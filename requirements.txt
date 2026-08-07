@@ -1,0 +1,7 @@
+pydantic
+instructor
+openai
+python-dotenv
+eval_type_backport
+urllib3<2
+streamlit

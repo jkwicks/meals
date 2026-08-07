@@ -1,0 +1,18 @@
+# secrets
+.env
+
+# python
+venv/
+__pycache__/
+*.pyc
+
+# generated at runtime — not source
+meal_plan.json
+meal_history.json
+shopping_list.md
+
+# local-only Claude Code settings
+.claude/settings.local.json
+
+# macOS
+.DS_Store

@@ -1,0 +1,77 @@
+{
+  "openrouter_model": "google/gemma-4-26b-a4b-it:free",
+  "weekly_schedule": {
+    "Monday": {
+      "calories": 2200,
+      "protein_g": 170,
+      "net_carbs_g": 150,
+      "is_keto": false
+    },
+    "Tuesday": {
+      "calories": 2200,
+      "protein_g": 170,
+      "net_carbs_g": 150,
+      "is_keto": false
+    },
+    "Wednesday": {
+      "calories": 2000,
+      "protein_g": 160,
+      "net_carbs_g": 30,
+      "is_keto": true
+    },
+    "Thursday": {
+      "calories": 2200,
+      "protein_g": 170,
+      "net_carbs_g": 150,
+      "is_keto": false
+    },
+    "Friday": {
+      "calories": 1543,
+      "protein_g": 160,
+      "net_carbs_g": 30,
+      "is_keto": true
+    },
+    "Saturday": {
+      "calories": 2400,
+      "protein_g": 180,
+      "net_carbs_g": 200,
+      "is_keto": false
+    },
+    "Sunday": {
+      "calories": 2000,
+      "protein_g": 160,
+      "net_carbs_g": 30,
+      "is_keto": true
+    }
+  },
+  "cuisines": [
+    "mexican",
+    "indian",
+    "thai",
+    "japanese",
+    "korean",
+    "bbq",
+    "middle_eastern",
+    "italian",
+    "mediterranean",
+    "vietnamese",
+    "cajun",
+    "greek"
+  ],
+  "dietary_rules": {
+    "allowed_nova_groups": [1, 2, 3],
+    "banned_ingredients": [
+      "high fructose corn syrup",
+      "artificial sweeteners",
+      "hydrogenated oil",
+      "MSG",
+      "seed oils",
+      "soy protein isolate"
+    ]
+  },
+  "serving_rules": {
+    "servings_per_meal": 2,
+    "batch_cook_days": ["Sunday", "Wednesday"],
+    "batch_multiplier": 4
+  }
+}
