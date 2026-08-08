@@ -1,5 +1,5 @@
 import argparse
-import json
+import asyncio
 import logging
 import os
 import time
@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
+from repository import (
+    DEFAULT_CONFIG_FILE,
+    DEFAULT_HISTORY_FILE,
+    DEFAULT_WEEK_PLAN_FILE,
+    LocalJSONRepository,
+    PlanRepository,
+    run_sync,
+)
 from shopping import (
     aggregate_cook_events,
     format_shopping_list_markdown,
@@ -39,7 +47,9 @@ load_dotenv()
 DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"
-WEEK_PLAN_CACHE_FILE = "week_plan.json"
+# Where the local files live is repository.py's business now; these names are
+# kept only for the CLI's help text and log messages.
+WEEK_PLAN_CACHE_FILE = DEFAULT_WEEK_PLAN_FILE
 LOG_FILE = "meals.log"
 
 logger = logging.getLogger("meals")
@@ -59,7 +69,7 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     handler = logging.FileHandler(log_file)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
-MEAL_HISTORY_FILE = "meal_history.json"
+MEAL_HISTORY_FILE = DEFAULT_HISTORY_FILE
 HISTORY_MAX_ENTRIES = 21
 PROTEIN_LOOKBACK_ENTRIES = 3
 # How many recent main proteins to name in the prompt. Long enough to stop a
@@ -87,9 +97,13 @@ def is_free_model(model: str) -> bool:
     return model.endswith(":free")
 
 
-def load_config(config_path: str = "config.json") -> dict:
-    with open(config_path, "r") as f:
-        return json.load(f)
+def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float:
+    """Fat is whatever energy is left once protein and carbs are paid for.
+
+    The one place this arithmetic lives, so a per-meal override and a whole-day
+    target are derived by the identical rule.
+    """
+    return max(0, (calories - (protein_g * 4 + net_carbs_g * 4)) / 9)
 
 
 def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
@@ -105,9 +119,7 @@ def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
     protein_g = day_targets["protein_g"]
     net_carbs_g = day_targets["net_carbs_g"]
 
-    protein_cal = protein_g * 4
-    carb_cal = net_carbs_g * 4
-    fat_g = max(0, (calories - (protein_cal + carb_cal)) / 9)
+    fat_g = derive_fat_g(calories, protein_g, net_carbs_g)
 
     return {
         "day_of_week": day_of_week,
@@ -122,16 +134,52 @@ def week_targets(spec: WeekSpec, config: dict) -> Dict[str, dict]:
     return {day: calculate_daily_targets(day, config) for day in spec.days}
 
 
+def meal_overrides_for(day: str, config: dict) -> Dict[str, dict]:
+    """Per-meal budgets pinned by config for `day`, keyed by meal_type.
+
+    `weekly_schedule[day].meal_overrides` is how you say "Saturday dinner is
+    900 kcal whatever else that day looks like" — a fixed budget for one meal
+    that the weight-based split must work around rather than compute.
+
+    Written the same way a daily target is (calories, protein_g, net_carbs_g);
+    fat_g may be given explicitly but is otherwise derived by the same rule, so
+    an override that names only calories puts every remaining calorie in fat.
+    Malformed entries are dropped with a warning to meals.log rather than
+    raised — a typo in one meal must not cost the whole day's generation.
+    """
+    raw = (config.get("weekly_schedule", {}).get(day) or {}).get("meal_overrides") or {}
+    known = meal_types(config)
+
+    resolved: Dict[str, dict] = {}
+    for meal_type, override in raw.items():
+        if meal_type not in known:
+            logger.warning(
+                "%s: ignoring meal_override for unknown meal type '%s' (known: %s)",
+                day, meal_type, ", ".join(known),
+            )
+            continue
+        if not isinstance(override, dict) or "calories" not in override:
+            logger.warning(
+                "%s %s: ignoring meal_override without a calories target", day, meal_type
+            )
+            continue
+        calories = float(override["calories"])
+        protein_g = float(override.get("protein_g", 0))
+        net_carbs_g = float(override.get("net_carbs_g", 0))
+        resolved[meal_type] = {
+            "calories": calories,
+            "protein_g": protein_g,
+            "net_carbs_g": net_carbs_g,
+            "fat_g": float(
+                override.get("fat_g", derive_fat_g(calories, protein_g, net_carbs_g))
+            ),
+        }
+    return resolved
+
+
 # --------------------------------------------------------------------------
 # History-aware rotation
 # --------------------------------------------------------------------------
-
-
-def load_history(path: str = MEAL_HISTORY_FILE) -> List[dict]:
-    if not os.path.exists(path):
-        return []
-    with open(path, "r") as f:
-        return json.load(f)
 
 
 def next_choice(options: List[str], recent: List[str]) -> Optional[str]:
@@ -533,6 +581,7 @@ def split_targets(
     cook_slots: List[SlotSpec],
     multiplicity: Dict[str, int],
     config: dict,
+    overrides: Optional[Dict[str, dict]] = None,
 ) -> Dict[str, dict]:
     """Divide the day's remaining macros into a per-meal budget.
 
@@ -542,28 +591,98 @@ def split_targets(
     rule as calculate_daily_targets: Python does the arithmetic, the model
     only fills in food.
 
-    A meal eaten more than once today contributes its macros that many times,
-    so it takes a proportionally larger share of the day while its own recipe
-    budget stays a single serving.
-    """
-    weights_config = config.get("meal_weights", DEFAULT_MEAL_WEIGHTS)
-    base = {
-        slot.id: weights_config.get(slot.meal_type, 0.25) or 0.25 for slot in cook_slots
-    }
-    total_weight = sum(base[slot.id] * multiplicity.get(slot.id, 1) for slot in cook_slots)
-    if total_weight <= 0:
-        return {slot.id: dict(remaining) for slot in cook_slots}
+    Two passes, in order:
 
-    return {
-        slot.id: {
-            key: remaining[key] * base[slot.id] / total_weight for key in MACRO_KEYS
+    1. Any slot with an explicit override (see meal_overrides_for) is assigned
+       that budget verbatim — it is a fixed number, not a starting point.
+    2. What those pinned meals consume is subtracted from the day, and only the
+       leftover is split across the remaining slots by normalised weight. So
+       pinning breakfast at 600 kcal moves the other meals down, exactly as
+       leftover macros already do; weights renormalise over the un-pinned slots
+       alone, which is the same rule that already redistributes a skipped meal.
+
+    A meal eaten more than once today contributes its macros that many times,
+    so it consumes (or takes a share of) the day proportionally while its own
+    recipe budget stays a single serving.
+    """
+    overrides = overrides or {}
+    weights_config = config.get("meal_weights", DEFAULT_MEAL_WEIGHTS)
+
+    budgets: Dict[str, dict] = {}
+    pinned = {key: 0.0 for key in MACRO_KEYS}
+    flexible: List[SlotSpec] = []
+    for slot in cook_slots:
+        override = overrides.get(slot.meal_type)
+        if override is None:
+            flexible.append(slot)
+            continue
+        budgets[slot.id] = {key: override[key] for key in MACRO_KEYS}
+        eaten_today = multiplicity.get(slot.id, 1)
+        for key in MACRO_KEYS:
+            pinned[key] += override[key] * eaten_today
+
+    if not flexible:
+        return budgets
+
+    left = {key: remaining[key] - pinned[key] for key in MACRO_KEYS}
+    overspent = [key for key in MACRO_KEYS if left[key] < 0]
+    if overspent:
+        # Floored rather than raised: the day still generates, and a 0 budget
+        # shows up as a visible shortfall in the day summary the same way an
+        # orphaned leftover does.
+        logger.warning(
+            "meal_overrides for %s claim more %s than the day's target leaves — "
+            "the un-overridden meals are floored at 0 for those macros",
+            ", ".join(sorted(overrides)),
+            ", ".join(overspent),
+        )
+        left = {key: max(0.0, left[key]) for key in MACRO_KEYS}
+
+    base = {slot.id: weights_config.get(slot.meal_type, 0.25) or 0.25 for slot in flexible}
+    total_weight = sum(base[slot.id] * multiplicity.get(slot.id, 1) for slot in flexible)
+    if total_weight <= 0:
+        budgets.update({slot.id: dict(left) for slot in flexible})
+        return budgets
+
+    budgets.update(
+        {
+            slot.id: {key: left[key] * base[slot.id] / total_weight for key in MACRO_KEYS}
+            for slot in flexible
         }
-        for slot in cook_slots
-    }
+    )
+    return budgets
+
+
+def inventory_instruction(config: dict) -> str:
+    """Prompt line telling the model to build around food already in the house.
+
+    `inventory_to_clear` is a plain list of things to use up ("400g chicken
+    thighs", "half a bag of spinach"). It is a priority, never a constraint:
+    the styles, cuisines and macro budgets still win, because a model told it
+    *must* use an item will wedge it into a breakfast where it doesn't belong.
+
+    Note these items are still costed as ordinary ingredients, so they appear
+    on the shopping list — the list says what a recipe needs, not what you have
+    yet to buy.
+    """
+    items = [
+        str(item).strip()
+        for item in config.get("inventory_to_clear", [])
+        if str(item).strip()
+    ]
+    if not items:
+        return ""
+    return (
+        "- We already have these at home and want them used up first — prefer "
+        "them over buying more of the same kind of thing, and spread them "
+        f"across the day's meals where they genuinely fit: {', '.join(items)}. "
+        "Never force one into a meal it doesn't suit, and never break a meal's "
+        "style, cuisine or macro budget to use one up.\n"
+    )
 
 
 def build_slot_brief(
-    slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict
+    slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict, pinned: bool = False
 ) -> str:
     """One line per meal the model has to invent: style, cuisine, macro budget."""
     parts = [f"- {slot.meal_type.upper()}"]
@@ -579,6 +698,8 @@ def build_slot_brief(
         f"{budget['protein_g']:.0f}g protein, {budget['net_carbs_g']:.0f}g net carbs, "
         f"{budget['fat_g']:.0f}g fat"
     )
+    if pinned:
+        parts.append("[fixed budget for this meal — the other meals absorb the rest of the day]")
     if times_eaten_today > 1:
         parts.append(f"[eaten {times_eaten_today}x today, budget already accounts for that]")
     return " | ".join(parts)
@@ -632,9 +753,16 @@ def generate_day(
         else ""
     )
 
-    budgets = split_targets(remaining, cook_slots, multiplicity, config)
+    overrides = meal_overrides_for(day, config)
+    budgets = split_targets(remaining, cook_slots, multiplicity, config, overrides)
     slot_briefs = "\n".join(
-        build_slot_brief(slot, config, multiplicity.get(slot.id, 1), budgets[slot.id])
+        build_slot_brief(
+            slot,
+            config,
+            multiplicity.get(slot.id, 1),
+            budgets[slot.id],
+            pinned=slot.meal_type in overrides,
+        )
         for slot in cook_slots
     )
 
@@ -660,6 +788,7 @@ def generate_day(
         "overlap between meals, the way a registered dietitian would design a "
         "menu — not just whatever hits the numbers with the fewest ingredients.\n"
         f"{avoid_protein_instruction}"
+        f"{inventory_instruction(config)}"
         f"{leftovers_instruction}"
         f"{batch_instruction}"
         "- Each meal below carries its OWN macro budget. Hit that meal's "
@@ -766,12 +895,13 @@ def generate_day(
     return fitted
 
 
-def generate_week_plan(
+async def generate_week_plan(
     spec: WeekSpec,
     config: dict,
     history: Optional[List[dict]] = None,
     progress_callback=None,
     note_callback=None,
+    repository: Optional[PlanRepository] = None,
 ) -> WeekPlan:
     """Generate the whole week, one API call per day that has cooking to do.
 
@@ -779,8 +909,16 @@ def generate_week_plan(
     exists by the time its macros are needed. Cost scales with cook days, not
     calendar days: a week where lunches are all leftovers is 7 smaller calls,
     and a day with nothing to cook is free.
+
+    Async because it may have to read history through the repository. Note the
+    generation calls themselves are still synchronous: `generate_day` blocks on
+    instructor's sync client for 30s-3min per day, so this coroutine holds the
+    loop for the length of a run. Fixing that means an async OpenAI client (or
+    an `asyncio.to_thread` hop, which would move progress callbacks off the
+    Streamlit script thread) — a separate change from the storage boundary.
     """
-    history = load_history() if history is None else history
+    if history is None:
+        history = await (repository or LocalJSONRepository()).load_history()
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -877,13 +1015,14 @@ def extract_main_protein(recipe: Recipe) -> Optional[str]:
     return max(recipe.ingredients, key=lambda ingredient: ingredient.protein_g).name
 
 
-def record_week_history(
+async def record_week_history(
     week_plan: WeekPlan,
-    path: str = MEAL_HISTORY_FILE,
+    repository: Optional[PlanRepository] = None,
     max_entries: int = HISTORY_MAX_ENTRIES,
 ) -> None:
     """One history entry per cooked day, so rotation carries across weeks."""
-    history = load_history(path)
+    repository = repository or LocalJSONRepository()
+    history = await repository.load_history()
     generated_at = week_plan.generated_at
 
     for day in week_plan.days:
@@ -906,9 +1045,7 @@ def record_week_history(
             }
         )
 
-    history = history[-max_entries:]
-    with open(path, "w") as f:
-        json.dump(history, f, indent=2)
+    await repository.save_history(history[-max_entries:])
 
 
 # --------------------------------------------------------------------------
@@ -966,10 +1103,11 @@ def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -
         print(format_shopping_list_text(shopping_list, cook_events=events))
 
 
-def main():
-    configure_logging()
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Weekly Meal Planner CLI")
-    parser.add_argument("--config", default="config.json", help="Path to config JSON file")
+    parser.add_argument(
+        "--config", default=DEFAULT_CONFIG_FILE, help="Path to config JSON file"
+    )
     parser.add_argument(
         "--model",
         default=None,
@@ -1012,9 +1150,18 @@ def main():
             "OpenRouter (for iterating on the shopping list without API calls)."
         ),
     )
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
-    config = load_config(args.config)
+
+async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
+    """The CLI's actual work, async so it can await the repository.
+
+    Split from `main()` so there is exactly one `asyncio.run` in the process
+    (in `main`) and everything below it is ordinary async code — the shape the
+    future backend expects, and the reason storage calls are awaited here
+    rather than bridged individually.
+    """
+    config = await repository.load_config()
     if args.model:
         config["openrouter_model"] = args.model
     spec = default_week_spec(config, args.week_start, args.servings)
@@ -1026,10 +1173,13 @@ def main():
 
     if args.use_cached_plan:
         print(f"Loading cached week plan from {WEEK_PLAN_CACHE_FILE}...", flush=True)
-        with open(WEEK_PLAN_CACHE_FILE, "r") as f:
-            week_plan = WeekPlan.model_validate(json.load(f))
+        cached = await repository.load_week_plan()
+        if cached is None:
+            print(f"No cached week plan found ({WEEK_PLAN_CACHE_FILE}). Generate one first.")
+            raise SystemExit(1)
+        week_plan = WeekPlan.model_validate(cached)
     else:
-        history = load_history()
+        history = await repository.load_history()
         spec = resolve_auto_choices(spec, config, history)
 
         errors = validate_week(spec, config)
@@ -1050,17 +1200,17 @@ def main():
         def report(day: str, cooks: int) -> None:
             print(f"  {day}: {cooks} recipe(s)..." if cooks else f"  {day}: leftovers only", flush=True)
 
-        week_plan = generate_week_plan(
+        week_plan = await generate_week_plan(
             spec,
             config,
             history,
             progress_callback=report,
             note_callback=lambda message: print(f"    {message}", flush=True),
+            repository=repository,
         )
 
-        with open(WEEK_PLAN_CACHE_FILE, "w") as f:
-            json.dump(week_plan.model_dump(), f, indent=2)
-        record_week_history(week_plan)
+        await repository.save_week_plan(week_plan.model_dump())
+        await record_week_history(week_plan, repository)
 
     print_week_summary(week_plan)
 
@@ -1090,6 +1240,19 @@ def main():
         with open("shopping_list.md", "w") as f:
             f.write("\n\n".join(sections))
         print("\nSaved shopping lists to shopping_list.md", flush=True)
+
+
+def main() -> None:
+    """Sync entry point: parse args, pick a repository, run the async CLI.
+
+    `--config` still names a file because the only repository today is the
+    local one; a backend implementation would be selected here instead and
+    nothing below this line would change.
+    """
+    configure_logging()
+    args = parse_args()
+    repository = LocalJSONRepository(config_path=args.config)
+    run_sync(run_cli(args, repository))
 
 
 if __name__ == "__main__":

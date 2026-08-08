@@ -10,12 +10,11 @@ from planner import (
     configure_logging,
     day_slot_macros,
     generate_week_plan,
-    load_config,
-    load_history,
     per_serving_totals,
     record_week_history,
     resolve_auto_choices,
 )
+from repository import LocalJSONRepository, run_sync
 from shopping import (
     aggregate_cook_events,
     cook_plan_lines,
@@ -48,6 +47,12 @@ from week import (
 load_dotenv()
 
 CONFIG_PATH = "config.json"
+
+# One stateless repository for the app. Streamlit re-runs this module top to
+# bottom on every interaction, so this must stay cheap to construct — it holds
+# paths only, no handles. Swapping in a backend repository is a one-line change
+# here; nothing below touches the filesystem directly.
+REPOSITORY = LocalJSONRepository(config_path=CONFIG_PATH)
 MODEL_OPTIONS = [
     "anthropic/claude-sonnet-5",
     "deepseek/deepseek-v4-flash",
@@ -539,8 +544,15 @@ def render_shopping(week_plan, windows) -> None:
 # --------------------------------------------------------------------------
 
 
-def run_generation(spec: WeekSpec, config: dict) -> None:
-    history = load_history()
+async def run_generation(spec: WeekSpec, config: dict) -> None:
+    """Generate a week and stash it in session state.
+
+    Async because the planner's storage calls are awaited; the Streamlit script
+    thread is synchronous, so `main()` bridges with `run_sync`. Everything here
+    still runs on the script thread, which is what keeps `st.progress` updates
+    (and the `report` callback below) attached to this session.
+    """
+    history = await REPOSITORY.load_history()
     resolved = resolve_auto_choices(spec, config, history)
     cook_days = sorted({slot.day for slot in resolved.cook_slots()}, key=resolved.days.index)
 
@@ -558,8 +570,13 @@ def run_generation(spec: WeekSpec, config: dict) -> None:
         )
 
     try:
-        week_plan = generate_week_plan(
-            resolved, config, history, progress_callback=report, note_callback=notes.append
+        week_plan = await generate_week_plan(
+            resolved,
+            config,
+            history,
+            progress_callback=report,
+            note_callback=notes.append,
+            repository=REPOSITORY,
         )
     except Exception as exc:
         progress.empty()
@@ -567,13 +584,13 @@ def run_generation(spec: WeekSpec, config: dict) -> None:
         return
 
     progress.empty()
-    record_week_history(week_plan)
+    await record_week_history(week_plan, REPOSITORY)
     st.session_state["week_plan"] = week_plan
     st.session_state["generation_notes"] = notes
 
 
 def main():
-    config = load_config(CONFIG_PATH)
+    config = run_sync(REPOSITORY.load_config())
     sidebar = render_sidebar(config)
     days = sidebar["days"]
 
@@ -609,7 +626,7 @@ def main():
             use_container_width=True,
             disabled=bool(errors),
         ):
-            run_generation(spec, day_config)
+            run_sync(run_generation(spec, day_config))
 
         st.session_state["windows"] = windows
 

@@ -6,37 +6,44 @@
     "Monday": {
       "calories": 2200,
       "protein_g": 170,
-      "net_carbs_g": 150
+      "net_carbs_g": 150,
+      "meal_overrides": {}
     },
     "Tuesday": {
       "calories": 2200,
       "protein_g": 170,
-      "net_carbs_g": 150
+      "net_carbs_g": 150,
+      "meal_overrides": {}
     },
     "Wednesday": {
       "calories": 2000,
       "protein_g": 160,
-      "net_carbs_g": 30
+      "net_carbs_g": 30,
+      "meal_overrides": {}
     },
     "Thursday": {
       "calories": 2200,
       "protein_g": 170,
-      "net_carbs_g": 150
+      "net_carbs_g": 150,
+      "meal_overrides": {}
     },
     "Friday": {
       "calories": 1543,
       "protein_g": 160,
-      "net_carbs_g": 30
+      "net_carbs_g": 30,
+      "meal_overrides": {}
     },
     "Saturday": {
       "calories": 2400,
       "protein_g": 180,
-      "net_carbs_g": 200
+      "net_carbs_g": 200,
+      "meal_overrides": {}
     },
     "Sunday": {
       "calories": 2000,
       "protein_g": 160,
-      "net_carbs_g": 30
+      "net_carbs_g": 30,
+      "meal_overrides": {}
     }
   },
   "meal_styles": {
@@ -113,6 +120,7 @@
   "serving_rules": {
     "servings_per_meal": 2
   },
+  "inventory_to_clear": [],
   "shopping": {
     "shop_days": ["Sunday", "Wednesday"]
   }

@@ -13,6 +13,8 @@ shopping_list.md
 meals.log
 streamlit.log
 .streamlit.pid
+nicegui.log
+.nicegui.pid
 
 # local-only Claude Code settings
 .claude/settings.local.json
