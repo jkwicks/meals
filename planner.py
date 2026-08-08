@@ -620,11 +620,30 @@ def carried_macros(
 # --------------------------------------------------------------------------
 
 
-def build_client() -> instructor.Instructor:
+def api_key_error() -> Optional[str]:
+    """Why generation can't start, or None if it can.
+
+    Split out of `build_client` so a caller can ask *before* committing to a
+    run. `generate_week_plan` turns a per-day exception into a per-day failure
+    (see "a failed day must not fail the week"), which is exactly wrong for a
+    missing key: it isn't a flaky provider, it will fail every day identically,
+    and the user would wait through seven attempts to be told so seven times.
+    """
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key or api_key == "your_openrouter_api_key_here":
-        raise RuntimeError("OPENROUTER_API_KEY is not set. Add it to your .env file.")
-    openai_client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key, timeout=120.0)
+        return "OPENROUTER_API_KEY is not set. Add it to your .env file."
+    return None
+
+
+def build_client() -> instructor.Instructor:
+    error = api_key_error()
+    if error:
+        raise RuntimeError(error)
+    openai_client = OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=120.0,
+    )
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
 
 
@@ -947,6 +966,28 @@ def generate_day(
     return fitted
 
 
+def on_calling_loop(callback):
+    """Wrap `callback` so a worker thread's call runs back on *this* loop.
+
+    `generate_day` runs in a worker thread (see `generate_week_plan`), which
+    means anything it calls back into runs off the event loop. That is fine for
+    the CLI's `print`, and not fine for the NiceGUI front end, whose elements
+    queue their updates against the loop that owns the client — so the hop is
+    undone here, once, rather than being every caller's problem to remember.
+
+    Must be called from the loop thread: it captures the running loop at wrap
+    time, and there is none inside the worker.
+    """
+    if callback is None:
+        return None
+    loop = asyncio.get_running_loop()
+
+    def forward(*args, **kwargs) -> None:
+        loop.call_soon_threadsafe(lambda: callback(*args, **kwargs))
+
+    return forward
+
+
 async def generate_week_plan(
     spec: WeekSpec,
     config: dict,
@@ -962,12 +1003,21 @@ async def generate_week_plan(
     calendar days: a week where lunches are all leftovers is 7 smaller calls,
     and a day with nothing to cook is free.
 
-    Async because it may have to read history through the repository. Note the
-    generation calls themselves are still synchronous: `generate_day` blocks on
-    instructor's sync client for 30s-3min per day, so this coroutine holds the
-    loop for the length of a run. Fixing that means an async OpenAI client (or
-    an `asyncio.to_thread` hop, which would move progress callbacks off the
-    calling thread) — a separate change from the storage boundary.
+    Every day's API call is dispatched with `asyncio.to_thread`. `generate_day`
+    blocks on instructor's *synchronous* client for 30s-3min, and awaiting it
+    inline held the loop for the length of a run — invisible in the CLI, fatal
+    in NiceGUI, where it froze every connected browser for the whole 20 minutes
+    and the progress updates it was meant to be showing could not be delivered
+    until the run they described had finished. The thread is what makes the
+    `await` a real yield; `on_calling_loop` puts `note_callback` back on the
+    loop afterwards, so a caller's callbacks still arrive where they were
+    registered. `progress_callback` is fired here, on the loop, and never
+    crosses the boundary at all.
+
+    Days remain strictly sequential — one thread at a time, walked in week
+    order — because a later day's prompt is built from earlier days' recipes
+    (`carried_macros`, `avoid_proteins`). This is about not blocking the loop,
+    not about generating faster.
     """
     if history is None:
         history = await (repository or LocalJSONRepository()).load_history()
@@ -978,6 +1028,7 @@ async def generate_week_plan(
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
     avoid_proteins = recent_main_proteins(history)
+    thread_safe_note = on_calling_loop(note_callback)
 
     events: Dict[str, CookEvent] = {}
     failures: Dict[str, str] = {}
@@ -992,7 +1043,8 @@ async def generate_week_plan(
             continue
 
         try:
-            recipes = generate_day(
+            recipes = await asyncio.to_thread(
+                generate_day,
                 day=day,
                 targets=targets[day],
                 cook_slots=cook_slots,
@@ -1002,7 +1054,7 @@ async def generate_week_plan(
                 carried=carried,
                 carried_descriptions=descriptions,
                 avoid_proteins=avoid_proteins[-PROTEIN_AVOID_WINDOW:],
-                progress_note=note_callback,
+                progress_note=thread_safe_note,
             )
         except Exception as exc:
             # One bad day must not discard the six good ones. Free routes fail

@@ -2,8 +2,9 @@
 # Start/stop/status for the meal planner web UI, so you don't have to remember
 # venv activation, the right invocation, or how to find/kill it.
 #
-# NiceGUI (ui_app.py) is the only UI. Streamlit has been removed; generating a
-# week is a CLI job until generation is ported — see `python planner.py --help`.
+# NiceGUI (ui_app.py) is the only UI. Streamlit has been removed. The UI can
+# generate a week itself now; `python planner.py --help` is the other way in,
+# and still the only one that prints shopping lists.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"

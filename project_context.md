@@ -18,22 +18,121 @@ Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there).
 ## Run
 
 Run from the venv: `source venv/bin/activate`, then `python planner.py --help`
-for flags, or `streamlit run app.py` for the web UI.
+for flags.
+
+For the web UI use `./server.sh start` — it handles venv activation, nohup, the
+PID file and the log:
+
+    ./server.sh start              # NiceGUI (ui_app.py) on :8080
+    ./server.sh status
+    ./server.sh stop
+    MEALS_PORT=9000 ./server.sh start
 
 ### Web UI
 
-`app.py` is a Streamlit wrapper around `planner.py`/`week.py`/`shopping.py` —
-it reuses their functions directly rather than reimplementing planning logic,
-so behavior stays identical to the CLI. The **Plan Setup** tab holds an
-editable per-day macro table and the 28-row meal grid; **The Week** and
-**Shopping** render `st.session_state["week_plan"]`, so widget interactions
-(ticking off shopping items) never trigger an OpenRouter call — only the
-"Generate Week" button does.
+NiceGUI (`ui_app.py`) is the only web UI. The Streamlit app (`app.py`) was
+deleted once the migration landed; if you need its rendering or grid-editing
+code as a reference, it is in git history at `git show e237872:app.py`.
 
-The grid lives in `st.session_state["grid_rows"]` and is rebuilt only when the
-*week shape* changes (`ensure_grid`) — rebuilding every rerun would discard
-the user's edits, never rebuilding would leave stale days after changing the
-week start.
+A week can be generated from either front end — `python planner.py` or the
+NiceGUI drawer's "Generate week" — and both go through the same
+`generate_week_plan`, write the same `week_plan.json` and append the same
+history. The CLI is still the one that prints shopping lists.
+
+### NiceGUI front end
+
+`ui_app.py` (`./server.sh start`, serves on :8080) is the high-density desktop
+UI: left drawer for global controls, a header of 7 per-day macro bars, and a
+7-column x 4-card canvas, both grids `grid-cols-7` so a day's telemetry sits
+above its meals. Cook/leftover/skip/not-generated are four distinct card
+treatments (`STATUS_STYLES`).
+
+**Generating is the only thing here that writes to disk.** `run_generation`
+saves `week_plan.json` and records history *before* adopting the plan into
+`PlannerState`, so the grid can never show a week that isn't saved — a
+20-minute run one browser refresh from being lost is the failure that ordering
+prevents. Grid *edits* are still in-memory only: they live in the client's
+`PlannerState` until "Reload from disk" discards them, and the header shows an
+"edited — not saved" chip while they're outstanding (`adopt_plan` clears it,
+because saving is what it just did).
+
+Things worth knowing about the generation path specifically:
+
+- **It generates what's on the grid**, not a fresh default week — including
+  any "Link to next lunch" edits, so a linked lunch is a leftover the model is
+  told not to generate. `generation_spec()` reapplies the drawer's
+  people-per-meal, which `PlannerState.spec` deliberately ignores once a week
+  exists (see `_shape()`); without that, the control would silently do nothing
+  on every run after the first.
+- **The API key is checked up front** (`planner.api_key_error`). Left to the
+  per-day handler it would become seven identical failures after a long wait,
+  because "a failed day must not fail the week" is exactly the wrong policy for
+  a misconfiguration that will fail every day.
+- The progress modal is built once per page and *opened* per run, so the
+  `progress_callback`/`note_callback` handlers just assign to elements that
+  already exist. Notes go to a `ui.log` rather than a status label because
+  portion trims and failed days both arrive mid-run and a label would
+  overwrite the one you were reading.
+- Only a whole-run exception reaches the `except` (no config, storage
+  unwritable); per-day failures arrive in `WeekPlan.failures` and become a
+  warning toast plus the red NOT GENERATED cards. Nothing is adopted on the
+  exception path, so a failed run leaves the week on screen untouched.
+- `PlannerState.generating` guards re-entry. The loop stays free during a run
+  (see below), which is exactly why the button is still clickable and needs
+  the flag: two tabs generating at once would race to overwrite the same file.
+
+The one edit it offers today is the **"Link to next lunch"** button on each
+dinner card: one click sets the following day's lunch to `MODE_LEFTOVER` with
+`source` pointing at that dinner. Because portions are derived, that single
+change is also what grows the batch — see `PlannerState.apply_spec`, which is
+where every future grid edit should land too:
+
+- The spec is now **held** (`PlannerState._spec`) rather than re-derived per
+  read, and rebuilt only when `_shape()` changes — re-deriving on read would
+  discard the edit that was just made. (The deleted Streamlit app dodged the
+  same trap in `ensure_grid`.) `_shape()` excludes `servings` for a generated
+  week, whose
+  portions come from `week_plan.servings_per_meal` instead.
+- `apply_spec` writes the new slots back into `week_plan` as well as `_spec`,
+  because `day_slot_macros` walks the *plan's* slots — otherwise the linked
+  lunch's macros would never reach the telemetry header.
+- It also rescales the affected cook events (`planner.rescale_cook_event`).
+  Portions being derived means a card reading "4 portions" over ingredients
+  weighed for 2 is exactly the disagreement the derived-portions rule exists
+  to prevent, and the fix is linear arithmetic, not a regeneration call.
+- `week.leftover_link_error` gates the click. It re-checks what
+  `validate_week` enforces, but returns *one sentence about the two meals
+  clicked* — a whole-week error list can't say which entry the click caused.
+  The button is left enabled when it fails, because a disabled Quasar button
+  swallows hover and the tooltip explaining why would never appear.
+
+The leftover/cook pairing is drawn two ways. Statically, both cards carry a
+dot and a line in their chain's colour — the cook says "→ feeds Tue lunch",
+the leftover says "↩ from Mon dinner" — so the link reads without touching
+anything. On hover, `chain_css()` outlines every card in the chain at once,
+via `.meal-canvas:has(.chain-N:hover) .chain-N`; `:has()` is what lets one
+card's hover style its partners three columns away without a Python round trip
+per mouseenter, which would be visibly laggy for a hover effect. Chain classes
+are unique per chain, colours cycle, so the outline is what disambiguates when
+a busy week reuses a hue.
+
+Two things it does differently from the old Streamlit app, both worth keeping:
+
+- NiceGUI page handlers run *on* the event loop, so it `await`s the repository
+  directly. **Do not use `repository.run_sync()` here** — it detects the
+  running loop and hands the coroutine to a scratch thread, which is pure
+  overhead when the caller is already async.
+- There is no re-run, so there is no session-state cache to defend. UI widgets
+  bind to a per-client `PlannerState` and structural changes call
+  `.refresh()` on the `@ui.refreshable` sections that depend on them. Note
+  that attaching `bind_value` fires an initial change event, so a handler's
+  callees must be defined before the widget is built — that is why `canvas` is
+  defined above the drawer and only *called* at the end.
+
+`PlannerState.slot_views()` flattens both a generated `WeekPlan` and an
+un-generated `WeekSpec` into the same `SlotView` shape, so the card widget has
+one code path and a cold start previews the planned week rather than rendering
+28 empty cells.
 
 ## Architecture
 
@@ -60,6 +159,7 @@ which is why `validate_week` rejects a leftover pointing at a later day.
 
 - `config.json` — external configuration; `DEFAULT_MODEL` in `planner.py` is
   the fallback when `openrouter_model` is unset or the API key is missing.
+- `repository.py` — the storage boundary (see below).
 - `week.py` — all the deterministic, API-free planning. The entire week —
   styles, cuisines, portions, windows — is resolved here before a single token
   is generated, so the UI previews exactly what it will ask for.
@@ -88,6 +188,54 @@ which is why `validate_week` rejects a leftover pointing at a later day.
     `MD_JSON` mode just asks the model to emit JSON as text, which works with
     far more free-tier providers.
 
+### Storage goes through an async repository
+
+Nothing outside `repository.py` opens a file or touches `json` any more.
+`PlanRepository` is the interface (`load_config`, `load_history`,
+`save_history`, `load_week_plan`, `save_week_plan`); `LocalJSONRepository` is
+the only implementation today and keeps the same three files in the same
+places. Point the app at a backend by constructing a different subclass —
+`planner.main()` and `REPOSITORY` in `ui_app.py` are the only two places that
+name one.
+
+**Every method is `async`, including the local file one, deliberately.** The
+interface is shaped for the future backend that receives asynchronous webhook
+pushes, so business logic awaits its storage today rather than being rewritten
+around an `await` boundary later. `LocalJSONRepository` runs its blocking
+`open()`/`json` work in `asyncio.to_thread`, so an `await` genuinely yields
+instead of wrapping a blocking call in a coroutine.
+
+Consequences worth knowing:
+
+- `generate_week_plan()` and `record_week_history()` are coroutines. Sync
+  callers bridge with `repository.run_sync()` — one `asyncio.run` per entry
+  point (today just `planner.main()`), never one per storage call.
+- `run_sync` falls back to a scratch thread if a loop is already running in the
+  calling thread. The CLI has no running loop, so the normal path is plain
+  `asyncio.run` and progress callbacks stay on the calling thread. NiceGUI is
+  the opposite case and must `await` the repository directly — see the front
+  end section above.
+- **`generate_day()` is still a synchronous call, dispatched to a thread.** It
+  blocks on instructor's sync client for 30s–3min, so `generate_week_plan()`
+  hands each day to `asyncio.to_thread` — that is what makes the `await` a real
+  yield. Awaiting it inline held the loop for the whole run: invisible in the
+  CLI, fatal in NiceGUI, where it froze every connected browser and the
+  progress updates it was meant to be showing couldn't be delivered until the
+  run they described had finished. Days stay strictly sequential (one thread at
+  a time, in week order) because a later day's prompt is built from earlier
+  days' recipes — this is about not blocking the loop, not about going faster.
+- **Callbacks come back to the loop.** `on_calling_loop()` wraps
+  `note_callback` so a worker thread's call is re-scheduled with
+  `call_soon_threadsafe` — NiceGUI elements queue their updates against the
+  loop that owns the client, so the alternative is a UI mutated off-thread.
+  `progress_callback` never crosses the boundary; it fires on the loop, between
+  days.
+- Writes go via a temp file + `os.replace`. A crash mid-write used to be able
+  to leave truncated JSON where `meal_history.json` was, and history can't be
+  regenerated.
+- `--use-cached-plan` now exits with a clear message when there is no cached
+  plan, instead of an `open()` traceback.
+
 ### Portion sizing — three layers, because models can't size meals
 
 Measured behaviour on `google/gemma-4-26b-a4b-it:free`: asked for two meals
@@ -100,6 +248,19 @@ regardless of the stated target. Three layers correct this, in order:
    normalised over the slots actually being cooked. A meal eaten more than
    once that day takes a proportionally larger share of the day while its own
    recipe budget stays a single serving.
+
+   Explicit budgets win over weights: `weekly_schedule.<day>.meal_overrides`
+   pins named meals (`{"breakfast": {"calories": 450, "protein_g": 45,
+   "net_carbs_g": 25}}`, `fat_g` optional and otherwise derived by
+   `derive_fat_g()`, the same rule `calculate_daily_targets()` uses). Those
+   budgets are assigned verbatim, what they consume — override x how many
+   times it's eaten that day — comes off the day, and only the remainder is
+   split by weight across the un-pinned slots. So a pinned breakfast pushes
+   the other meals *down*, exactly the way leftover macros already do, and the
+   day still totals its target. Overrides that exceed the day floor the rest
+   at 0 and log a warning rather than going negative; a malformed or
+   unknown-meal-type override is dropped with a warning, because a config typo
+   must not cost a day of generation.
 2. **`fit_recipe_to_budget()`** linearly rescales the response so its calories
    land on budget. Every macro is linear in quantity, so one factor resizes
    the portion without changing the dish. Clamped to `PORTION_TRIM_LIMITS`
@@ -166,7 +327,7 @@ free-tier one. A paid frontier model hit it harder than gemma did.
 
 ### Diagnosing a slow or failed day
 
-`configure_logging()` (called from both `planner.main()` and `app.py` at
+`configure_logging()` (called from both `planner.main()` and `ui_app.py` at
 import time) writes per-day generation timing to `meals.log`: request start,
 elapsed seconds, `finish_reason`, `completion_tokens`, and `reasoning_tokens`
 for every `generate_day()` call, plus a line for any day that fails. This is
@@ -187,6 +348,23 @@ free-tier churn, latency variance vs. the client timeout). They live in the
 names before combining them. Every normalisation rule and the bad line it
 fixes are in `.claude/rules/shopping.md`, which loads automatically when
 working on `shopping.py`.
+
+### Using up what's already in the house
+
+`config.inventory_to_clear` is a flat list of things to cook through ("600g
+chicken thighs", "half a bag of spinach"). `inventory_instruction()` turns it
+into one system-prompt line per day; an empty list emits nothing, so the
+prompt is byte-identical to before when the feature is unused.
+
+It is deliberately a **priority, not a constraint** — the wording tells the
+model to prefer these items where they fit and forbids it from bending a
+meal's style, cuisine or macro budget to use one up. A model told it *must*
+use an item will wedge chicken thighs into a breakfast shake.
+
+Consequence worth knowing: these items are still ordinary ingredients in the
+recipe, so they still appear on the shopping list. The list describes what the
+recipes need, not what you have yet to buy — subtracting inventory from it
+would need real quantities per item, which this list doesn't carry.
 
 ## Metric unit rules
 
@@ -221,7 +399,7 @@ working on `shopping.py`.
 - `meal_history.json` entries written before the weekly rewrite have no
   `styles` key. `history_styles()` tolerates that (those days simply don't
   seed style rotation), so old history files don't need migrating.
-
+-e 
 
 === File: requirements.txt ===
 pydantic
@@ -230,10 +408,8 @@ openai
 python-dotenv
 eval_type_backport
 urllib3<2
-streamlit
-pandas
-watchdog
-
+nicegui
+-e 
 
 === File: .claude/rules/shopping.md ===
 ---
@@ -286,7 +462,7 @@ normalises them before combining; each rule fixes something observed:
 
 When adding a keyword, prefer the most specific phrase; longest-match will do
 the right thing without touching the ordering.
-
+-e 
 
 === File: .claude/skills/openrouter-model-choice/SKILL.md ===
 ---
@@ -355,5 +531,5 @@ swap it:
 
 Note: reasoning must stay disabled on every request regardless of which model
 you pick — see the "Reasoning must be disabled" section in `CLAUDE.md`.
-
+-e 
 

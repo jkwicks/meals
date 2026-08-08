@@ -446,10 +446,19 @@ def format_shopping_list_markdown(
 def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
     """One item per line, no bullets/markdown/blank lines. Google Keep turns
     each line of pasted text into its own checkbox item inside a list-type
-    note — bullets or blank lines would just become extra junk items."""
+    note — bullets or blank lines would just become extra junk items.
+
+    The perishable note rides along on the item's own line rather than getting
+    a line of its own: this is the copy you read *in the shop*, which is the
+    one place the warning can still change what you put in the basket, and a
+    separate line would become a checkbox for a thing you can't buy.
+    """
     lines = []
     for department in sorted(shopping_list.categories):
         lines.append(department)
         for item in shopping_list.categories[department]:
-            lines.append(f"{item.name}: {format_quantity(item.name, item.total_amount_g)}")
+            note = " (buy fresh closer to the day)" if item.buy_late else ""
+            lines.append(
+                f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
+            )
     return "\n".join(lines)
