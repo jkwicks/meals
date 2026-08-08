@@ -2,36 +2,16 @@
 # Start/stop/status for the meal planner web UI, so you don't have to remember
 # venv activation, the right invocation, or how to find/kill it.
 #
-# Two UIs coexist during the NiceGUI migration, and each gets its own port, PID
-# file and log so both can run at once. That matters: ui_app.py is read-only
-# and still can't generate a week, so the Streamlit app has to stay reachable
-# to produce the week_plan.json the NiceGUI one renders.
+# NiceGUI (ui_app.py) is the only UI. Streamlit has been removed; generating a
+# week is a CLI job until generation is ported — see `python planner.py --help`.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-DEFAULT_UI="nicegui"
-
-select_ui() {
-    case "$1" in
-        nicegui)
-            PID_FILE=".nicegui.pid"
-            LOG_FILE="nicegui.log"
-            PORT="${MEALS_PORT:-8080}"
-            DESC="NiceGUI (ui_app.py)"
-            ;;
-        streamlit)
-            PID_FILE=".streamlit.pid"
-            LOG_FILE="streamlit.log"
-            PORT="${MEALS_PORT:-8501}"
-            DESC="Streamlit (app.py)"
-            ;;
-        *)
-            echo "Unknown UI '$1' — expected 'nicegui' or 'streamlit'." >&2
-            exit 1
-            ;;
-    esac
-}
+PID_FILE=".nicegui.pid"
+LOG_FILE="nicegui.log"
+PORT="${MEALS_PORT:-8080}"
+DESC="NiceGUI (ui_app.py)"
 
 is_running() {
     [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
@@ -50,14 +30,9 @@ start() {
     fi
     source venv/bin/activate
 
-    if [ "$UI" = "nicegui" ]; then
-        # ui_app.py reads MEALS_UI_PORT; reload is off in the script it runs,
-        # so this stays one process and the PID below is the one to kill.
-        MEALS_UI_PORT="$PORT" nohup python ui_app.py > "$LOG_FILE" 2>&1 &
-    else
-        nohup streamlit run app.py --server.port "$PORT" --server.headless true \
-            > "$LOG_FILE" 2>&1 &
-    fi
+    # ui_app.py reads MEALS_UI_PORT; reload is off in the script it runs, so
+    # this stays one process and the PID below is the one to kill.
+    MEALS_UI_PORT="$PORT" nohup python ui_app.py > "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
     disown
@@ -83,26 +58,16 @@ status() {
     fi
 }
 
-# Status reports on both UIs regardless of which one was named — during the
-# migration "is it up?" almost always means "which of them is up?".
-status_all() {
-    for ui in nicegui streamlit; do
-        select_ui "$ui"
-        status
-    done
-}
-
 ACTION="${1:-}"
-UI="${2:-$DEFAULT_UI}"
 
 case "$ACTION" in
-    start)   select_ui "$UI"; start ;;
-    stop)    select_ui "$UI"; stop ;;
-    restart) select_ui "$UI"; stop; start ;;
-    status)  status_all ;;
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    status)  status ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status} [nicegui|streamlit]"
-        echo "  UI defaults to $DEFAULT_UI. Port override: MEALS_PORT=9000 $0 start"
+        echo "Usage: $0 {start|stop|restart|status}"
+        echo "  Port override: MEALS_PORT=9000 $0 start"
         exit 1
         ;;
 esac

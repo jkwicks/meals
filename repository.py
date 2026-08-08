@@ -141,9 +141,9 @@ class LocalJSONRepository(PlanRepository):
 def run_sync(awaitable: Awaitable[T]) -> T:
     """Run one coroutine to completion from synchronous code.
 
-    The bridge for callers that are not (yet) async themselves: the CLI's
-    `main()` and Streamlit, which runs scripts top-to-bottom in a plain thread.
-    `asyncio.run` covers both, but it raises if a loop is already running in
+    The bridge for callers that are not (yet) async themselves — today the
+    CLI's `main()`, which runs top-to-bottom in a plain thread with no loop.
+    `asyncio.run` covers that, but it raises if a loop is already running in
     this thread — so when there is one, the coroutine is handed to a scratch
     thread with a loop of its own. That path costs a thread, and exists only so
     an embedded caller never deadlocks; the normal case is the first branch.

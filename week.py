@@ -95,6 +95,17 @@ def slot_id(day: str, meal_type: str) -> str:
     return f"{day}:{meal_type}"
 
 
+def slot_label(value: str, short: bool = False) -> str:
+    """A slot id as prose: 'Monday:dinner' -> 'Monday dinner' / 'Mon dinner'.
+
+    `humanize` only swaps underscores, so it leaves the colon in a slot id
+    sitting in the middle of a sentence. Anything that names a slot to the
+    user goes through here instead.
+    """
+    day, _, meal_type = value.partition(":")
+    return f"{day[:3] if short else day} {meal_type}".strip()
+
+
 class SlotSpec(BaseModel):
     """One eating slot: what the user wants at this day/meal, pre-generation."""
 
@@ -186,6 +197,77 @@ def autofill_leftovers(spec: WeekSpec, meal_type: str, source_meal_type: str) ->
     return spec.model_copy(update={"slots": updated})
 
 
+def next_day_slot_id(spec: WeekSpec, day: str, meal_type: str) -> Optional[str]:
+    """`meal_type`'s slot on the day after `day`, or None past the week's end.
+
+    "The day after" is the next entry in `spec.days`, not the next calendar
+    day: the week is rotated by `week_start_day`, so the last day has no
+    following slot to link to even though a Sunday follows a Saturday.
+    """
+    index = spec.day_index(day)
+    if index < 0 or index + 1 >= len(spec.days):
+        return None
+    return slot_id(spec.days[index + 1], meal_type)
+
+
+def leftover_link_error(spec: WeekSpec, target_id: str, source_id: str) -> Optional[str]:
+    """Why `target_id` can't eat `source_id`'s leftovers, or None if it can.
+
+    Checked up front rather than by running `validate_week` over the mutated
+    week: that returns every problem in the grid, and a one-click action needs
+    a single sentence about the two meals the user just picked. The rules
+    themselves are the same ones `validate_week` enforces, plus a repeat-click
+    guard, so anything this accepts still passes validation afterwards.
+    """
+    by_id = spec.by_id()
+    target = by_id.get(target_id)
+    source = by_id.get(source_id)
+
+    if source is None or target is None:
+        return "That meal isn't part of this week."
+    if source.id == target.id:
+        return f"{slot_label(target_id)} can't be its own leftover."
+    if source.mode != MODE_COOK:
+        return f"{slot_label(source_id)} isn't cooked — leftovers need a cook to come from."
+    if spec.day_index(source.day) > spec.day_index(target.day):
+        return (
+            f"{source.day} comes after {target.day} — leftovers only travel forwards "
+            "through the week."
+        )
+    if target.mode == MODE_LEFTOVER and target.source == source_id:
+        return f"{slot_label(target_id)} already eats this one."
+
+    # Converting a cook into a leftover would strand anything already pointing
+    # at it, which validate_week rejects as "source isn't a cooked meal". Say
+    # so here instead of silently breaking the other end of that chain.
+    dependants = [
+        slot.id for slot in spec.slots if slot.mode == MODE_LEFTOVER and slot.source == target_id
+    ]
+    if dependants:
+        return (
+            f"{slot_label(target_id)} already feeds "
+            f"{', '.join(slot_label(value) for value in dependants)} — repoint those first."
+        )
+    return None
+
+
+def link_leftover(spec: WeekSpec, target_id: str, source_id: str) -> WeekSpec:
+    """A copy of `spec` with `target_id` set to eat `source_id`'s leftovers.
+
+    Call `leftover_link_error` first — this applies the edit unconditionally.
+    `extra_portions` is cleared because it only means anything on a cook slot.
+    """
+    updated = [
+        slot.model_copy(
+            update={"mode": MODE_LEFTOVER, "source": source_id, "extra_portions": 0}
+        )
+        if slot.id == target_id
+        else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
 def claim_counts(spec: WeekSpec) -> Dict[str, int]:
     """How many eating slots each cook slot has to feed, itself included."""
     counts = {slot.id: 1 for slot in spec.cook_slots()}
@@ -248,7 +330,7 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
                     errors.append(f"{label}: source '{slot.source}' is not a slot in this week.")
                 elif source.mode != MODE_COOK:
                     errors.append(
-                        f"{label}: source '{humanize(slot.source)}' isn't a cooked meal — "
+                        f"{label}: source '{slot_label(slot.source)}' isn't a cooked meal — "
                         "leftovers can only come from a slot set to cook."
                     )
                 elif spec.day_index(source.day) > spec.day_index(slot.day):
@@ -297,9 +379,9 @@ def week_warnings(spec: WeekSpec) -> List[str]:
             warnings.append(
                 f"{slot.day} {slot.meal_type} feeds {claims} meals — that's a lot of "
                 "repeats of one recipe, and it has to keep for "
-                f"{_span_days(spec, cook_id)} days."
+                f"{span_days(spec, cook_id)} days."
             )
-        span = _span_days(spec, cook_id)
+        span = span_days(spec, cook_id)
         if span >= FRIDGE_SAFE_DAYS:
             warnings.append(
                 f"{slot.day} {slot.meal_type} is eaten up to {span} days after cooking — "
@@ -317,8 +399,13 @@ def week_warnings(spec: WeekSpec) -> List[str]:
     return warnings
 
 
-def _span_days(spec: WeekSpec, cook_id: str) -> int:
-    """Days between cooking and the last meal that eats it."""
+def span_days(spec: WeekSpec, cook_id: str) -> int:
+    """Days between cooking and the last meal that eats it.
+
+    Public because editing the week changes it: re-pointing a leftover moves
+    the last meal a batch has to survive to, which is what decides whether its
+    storage note says "refrigerate" or "freeze the rest".
+    """
     claims = eaten_on(spec).get(cook_id, [])
     if not claims:
         return 0

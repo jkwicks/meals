@@ -20,48 +20,74 @@ Run from the venv: `source venv/bin/activate`, then `python planner.py --help`
 for flags.
 
 For the web UI use `./server.sh start` — it handles venv activation, nohup, the
-PID file and the log. It takes an optional UI argument, defaulting to the
-NiceGUI app:
+PID file and the log:
 
     ./server.sh start              # NiceGUI (ui_app.py) on :8080
-    ./server.sh start streamlit    # Streamlit (app.py) on :8501
-    ./server.sh status             # reports on both, whichever you asked for
-    ./server.sh stop [ui]
+    ./server.sh status
+    ./server.sh stop
     MEALS_PORT=9000 ./server.sh start
-
-Each UI has its own port, PID file and log, so both can run at once — which
-you currently need, because `ui_app.py` is read-only and only the Streamlit app
-can generate a week.
 
 ### Web UI
 
-`app.py` is a Streamlit wrapper around `planner.py`/`week.py`/`shopping.py` —
-it reuses their functions directly rather than reimplementing planning logic,
-so behavior stays identical to the CLI. The **Plan Setup** tab holds an
-editable per-day macro table and the 28-row meal grid; **The Week** and
-**Shopping** render `st.session_state["week_plan"]`, so widget interactions
-(ticking off shopping items) never trigger an OpenRouter call — only the
-"Generate Week" button does.
+NiceGUI (`ui_app.py`) is the only web UI. The Streamlit app (`app.py`) was
+deleted once the migration landed; if you need its rendering or grid-editing
+code as a reference, it is in git history at `git show e237872:app.py`.
 
-The grid lives in `st.session_state["grid_rows"]` and is rebuilt only when the
-*week shape* changes (`ensure_grid`) — rebuilding every rerun would discard
-the user's edits, never rebuilding would leave stale days after changing the
-week start.
+**Generating a week is a CLI job** (`python planner.py`) until generation is
+ported to NiceGUI — see below. No web UI can currently produce a week.
 
 ### NiceGUI front end (migration in progress)
 
 `ui_app.py` (`./server.sh start`, serves on :8080) is the high-density desktop
-replacement for `app.py`: left drawer for global controls, a header of 7
-per-day macro bars, and a 7-column x 4-card canvas, both grids `grid-cols-7`
-so a day's telemetry sits above its meals. Cook/leftover/skip/not-generated
-are four distinct card treatments (`STATUS_STYLES`).
+UI: left drawer for global controls, a header of 7 per-day macro bars, and a
+7-column x 4-card canvas, both grids `grid-cols-7` so a day's telemetry sits
+above its meals. Cook/leftover/skip/not-generated are four distinct card
+treatments (`STATUS_STYLES`).
 
-**It is read-only for now** — it loads config and the cached week plan and
-renders them; the Generate button is deliberately disabled. `app.py` therefore
-stays until generation is ported, since it is the only UI that can produce a
-week.
+**It cannot generate** — the Generate button is deliberately disabled, and
+generation is the one piece of the port still outstanding. Use `python
+planner.py` to produce a `week_plan.json`, then render it here. It can
+*rearrange* an already-generated week, and
+**nothing it does is written to disk**: edits live in the client's
+`PlannerState` until "Reload from disk" discards them, and the header shows an
+"edited — not saved" chip while they're outstanding.
 
-Two things it does differently from the Streamlit app, both worth keeping:
+The one edit it offers today is the **"Link to next lunch"** button on each
+dinner card: one click sets the following day's lunch to `MODE_LEFTOVER` with
+`source` pointing at that dinner. Because portions are derived, that single
+change is also what grows the batch — see `PlannerState.apply_spec`, which is
+where every future grid edit should land too:
+
+- The spec is now **held** (`PlannerState._spec`) rather than re-derived per
+  read, and rebuilt only when `_shape()` changes — re-deriving on read would
+  discard the edit that was just made. (The deleted Streamlit app dodged the
+  same trap in `ensure_grid`.) `_shape()` excludes `servings` for a generated
+  week, whose
+  portions come from `week_plan.servings_per_meal` instead.
+- `apply_spec` writes the new slots back into `week_plan` as well as `_spec`,
+  because `day_slot_macros` walks the *plan's* slots — otherwise the linked
+  lunch's macros would never reach the telemetry header.
+- It also rescales the affected cook events (`planner.rescale_cook_event`).
+  Portions being derived means a card reading "4 portions" over ingredients
+  weighed for 2 is exactly the disagreement the derived-portions rule exists
+  to prevent, and the fix is linear arithmetic, not a regeneration call.
+- `week.leftover_link_error` gates the click. It re-checks what
+  `validate_week` enforces, but returns *one sentence about the two meals
+  clicked* — a whole-week error list can't say which entry the click caused.
+  The button is left enabled when it fails, because a disabled Quasar button
+  swallows hover and the tooltip explaining why would never appear.
+
+The leftover/cook pairing is drawn two ways. Statically, both cards carry a
+dot and a line in their chain's colour — the cook says "→ feeds Tue lunch",
+the leftover says "↩ from Mon dinner" — so the link reads without touching
+anything. On hover, `chain_css()` outlines every card in the chain at once,
+via `.meal-canvas:has(.chain-N:hover) .chain-N`; `:has()` is what lets one
+card's hover style its partners three columns away without a Python round trip
+per mouseenter, which would be visibly laggy for a hover effect. Chain classes
+are unique per chain, colours cycle, so the outline is what disambiguates when
+a busy week reuses a hue.
+
+Two things it does differently from the old Streamlit app, both worth keeping:
 
 - NiceGUI page handlers run *on* the event loop, so it `await`s the repository
   directly. **Do not use `repository.run_sync()` here** — it detects the
@@ -140,8 +166,8 @@ Nothing outside `repository.py` opens a file or touches `json` any more.
 `save_history`, `load_week_plan`, `save_week_plan`); `LocalJSONRepository` is
 the only implementation today and keeps the same three files in the same
 places. Point the app at a backend by constructing a different subclass —
-`planner.main()` and `REPOSITORY` in `app.py` are the only two places that name
-one.
+`planner.main()` and `REPOSITORY` in `ui_app.py` are the only two places that
+name one.
 
 **Every method is `async`, including the local file one, deliberately.** The
 interface is shaped for the future backend that receives asynchronous webhook
@@ -154,17 +180,18 @@ Consequences worth knowing:
 
 - `generate_week_plan()` and `record_week_history()` are coroutines. Sync
   callers bridge with `repository.run_sync()` — one `asyncio.run` per entry
-  point (`planner.main()`, and the Streamlit button/`main()` in `app.py`),
-  never one per storage call.
+  point (today just `planner.main()`), never one per storage call.
 - `run_sync` falls back to a scratch thread if a loop is already running in the
-  calling thread. Streamlit's script thread has no running loop, so the normal
-  path is plain `asyncio.run` and progress callbacks stay on the script thread
-  where `st.progress` still works.
+  calling thread. The CLI has no running loop, so the normal path is plain
+  `asyncio.run` and progress callbacks stay on the calling thread. NiceGUI is
+  the opposite case and must `await` the repository directly — see the front
+  end section above.
 - **The generation calls are still synchronous.** `generate_day()` blocks on
   instructor's sync client for 30s–3min, inside an async function, so a run
   still holds the loop for its whole duration. Async storage doesn't change
-  that; only an async OpenAI client (or a `to_thread` hop, which would move
-  progress callbacks off the Streamlit script thread) would.
+  that; only an async OpenAI client would. This is the thing to solve when
+  porting generation into NiceGUI, where blocking the loop would freeze the
+  whole UI for the length of the run.
 - Writes go via a temp file + `os.replace`. A crash mid-write used to be able
   to leave truncated JSON where `meal_history.json` was, and history can't be
   regenerated.
@@ -262,7 +289,7 @@ free-tier one. A paid frontier model hit it harder than gemma did.
 
 ### Diagnosing a slow or failed day
 
-`configure_logging()` (called from both `planner.main()` and `app.py` at
+`configure_logging()` (called from both `planner.main()` and `ui_app.py` at
 import time) writes per-day generation timing to `meals.log`: request start,
 elapsed seconds, `finish_reason`, `completion_tokens`, and `reasoning_tokens`
 for every `generate_day()` call, plus a line for any day that fails. This is

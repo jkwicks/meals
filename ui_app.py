@@ -1,11 +1,13 @@
 """NiceGUI front end — the whole week on one high-density desktop screen.
 
-This is the replacement for the Streamlit `app.py`, built in stages. This stage
-is **read-only**: it loads whatever the repository already has and renders it.
-Nothing here writes config, history or a week plan, and the Generate button is
-deliberately inert (see `render_sidebar`). `app.py` therefore stays as-is until
-generation is ported — deleting it now would take the only working generation
-UI with it.
+The only web front end, built in stages. It can rearrange a week but not
+produce one: the Generate button is deliberately inert until generation is
+ported, so `python planner.py` is currently the only way to produce a week.
+
+**Nothing here writes to disk.** Edits (today: "Link to next lunch") live in
+the client's `PlannerState` until "Reload from disk" throws them away, and the
+header carries an "edited — not saved" chip while any are outstanding. Persisting
+them belongs with the rest of the mutation port, not ahead of it.
 
 Three regions, mirroring how the week is actually read:
 
@@ -26,11 +28,11 @@ reach for `repository.run_sync()` in this file: it detects the running loop and
 hands the coroutine to a scratch thread, which is pure overhead when we are
 already async, and would serialise page loads behind a thread pool.
 
-Why refreshables instead of Streamlit's re-run
-----------------------------------------------
-Streamlit re-executed this whole module on every widget interaction; the grid
-had to be cached in session state precisely to survive that. NiceGUI keeps the
-Python objects alive per client, so the UI binds to a `PlannerState` instance
+Why refreshables, and not a re-run model
+---------------------------------------
+A re-run front end re-executes its whole module on every widget interaction,
+forcing the grid into a session-state cache purely to survive that. NiceGUI
+keeps the Python objects alive per client, so the UI binds to a `PlannerState`
 and only the `@ui.refreshable` sections that depend on a changed field are
 re-rendered. Changing the week start repaints 7 columns, not the page.
 
@@ -53,6 +55,7 @@ from planner import (
     configure_logging,
     day_slot_macros,
     per_serving_totals,
+    rescale_cook_event,
 )
 from repository import LocalJSONRepository
 from shopping import format_quantity
@@ -62,11 +65,17 @@ from week import (
     MODE_SKIP,
     WeekSpec,
     default_week_spec,
+    eaten_on,
     humanize,
+    leftover_link_error,
+    link_leftover,
     meal_types,
+    next_day_slot_id,
     portions_for,
     shopping_windows,
     slot_id,
+    slot_label,
+    span_days,
     week_days,
 )
 
@@ -75,9 +84,9 @@ configure_logging()
 
 CONFIG_PATH = "config.json"
 
-# One repository for the server. Unlike the Streamlit module this is imported
-# once, not re-executed per interaction — but it still holds paths only, so
-# pointing the app at a backend stays a one-line change here.
+# One repository for the server, imported once rather than re-executed per
+# interaction. It holds paths only, so pointing the app at a different backend
+# stays a one-line change here.
 REPOSITORY = LocalJSONRepository(config_path=CONFIG_PATH)
 
 MODEL_OPTIONS = [
@@ -132,6 +141,19 @@ MACRO_LABELS = [
     ("fat_g", "F", "g"),
 ]
 
+# The one-click leftover action: tonight's dinner feeds tomorrow's lunch. This
+# is the overwhelmingly common bulk-cooking pattern (it is the same one
+# `week.autofill_leftovers` automates for the whole week), offered per-card so
+# it can be applied to one dinner without rewriting the grid.
+LINK_SOURCE_MEAL = "dinner"
+LINK_TARGET_MEAL = "lunch"
+LINK_ACTION_LABEL = "Link to next lunch"
+
+# Hues for the cook->leftover chains. Cycled, so two chains can share a colour
+# on a busy week — the colour is a hint, the hover outline (keyed on a unique
+# class per chain) is what disambiguates.
+LINK_COLOURS = ["#38bdf8", "#fbbf24", "#a78bfa", "#34d399", "#fb7185", "#22d3ee"]
+
 
 # --------------------------------------------------------------------------
 # View model
@@ -152,6 +174,7 @@ class SlotView:
     meal_type: str
     status: str
     title: str
+    mode: str = MODE_SKIP
     style: str = ""
     cuisine: str = ""
     portions: int = 0
@@ -159,6 +182,23 @@ class SlotView:
     macros: Optional[dict] = None
     source_label: str = ""
     recipe: object = None  # planner.Recipe, kept loose to avoid a hard import cycle
+
+    # --- leftover chain wiring ---
+    # `chain` is the shared index of the cook-plus-its-leftovers group this
+    # card belongs to; both ends of a link carry the same one, which is what
+    # lets the card colour and the hover outline tie them together visually.
+    chain: Optional[int] = None
+    feeds: List[str] = field(default_factory=list)  # cook cards: who eats this
+    link_target: str = ""  # slot id "Link to next lunch" would point at us
+    link_error: str = ""  # why that link isn't available, if it isn't
+
+    @property
+    def id(self) -> str:
+        return slot_id(self.day, self.meal_type)
+
+    @property
+    def chain_colour(self) -> str:
+        return LINK_COLOURS[(self.chain or 0) % len(LINK_COLOURS)]
 
 
 @dataclass
@@ -177,6 +217,14 @@ class PlannerState:
     shop_days: List[str] = field(default_factory=list)
     model: str = DEFAULT_MODEL
     focus: Optional[SlotView] = None
+    edited: bool = False
+
+    # The live week shape. Held rather than re-derived on every access because
+    # it is now editable: rebuilding it per read would throw away the links the
+    # user just made. `_spec_shape` records what it was derived from, so a
+    # genuine change of week shape still rebuilds it.
+    _spec: Optional[WeekSpec] = None
+    _spec_shape: tuple = ()
 
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
@@ -196,6 +244,11 @@ class PlannerState:
         repository, which deliberately deals in plain dicts."""
         raw = await repository.load_week_plan()
         self.week_plan = WeekPlan.model_validate(raw) if raw else None
+        # What's on disk is the truth again, so discard the edited spec and
+        # let the next `spec` read rebuild from the reloaded plan.
+        self._spec = None
+        self._spec_shape = ()
+        self.edited = False
 
     @property
     def days(self) -> List[str]:
@@ -204,6 +257,21 @@ class PlannerState:
     @property
     def meal_types(self) -> List[str]:
         return meal_types(self.config)
+
+    def _shape(self) -> tuple:
+        """What the spec is derived *from*; a change here invalidates edits.
+
+        `servings` only counts for an un-generated week: a generated plan's
+        portions come from `week_plan.servings_per_meal`, so nudging the
+        drawer's people-per-meal must not silently discard links it can't
+        affect.
+        """
+        plan = self.week_plan
+        return (
+            tuple(self.days),
+            plan.generated_at if plan else None,
+            None if plan else self.servings,
+        )
 
     @property
     def spec(self) -> WeekSpec:
@@ -214,13 +282,87 @@ class PlannerState:
         portion count in the preview is the same arithmetic that produced the
         real one.
         """
-        if self.week_plan:
-            return WeekSpec(
-                days=self.days,
-                servings_per_meal=self.week_plan.servings_per_meal,
-                slots=self.week_plan.slots,
-            )
-        return default_week_spec(self.config, self.week_start, self.servings)
+        shape = self._shape()
+        if self._spec is None or self._spec_shape != shape:
+            if self.week_plan:
+                self._spec = WeekSpec(
+                    days=self.days,
+                    servings_per_meal=self.week_plan.servings_per_meal,
+                    slots=self.week_plan.slots,
+                )
+            else:
+                self._spec = default_week_spec(self.config, self.week_start, self.servings)
+            self._spec_shape = shape
+        return self._spec
+
+    def apply_spec(self, spec: WeekSpec) -> None:
+        """Adopt an edited spec as the week's live shape.
+
+        The plan keeps its *own* copy of the slots and `day_slot_macros` walks
+        those, so replacing only the spec would leave the telemetry header
+        reporting the week as it was before the edit. Cook events are rescaled
+        for the same reason: portions are derived from how many slots claim a
+        cook (`week.portions_for`), so the batch — and its ingredient
+        quantities — has to move with them.
+
+        Nothing is written to disk. This is a local reshuffle of a week that
+        has already been generated; `edited` is what tells the header to say
+        so.
+        """
+        self._spec = spec
+        self.edited = True
+
+        plan = self.week_plan
+        if plan is None:
+            self._spec_shape = self._shape()
+            return
+
+        portions = portions_for(spec)
+        claims = eaten_on(spec)
+        self.week_plan = plan.model_copy(
+            update={
+                "slots": list(spec.slots),
+                # A slot that stopped being a cook keeps its event in the list,
+                # orphaned: nothing resolves to it any more, and holding it
+                # means the recipe is still there if the week is re-pointed.
+                "cook_events": [
+                    rescale_cook_event(
+                        event,
+                        portions[event.slot_id],
+                        span_days(spec, event.slot_id),
+                        claims.get(event.slot_id, [event.slot_id]),
+                    )
+                    if event.slot_id in portions
+                    else event
+                    for event in plan.cook_events
+                ],
+            }
+        )
+        self._spec_shape = self._shape()
+
+    def link_to_next_lunch(self, source_id: str) -> Optional[str]:
+        """Point the following day's lunch at this cook. Returns why not, or None.
+
+        The whole "Macro Action": one click turns tomorrow's lunch into
+        leftovers of tonight's dinner, which — because portions are derived —
+        is also what increases tonight's batch. There is no portion number to
+        set anywhere in this flow, by design.
+        """
+        spec = self.spec
+        source = spec.by_id().get(source_id)
+        if source is None:
+            return "That meal isn't part of this week."
+
+        target_id = next_day_slot_id(spec, source.day, LINK_TARGET_MEAL)
+        if target_id is None:
+            return f"{source.day} is the last day of the week — there's no next lunch."
+
+        error = leftover_link_error(spec, target_id, source_id)
+        if error:
+            return error
+
+        self.apply_spec(link_leftover(spec, target_id, source_id))
+        return None
 
     def targets_for(self, day: str) -> dict:
         """A generated week's targets are whatever it was generated against;
@@ -241,6 +383,20 @@ class PlannerState:
         events = self.week_plan.by_slot() if self.week_plan else {}
         views: Dict[str, SlotView] = {}
 
+        # Hoisted: both are whole-week scans, and calling them per slot made
+        # rendering 28 cards quadratic in the size of the week.
+        portions = portions_for(spec)
+        claims = eaten_on(spec)
+
+        # One chain per cook that anything else eats — a cook nobody inherits
+        # from is not a link, so it gets no colour and no marker.
+        chains = {
+            slot.id: index
+            for index, slot in enumerate(
+                cook for cook in spec.cook_slots() if len(claims.get(cook.id, [])) > 1
+            )
+        }
+
         for slot in spec.slots:
             if slot.mode == MODE_SKIP:
                 views[slot.id] = SlotView(
@@ -248,6 +404,7 @@ class PlannerState:
                     meal_type=slot.meal_type,
                     status=STATUS_SKIP,
                     title="Skipped",
+                    mode=slot.mode,
                 )
                 continue
 
@@ -256,10 +413,34 @@ class PlannerState:
             # visibly the same dish.
             source_id = slot.id if slot.mode == MODE_COOK else slot.source
             event = events.get(source_id or "")
-            source_label = ""
-            if slot.mode == MODE_LEFTOVER and slot.source:
-                source_day, source_meal = slot.source.split(":")
-                source_label = f"{source_day[:3]} {source_meal}"
+            source_label = slot_label(slot.source, short=True) if slot.source else ""
+
+            link_target, link_error = "", ""
+            if slot.mode == MODE_COOK and slot.meal_type == LINK_SOURCE_MEAL:
+                link_target = next_day_slot_id(spec, slot.day, LINK_TARGET_MEAL) or ""
+                link_error = (
+                    leftover_link_error(spec, link_target, slot.id) or ""
+                    if link_target
+                    else f"{slot.day} is the last day of the week."
+                )
+
+            common = dict(
+                day=slot.day,
+                meal_type=slot.meal_type,
+                mode=slot.mode,
+                style=humanize(slot.style),
+                cuisine=humanize(slot.cuisine),
+                portions=portions.get(source_id or "", 0),
+                source_label=source_label if slot.mode == MODE_LEFTOVER else "",
+                chain=chains.get(source_id or ""),
+                feeds=(
+                    [slot_label(value, short=True) for value in claims.get(slot.id, [])[1:]]
+                    if slot.mode == MODE_COOK
+                    else []
+                ),
+                link_target=link_target,
+                link_error=link_error,
+            )
 
             if event is None:
                 # Two different absences. With a plan loaded, a missing event
@@ -270,36 +451,74 @@ class PlannerState:
                 # *preview* of the shape about to be generated, so the slot
                 # keeps its planned mode and only the recipe is missing.
                 views[slot.id] = SlotView(
-                    day=slot.day,
-                    meal_type=slot.meal_type,
                     status=(
                         STATUS_MISSING
                         if self.week_plan
                         else (STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER)
                     ),
                     title="Not generated" if self.week_plan else "To be generated",
-                    style=humanize(slot.style),
-                    cuisine=humanize(slot.cuisine),
-                    portions=portions_for(spec).get(slot.id, 0),
-                    source_label=source_label,
+                    **common,
                 )
                 continue
 
+            # Style and cuisine come off the event, which recorded whatever
+            # `resolve_auto_choices` settled on — the slot may still say
+            # "auto".
             views[slot.id] = SlotView(
-                day=slot.day,
-                meal_type=slot.meal_type,
                 status=STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER,
                 title=event.recipe.name,
-                style=humanize(event.style),
-                cuisine=humanize(event.cuisine),
-                portions=event.portions,
                 prep_minutes=event.recipe.prep_time_minutes,
                 macros=per_serving_totals(event.recipe),
-                source_label=source_label,
                 recipe=event.recipe,
+                **{
+                    **common,
+                    "style": humanize(event.style),
+                    "cuisine": humanize(event.cuisine),
+                },
             )
 
         return views
+
+
+def chain_css(chains: int) -> str:
+    """CSS that lights up a whole cook->leftover chain when any card in it is hovered.
+
+    `:has()` on the canvas is what makes this work without JavaScript: hovering
+    any member matches the ancestor, which then outlines *every* card carrying
+    that chain's class, wherever it sits in the 7-column grid. A round trip to
+    Python per mouseenter would be visibly laggy for a pure hover effect.
+
+    One rule per chain because a selector can't compare one element's class to
+    another's; `chains` is the most a week of this shape can hold, since every
+    chain needs a cook plus at least one leftover. Outline rather than border
+    so nothing reflows, and browsers without `:has()` (pre-2023) simply lose
+    the highlight — the dot and the "feeds"/"from" lines still name both ends.
+    """
+    rules = [
+        ".meal-canvas .chain {"
+        " outline: 1px solid transparent; outline-offset: 2px;"
+        " border-radius: 0.25rem; transition: outline-color 120ms ease; }"
+    ]
+    for index in range(max(chains, 0)):
+        colour = LINK_COLOURS[index % len(LINK_COLOURS)]
+        rules.append(
+            f".meal-canvas:has(.chain-{index}:hover) .chain-{index}"
+            f" {{ outline-color: {colour}; }}"
+        )
+    return "\n".join(rules)
+
+
+def link_line(marker: str, text: str, colour: str) -> None:
+    """The one-line "this card is tied to that one" note, in its chain's colour.
+
+    Both ends get one — the cook says who eats it, the leftover says what it
+    came from — so the pairing is readable without hovering anything.
+    """
+    with ui.element("div").classes("flex flex-row items-center gap-1 min-w-0"):
+        ui.element("span").classes("shrink-0 w-1.5 h-1.5 rounded-full").style(
+            f"background: {colour}"
+        )
+        ui.label(f"{marker} {text}").classes("text-[9px] truncate").style(f"color: {colour}")
 
 
 def macro_colour(actual: float, target: float) -> str:
@@ -332,7 +551,12 @@ async def planner_page() -> None:
     ui.add_css(
         # Quasar's page container assumes comfortable padding; a 7-column week
         # needs the horizontal space back.
-        ".nicegui-content { padding: 0.75rem; gap: 0.75rem; }"
+        ".nicegui-content { padding: 0.75rem; gap: 0.75rem; }\n"
+        # Emitted once per page rather than from `canvas`, which is refreshable
+        # and would stack another copy into the head on every repaint. The
+        # bound is the week's shape, not its current contents, so it stays
+        # valid however the grid is edited afterwards.
+        + chain_css((len(state.days) * len(state.meal_types)) // 2)
     )
 
     # ---- recipe detail (read-only) ---------------------------------------
@@ -408,59 +632,105 @@ async def planner_page() -> None:
     # `bind_value` fires an initial change event, so every handler's callees
     # must already exist by the time the sidebar is built.
 
+    def on_link_next_lunch(view: SlotView) -> None:
+        """Apply the Macro Action, then repaint whatever it moved.
+
+        `refresh_all` is defined further down the page body; a closure resolves
+        it when the click fires, long after the page has finished building.
+        The telemetry header is in that repaint on purpose — the linked lunch
+        now eats the dinner's macros, so its day's totals change too.
+        """
+        error = state.link_to_next_lunch(view.id)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        refresh_all()
+        ui.notify(
+            f"{view.title} now feeds {slot_label(view.link_target)} — "
+            f"cooking {portions_for(state.spec).get(view.id, 0)} portions",
+            type="positive",
+        )
+
     def meal_card(view: Optional[SlotView], meal_type: str) -> None:
         if view is None:
             view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
         look = STATUS_STYLES[view.status]
         clickable = "cursor-pointer hover:brightness-125" if view.recipe else ""
+        chain = f"chain chain-{view.chain}" if view.chain is not None else ""
 
-        card = ui.element("div").classes(
-            f"rounded p-2 flex flex-col gap-1 min-w-0 {look['card']} {clickable}"
-        )
-        if view.recipe:
-            card.on("click", lambda v=view: open_detail(v))
+        with ui.element("div").classes(
+            f"rounded p-2 flex flex-col gap-1 min-w-0 {look['card']} {chain}"
+        ):
+            # The recipe dialog opens from this inner block rather than the
+            # card, so the action button below is a sibling of it and a click
+            # on the button can't also open the dialog on its way up.
+            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
+            if view.recipe:
+                body.on("click", lambda v=view: open_detail(v))
 
-        with card:
-            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
-                ui.label(meal_type[:5].upper()).classes(
-                    "text-[9px] font-semibold tracking-widest text-slate-500"
+            with body:
+                with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+                    ui.label(meal_type[:5].upper()).classes(
+                        "text-[9px] font-semibold tracking-widest text-slate-500"
+                    )
+                    ui.label(look["label"]).classes(
+                        f"text-[9px] font-semibold px-1 rounded {look['badge']}"
+                    )
+
+                ui.label(view.title).classes(
+                    "text-[11px] leading-tight font-medium text-slate-100 line-clamp-2"
                 )
-                ui.label(look["label"]).classes(
-                    f"text-[9px] font-semibold px-1 rounded {look['badge']}"
+
+                tags = " · ".join(part for part in [view.style, view.cuisine] if part)
+                if tags:
+                    ui.label(tags).classes("text-[9px] text-slate-400 truncate")
+
+                if view.mode == MODE_LEFTOVER and view.source_label:
+                    link_line("↩ from", view.source_label, view.chain_colour)
+                if view.feeds:
+                    link_line("→ feeds", " · ".join(view.feeds), view.chain_colour)
+
+                if view.macros:
+                    with ui.element("div").classes("flex flex-row gap-1.5 mt-0.5"):
+                        for key, short, unit in MACRO_LABELS:
+                            text = (
+                                f"{view.macros[key]:.0f}"
+                                if key == "calories"
+                                else f"{short}{view.macros[key]:.0f}"
+                            )
+                            ui.label(text).classes("text-[9px] font-mono text-slate-400")
+
+                if view.mode == MODE_COOK and view.portions:
+                    ui.label(
+                        f"{view.portions} portions · {view.prep_minutes} min"
+                        if view.prep_minutes is not None
+                        else f"{view.portions} portions"
+                    ).classes("text-[9px] text-emerald-300/70 truncate")
+
+            if view.mode == MODE_COOK and view.meal_type == LINK_SOURCE_MEAL:
+                # Left enabled even when it can't be applied: a disabled Quasar
+                # button swallows hover, so the tooltip explaining *why* would
+                # never appear. Clicking says the same thing in a notification.
+                button = ui.button(
+                    LINK_ACTION_LABEL,
+                    icon="subdirectory_arrow_right",
+                    on_click=lambda v=view: on_link_next_lunch(v),
                 )
-
-            ui.label(view.title).classes(
-                "text-[11px] leading-tight font-medium text-slate-100 line-clamp-2"
-            )
-
-            tags = " · ".join(part for part in [view.style, view.cuisine] if part)
-            if tags:
-                ui.label(tags).classes("text-[9px] text-slate-400 truncate")
-
-            if view.status == STATUS_LEFTOVER and view.source_label:
-                ui.label(f"↩ from {view.source_label}").classes("text-[9px] text-sky-300 truncate")
-
-            if view.macros:
-                with ui.element("div").classes("flex flex-row gap-1.5 mt-0.5"):
-                    for key, short, unit in MACRO_LABELS:
-                        text = (
-                            f"{view.macros[key]:.0f}"
-                            if key == "calories"
-                            else f"{short}{view.macros[key]:.0f}"
-                        )
-                        ui.label(text).classes("text-[9px] font-mono text-slate-400")
-
-            if view.status == STATUS_COOK and view.portions:
-                ui.label(
-                    f"{view.portions} portions · {view.prep_minutes} min"
-                    if view.prep_minutes is not None
-                    else f"{view.portions} portions"
-                ).classes("text-[9px] text-emerald-300/70 truncate")
+                button.props("dense flat no-caps size=sm").classes(
+                    "self-start min-h-0 px-1 py-0 text-[9px] "
+                    + ("text-slate-600" if view.link_error else "text-sky-300")
+                )
+                with button:
+                    ui.tooltip(
+                        view.link_error
+                        or f"{slot_label(view.link_target)} eats this instead of "
+                        "cooking — the batch grows to match."
+                    )
 
     @ui.refreshable
     def canvas() -> None:
         views = state.slot_views()
-        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full items-start"):
+        with ui.element("div").classes("meal-canvas grid grid-cols-7 gap-2 w-full items-start"):
             for day in state.days:
                 with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
                     with ui.element("div").classes(
@@ -524,6 +794,12 @@ async def planner_page() -> None:
                     else "no cached week — showing planned shape only"
                 ),
             )
+            # Linking is an in-memory reshuffle: nothing here writes
+            # week_plan.json, so say so rather than letting the grid imply the
+            # cached week on disk has changed.
+            ui.label("edited — not saved").classes(
+                "text-[10px] font-semibold px-1 rounded bg-amber-400/15 text-amber-300"
+            ).bind_visibility_from(state, "edited")
             ui.space()
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
@@ -632,11 +908,11 @@ async def planner_page() -> None:
             # Generation is intentionally not wired up in this stage. The
             # button exists so the layout is final, but a 20-minute run that
             # writes history belongs with the rest of the mutation port —
-            # until then `streamlit run app.py` is still the way to generate.
+            # until then the CLI is the only way to generate a week.
             generate = ui.button("Generate week", icon="bolt").props("dense").classes("w-full")
             generate.disable()
             with generate:
-                ui.tooltip("Not wired up yet — generate with `streamlit run app.py`.")
+                ui.tooltip("Not wired up yet — generate with `python planner.py`.")
 
             ui.button(
                 "Reload from disk", icon="refresh", on_click=reload_from_disk

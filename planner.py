@@ -484,6 +484,33 @@ def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
     return resize_recipe(recipe, factor), factor
 
 
+# Opening words of a storage note we wrote ourselves. Used to tell our note
+# apart from a model-authored one when a batch is later resized: ours is stale
+# the moment the portion count moves, a model's is about the dish and must
+# survive. Worst case a model happens to open its note this way and gets an
+# accurate note in place of its own.
+STORAGE_NOTE_PREFIX = "Yields "
+
+
+def storage_note(portions: int, keeps_for_days: int) -> str:
+    """How to keep a batch that has to last until the meal that finishes it.
+
+    Empty for a single serving eaten the day it's cooked — there is nothing to
+    say, and `scale_recipe` leaves `prep_notes` alone rather than writing one.
+    """
+    if portions <= 1 or keeps_for_days <= 0:
+        return ""
+    storage = (
+        "refrigerate in airtight containers"
+        if keeps_for_days < FRIDGE_SAFE_DAYS
+        else f"refrigerate what you'll eat within {FRIDGE_SAFE_DAYS} days and freeze the rest"
+    )
+    return (
+        f"{STORAGE_NOTE_PREFIX}{portions} portions, eaten across {keeps_for_days} day(s). "
+        f"Portion immediately, {storage}; reheat thoroughly before serving."
+    )
+
+
 def scale_recipe(recipe: Recipe, portions: int, keeps_for_days: int) -> Recipe:
     """Scale a recipe from the model's single serving up to its full yield.
 
@@ -492,20 +519,45 @@ def scale_recipe(recipe: Recipe, portions: int, keeps_for_days: int) -> Recipe:
     multiply and the arithmetic never leaves Python.
     """
     scaled = resize_recipe(recipe, portions)
+    prep_notes = recipe.prep_notes or storage_note(portions, keeps_for_days) or None
+    return scaled.model_copy(update={"servings": portions, "prep_notes": prep_notes})
+
+
+def rescale_cook_event(
+    event: CookEvent, portions: int, keeps_for_days: int, eaten_by: List[str]
+) -> CookEvent:
+    """Resize an already-scaled cook event's batch to a new portion count.
+
+    Editing the week changes how many slots claim a cook, and portions are
+    *derived* from exactly that (`week.portions_for`) — so the batch has to
+    follow, or the card says "6 portions" over ingredients weighed for 4,
+    which is the disagreement the derived-portion rule exists to prevent.
+
+    This is the same linear arithmetic as `scale_recipe`, just starting from a
+    batch instead of a single serving, so re-pointing a leftover costs no
+    generation call. It cannot invent a new dish — only more or less of this
+    one — which is exactly right for "the same recipe now feeds another meal".
+    """
+    if event.portions <= 0:
+        return event
+
+    recipe = event.recipe
+    if portions != event.portions:
+        recipe = resize_recipe(recipe, portions / event.portions)
 
     prep_notes = recipe.prep_notes
-    if portions > 1 and keeps_for_days > 0 and not prep_notes:
-        storage = (
-            "refrigerate in airtight containers"
-            if keeps_for_days < FRIDGE_SAFE_DAYS
-            else f"refrigerate what you'll eat within {FRIDGE_SAFE_DAYS} days and freeze the rest"
-        )
-        prep_notes = (
-            f"Yields {portions} portions, eaten across {keeps_for_days} day(s). "
-            f"Portion immediately, {storage}; reheat thoroughly before serving."
-        )
+    if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
+        prep_notes = storage_note(portions, keeps_for_days) or None
 
-    return scaled.model_copy(update={"servings": portions, "prep_notes": prep_notes})
+    return event.model_copy(
+        update={
+            "portions": portions,
+            "eaten_by": list(eaten_by),
+            "recipe": recipe.model_copy(
+                update={"servings": portions, "prep_notes": prep_notes}
+            ),
+        }
+    )
 
 
 def day_slot_macros(week_plan: WeekPlan, day: str) -> dict:
@@ -915,7 +967,7 @@ async def generate_week_plan(
     instructor's sync client for 30s-3min per day, so this coroutine holds the
     loop for the length of a run. Fixing that means an async OpenAI client (or
     an `asyncio.to_thread` hop, which would move progress callbacks off the
-    Streamlit script thread) — a separate change from the storage boundary.
+    calling thread) — a separate change from the storage boundary.
     """
     if history is None:
         history = await (repository or LocalJSONRepository()).load_history()
