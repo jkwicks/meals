@@ -10,6 +10,9 @@ __pycache__/
 meal_plan.json
 meal_history.json
 shopping_list.md
+meals.log
+streamlit.log
+.streamlit.pid
 
 # local-only Claude Code settings
 .claude/settings.local.json
