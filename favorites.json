@@ -257,5 +257,715 @@
       "servings": 4,
       "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
     }
+  },
+  {
+    "id": "18440aeefa9042e7b7bf7ee4c6abb621",
+    "saved_at": "2026-08-09T05:38:19+00:00",
+    "recipe": {
+      "name": "Spinach, Feta and Turkey Scramble",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "eggs",
+          "quantity_g": 228.0,
+          "nova_group": 1,
+          "calories": 352.6,
+          "protein_g": 28.8,
+          "net_carbs_g": 1.8,
+          "fat_g": 24.4
+        },
+        {
+          "name": "ground turkey breast, raw",
+          "quantity_g": 122.0,
+          "nova_group": 1,
+          "calories": 152.0,
+          "protein_g": 32.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.0
+        },
+        {
+          "name": "baby spinach",
+          "quantity_g": 92.0,
+          "nova_group": 1,
+          "calories": 21.2,
+          "protein_g": 2.6,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.4
+        },
+        {
+          "name": "feta cheese",
+          "quantity_g": 54.0,
+          "nova_group": 3,
+          "calories": 139.8,
+          "protein_g": 7.6,
+          "net_carbs_g": 1.6,
+          "fat_g": 11.4
+        },
+        {
+          "name": "cherry tomatoes",
+          "quantity_g": 92.0,
+          "nova_group": 1,
+          "calories": 16.8,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.2
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 18.0,
+          "nova_group": 2,
+          "calories": 161.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 18.2
+        },
+        {
+          "name": "wholegrain sourdough bread",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 145.8,
+          "protein_g": 5.8,
+          "net_carbs_g": 23.6,
+          "fat_g": 1.2
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.6,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0
+        },
+        {
+          "name": "salt",
+          "quantity_g": 1.6,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Heat olive oil in a non-stick skillet over medium heat.",
+        "Add ground turkey and cook, breaking it up, until browned and cooked through, about 5 minutes.",
+        "Add cherry tomatoes and spinach, saut\u00e9 until spinach wilts and tomatoes soften slightly.",
+        "Whisk eggs with salt and pepper, pour into the skillet.",
+        "Stir gently and cook over low-medium heat until eggs are just set, then crumble feta over the top.",
+        "Toast the sourdough bread and serve alongside the scramble."
+      ],
+      "prep_time_minutes": 15,
+      "servings": 2,
+      "prep_notes": null
+    }
+  },
+  {
+    "id": "37d7988518a44f648a157b61772d1efe",
+    "saved_at": "2026-08-09T05:46:56+00:00",
+    "recipe": {
+      "name": "Grilled Chicken and Hummus Wrap",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "chicken breast, raw",
+          "quantity_g": 440.0,
+          "nova_group": 1,
+          "calories": 480.0,
+          "protein_g": 92.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 10.0
+        },
+        {
+          "name": "whole wheat tortilla",
+          "quantity_g": 180.0,
+          "nova_group": 3,
+          "calories": 500.0,
+          "protein_g": 16.0,
+          "net_carbs_g": 76.0,
+          "fat_g": 12.0
+        },
+        {
+          "name": "hummus",
+          "quantity_g": 120.0,
+          "nova_group": 2,
+          "calories": 220.0,
+          "protein_g": 8.0,
+          "net_carbs_g": 10.0,
+          "fat_g": 16.0
+        },
+        {
+          "name": "greek yogurt",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 60.0,
+          "protein_g": 9.0,
+          "net_carbs_g": 4.0,
+          "fat_g": 1.0
+        },
+        {
+          "name": "romaine lettuce",
+          "quantity_g": 80.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 1.0,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.2
+        },
+        {
+          "name": "tomato",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 1.0,
+          "net_carbs_g": 4.0,
+          "fat_g": 0.2
+        },
+        {
+          "name": "cucumber",
+          "quantity_g": 80.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.2
+        },
+        {
+          "name": "red onion",
+          "quantity_g": 40.0,
+          "nova_group": 1,
+          "calories": 16.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "feta cheese",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 160.0,
+          "protein_g": 8.0,
+          "net_carbs_g": 2.0,
+          "fat_g": 13.0
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 20.0,
+          "nova_group": 1,
+          "calories": 176.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 20.0
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 20.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 1.4,
+          "fat_g": 0.0
+        },
+        {
+          "name": "cumin",
+          "quantity_g": 4.0,
+          "nova_group": 1,
+          "calories": 8.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.4
+        },
+        {
+          "name": "paprika",
+          "quantity_g": 4.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.6,
+          "fat_g": 0.4
+        }
+      ],
+      "instructions": [
+        "Season chicken with cumin, paprika, salt and pepper; grill or pan-sear until cooked through, then slice.",
+        "Warm the tortilla briefly on a dry skillet to soften.",
+        "Spread hummus and greek yogurt over the tortilla.",
+        "Layer lettuce, tomato, cucumber, red onion, feta and sliced chicken.",
+        "Drizzle with olive oil and lemon juice.",
+        "Roll tightly into a wrap, slice in half and serve."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 2,
+      "prep_notes": null
+    }
+  },
+  {
+    "id": "87308583706f47c68719eaa202666019",
+    "saved_at": "2026-08-09T05:47:04+00:00",
+    "recipe": {
+      "name": "Mediterranean Roast Pork Loin with Lemon Potatoes, Roasted Peppers and Fennel",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "pork loin, boneless, raw",
+          "quantity_g": 728.0,
+          "nova_group": 1,
+          "calories": 1443.6,
+          "protein_g": 160.4,
+          "net_carbs_g": 0.0,
+          "fat_g": 80.0
+        },
+        {
+          "name": "potatoes, waxy, cut into wedges",
+          "quantity_g": 1020.0,
+          "nova_group": 1,
+          "calories": 816.4,
+          "protein_g": 21.6,
+          "net_carbs_g": 171.2,
+          "fat_g": 1.2
+        },
+        {
+          "name": "red bell pepper",
+          "quantity_g": 364.0,
+          "nova_group": 1,
+          "calories": 113.2,
+          "protein_g": 3.6,
+          "net_carbs_g": 18.0,
+          "fat_g": 1.2
+        },
+        {
+          "name": "fennel bulb",
+          "quantity_g": 364.0,
+          "nova_group": 1,
+          "calories": 113.2,
+          "protein_g": 4.4,
+          "net_carbs_g": 16.4,
+          "fat_g": 0.8
+        },
+        {
+          "name": "red onion",
+          "quantity_g": 220.0,
+          "nova_group": 1,
+          "calories": 91.2,
+          "protein_g": 2.0,
+          "net_carbs_g": 18.4,
+          "fat_g": 0.4
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 64.0,
+          "nova_group": 2,
+          "calories": 579.6,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 65.6
+        },
+        {
+          "name": "garlic cloves",
+          "quantity_g": 29.0,
+          "nova_group": 1,
+          "calories": 43.6,
+          "protein_g": 2.0,
+          "net_carbs_g": 7.2,
+          "fat_g": 0.0
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 56.0,
+          "nova_group": 1,
+          "calories": 10.8,
+          "protein_g": 0.0,
+          "net_carbs_g": 2.8,
+          "fat_g": 0.0
+        },
+        {
+          "name": "dried oregano",
+          "quantity_g": 7.2,
+          "nova_group": 1,
+          "calories": 18.4,
+          "protein_g": 0.8,
+          "net_carbs_g": 2.4,
+          "fat_g": 0.4
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 7.2,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 3.6,
+          "nova_group": 1,
+          "calories": 7.2,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.2,
+          "fat_g": 0.0
+        },
+        {
+          "name": "kalamata olives",
+          "quantity_g": 92.0,
+          "nova_group": 1,
+          "calories": 120.4,
+          "protein_g": 0.8,
+          "net_carbs_g": 2.0,
+          "fat_g": 10.8
+        }
+      ],
+      "instructions": [
+        "Preheat oven to 210\u00b0C (fan).",
+        "Toss potato wedges, fennel, red pepper and red onion with half the olive oil, half the garlic, oregano, salt and pepper on a roasting tray.",
+        "Roast vegetables for 15 minutes while preparing the pork.",
+        "Rub pork loin with remaining olive oil, garlic, lemon juice, salt and pepper.",
+        "Push vegetables to one side of the tray, place pork loin in the center and roast together for 30-35 minutes until pork reaches 63\u00b0C internal temperature and vegetables are golden and tender.",
+        "Rest the pork for 5 minutes, then slice.",
+        "Scatter kalamata olives over the vegetables and serve alongside the sliced pork with pan juices."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 4,
+      "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
+    }
+  },
+  {
+    "id": "86a57ef3a995455c90fc2d4063cbf26e",
+    "saved_at": "2026-08-09T05:47:36+00:00",
+    "recipe": {
+      "name": "Korean Beef Bulgogi Rice Tray Bake",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "lean beef sirloin, thinly sliced",
+          "quantity_g": 748.0,
+          "nova_group": 1,
+          "calories": 1269.6,
+          "protein_g": 171.6,
+          "net_carbs_g": 0.0,
+          "fat_g": 59.6
+        },
+        {
+          "name": "cooked white rice",
+          "quantity_g": 1196.0,
+          "nova_group": 1,
+          "calories": 1553.2,
+          "protein_g": 30.0,
+          "net_carbs_g": 336.0,
+          "fat_g": 3.6
+        },
+        {
+          "name": "soy sauce",
+          "quantity_g": 76.0,
+          "nova_group": 2,
+          "calories": 44.8,
+          "protein_g": 7.6,
+          "net_carbs_g": 3.6,
+          "fat_g": 0.0
+        },
+        {
+          "name": "sesame oil",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 265.2,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 30.0
+        },
+        {
+          "name": "garlic",
+          "quantity_g": 37.0,
+          "nova_group": 1,
+          "calories": 56.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 9.2,
+          "fat_g": 0.0
+        },
+        {
+          "name": "fresh ginger",
+          "quantity_g": 19.0,
+          "nova_group": 1,
+          "calories": 14.8,
+          "protein_g": 0.4,
+          "net_carbs_g": 2.8,
+          "fat_g": 0.0
+        },
+        {
+          "name": "honey",
+          "quantity_g": 44.0,
+          "nova_group": 1,
+          "calories": 134.4,
+          "protein_g": 0.0,
+          "net_carbs_g": 36.4,
+          "fat_g": 0.0
+        },
+        {
+          "name": "gochujang",
+          "quantity_g": 56.0,
+          "nova_group": 2,
+          "calories": 104.4,
+          "protein_g": 2.8,
+          "net_carbs_g": 18.8,
+          "fat_g": 2.0
+        },
+        {
+          "name": "zucchini",
+          "quantity_g": 372.0,
+          "nova_group": 1,
+          "calories": 63.6,
+          "protein_g": 4.4,
+          "net_carbs_g": 9.2,
+          "fat_g": 1.2
+        },
+        {
+          "name": "carrot",
+          "quantity_g": 260.0,
+          "nova_group": 1,
+          "calories": 108.4,
+          "protein_g": 2.4,
+          "net_carbs_g": 20.4,
+          "fat_g": 0.8
+        },
+        {
+          "name": "spring onion",
+          "quantity_g": 76.0,
+          "nova_group": 1,
+          "calories": 22.4,
+          "protein_g": 1.6,
+          "net_carbs_g": 2.8,
+          "fat_g": 0.4
+        },
+        {
+          "name": "sesame seeds",
+          "quantity_g": 19.0,
+          "nova_group": 1,
+          "calories": 108.4,
+          "protein_g": 3.2,
+          "net_carbs_g": 2.0,
+          "fat_g": 9.6
+        },
+        {
+          "name": "egg",
+          "quantity_g": 204.0,
+          "nova_group": 1,
+          "calories": 291.2,
+          "protein_g": 24.8,
+          "net_carbs_g": 1.6,
+          "fat_g": 19.6
+        }
+      ],
+      "instructions": [
+        "Preheat oven to 220\u00b0C.",
+        "Whisk soy sauce, sesame oil, garlic, ginger, honey and gochujang into a marinade.",
+        "Toss sliced beef in half the marinade and let sit 10 minutes.",
+        "Spread rice across a lined baking tray, top with sliced zucchini and carrot.",
+        "Arrange marinated beef over the vegetables and drizzle remaining marinade evenly.",
+        "Bake for 15-18 minutes until beef is cooked and vegetables are tender.",
+        "Fry the egg separately to a runny yolk and place on top before serving.",
+        "Garnish with spring onion and sesame seeds."
+      ],
+      "prep_time_minutes": 30,
+      "servings": 4,
+      "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
+    }
+  },
+  {
+    "id": "0463f722225f424e8db44b7856ed5189",
+    "saved_at": "2026-08-09T21:30:01+00:00",
+    "recipe": {
+      "name": "Pan-Seared Lemon-Spiced Chicken with Kidney Bean & Savoy Cabbage Skillet",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "boneless skinless chicken breast",
+          "quantity_g": 340.0,
+          "nova_group": 1,
+          "calories": 561.0,
+          "protein_g": 105.4,
+          "net_carbs_g": 0.0,
+          "fat_g": 12.2
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 13.5,
+          "nova_group": 2,
+          "calories": 119.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 47.0,
+          "nova_group": 1,
+          "calories": 11.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 3.3,
+          "fat_g": 0.0
+        },
+        {
+          "name": "lemon zest",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "paprika",
+          "quantity_g": 2.3,
+          "nova_group": 1,
+          "calories": 7.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 1.2,
+          "fat_g": 0.3
+        },
+        {
+          "name": "chili powder",
+          "quantity_g": 2.3,
+          "nova_group": 2,
+          "calories": 8.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.3,
+          "fat_g": 0.4
+        },
+        {
+          "name": "garlic",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "Savoy cabbage",
+          "quantity_g": 340.0,
+          "nova_group": 1,
+          "calories": 85.0,
+          "protein_g": 5.1,
+          "net_carbs_g": 14.4,
+          "fat_g": 0.3
+        },
+        {
+          "name": "cooked kidney beans",
+          "quantity_g": 177.0,
+          "nova_group": 1,
+          "calories": 225.0,
+          "protein_g": 15.3,
+          "net_carbs_g": 26.4,
+          "fat_g": 0.9
+        },
+        {
+          "name": "salt",
+          "quantity_g": 1.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 0.5,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Toss chicken breasts with lemon juice, lemon zest, paprika, garlic, salt, and pepper.",
+        "Heat olive oil in a skillet over medium-high heat. Add chicken and sear for 5-7 minutes per side until cooked through, then remove and set aside.",
+        "In the same skillet, add the shredded Savoy cabbage and kidney beans. Saut\u00e9 for 4-5 minutes until the cabbage is tender-crisp.",
+        "Slice the chicken, return it to the skillet to warm through, and adjust seasoning with salt and pepper before serving."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 4,
+      "prep_notes": null
+    }
+  },
+  {
+    "id": "d4df65e651784b9d83002e8e95282765",
+    "saved_at": "2026-08-09T21:34:22+00:00",
+    "recipe": {
+      "name": "Vanilla Almond Butter Protein Shake",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "whey protein isolate powder",
+          "quantity_g": 92.0,
+          "nova_group": 2,
+          "calories": 344.2,
+          "protein_g": 82.6,
+          "net_carbs_g": 2.2,
+          "fat_g": 2.2
+        },
+        {
+          "name": "unsweetened almond milk",
+          "quantity_g": 574.0,
+          "nova_group": 2,
+          "calories": 57.4,
+          "protein_g": 2.2,
+          "net_carbs_g": 2.2,
+          "fat_g": 4.6
+        },
+        {
+          "name": "almond butter",
+          "quantity_g": 68.0,
+          "nova_group": 1,
+          "calories": 426.8,
+          "protein_g": 13.8,
+          "net_carbs_g": 4.6,
+          "fat_g": 39.0
+        },
+        {
+          "name": "heavy cream",
+          "quantity_g": 68.0,
+          "nova_group": 1,
+          "calories": 229.4,
+          "protein_g": 2.2,
+          "net_carbs_g": 0.0,
+          "fat_g": 25.2
+        },
+        {
+          "name": "ice cubes",
+          "quantity_g": 184.0,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "vanilla extract",
+          "quantity_g": 6.8,
+          "nova_group": 2,
+          "calories": 18.4,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        },
+        {
+          "name": "ground cinnamon",
+          "quantity_g": 4.6,
+          "nova_group": 1,
+          "calories": 11.4,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Add almond milk, protein powder, almond butter, and heavy cream to a blender.",
+        "Add ice cubes, vanilla extract, and cinnamon.",
+        "Blend on high for 30-45 seconds until smooth and frothy.",
+        "Pour into a glass and serve immediately."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 2,
+      "prep_notes": null
+    }
   }
 ]

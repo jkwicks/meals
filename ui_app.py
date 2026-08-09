@@ -250,6 +250,62 @@ TARGET_FIELDS = [
 TRAINING_TYPES = list(TRAINING_INTENSITY_SPLIT) + ["rest"]
 TRAINING_TYPE_LABELS = {value: humanize(value) for value in TRAINING_TYPES}
 
+# The context pipeline shown above the telemetry header: what's supposed to
+# feed a day's plan, in dependency order. (key, label, icon, description,
+# connected). `connected=False` stages have no data source wired up yet —
+# they render as a permanently dashed/muted chip until something real lands
+# in `pipeline_value()`. "Meal Plan" isn't a fifth stage here because
+# `telemetry()` already renders it immediately below this row.
+PIPELINE_STAGES = [
+    (
+        "readiness",
+        "Morning Readiness",
+        "self_improvement",
+        "Subjective readiness check-in — not built yet.",
+        False,
+    ),
+    (
+        "sync",
+        "Health Connect Sync",
+        "monitor_heart",
+        "Garmin sleep/Body Battery — not built yet.",
+        False,
+    ),
+    (
+        "context",
+        "Calendar/Location",
+        "event",
+        "WFH vs. in-office, meeting load — not built yet.",
+        False,
+    ),
+    (
+        "workout",
+        "Adaptive Workout",
+        "fitness_center",
+        "Training session for the day, from the drawer's schedule.",
+        True,
+    ),
+]
+
+
+def pipeline_value(state: "PlannerState", day: str, key: str) -> Optional[str]:
+    """What a connected pipeline stage has for `day`, or None if unset.
+
+    Only "workout" is wired today — it reads the same `training_schedule`
+    `has_training()`/the telemetry ⚡ marker already use, so this is a real
+    signal, not a placeholder, from the day this pipeline ships. The other
+    stages stay in `PIPELINE_STAGES` with `connected=False` and never reach
+    here.
+    """
+    if key == "workout":
+        session = next(
+            (s for s in state.training_schedule if s.get("day") == day), None
+        )
+        if session is None:
+            return None
+        return TRAINING_TYPE_LABELS.get(session["type"], session["type"])
+    return None
+
 
 # --------------------------------------------------------------------------
 # View model
@@ -329,6 +385,10 @@ class PlannerState:
     # `planning_config()` by `planner.apply_training_adjustments` and never
     # written back to config.json.
     training_schedule: List[dict] = field(default_factory=list)
+    # Which day's context-pipeline dialog is open, if any. Held the same way
+    # as `focus` is for the recipe detail dialog: one dialog reused for all
+    # seven days, refreshable off this key rather than seven pre-built dialogs.
+    pipeline_day: Optional[str] = None
     # A run holds this client for 30s-3min per cooking day. The loop stays free
     # (planner dispatches each call to a thread), so the browser is still live
     # and perfectly able to click Generate again — this is the flag that says
@@ -1048,25 +1108,38 @@ async def planner_page() -> None:
     # whole page has finished building — same forward-reference pattern
     # `on_link_next_lunch` already uses for `refresh_all` below.
 
+    def is_favorited(recipe_name: str) -> bool:
+        return any(f["recipe"].get("name") == recipe_name for f in state.favorites)
+
     async def mark_favorite(view: SlotView) -> None:
         if view.recipe is None:
             return
         record = await REPOSITORY.save_favorite(view.recipe.model_dump())
+        # A duplicate name means the repository handed back an existing
+        # record rather than creating one — it's already in state.favorites,
+        # so appending it again would be the same duplicate the repository
+        # just refused to write to disk.
+        if any(f["id"] == record["id"] for f in state.favorites):
+            ui.notify("Already in favorites", type="warning")
+            return
         state.favorites.append(record)
         favorites_list.refresh()
+        canvas.refresh()
         ui.notify("Recipe saved to favorites!", type="positive")
 
     def swap_filter_matches(favorite: dict, meal_type: Optional[str], query: str) -> bool:
         recipe = favorite["recipe"]
         if meal_type and recipe.get("meal_type") != meal_type:
             return False
-        if query and query.lower() not in recipe.get("name", "").lower():
-            return False
+        if query:
+            haystack = f"{recipe.get('name', '')} {recipe.get('cuisine', '')}".lower()
+            if query.lower() not in haystack:
+                return False
         return True
 
     def select_swap_favorite(favorite_id: str) -> None:
         state.swap_selected_id = favorite_id
-        swap_dialog_body.refresh()
+        swap_matches.refresh()
 
     def confirm_swap() -> None:
         if state.swap_target is None or state.swap_selected_id is None:
@@ -1085,7 +1158,14 @@ async def planner_page() -> None:
         ui.notify(f"Swapped in \"{favorite['recipe']['name']}\"", type="positive")
 
     @ui.refreshable
-    def swap_dialog_body() -> None:
+    def swap_matches() -> None:
+        """The results list + budget comparison. Refreshed on every filter/query/selection
+        change — kept separate from `swap_dialog_body` so those refreshes never touch the
+        search `ui.input` itself. Rebuilding an input on every keystroke (the previous
+        shape of this dialog) destroys and recreates the DOM node each time, which steals
+        focus after one character — see the `day_target_row` note in CLAUDE.md for the same
+        trap elsewhere in this file.
+        """
         view = state.swap_target
         if view is None:
             return
@@ -1097,16 +1177,82 @@ async def planner_page() -> None:
         ]
         selected = next((f for f in state.favorites if f["id"] == state.swap_selected_id), None)
 
+        if not matches:
+            ui.label(
+                "No favorites match — clear the filter or import one."
+            ).classes("text-xs text-slate-500 italic")
+
+        with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
+            for favorite in matches:
+                recipe = favorite["recipe"]
+                macros = per_serving_totals(Recipe.model_validate(recipe))
+                is_selected = favorite["id"] == state.swap_selected_id
+                with ui.element("div").classes(
+                    "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
+                    "cursor-pointer border "
+                    + (
+                        "bg-emerald-400/15 border-emerald-400/40"
+                        if is_selected
+                        else "border-slate-800 hover:border-slate-600"
+                    )
+                ).on("click", lambda f=favorite: select_swap_favorite(f["id"])):
+                    with ui.element("div").classes("flex flex-col min-w-0"):
+                        ui.label(recipe["name"]).classes(
+                            "text-xs font-semibold truncate"
+                        )
+                        ui.label(recipe.get("meal_type", "").title()).classes(
+                            "text-[10px] text-slate-500"
+                        )
+                    ui.label(f"{macros['calories']:.0f} kcal").classes(
+                        "text-[10px] font-mono text-slate-300 shrink-0"
+                    )
+
+        ui.separator()
+        with ui.element("div").classes("flex flex-row gap-4"):
+            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                ui.label("Target slot budget").classes(
+                    "text-[10px] uppercase tracking-wide text-slate-500"
+                )
+                if budget:
+                    for key, short, unit in MACRO_LABELS:
+                        ui.label(f"{short}: {budget[key]:.0f}{unit}").classes(
+                            "text-xs text-slate-300"
+                        )
+                else:
+                    ui.label("—").classes("text-xs text-slate-500")
+            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                ui.label("Selected favorite (per serving)").classes(
+                    "text-[10px] uppercase tracking-wide text-slate-500"
+                )
+                if selected:
+                    macros = per_serving_totals(
+                        Recipe.model_validate(selected["recipe"])
+                    )
+                    for key, short, unit in MACRO_LABELS:
+                        ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
+                            "text-xs text-emerald-200"
+                        )
+                else:
+                    ui.label("Pick a favorite above").classes(
+                        "text-xs text-slate-500 italic"
+                    )
+
+    @ui.refreshable
+    def swap_dialog_body() -> None:
+        view = state.swap_target
+        if view is None:
+            return
+
         with ui.element("div").classes("flex flex-col gap-2"):
             ui.label(f"Swap {slot_label(view.id)}").classes("text-sm font-semibold")
 
             def on_filter_change(event) -> None:
                 state.swap_filter = event.value
-                swap_dialog_body.refresh()
+                swap_matches.refresh()
 
             def on_query_change(event) -> None:
                 state.swap_query = event.value or ""
-                swap_dialog_body.refresh()
+                swap_matches.refresh()
 
             with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                 ui.select(
@@ -1120,65 +1266,7 @@ async def planner_page() -> None:
                     on_change=on_query_change,
                 ).props("dense outlined clearable").classes("flex-1 text-xs")
 
-            if not matches:
-                ui.label(
-                    "No favorites match — clear the filter or import one."
-                ).classes("text-xs text-slate-500 italic")
-
-            with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
-                for favorite in matches:
-                    recipe = favorite["recipe"]
-                    macros = per_serving_totals(Recipe.model_validate(recipe))
-                    is_selected = favorite["id"] == state.swap_selected_id
-                    with ui.element("div").classes(
-                        "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
-                        "cursor-pointer border "
-                        + (
-                            "bg-emerald-400/15 border-emerald-400/40"
-                            if is_selected
-                            else "border-slate-800 hover:border-slate-600"
-                        )
-                    ).on("click", lambda f=favorite: select_swap_favorite(f["id"])):
-                        with ui.element("div").classes("flex flex-col min-w-0"):
-                            ui.label(recipe["name"]).classes(
-                                "text-xs font-semibold truncate"
-                            )
-                            ui.label(recipe.get("meal_type", "").title()).classes(
-                                "text-[10px] text-slate-500"
-                            )
-                        ui.label(f"{macros['calories']:.0f} kcal").classes(
-                            "text-[10px] font-mono text-slate-300 shrink-0"
-                        )
-
-            ui.separator()
-            with ui.element("div").classes("flex flex-row gap-4"):
-                with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
-                    ui.label("Target slot budget").classes(
-                        "text-[10px] uppercase tracking-wide text-slate-500"
-                    )
-                    if budget:
-                        for key, short, unit in MACRO_LABELS:
-                            ui.label(f"{short}: {budget[key]:.0f}{unit}").classes(
-                                "text-xs text-slate-300"
-                            )
-                    else:
-                        ui.label("—").classes("text-xs text-slate-500")
-                with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
-                    ui.label("Selected favorite (per serving)").classes(
-                        "text-[10px] uppercase tracking-wide text-slate-500"
-                    )
-                    if selected:
-                        macros = per_serving_totals(
-                            Recipe.model_validate(selected["recipe"])
-                        )
-                        for key, short, unit in MACRO_LABELS:
-                            ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
-                                "text-xs text-emerald-200"
-                            )
-                    else:
-                        ui.label("Pick a favorite above").classes(
-                            "text-xs text-slate-500 italic"
-                        )
+            swap_matches()
 
             with ui.row().classes("justify-end gap-2 mt-1"):
                 ui.button("Cancel", on_click=swap_dialog.close).props(
@@ -1252,15 +1340,23 @@ async def planner_page() -> None:
                 with ui.element("div").classes("flex flex-row items-center gap-0.5"):
                     if view.recipe is not None:
                         if view.mode == MODE_COOK:
+                            favorited = is_favorited(view.recipe.name)
                             fav_button = ui.button(
-                                icon="bookmark_border",
+                                icon="bookmark" if favorited else "bookmark_border",
                                 on_click=lambda v=view: mark_favorite(v),
                             )
                             fav_button.props("dense flat round size=xs").classes(
-                                "min-h-0 p-0.5 text-slate-500 hover:text-amber-300"
+                                "min-h-0 p-0.5 "
+                                + (
+                                    "text-amber-300"
+                                    if favorited
+                                    else "text-slate-500 hover:text-amber-300"
+                                )
                             )
                             with fav_button:
-                                ui.tooltip("Save to favorites")
+                                ui.tooltip(
+                                    "Already in favorites" if favorited else "Save to favorites"
+                                )
                         swap_button = ui.button(
                             icon="swap_horiz",
                             on_click=lambda v=view: open_swap_modal(v),
@@ -1377,6 +1473,86 @@ async def planner_page() -> None:
                         )
                     for meal_type in state.meal_types:
                         meal_card(views.get(slot_id(day, meal_type)), meal_type)
+
+    # ---- context pipeline: what fed a day's plan --------------------------
+    # One dialog reused for every day, refreshable off state.pipeline_day —
+    # same pattern as recipe_detail/state.focus above. The expanded ui.stepper
+    # lives here rather than inline because a stepper's headers need more
+    # width than a grid-cols-7 column has (telemetry already fights this
+    # squeezing three macro numbers into the same column).
+
+    @ui.refreshable
+    def pipeline_detail() -> None:
+        day = state.pipeline_day
+        if day is None:
+            return
+        ui.label(f"{day} — context pipeline").classes(
+            "text-sm font-semibold text-slate-200 mb-2"
+        )
+        with ui.stepper().props("header-nav flat").classes("bg-transparent w-full"):
+            for key, label, icon, description, connected in PIPELINE_STAGES:
+                value = pipeline_value(state, day, key)
+                step = ui.step(label, icon=icon)
+                if not connected:
+                    step.props("disable")
+                with step:
+                    ui.label(description).classes("text-xs text-slate-400")
+                    if connected:
+                        ui.label(value if value is not None else "Nothing scheduled").classes(
+                            "text-sm font-mono mt-1 "
+                            + ("text-emerald-300" if value is not None else "text-slate-500")
+                        )
+                    else:
+                        ui.label("Not connected").classes(
+                            "text-[10px] uppercase tracking-wide text-slate-600 mt-1"
+                        )
+
+    with ui.dialog() as pipeline_dialog:
+        with ui.element("div").classes("bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full"):
+            pipeline_detail()
+
+    def open_pipeline(day: str) -> None:
+        state.pipeline_day = day
+        pipeline_detail.refresh()
+        pipeline_dialog.open()
+
+    # ---- header: context pipeline ------------------------------------------
+    # Compact icon-chip row, one per pipeline stage, directly above the
+    # telemetry it explains. A row of chips rather than an inline
+    # ui.stepper — same width problem as above — connected by a thin
+    # chevron line like a mini timeline. Clicking a day's row opens the full
+    # stepper. Three of the four stages have no data source yet
+    # (`connected=False` in PIPELINE_STAGES) and render dashed/muted;
+    # "Adaptive Workout" is already live off the drawer's training schedule.
+
+    @ui.refreshable
+    def context_pipeline() -> None:
+        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full mb-1"):
+            for day in state.days:
+                with ui.element("div").classes(
+                    "flex flex-row items-center gap-0.5 cursor-pointer rounded "
+                    "px-0.5 py-0.5 hover:bg-slate-800/60"
+                ).on("click", lambda day=day: open_pipeline(day)):
+                    for i, (key, label, icon, description, connected) in enumerate(
+                        PIPELINE_STAGES
+                    ):
+                        value = pipeline_value(state, day, key)
+                        if connected and value is not None:
+                            look = "bg-emerald-400/20 text-emerald-300"
+                            tip = f"{label}: {value}"
+                        elif connected:
+                            look = "bg-slate-800/60 text-slate-400 border border-slate-700"
+                            tip = f"{label}: none scheduled"
+                        else:
+                            look = (
+                                "bg-slate-800/60 text-slate-600 "
+                                "border border-dashed border-slate-700"
+                            )
+                            tip = f"{label} — not connected yet"
+                        with ui.icon(icon).classes(f"text-[13px] rounded-full p-1 {look}"):
+                            ui.tooltip(tip)
+                        if i < len(PIPELINE_STAGES) - 1:
+                            ui.icon("chevron_right").classes("text-[10px] text-slate-700")
 
     # ---- header: macro telemetry -----------------------------------------
 
@@ -1617,6 +1793,7 @@ async def planner_page() -> None:
                     "Every shopping trip in this week, grouped by department — "
                     "built from the grid as it stands, including any edits."
                 )
+        context_pipeline()
         telemetry()
 
     # ---- left drawer: global controls ------------------------------------

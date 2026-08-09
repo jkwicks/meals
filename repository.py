@@ -92,7 +92,13 @@ class PlanRepository(abc.ABC):
         """Add `recipe` (a plain dict, same shape `Recipe.model_dump()` produces)
         to the favorites library. Returns the stored record — `recipe` plus an
         assigned `id` and a `saved_at` timestamp — so the caller can append it
-        to its in-memory list without a second round trip."""
+        to its in-memory list without a second round trip.
+
+        A recipe whose `name` already matches a saved favorite is not
+        appended again; the existing record is returned instead. Callers can
+        tell the two cases apart by checking whether the returned `id` is
+        already in their in-memory list.
+        """
 
     @abc.abstractmethod
     async def update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
@@ -167,6 +173,12 @@ class LocalJSONRepository(PlanRepository):
 
     def _save_favorite(self, recipe: dict) -> dict:
         favorites = self._read_json(self.favorites_path) or []
+        existing = next(
+            (r for r in favorites if r.get("recipe", {}).get("name") == recipe.get("name")),
+            None,
+        )
+        if existing is not None:
+            return existing
         record = {
             "id": uuid.uuid4().hex,
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
