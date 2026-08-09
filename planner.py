@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 import instructor
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from repository import (
@@ -795,6 +795,131 @@ def build_client() -> instructor.Instructor:
         timeout=120.0,
     )
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+def build_async_client() -> instructor.Instructor:
+    """Async twin of `build_client`, for callers that already run on a loop.
+
+    `import_external_recipe` is one call, not seven sequential days, so unlike
+    `generate_day` there's no thread-per-call dance to do here — it can
+    `await` OpenRouter directly instead of going through `asyncio.to_thread`
+    the way a day's generation has to (see "Storage goes through an async
+    repository" in CLAUDE.md for why that dance exists at all).
+    """
+    error = api_key_error()
+    if error:
+        raise RuntimeError(error)
+    openai_client = AsyncOpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=120.0,
+    )
+    # MD_JSON, not JSON/TOOLS — same reason as build_client: Recipe nests
+    # Ingredient, and several free OpenRouter providers 422 on the $defs/$ref
+    # a schema-carrying mode emits for a nested model.
+    return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+async def import_external_recipe(
+    raw_input: str,
+    config: Optional[dict] = None,
+    repository: Optional[PlanRepository] = None,
+) -> Recipe:
+    """Parse pasted recipe text (or a scrape) into a typed, validated Recipe.
+
+    `config` lets a caller that already has one (the NiceGUI drawer,
+    mid-session) skip a reload; left out, one is loaded fresh so this also
+    works as a standalone call. Dietary rules are enforced the same way
+    generation enforces them — nova_group and banned_ingredients read
+    `info.context["config"]` (see `Ingredient`'s validators) — so an imported
+    recipe answers to the same rules a generated one does, not a weaker set.
+
+    Unlike `generate_day`, there's no day budget to trim against: an imported
+    recipe is reported as written, servings included, with ingredient
+    quantities and macros for the FULL recipe at that serving count — exactly
+    what `Recipe`/`Ingredient` already assume elsewhere (`per_serving_totals`
+    divides by `servings`), so no extra scaling step belongs here. A caller
+    dropping this into a specific slot (see `PlannerState.swap_slot_with_favorite`)
+    normalises to one serving and rescales there, same as it would for any
+    other favorite.
+    """
+    if config is None:
+        config = await (repository or LocalJSONRepository()).load_config()
+
+    dietary_rules = config["dietary_rules"]
+    client = build_async_client()
+
+    system_prompt = (
+        "You turn unformatted recipe text — pasted from a website, a photo's "
+        "OCR, a handwritten note — into structured, precise data. Extract "
+        "exactly one recipe.\n\n"
+        "Rules:\n"
+        "- Convert every quantity to grams (quantity_g). Normalize cups, "
+        "tablespoons, teaspoons, ounces, pounds and count-based amounts "
+        "('1 onion', '2 eggs') using standard ingredient densities/weights — "
+        "never leave a non-metric unit in the output.\n"
+        "- Every ingredient's nova_group must be one of: "
+        f"{dietary_rules['allowed_nova_groups']} (1=unprocessed/minimally "
+        "processed, 2=processed culinary ingredients, 3=processed foods). "
+        "Classify honestly — if the source is genuinely an ultra-processed "
+        "product (Group 4), classify it as 4 rather than mislabeling it; the "
+        "schema will reject it rather than let it through unnoticed.\n"
+        "- Never use any of these banned ingredients: "
+        f"{', '.join(dietary_rules['banned_ingredients']) or '(none configured)'}.\n"
+        "- Report calories, protein_g, net_carbs_g and fat_g for every "
+        "ingredient. If the source doesn't state an ingredient's macros, "
+        "estimate them from standard nutrition data for that food and "
+        "quantity — every macro field is required and must be a real number, "
+        "never null or omitted, even when your best estimate is 0.\n"
+        "- `servings` is however many portions the recipe as written yields "
+        "(read it off the source if stated, e.g. 'serves 4'; otherwise your "
+        "best judgement, minimum 1). Ingredient quantities and macros are for "
+        "the FULL recipe at that serving count, not for one serving.\n"
+        "- If meal_type isn't stated, infer breakfast/lunch/dinner/snack from "
+        "the dish itself.\n"
+        "- Do not invent ingredients or steps absent from the source, and add "
+        "no commentary — respond with the structured data only."
+    )
+
+    model = config.get("openrouter_model", DEFAULT_MODEL)
+    max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
+
+    logger.info("import_external_recipe: requesting parse from %s", model)
+    started = time.monotonic()
+    try:
+        recipe, completion = await client.chat.completions.create_with_completion(
+            model=model,
+            response_model=Recipe,
+            max_retries=3,
+            max_tokens=max_tokens,
+            # Non-optional — see CLAUDE.md "Reasoning must be disabled": the
+            # identical prompt shape measured 303s and, on two real runs, zero
+            # content, with this switch left on.
+            extra_body={"reasoning": {"enabled": False}},
+            context={"config": config},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": raw_input},
+            ],
+        )
+    except Exception as exc:
+        logger.warning(
+            "import_external_recipe: failed after %.1fs — %s: %s",
+            time.monotonic() - started,
+            type(exc).__name__,
+            str(exc).split("\n")[0][:300],
+        )
+        raise
+
+    elapsed = time.monotonic() - started
+    usage = getattr(completion, "usage", None)
+    logger.info(
+        "import_external_recipe: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
+        elapsed,
+        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
+        getattr(usage, "completion_tokens", None),
+    )
+    return recipe
 
 
 def split_targets(

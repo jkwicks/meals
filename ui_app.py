@@ -64,11 +64,13 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from nicegui import ui
+from pydantic import ValidationError
 
 from planner import (
     DEFAULT_MODEL,
     MACRO_KEYS,
     TRAINING_INTENSITY_SPLIT,
+    Recipe,
     WeekPlan,
     api_key_error,
     apply_training_adjustments,
@@ -76,10 +78,15 @@ from planner import (
     configure_logging,
     day_slot_macros,
     generate_week_plan,
+    import_external_recipe,
+    meal_overrides_for,
     per_serving_totals,
     record_week_history,
     rescale_cook_event,
+    resize_recipe,
     resolve_auto_choices,
+    scale_recipe,
+    split_targets,
 )
 from repository import LocalJSONRepository
 from shopping import (
@@ -329,6 +336,27 @@ class PlannerState:
     # would race to overwrite the same week_plan.json.
     generating: bool = False
 
+    # The saved-recipe library (favorites.json), record shape
+    # {id, saved_at, recipe}. Loaded once at startup and kept in sync with
+    # disk by every handler that mutates it — there is no re-read on repaint,
+    # since the whole point is that a browser tab's list doesn't jump around
+    # under a card the user is mid-click on.
+    favorites: List[dict] = field(default_factory=list)
+    favorite_search: str = ""
+    # Which card the swap modal is open for, and its in-progress filter/pick.
+    # Held on state rather than as dialog-local variables so `swap_dialog_body`
+    # can be a plain `@ui.refreshable` that reads state, the same pattern
+    # `recipe_detail` uses for `state.focus`.
+    swap_target: Optional[SlotView] = None
+    swap_filter: Optional[str] = None
+    swap_query: str = ""
+    swap_selected_id: Optional[str] = None
+    # Import dialog scratch text; cleared once a paste is successfully turned
+    # into a favorite.
+    import_text: str = ""
+    edit_favorite_id: Optional[str] = None
+    edit_favorite_name: str = ""
+
     # The live week shape. Held rather than re-derived on every access because
     # it is now editable: rebuilding it per read would throw away the links the
     # user just made. `_spec_shape` records what it was derived from, so a
@@ -352,6 +380,7 @@ class PlannerState:
             ],
             training_schedule=[dict(session) for session in config.get("training_schedule") or []],
         )
+        state.favorites = await repository.load_favorites()
         await state.reload_plan(repository)
         return state
 
@@ -487,6 +516,71 @@ class PlannerState:
             return error
 
         self.apply_spec(link_leftover(spec, target_id, source_id))
+        return None
+
+    def swap_slot_with_favorite(self, target_slot_id: str, favorite_recipe: dict) -> Optional[str]:
+        """Replace a cooked slot's recipe with a saved favorite. Returns why not, or None.
+
+        Same shape as `link_to_next_lunch`: a single sentence about the one
+        slot clicked, state only mutates on success, and the caller is the one
+        that repaints (`refresh_all`) — this class stays free of `ui.*` calls,
+        same as everywhere else in `PlannerState`.
+
+        Resolved through `source` for a leftover slot, same as `slot_views`,
+        because the recipe belongs to the cook event, not the eating slot —
+        swapping a leftover's favorite has to change the meal everyone in that
+        chain eats, not fork a second copy only this slot sees.
+        """
+        if self.week_plan is None:
+            return "Generate a week before swapping in a favorite."
+
+        spec = self.spec
+        slot = spec.by_id().get(target_slot_id)
+        if slot is None:
+            return "That meal isn't part of this week."
+        if slot.mode == MODE_SKIP:
+            return f"{slot_label(target_slot_id)} is skipped — nothing to swap."
+
+        source_id = slot.id if slot.mode == MODE_COOK else slot.source
+        event = self.week_plan.by_slot().get(source_id or "")
+        if event is None:
+            return f"{slot_label(target_slot_id)} hasn't been generated yet — nothing to swap."
+
+        try:
+            recipe = Recipe.model_validate(favorite_recipe)
+        except ValidationError as exc:
+            return f"That favorite isn't a usable recipe: {exc}"
+
+        # Favorites are expected in the same shape generation produces: one
+        # serving. A favorite saved off an already-scaled batch card would
+        # carry servings > 1, so it's normalised back to one serving first —
+        # `scale_recipe` below is what re-expands it to this slot's batch.
+        if recipe.servings != 1:
+            recipe = resize_recipe(recipe, 1 / recipe.servings).model_copy(
+                update={"servings": 1}
+            )
+
+        # portions/keeps_for_days mirror `apply_spec`'s call to
+        # `rescale_cook_event`: the batch size is still derived from how many
+        # slots claim this cook, a favorite swap doesn't change that.
+        scaled = scale_recipe(
+            recipe,
+            portions=event.portions,
+            keeps_for_days=span_days(spec, source_id),
+        )
+        new_event = event.model_copy(update={"recipe": scaled})
+        self.week_plan = self.week_plan.model_copy(
+            update={
+                "cook_events": [
+                    new_event if e.slot_id == source_id else e
+                    for e in self.week_plan.cook_events
+                ]
+            }
+        )
+        # No apply_spec here: the slot's mode/source didn't change, only the
+        # cook event's recipe, which day_slot_macros and slot_views already
+        # read live off week_plan.cook_events — no _spec rebuild needed.
+        self.edited = True
         return None
 
     def planning_config(self) -> dict:
@@ -808,6 +902,53 @@ def telemetry_bar(actual: float, target: float, *, height: str = "8px") -> None:
         )
 
 
+def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
+    """The per-serving macro budget generation would aim this slot at right now.
+
+    Mirrors `generate_day`'s own split rather than a rough per-day average:
+    leftover slots eaten that day have their macros subtracted from the day
+    target first, then the remainder is divided across the day's cook slots
+    by `split_targets` — the same function and the same order of operations
+    generation uses. So the swap modal's "target" column is the number a
+    fresh generation would have handed the model for this slot, not an
+    approximation of it.
+    """
+    if not view.day:
+        return None
+    spec = state.spec
+    config = state.planning_config()
+    day_slots = [slot for slot in spec.slots if slot.day == view.day]
+    cook_slots = [slot for slot in day_slots if slot.mode == MODE_COOK]
+    if not cook_slots:
+        return None
+
+    claims = eaten_on(spec)
+    multiplicity = {slot.id: len(claims.get(slot.id, [slot.id])) for slot in cook_slots}
+
+    events = state.week_plan.by_slot() if state.week_plan else {}
+    carried = {key: 0.0 for key in MACRO_KEYS}
+    for slot in day_slots:
+        if slot.mode != MODE_LEFTOVER:
+            continue
+        event = events.get(slot.source or "")
+        if event is None:
+            continue
+        per_serving = per_serving_totals(event.recipe)
+        for key in MACRO_KEYS:
+            carried[key] += per_serving[key]
+
+    targets = state.targets_for(view.day)
+    remaining = {key: max(0.0, float(targets[key]) - carried[key]) for key in MACRO_KEYS}
+    overrides = meal_overrides_for(view.day, config)
+    budgets = split_targets(remaining, cook_slots, multiplicity, config, overrides)
+
+    slot = spec.by_id().get(view.id)
+    if slot is None:
+        return None
+    source_id = slot.id if slot.mode == MODE_COOK else slot.source
+    return budgets.get(source_id or "")
+
+
 # --------------------------------------------------------------------------
 # Page
 # --------------------------------------------------------------------------
@@ -901,6 +1042,170 @@ async def planner_page() -> None:
         recipe_detail.refresh()
         detail_dialog.open()
 
+    # ---- favorites: mark, and swap-in modal -------------------------------
+    # `favorites_list` (drawer) is defined later, inside the left drawer
+    # section, but every handler here only *runs* on a click long after the
+    # whole page has finished building — same forward-reference pattern
+    # `on_link_next_lunch` already uses for `refresh_all` below.
+
+    async def mark_favorite(view: SlotView) -> None:
+        if view.recipe is None:
+            return
+        record = await REPOSITORY.save_favorite(view.recipe.model_dump())
+        state.favorites.append(record)
+        favorites_list.refresh()
+        ui.notify("Recipe saved to favorites!", type="positive")
+
+    def swap_filter_matches(favorite: dict, meal_type: Optional[str], query: str) -> bool:
+        recipe = favorite["recipe"]
+        if meal_type and recipe.get("meal_type") != meal_type:
+            return False
+        if query and query.lower() not in recipe.get("name", "").lower():
+            return False
+        return True
+
+    def select_swap_favorite(favorite_id: str) -> None:
+        state.swap_selected_id = favorite_id
+        swap_dialog_body.refresh()
+
+    def confirm_swap() -> None:
+        if state.swap_target is None or state.swap_selected_id is None:
+            return
+        favorite = next(
+            (f for f in state.favorites if f["id"] == state.swap_selected_id), None
+        )
+        if favorite is None:
+            return
+        error = state.swap_slot_with_favorite(state.swap_target.id, favorite["recipe"])
+        if error:
+            ui.notify(error, type="warning")
+            return
+        swap_dialog.close()
+        refresh_all()
+        ui.notify(f"Swapped in \"{favorite['recipe']['name']}\"", type="positive")
+
+    @ui.refreshable
+    def swap_dialog_body() -> None:
+        view = state.swap_target
+        if view is None:
+            return
+
+        budget = slot_target_budget(state, view)
+        meal_filter = None if state.swap_filter in (None, "All meal types") else state.swap_filter
+        matches = [
+            f for f in state.favorites if swap_filter_matches(f, meal_filter, state.swap_query)
+        ]
+        selected = next((f for f in state.favorites if f["id"] == state.swap_selected_id), None)
+
+        with ui.element("div").classes("flex flex-col gap-2"):
+            ui.label(f"Swap {slot_label(view.id)}").classes("text-sm font-semibold")
+
+            def on_filter_change(event) -> None:
+                state.swap_filter = event.value
+                swap_dialog_body.refresh()
+
+            def on_query_change(event) -> None:
+                state.swap_query = event.value or ""
+                swap_dialog_body.refresh()
+
+            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+                ui.select(
+                    ["All meal types"] + state.meal_types,
+                    value=state.swap_filter or "All meal types",
+                    on_change=on_filter_change,
+                ).props("dense outlined").classes("flex-1 text-xs")
+                ui.input(
+                    placeholder="Search favorites…",
+                    value=state.swap_query,
+                    on_change=on_query_change,
+                ).props("dense outlined clearable").classes("flex-1 text-xs")
+
+            if not matches:
+                ui.label(
+                    "No favorites match — clear the filter or import one."
+                ).classes("text-xs text-slate-500 italic")
+
+            with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
+                for favorite in matches:
+                    recipe = favorite["recipe"]
+                    macros = per_serving_totals(Recipe.model_validate(recipe))
+                    is_selected = favorite["id"] == state.swap_selected_id
+                    with ui.element("div").classes(
+                        "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
+                        "cursor-pointer border "
+                        + (
+                            "bg-emerald-400/15 border-emerald-400/40"
+                            if is_selected
+                            else "border-slate-800 hover:border-slate-600"
+                        )
+                    ).on("click", lambda f=favorite: select_swap_favorite(f["id"])):
+                        with ui.element("div").classes("flex flex-col min-w-0"):
+                            ui.label(recipe["name"]).classes(
+                                "text-xs font-semibold truncate"
+                            )
+                            ui.label(recipe.get("meal_type", "").title()).classes(
+                                "text-[10px] text-slate-500"
+                            )
+                        ui.label(f"{macros['calories']:.0f} kcal").classes(
+                            "text-[10px] font-mono text-slate-300 shrink-0"
+                        )
+
+            ui.separator()
+            with ui.element("div").classes("flex flex-row gap-4"):
+                with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                    ui.label("Target slot budget").classes(
+                        "text-[10px] uppercase tracking-wide text-slate-500"
+                    )
+                    if budget:
+                        for key, short, unit in MACRO_LABELS:
+                            ui.label(f"{short}: {budget[key]:.0f}{unit}").classes(
+                                "text-xs text-slate-300"
+                            )
+                    else:
+                        ui.label("—").classes("text-xs text-slate-500")
+                with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                    ui.label("Selected favorite (per serving)").classes(
+                        "text-[10px] uppercase tracking-wide text-slate-500"
+                    )
+                    if selected:
+                        macros = per_serving_totals(
+                            Recipe.model_validate(selected["recipe"])
+                        )
+                        for key, short, unit in MACRO_LABELS:
+                            ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
+                                "text-xs text-emerald-200"
+                            )
+                    else:
+                        ui.label("Pick a favorite above").classes(
+                            "text-xs text-slate-500 italic"
+                        )
+
+            with ui.row().classes("justify-end gap-2 mt-1"):
+                ui.button("Cancel", on_click=swap_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                ui.button(
+                    "Confirm swap", icon="swap_horiz", on_click=confirm_swap
+                ).props("dense no-caps").bind_enabled_from(
+                    state, "swap_selected_id", backward=bool
+                )
+
+    with ui.dialog() as swap_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-[36rem] max-w-full max-h-[85vh] overflow-y-auto"
+        ):
+            swap_dialog_body()
+
+    def open_swap_modal(view: SlotView) -> None:
+        if view.recipe is None:
+            return
+        state.swap_target = view
+        state.swap_filter = view.meal_type
+        state.swap_query = ""
+        state.swap_selected_id = None
+        swap_dialog_body.refresh()
+        swap_dialog.open()
+
     # ---- canvas: 7 day columns x 4 meal cards -----------------------------
     # Defined before the header and drawer, rendered after them: attaching a
     # `bind_value` fires an initial change event, so every handler's callees
@@ -936,18 +1241,35 @@ async def planner_page() -> None:
             f"meal-card card-{view.status} rounded p-2 flex flex-col gap-1 min-w-0 "
             f"transition-shadow duration-150 {look['card']} {chain}"
         ):
-            # The recipe dialog opens from this inner block rather than the
-            # card, so the action button below is a sibling of it and a click
-            # on the button can't also open the dialog on its way up.
-            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
-            if view.recipe:
-                body.on("click", lambda v=view: open_detail(v))
-
-            with body:
-                with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
-                    ui.label(meal_type[:5].upper()).classes(
-                        "text-[9px] font-semibold tracking-widest text-slate-500"
-                    )
+            # Header row is a sibling of the clickable body below, not a child
+            # of it — same reasoning as the "Link to next lunch" button: a
+            # click on the favorite/swap buttons would otherwise bubble up
+            # through `body`'s click handler and open the detail dialog too.
+            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+                ui.label(meal_type[:5].upper()).classes(
+                    "text-[9px] font-semibold tracking-widest text-slate-500"
+                )
+                with ui.element("div").classes("flex flex-row items-center gap-0.5"):
+                    if view.recipe is not None:
+                        if view.mode == MODE_COOK:
+                            fav_button = ui.button(
+                                icon="bookmark_border",
+                                on_click=lambda v=view: mark_favorite(v),
+                            )
+                            fav_button.props("dense flat round size=xs").classes(
+                                "min-h-0 p-0.5 text-slate-500 hover:text-amber-300"
+                            )
+                            with fav_button:
+                                ui.tooltip("Save to favorites")
+                        swap_button = ui.button(
+                            icon="swap_horiz",
+                            on_click=lambda v=view: open_swap_modal(v),
+                        )
+                        swap_button.props("dense flat round size=xs").classes(
+                            "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                        )
+                        with swap_button:
+                            ui.tooltip("Swap with a favorite")
                     with ui.element("div").classes(
                         "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
                         f"{look['badge']}"
@@ -957,6 +1279,14 @@ async def planner_page() -> None:
                             "text-[8px] font-semibold tracking-wide"
                         )
 
+            # The recipe dialog opens from this inner block rather than the
+            # card, so the action buttons above are siblings of it and a click
+            # on them can't also open the dialog on its way up.
+            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
+            if view.recipe:
+                body.on("click", lambda v=view: open_detail(v))
+
+            with body:
                 # Bold, larger than the rest of the card — the one thing a
                 # scan down a column of 28 cards actually needs to read.
                 # Titles past TITLE_TOOLTIP_CHARS can't fit the two clamped
@@ -1675,6 +2005,113 @@ async def planner_page() -> None:
                 type="positive",
             )
 
+    # ---- favorites library & recipe import ---------------------------------
+    # `favorites_list` is referenced by handlers defined above this point
+    # (`mark_favorite`) and below it (drawer buttons) alike — every one of
+    # them only runs on a later click, by which time this name already exists
+    # in `planner_page`'s scope, same forward-reference pattern as
+    # `refresh_all`.
+
+    async def delete_favorite(favorite_id: str) -> None:
+        await REPOSITORY.delete_favorite(favorite_id)
+        state.favorites = [f for f in state.favorites if f["id"] != favorite_id]
+        favorites_list.refresh()
+        ui.notify("Favorite deleted", type="positive")
+
+    def open_edit_favorite(favorite: dict) -> None:
+        state.edit_favorite_id = favorite["id"]
+        state.edit_favorite_name = favorite["recipe"]["name"]
+        edit_favorite_dialog.open()
+
+    async def save_favorite_edit() -> None:
+        favorite = next(
+            (f for f in state.favorites if f["id"] == state.edit_favorite_id), None
+        )
+        if favorite is None:
+            return
+        new_name = (state.edit_favorite_name or "").strip()
+        if not new_name:
+            ui.notify("Name can't be empty.", type="warning")
+            return
+        updated_recipe = dict(favorite["recipe"], name=new_name)
+        record = await REPOSITORY.update_favorite(favorite["id"], updated_recipe)
+        if record:
+            favorite["recipe"] = record["recipe"]
+        favorites_list.refresh()
+        edit_favorite_dialog.close()
+        ui.notify("Favorite updated", type="positive")
+
+    with ui.dialog() as edit_favorite_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-96 max-w-full flex flex-col gap-2"
+        ):
+            ui.label("Rename favorite").classes("text-sm font-semibold")
+            ui.input(label="Name").bind_value(state, "edit_favorite_name").props(
+                "dense outlined"
+            ).classes("w-full text-xs")
+            with ui.row().classes("justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=edit_favorite_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                ui.button("Save", on_click=save_favorite_edit).props("dense no-caps")
+
+    async def on_import() -> None:
+        text = (state.import_text or "").strip()
+        if not text:
+            ui.notify("Paste some recipe text first.", type="warning")
+            return
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        import_button.props("loading")
+        try:
+            recipe = await import_external_recipe(
+                text, config=state.planning_config(), repository=REPOSITORY
+            )
+        except Exception as exc:
+            ui.notify(
+                f"Import failed: {type(exc).__name__}: {exc}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            import_button.props(remove="loading")
+
+        record = await REPOSITORY.save_favorite(recipe.model_dump())
+        state.favorites.append(record)
+        favorites_list.refresh()
+        state.import_text = ""
+        import_dialog.close()
+        ui.notify(f"Imported \"{recipe.name}\" into favorites.", type="positive")
+
+    with ui.dialog() as import_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full flex flex-col gap-2"
+        ):
+            ui.label("Import a recipe").classes("text-sm font-semibold")
+            ui.label(
+                "Paste raw recipe text, an ingredient list, or a URL — it's turned "
+                "into grams, macros and NOVA groups under the same dietary rules "
+                "generation uses."
+            ).classes("text-[10px] text-slate-500")
+            ui.textarea(placeholder="Paste recipe text or a URL…").bind_value(
+                state, "import_text"
+            ).props("dense outlined").classes("w-full text-xs").style(
+                "min-height: 8rem"
+            )
+            with ui.row().classes("justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=import_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                import_button = ui.button(
+                    "Analyze & Import", icon="auto_awesome", on_click=on_import
+                ).props("dense no-caps")
+
     with ui.left_drawer(bordered=True).classes(
         "bg-slate-900 p-3 gap-3 flex flex-col h-screen overflow-y-auto w-full max-w-xs"
     ).props(":width=320"):
@@ -1809,6 +2246,74 @@ async def planner_page() -> None:
             ).classes("text-[10px] text-slate-500 mb-1")
             with ui.element("div").classes("flex flex-col gap-1.5"):
                 training_editor()
+
+        with ui.expansion("Favorite Recipes & Imports", icon="favorite").classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
+
+            def on_favorite_search(event) -> None:
+                state.favorite_search = (event.value or "").strip()
+                favorites_list.refresh()
+
+            ui.input(
+                placeholder="Search favorites…",
+                on_change=on_favorite_search,
+            ).props("dense outlined clearable").classes("w-full text-xs")
+
+            @ui.refreshable
+            def favorites_list() -> None:
+                query = state.favorite_search.lower()
+                matches = [
+                    f
+                    for f in state.favorites
+                    if not query
+                    or query in f["recipe"]["name"].lower()
+                    or query in f["recipe"].get("meal_type", "").lower()
+                ]
+                if not state.favorites:
+                    ui.label(
+                        "No favorites saved yet — mark a cooked meal or import one."
+                    ).classes("text-[10px] text-slate-500 italic")
+                elif not matches:
+                    ui.label("No favorites match that search.").classes(
+                        "text-[10px] text-slate-500 italic"
+                    )
+                with ui.element("div").classes("flex flex-col gap-1 max-h-56 overflow-y-auto"):
+                    for favorite in matches:
+                        recipe = favorite["recipe"]
+                        with ui.element("div").classes(
+                            "flex flex-row items-center justify-between gap-1 p-1 rounded "
+                            "border border-slate-800 bg-slate-950/30"
+                        ):
+                            with ui.element("div").classes("flex flex-col min-w-0"):
+                                ui.label(recipe["name"]).classes(
+                                    "text-[11px] font-semibold truncate"
+                                )
+                                ui.label(recipe.get("meal_type", "").title()).classes(
+                                    "text-[9px] text-slate-500"
+                                )
+                            with ui.element("div").classes(
+                                "flex flex-row items-center gap-0.5 shrink-0"
+                            ):
+                                ui.button(
+                                    icon="edit",
+                                    on_click=lambda f=favorite: open_edit_favorite(f),
+                                ).props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                                )
+                                ui.button(
+                                    icon="delete",
+                                    on_click=lambda fid=favorite["id"]: delete_favorite(fid),
+                                ).props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
+                                )
+
+            favorites_list()
+
+            ui.separator().classes("my-1")
+            ui.button(
+                "Import recipe", icon="upload_file", on_click=import_dialog.open
+            ).props("dense flat no-caps size=sm").classes("w-full text-slate-300")
 
         ui.separator()
         with ui.element("div").classes("flex flex-row items-center gap-1"):

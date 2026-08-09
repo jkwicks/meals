@@ -26,12 +26,15 @@ import abc
 import asyncio
 import json
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any, Awaitable, List, Optional, TypeVar
 
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_HISTORY_FILE = "meal_history.json"
 DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
+DEFAULT_FAVORITES_FILE = "favorites.json"
 
 T = TypeVar("T")
 
@@ -80,6 +83,31 @@ class PlanRepository(abc.ABC):
         behind in planner.py, which is the thing this module exists to remove.
         """
 
+    @abc.abstractmethod
+    async def load_favorites(self) -> List[dict]:
+        """Saved recipes, oldest first. Empty when nothing has been favorited yet."""
+
+    @abc.abstractmethod
+    async def save_favorite(self, recipe: dict) -> dict:
+        """Add `recipe` (a plain dict, same shape `Recipe.model_dump()` produces)
+        to the favorites library. Returns the stored record — `recipe` plus an
+        assigned `id` and a `saved_at` timestamp — so the caller can append it
+        to its in-memory list without a second round trip."""
+
+    @abc.abstractmethod
+    async def update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
+        """Replace a saved favorite's recipe payload in place.
+
+        Returns the updated record, or None if `favorite_id` isn't in the
+        library — a favorite deleted in another tab is a no-op here, not an
+        error, the same tolerance `load_history`/`load_week_plan` extend to a
+        missing file.
+        """
+
+    @abc.abstractmethod
+    async def delete_favorite(self, favorite_id: str) -> None:
+        """Remove a saved favorite. A no-op if it's already gone."""
+
 
 class LocalJSONRepository(PlanRepository):
     """The current on-disk layout: three JSON files next to the code.
@@ -96,10 +124,12 @@ class LocalJSONRepository(PlanRepository):
         config_path: str = DEFAULT_CONFIG_FILE,
         history_path: str = DEFAULT_HISTORY_FILE,
         week_plan_path: str = DEFAULT_WEEK_PLAN_FILE,
+        favorites_path: str = DEFAULT_FAVORITES_FILE,
     ) -> None:
         self.config_path = config_path
         self.history_path = history_path
         self.week_plan_path = week_plan_path
+        self.favorites_path = favorites_path
 
     # -- PlanRepository ----------------------------------------------------
 
@@ -121,7 +151,48 @@ class LocalJSONRepository(PlanRepository):
     async def save_week_plan(self, week_plan: dict) -> None:
         await asyncio.to_thread(self._write_json, self.week_plan_path, week_plan)
 
+    async def load_favorites(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.favorites_path) or []
+
+    async def save_favorite(self, recipe: dict) -> dict:
+        return await asyncio.to_thread(self._save_favorite, recipe)
+
+    async def update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
+        return await asyncio.to_thread(self._update_favorite, favorite_id, recipe)
+
+    async def delete_favorite(self, favorite_id: str) -> None:
+        await asyncio.to_thread(self._delete_favorite, favorite_id)
+
     # -- blocking helpers, only ever called in a worker thread --------------
+
+    def _save_favorite(self, recipe: dict) -> dict:
+        favorites = self._read_json(self.favorites_path) or []
+        record = {
+            "id": uuid.uuid4().hex,
+            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "recipe": recipe,
+        }
+        favorites.append(record)
+        self._write_json(self.favorites_path, favorites)
+        return record
+
+    def _update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
+        favorites = self._read_json(self.favorites_path) or []
+        updated = None
+        for record in favorites:
+            if record.get("id") == favorite_id:
+                record["recipe"] = recipe
+                updated = record
+                break
+        if updated is not None:
+            self._write_json(self.favorites_path, favorites)
+        return updated
+
+    def _delete_favorite(self, favorite_id: str) -> None:
+        favorites = self._read_json(self.favorites_path) or []
+        remaining = [record for record in favorites if record.get("id") != favorite_id]
+        if len(remaining) != len(favorites):
+            self._write_json(self.favorites_path, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:
