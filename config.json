@@ -121,6 +121,15 @@
     "servings_per_meal": 2
   },
   "inventory_to_clear": [],
+  "training_schedule": [
+    {
+      "day": "Monday",
+      "time": "18:00",
+      "type": "gym_hypertrophy",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350
+    }
+  ],
   "shopping": {
     "shop_days": ["Sunday", "Wednesday"]
   }

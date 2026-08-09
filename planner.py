@@ -92,6 +92,156 @@ DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack
 PORTION_TRIM_LIMITS = (0.6, 1.6)
 PORTION_TRIM_DEADBAND = 0.03
 
+# Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
+# glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
+# to 1 per type so the whole burn is accounted for and fat_g (derived from
+# whatever calories are left) is left exactly as it was before the workout.
+TRAINING_INTENSITY_SPLIT = {
+    "gym_hypertrophy": {"carb_share": 0.5, "protein_share": 0.5},
+    "cardio_run": {"carb_share": 0.75, "protein_share": 0.25},
+    "walk": {"carb_share": 0.7, "protein_share": 0.3},
+}
+
+# Approximate clock time for each meal type. The schema has no real per-meal
+# time, so this is a fixed stand-in used only to find which meal a workout
+# sits closest to — good enough to decide "before" vs. "after", not a
+# calendar feature.
+MEAL_TIME_OF_DAY = {
+    "breakfast": "07:00",
+    "lunch": "12:30",
+    "snack": "15:30",
+    "dinner": "19:00",
+}
+
+# A workout within this many minutes *after* a meal is "fuelled by" that
+# meal, per the spec's "within 2 hours" rule for digestion constraints.
+TRAINING_PRE_WORKOUT_DIGESTION_MINUTES = 120
+
+
+def _clock_minutes(value: str) -> int:
+    hours, _, minutes = str(value).partition(":")
+    try:
+        return int(hours or 0) * 60 + int(minutes or 0)
+    except ValueError:
+        # A drawer time field is free text — a malformed value must not take
+        # the whole telemetry preview down with it, same tolerance as a
+        # malformed meal_override.
+        logger.warning("training_schedule: ignoring unparseable time '%s'", value)
+        return 0
+
+
+def apply_training_adjustments(config: dict) -> dict:
+    """Fold `config["training_schedule"]` into targets before they're calculated.
+
+    Returns a new config — this module never mutates the one it's handed —
+    with three changes per scheduled (non-rest) session:
+
+    A. Daily budget expansion: `estimated_burn_kcal` is added straight onto
+       the day's `calories`, and split into `protein_g`/`net_carbs_g`
+       additions by `TRAINING_INTENSITY_SPLIT`. The shares sum to 1, so
+       `derive_fat_g` lands on the same fat_g the day had before the workout
+       — a workout buys back carbs and protein, not fat.
+    B. Meal slot pinning: whichever configured meal type sits closest in
+       clock time (`MEAL_TIME_OF_DAY`) to the workout, on the side it
+       follows, is given a `meal_override` carrying half the day's
+       (post-expansion) carbs, its usual weighted share of protein and fat.
+       `meal_overrides_for`'s two-pass split then takes care of the rest —
+       the other meals absorb what's left exactly as any other pin does. An
+       explicit override the config already set for that meal always wins;
+       this never overwrites one.
+    C. Digestion rules: any meal within `TRAINING_PRE_WORKOUT_DIGESTION_MINUTES`
+       *before* the workout gets a prompt note (`training_notes`, read by
+       `build_slot_brief`) asking for low-fibre, low-fat, easily digestible
+       food — a constraint on what the meal is made of, not its macros, so it
+       doesn't fight step B.
+
+    Called once, up front (CLI: `run_cli`; UI: `PlannerState.planning_config`)
+    so every downstream reader — `week_targets`, `meal_overrides_for`,
+    `build_slot_brief` — sees the same already-adjusted config rather than
+    each needing its own patch.
+    """
+    sessions = [
+        session
+        for session in config.get("training_schedule", [])
+        if session.get("type") != "rest" and float(session.get("estimated_burn_kcal", 0) or 0) > 0
+    ]
+    if not sessions:
+        return config
+
+    schedule = {day: dict(targets) for day, targets in config["weekly_schedule"].items()}
+    notes: Dict[str, Dict[str, str]] = {}
+    weights = config.get("meal_weights", DEFAULT_MEAL_WEIGHTS)
+    day_meals = [meal_type for meal_type in meal_types(config) if meal_type in MEAL_TIME_OF_DAY]
+
+    for session in sessions:
+        day = session.get("day")
+        if day not in schedule:
+            logger.warning("training_schedule: ignoring session for unknown day '%s'", day)
+            continue
+        split = TRAINING_INTENSITY_SPLIT.get(session.get("type"))
+        if split is None:
+            logger.warning(
+                "training_schedule: ignoring session with unknown type '%s' on %s",
+                session.get("type"), day,
+            )
+            continue
+
+        burn = float(session["estimated_burn_kcal"])
+        day_targets = schedule[day]
+        day_targets["calories"] = day_targets.get("calories", 0) + burn
+        day_targets["protein_g"] = (
+            day_targets.get("protein_g", 0) + burn * split["protein_share"] / 4
+        )
+        day_targets["net_carbs_g"] = (
+            day_targets.get("net_carbs_g", 0) + burn * split["carb_share"] / 4
+        )
+
+        if not day_meals:
+            continue
+        workout_minutes = _clock_minutes(session.get("time", "00:00"))
+        nearest = min(
+            day_meals, key=lambda meal: abs(_clock_minutes(MEAL_TIME_OF_DAY[meal]) - workout_minutes)
+        )
+
+        if _clock_minutes(MEAL_TIME_OF_DAY[nearest]) >= workout_minutes:
+            overrides = dict(day_targets.get("meal_overrides") or {})
+            if nearest not in overrides:
+                day_fat_g = derive_fat_g(
+                    day_targets["calories"], day_targets["protein_g"], day_targets["net_carbs_g"]
+                )
+                weight = weights.get(nearest, 0.25) or 0.25
+                pinned_protein = round(day_targets["protein_g"] * weight, 1)
+                pinned_carbs = round(day_targets["net_carbs_g"] * 0.5, 1)
+                pinned_fat = round(day_fat_g * weight, 1)
+                overrides[nearest] = {
+                    "calories": round(pinned_protein * 4 + pinned_carbs * 4 + pinned_fat * 9, 1),
+                    "protein_g": pinned_protein,
+                    "net_carbs_g": pinned_carbs,
+                    "fat_g": pinned_fat,
+                }
+                day_targets["meal_overrides"] = overrides
+                notes.setdefault(day, {})[nearest] = (
+                    "[POST-WORKOUT MEAL: high glycogen replenishment required — "
+                    f"carb-forward to refuel after {humanize(session.get('type'))}]"
+                )
+
+        for meal in day_meals:
+            gap = workout_minutes - _clock_minutes(MEAL_TIME_OF_DAY[meal])
+            # A meal at the exact workout minute (gap 0) already has the
+            # post-workout note from the pin above if it was the nearest one
+            # — setdefault leaves that in place rather than overwriting it.
+            if 0 <= gap <= TRAINING_PRE_WORKOUT_DIGESTION_MINUTES:
+                notes.setdefault(day, {}).setdefault(
+                    meal,
+                    "[PRE-WORKOUT MEAL: low-fibre, ultra-easily digestible, low-fat fuel — "
+                    f"a {humanize(session.get('type'))} session follows at {session.get('time')}]",
+                )
+
+    adjusted = dict(config, weekly_schedule=schedule)
+    if notes:
+        adjusted["training_notes"] = notes
+    return adjusted
+
 
 def is_free_model(model: str) -> bool:
     return model.endswith(":free")
@@ -773,6 +923,9 @@ def build_slot_brief(
         parts.append("[fixed budget for this meal — the other meals absorb the rest of the day]")
     if times_eaten_today > 1:
         parts.append(f"[eaten {times_eaten_today}x today, budget already accounts for that]")
+    training_note = config.get("training_notes", {}).get(slot.day, {}).get(slot.meal_type)
+    if training_note:
+        parts.append(training_note)
     return " | ".join(parts)
 
 
@@ -1268,6 +1421,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     config = await repository.load_config()
     if args.model:
         config["openrouter_model"] = args.model
+    config = apply_training_adjustments(config)
     spec = default_week_spec(config, args.week_start, args.servings)
 
     if args.leftover_lunches:
