@@ -1,0 +1,1562 @@
+[
+  {
+    "food_id": "asparagus",
+    "name": "Asparagus",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Trim ends and steam for 5 minutes until tender-crisp."
+      ]
+    }
+  },
+  {
+    "food_id": "avocado",
+    "name": "Avocado",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw; pair with carotenoid-rich foods to quadruple nutrient absorption."
+      ]
+    }
+  },
+  {
+    "food_id": "beets",
+    "name": "Beets",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Cut into 1/2-inch wedges and steam for 15 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "bell_peppers",
+    "name": "Bell peppers",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Saute",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Slice into 1/2-inch strips; raw or light heat protects Vitamin C."
+      ]
+    }
+  },
+  {
+    "food_id": "broccoli",
+    "name": "Broccoli",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Cut florets into quarters and let sit 5-10 minutes before steaming to maximize sulforaphane."
+      ]
+    }
+  },
+  {
+    "food_id": "brussels_sprouts",
+    "name": "Brussels sprouts",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Cut sprouts into quarters and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "cabbage",
+    "name": "Cabbage",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Shred cabbage finely, let sit 5 minutes, then steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "carrots",
+    "name": "Carrots",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice rounds 1/4-inch thick and steam for 5 minutes to release beta-carotene."
+      ]
+    }
+  },
+  {
+    "food_id": "cauliflower",
+    "name": "Cauliflower",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Break into small florets, let sit 5 minutes, then steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "celery",
+    "name": "Celery",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Dice and steam for 5 minutes to preserve phenolic antioxidants."
+      ]
+    }
+  },
+  {
+    "food_id": "collard_greens",
+    "name": "Collard greens",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice leaves into 1/2-inch strips and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "cucumbers",
+    "name": "Cucumbers",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin intact to capture silica and fiber."
+      ]
+    }
+  },
+  {
+    "food_id": "eggplant",
+    "name": "Eggplant",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam / Saute",
+      "duration_minutes": 7,
+      "prep_tips": [
+        "Cube 1/2-inch thick and steam for 7 minutes to preserve nasunin in peel."
+      ]
+    }
+  },
+  {
+    "food_id": "fennel",
+    "name": "Fennel",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice bulb thinly; eat raw or quick steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "garlic",
+    "name": "Garlic",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Heat",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Chop or crush garlic and let sit for 10 minutes before heating to activate allicin."
+      ]
+    }
+  },
+  {
+    "food_id": "green_beans",
+    "name": "Green beans",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Steam whole green beans for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "green_peas",
+    "name": "Green peas",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Steam for 3 minutes to preserve delicate sugars and B vitamins."
+      ]
+    }
+  },
+  {
+    "food_id": "kale",
+    "name": "Kale",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice leaves into 1/2-inch strips and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "leeks",
+    "name": "Leeks",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Saute",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice into 1/4-inch rings, let sit 5 minutes, light saute for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "mushrooms__crimini_",
+    "name": "Mushrooms (crimini)",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Saute",
+      "duration_minutes": 7,
+      "prep_tips": [
+        "Slice 1/4-inch thick and healthy saute for 7 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "mushrooms__shiitake_",
+    "name": "Mushrooms (shiitake)",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Saute",
+      "duration_minutes": 7,
+      "prep_tips": [
+        "Remove stems, slice caps, and healthy saute for 7 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "mustard_greens",
+    "name": "Mustard greens",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Chop finely and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "olives",
+    "name": "Olives",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Cured",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw/cured; combine with light meals to enhance fat-soluble nutrient absorption."
+      ]
+    }
+  },
+  {
+    "food_id": "onions",
+    "name": "Onions",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Saute",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Chop onions, let sit 5 minutes, then light saute for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "potatoes",
+    "name": "Potatoes",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Quarter into 1/2-inch slices and steam for 15 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "romaine_lettuce",
+    "name": "Romaine lettuce",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Serve fresh and raw for maximum folate and Vitamin K."
+      ]
+    }
+  },
+  {
+    "food_id": "sea_vegetables",
+    "name": "Sea vegetables",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Soak / Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Rehydrate in warm water for 5–10 minutes; avoid boiling."
+      ]
+    }
+  },
+  {
+    "food_id": "spinach",
+    "name": "Spinach",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 1,
+      "prep_tips": [
+        "Quick steam for 1 minute to reduce oxalates while protecting nutrients."
+      ]
+    }
+  },
+  {
+    "food_id": "squash__summer_",
+    "name": "Squash (summer)",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Slice 1/4-inch thick and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "squash__winter_",
+    "name": "Squash (winter)",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 7,
+      "prep_tips": [
+        "Cube 1/2-inch thick and steam for 7 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "sweet_potatoes",
+    "name": "Sweet potatoes",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 7,
+      "prep_tips": [
+        "Cube into 1/2-inch pieces and steam for 7 minutes for highest antioxidant yield."
+      ]
+    }
+  },
+  {
+    "food_id": "swiss_chard",
+    "name": "Swiss chard",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Separate stems and leaves, steam leaves for 3 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "tomatoes",
+    "name": "Tomatoes",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Light Cook",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Cook with healthy fat (olive oil) to increase lycopene bioavailability up to 3x."
+      ]
+    }
+  },
+  {
+    "food_id": "turnip_greens",
+    "name": "Turnip greens",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Chop leaves into 1/2-inch strips and steam for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "yams",
+    "name": "Yams",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Cube into 1/2-inch pieces and steam for 10 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "apples",
+    "name": "Apples",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin intact to preserve pectin and polyphenols."
+      ]
+    }
+  },
+  {
+    "food_id": "apricots",
+    "name": "Apricots",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw or gently poached to release carotenoids."
+      ]
+    }
+  },
+  {
+    "food_id": "bananas",
+    "name": "Bananas",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw when fully ripe for easiest carbohydrate digestion."
+      ]
+    }
+  },
+  {
+    "food_id": "blueberries",
+    "name": "Blueberries",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw and fresh for maximum anthocyanin activity."
+      ]
+    }
+  },
+  {
+    "food_id": "cantaloupe",
+    "name": "Cantaloupe",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Serve raw and chilled to protect heat-sensitive Vitamin C."
+      ]
+    }
+  },
+  {
+    "food_id": "cranberries",
+    "name": "Cranberries",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Light Cook",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Simmer briefly with natural sweetener to reduce tartness without destroying phytonutrients."
+      ]
+    }
+  },
+  {
+    "food_id": "figs",
+    "name": "Figs",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat fresh or dried raw for high dietary fiber and calcium."
+      ]
+    }
+  },
+  {
+    "food_id": "grapefruit",
+    "name": "Grapefruit",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Section and eat raw including inner pink membranes for lycopene."
+      ]
+    }
+  },
+  {
+    "food_id": "grapes",
+    "name": "Grapes",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin for resveratrol."
+      ]
+    }
+  },
+  {
+    "food_id": "kiwifruit",
+    "name": "Kiwifruit",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Cut in half and spoon out raw flesh to preserve Vitamin C and actinidin enzymes."
+      ]
+    }
+  },
+  {
+    "food_id": "lemon_limes",
+    "name": "Lemon/Limes",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Juice",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add raw juice at the very end of cooking to protect Vitamin C."
+      ]
+    }
+  },
+  {
+    "food_id": "oranges",
+    "name": "Oranges",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Peel and eat fresh raw sections for citrus bioflavonoids."
+      ]
+    }
+  },
+  {
+    "food_id": "papaya",
+    "name": "Papaya",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with a squeeze of lime juice to boost papain enzyme availability."
+      ]
+    }
+  },
+  {
+    "food_id": "pears",
+    "name": "Pears",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin intact for hydroxycinnamic acids."
+      ]
+    }
+  },
+  {
+    "food_id": "pineapple",
+    "name": "Pineapple",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw and fresh to preserve heat-sensitive bromelain enzymes."
+      ]
+    }
+  },
+  {
+    "food_id": "plums",
+    "name": "Plums",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin for neochlorogenic and chlorogenic acids."
+      ]
+    }
+  },
+  {
+    "food_id": "prunes",
+    "name": "Prunes",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw or soak in warm water to rehydrate."
+      ]
+    }
+  },
+  {
+    "food_id": "raisins",
+    "name": "Raisins",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw or add to warm grain dishes near the end of cooking."
+      ]
+    }
+  },
+  {
+    "food_id": "raspberries",
+    "name": "Raspberries",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw immediately after washing to prevent nutrient leakage."
+      ]
+    }
+  },
+  {
+    "food_id": "strawberries",
+    "name": "Strawberries",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Slice just before serving to minimize antioxidant loss from air exposure."
+      ]
+    }
+  },
+  {
+    "food_id": "watermelon",
+    "name": "Watermelon",
+    "category": "Fruits",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw when fully ripe; store at room temp before cutting for higher lycopene."
+      ]
+    }
+  },
+  {
+    "food_id": "almonds",
+    "name": "Almonds",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Soaked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw with skin intact, or soak overnight to reduce enzyme inhibitors."
+      ]
+    }
+  },
+  {
+    "food_id": "cashews",
+    "name": "Cashews",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw or gently warmed to preserve heat-sensitive oleic acid."
+      ]
+    }
+  },
+  {
+    "food_id": "flaxseeds",
+    "name": "Flaxseeds",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Ground Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Grind fresh before consuming to release ALA omega-3 fats and lignans."
+      ]
+    }
+  },
+  {
+    "food_id": "extra_virgin_olive_oil",
+    "name": "Extra virgin olive oil",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Low Heat",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Use raw in dressings or drizzle over hot dishes after cooking to preserve polyphenols."
+      ]
+    }
+  },
+  {
+    "food_id": "peanuts",
+    "name": "Peanuts",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Roast",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw or lightly dry-roasted to retain resveratrol in skins."
+      ]
+    }
+  },
+  {
+    "food_id": "pumpkin_seeds",
+    "name": "Pumpkin seeds",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Low Roast",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Roast gently at 160°F (70°C) for 15 minutes to protect zinc and healthy fats."
+      ]
+    }
+  },
+  {
+    "food_id": "sesame_seeds",
+    "name": "Sesame seeds",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Toast",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Lightly toast in a dry pan for 3 minutes to enhance sesamol availability."
+      ]
+    }
+  },
+  {
+    "food_id": "sunflower_seeds",
+    "name": "Sunflower seeds",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw to preserve heat-sensitive Vitamin E."
+      ]
+    }
+  },
+  {
+    "food_id": "walnuts",
+    "name": "Walnuts",
+    "category": "Nuts & Seeds",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw and keep refrigerated to prevent polyunsaturated fats from oxidizing."
+      ]
+    }
+  },
+  {
+    "food_id": "barley",
+    "name": "Barley",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 45,
+      "prep_tips": [
+        "Simmer hulled barley in 3 parts water for 45 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "brown_rice",
+    "name": "Brown rice",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 45,
+      "prep_tips": [
+        "Simmer 1 cup rice to 2 cups water for 45 minutes, rest 10 minutes off heat."
+      ]
+    }
+  },
+  {
+    "food_id": "buckwheat",
+    "name": "Buckwheat",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Simmer groats in 2 parts water for 15 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "corn",
+    "name": "Corn",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Steam kernels or cobs for 5 minutes to boost ferulic acid antioxidant activity."
+      ]
+    }
+  },
+  {
+    "food_id": "millet",
+    "name": "Millet",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 25,
+      "prep_tips": [
+        "Simmer 1 part millet to 2.5 parts liquid for 25 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "oats",
+    "name": "Oats",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Cook steel-cut or rolled oats over low heat for 10 minutes to protect beta-glucans."
+      ]
+    }
+  },
+  {
+    "food_id": "quinoa",
+    "name": "Quinoa",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Rinse thoroughly to remove saponins, simmer in 2 parts water for 15 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "rye",
+    "name": "Rye",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Soak whole berries overnight, simmer for 60 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "spelt",
+    "name": "Spelt",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 50,
+      "prep_tips": [
+        "Soak whole spelt berries 8 hours, simmer for 50 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "whole_wheat",
+    "name": "Whole wheat",
+    "category": "Grains",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 50,
+      "prep_tips": [
+        "Simmer cracked wheat or wheat berries for 50 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "black_beans",
+    "name": "Black beans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Soak overnight, discard water, simmer 60 minutes for high anthocyanin retention."
+      ]
+    }
+  },
+  {
+    "food_id": "dried_peas",
+    "name": "Dried peas",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 45,
+      "prep_tips": [
+        "Simmer split peas for 45 minutes; no soaking needed."
+      ]
+    }
+  },
+  {
+    "food_id": "garbanzo_beans__chickpeas_",
+    "name": "Garbanzo beans (chickpeas)",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Soak 8 hours, simmer 60 minutes with a pinch of cumin for digestion."
+      ]
+    }
+  },
+  {
+    "food_id": "kidney_beans",
+    "name": "Kidney beans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Boil / Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Boil rapidly for 10 mins first to destroy lectins, then simmer till soft."
+      ]
+    }
+  },
+  {
+    "food_id": "lentils",
+    "name": "Lentils",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 20,
+      "prep_tips": [
+        "Rinse well and simmer 20 minutes; no soaking needed."
+      ]
+    }
+  },
+  {
+    "food_id": "lima_beans",
+    "name": "Lima beans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 45,
+      "prep_tips": [
+        "Soak overnight and simmer 45 minutes until tender."
+      ]
+    }
+  },
+  {
+    "food_id": "miso",
+    "name": "Miso",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Dissolve Warm",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Whisk into warm soup off the heat; never boil to protect live enzymes."
+      ]
+    }
+  },
+  {
+    "food_id": "navy_beans",
+    "name": "Navy beans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Soak overnight and simmer for 60 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "pinto_beans",
+    "name": "Pinto beans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Simmer",
+      "duration_minutes": 60,
+      "prep_tips": [
+        "Soak 8 hours and simmer for 60 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "soybeans",
+    "name": "Soybeans",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Steam edamame pods for 5 minutes; eat green seeds raw or lightly seasoned."
+      ]
+    }
+  },
+  {
+    "food_id": "tempeh",
+    "name": "Tempeh",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Steam / Saute",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Steam block for 10 minutes first to reduce bitterness before browning."
+      ]
+    }
+  },
+  {
+    "food_id": "tofu",
+    "name": "Tofu",
+    "category": "Beans & Legumes",
+    "optimal_cooking": {
+      "recommended_method": "Saute / Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Press out excess liquid, cube, and light saute for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "cod",
+    "name": "Cod",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Poach / Bake",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Bake at 350°F (175°C) for 10 minutes per inch of thickness."
+      ]
+    }
+  },
+  {
+    "food_id": "halibut",
+    "name": "Halibut",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Bake",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Bake for 10 mins per inch to preserve lean selenium and B vitamins."
+      ]
+    }
+  },
+  {
+    "food_id": "salmon",
+    "name": "Salmon",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Poach / Bake",
+      "duration_minutes": 10,
+      "prep_tips": [
+        "Bake at 350°F for 10 minutes per inch to protect EPA/DHA omega-3s."
+      ]
+    }
+  },
+  {
+    "food_id": "sardines",
+    "name": "Sardines",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Prep",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Consume whole with soft bones for calcium and omega-3 fats."
+      ]
+    }
+  },
+  {
+    "food_id": "scallops",
+    "name": "Scallops",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Quick Saute",
+      "duration_minutes": 4,
+      "prep_tips": [
+        "Saute 2 minutes per side until opaque."
+      ]
+    }
+  },
+  {
+    "food_id": "shrimp",
+    "name": "Shrimp",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Quick Saute / Steam",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Steam or quick saute for 3 minutes until pink."
+      ]
+    }
+  },
+  {
+    "food_id": "tuna",
+    "name": "Tuna",
+    "category": "Seafood",
+    "optimal_cooking": {
+      "recommended_method": "Quick Sear",
+      "duration_minutes": 4,
+      "prep_tips": [
+        "Sear 2 minutes per side to retain moisture and omega-3s."
+      ]
+    }
+  },
+  {
+    "food_id": "beef__lean_organic_",
+    "name": "Beef (lean organic)",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Roast / Grill",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Cook over medium heat to prevent heterocyclic amine formation."
+      ]
+    }
+  },
+  {
+    "food_id": "calfs_liver",
+    "name": "Calf's liver",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Quick Saute",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Sauté gently for 5 minutes over medium heat to maintain tenderness."
+      ]
+    }
+  },
+  {
+    "food_id": "chicken",
+    "name": "Chicken",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Bake / Poach",
+      "duration_minutes": 25,
+      "prep_tips": [
+        "Bake or poach at moderate temperatures to maintain moisture."
+      ]
+    }
+  },
+  {
+    "food_id": "lamb",
+    "name": "Lamb",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Roast",
+      "duration_minutes": 20,
+      "prep_tips": [
+        "Roast at 325°F to preserve CLA (conjugated linoleic acid)."
+      ]
+    }
+  },
+  {
+    "food_id": "turkey",
+    "name": "Turkey",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Bake",
+      "duration_minutes": 25,
+      "prep_tips": [
+        "Bake breast portions at 350°F to retain lean protein and tryptophan."
+      ]
+    }
+  },
+  {
+    "food_id": "venison",
+    "name": "Venison",
+    "category": "Poultry & Lean Meats",
+    "optimal_cooking": {
+      "recommended_method": "Roast / Sear",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Sear or roast gently; lean game meat dries out quickly if overcooked."
+      ]
+    }
+  },
+  {
+    "food_id": "low_fat_cheese",
+    "name": "Low-fat cheese",
+    "category": "Eggs & Dairy",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Light Melt",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Serve raw or melt gently at low temperatures."
+      ]
+    }
+  },
+  {
+    "food_id": "eggs",
+    "name": "Eggs",
+    "category": "Eggs & Dairy",
+    "optimal_cooking": {
+      "recommended_method": "Poach / Soft Boil",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Poach or soft boil for 5 minutes so yolk remains runny to protect lutein and choline."
+      ]
+    }
+  },
+  {
+    "food_id": "cows_milk__2__",
+    "name": "Cow's milk (2%)",
+    "category": "Eggs & Dairy",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Warm",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Drink cool or gently warm without boiling."
+      ]
+    }
+  },
+  {
+    "food_id": "goats_milk",
+    "name": "Goat's milk",
+    "category": "Eggs & Dairy",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Warm",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Consume gently warmed for easiest A2-protein digestion."
+      ]
+    }
+  },
+  {
+    "food_id": "yogurt",
+    "name": "Yogurt",
+    "category": "Eggs & Dairy",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw and unheated to preserve live probiotic cultures."
+      ]
+    }
+  },
+  {
+    "food_id": "basil",
+    "name": "Basil",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Add at end",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Tear fresh leaves and add at the last minute of cooking."
+      ]
+    }
+  },
+  {
+    "food_id": "black_pepper",
+    "name": "Black pepper",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Ground Fresh",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Grind fresh over cooked dishes; piperine boosts nutrient absorption."
+      ]
+    }
+  },
+  {
+    "food_id": "cayenne_pepper",
+    "name": "Cayenne pepper",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Cooked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add small amounts; capsaicin is heat-stable and aids circulation."
+      ]
+    }
+  },
+  {
+    "food_id": "dried_chili_pepper",
+    "name": "Dried chili pepper",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Chop / Cooked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Chop finely; capsaicin remains heat stable during cooking."
+      ]
+    }
+  },
+  {
+    "food_id": "cilantro_coriander_seeds",
+    "name": "Cilantro/Coriander seeds",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Light Toast",
+      "duration_minutes": 2,
+      "prep_tips": [
+        "Toast seeds lightly before grinding to release aromatic oils."
+      ]
+    }
+  },
+  {
+    "food_id": "ground_cinnamon",
+    "name": "Ground cinnamon",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Cooked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add ground cinnamon to warm grains or drinks for glycemic support."
+      ]
+    }
+  },
+  {
+    "food_id": "cloves",
+    "name": "Cloves",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Whole / Ground",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Use whole in simmers or freshly ground for peak eugenol content."
+      ]
+    }
+  },
+  {
+    "food_id": "cumin_seeds",
+    "name": "Cumin seeds",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Light Toast",
+      "duration_minutes": 2,
+      "prep_tips": [
+        "Toast whole seeds for 2 minutes before grinding or cooking."
+      ]
+    }
+  },
+  {
+    "food_id": "dill",
+    "name": "Dill",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Chop fresh dill and add just before serving."
+      ]
+    }
+  },
+  {
+    "food_id": "ginger",
+    "name": "Ginger",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Steep",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Grate fresh ginger into warm water or stir-fries near the end of cooking."
+      ]
+    }
+  },
+  {
+    "food_id": "mustard_seeds",
+    "name": "Mustard seeds",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Crushed Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Crush seeds to trigger myrosinase enzyme formation."
+      ]
+    }
+  },
+  {
+    "food_id": "oregano",
+    "name": "Oregano",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Dried / Fresh",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add dried oregano early in cooking; add fresh at the end."
+      ]
+    }
+  },
+  {
+    "food_id": "parsley",
+    "name": "Parsley",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Chop fresh flat-leaf parsley raw for Vitamin C and apigenin."
+      ]
+    }
+  },
+  {
+    "food_id": "peppermint",
+    "name": "Peppermint",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Steep",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Steep fresh or dried leaves in hot water for 5 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "rosemary",
+    "name": "Rosemary",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Cooked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add early to marinades or roasts; rosmarinic acid resists heat."
+      ]
+    }
+  },
+  {
+    "food_id": "sage",
+    "name": "Sage",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Light Cook",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Sauté fresh leaves in healthy fat for 3 minutes."
+      ]
+    }
+  },
+  {
+    "food_id": "thyme",
+    "name": "Thyme",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Cooked",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Simmer whole sprigs in soups and stews to release thymol."
+      ]
+    }
+  },
+  {
+    "food_id": "turmeric",
+    "name": "Turmeric",
+    "category": "Spices & Herbs",
+    "optimal_cooking": {
+      "recommended_method": "Light Heat",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Heat gently with black pepper and a healthy fat to boost curcumin absorption 2000%."
+      ]
+    }
+  },
+  {
+    "food_id": "blackstrap_molasses",
+    "name": "Blackstrap molasses",
+    "category": "Natural Sweeteners",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Use raw in warm water or baking for concentrated iron and copper."
+      ]
+    }
+  },
+  {
+    "food_id": "cane_juice",
+    "name": "Cane juice",
+    "category": "Natural Sweeteners",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Cold",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Consume raw and unrefined to retain trace minerals."
+      ]
+    }
+  },
+  {
+    "food_id": "honey",
+    "name": "Honey",
+    "category": "Natural Sweeteners",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Do not heat above 110°F (43°C) to protect active enzymes and propolis."
+      ]
+    }
+  },
+  {
+    "food_id": "maple_syrup",
+    "name": "Maple syrup",
+    "category": "Natural Sweeteners",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Drizzle raw over warm dishes to retain manganese and zinc minerals."
+      ]
+    }
+  },
+  {
+    "food_id": "green_tea",
+    "name": "Green tea",
+    "category": "Beverages & Other",
+    "optimal_cooking": {
+      "recommended_method": "Steep",
+      "duration_minutes": 3,
+      "prep_tips": [
+        "Steep leaves in 175°F (80°C) water for 3 minutes to extract EGCG without bitterness."
+      ]
+    }
+  },
+  {
+    "food_id": "soy_sauce__tamari_",
+    "name": "Soy sauce (tamari)",
+    "category": "Beverages & Other",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Add at end",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Add raw at the end of cooking to protect fermented enzymes."
+      ]
+    }
+  },
+  {
+    "food_id": "water",
+    "name": "Water",
+    "category": "Beverages & Other",
+    "optimal_cooking": {
+      "recommended_method": "Raw / Filtered",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Drink pure, room-temperature filtered water throughout the day."
+      ]
+    }
+  }
+]
