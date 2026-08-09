@@ -1373,7 +1373,7 @@ async def planner_page() -> None:
                     reset.set_visibility(day in state.target_overrides)
                     with reset:
                         ui.tooltip(f"Reset {day} to config.json")
-            with ui.element("div").classes("grid grid-cols-3 gap-1"):
+            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                 for key, label in TARGET_FIELDS:
                     inputs[key] = (
                         ui.number(
@@ -1387,7 +1387,7 @@ async def planner_page() -> None:
                         # Debounced so holding a key doesn't repaint the
                         # telemetry header once per digit.
                         .props("dense outlined debounce=350")
-                        .classes("w-full")
+                        .classes("flex-1 text-xs")
                     )
 
     @ui.refreshable
@@ -1462,21 +1462,22 @@ async def planner_page() -> None:
                         state.days,
                         value=session.get("day"),
                         on_change=training_field_handler(index, "day"),
-                    ).props("dense outlined").classes("flex-1 min-w-0")
+                    ).props("dense outlined").classes("flex-1 min-w-0 text-xs")
                     ui.button(icon="delete", on_click=on_remove).props(
                         "dense flat size=xs"
                     ).classes("min-h-0 p-0 text-slate-500")
-                with ui.element("div").classes("grid grid-cols-2 gap-1"):
+                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                     ui.input(
                         label="Time (HH:MM)",
                         value=session.get("time", ""),
                         on_change=training_field_handler(index, "time"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
                     ui.select(
                         TRAINING_TYPE_LABELS,
                         value=session.get("type"),
                         on_change=training_field_handler(index, "type"),
-                    ).props("dense outlined").classes("w-full")
+                    ).props("dense outlined").classes("flex-1 text-xs")
+                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                     ui.number(
                         label="Duration (min)",
                         value=session.get("duration_minutes", 0),
@@ -1484,7 +1485,7 @@ async def planner_page() -> None:
                         step=5,
                         precision=0,
                         on_change=training_field_handler(index, "duration_minutes"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
                     ui.number(
                         label="Burn (kcal)",
                         value=session.get("estimated_burn_kcal", 0),
@@ -1492,7 +1493,7 @@ async def planner_page() -> None:
                         step=10,
                         precision=0,
                         on_change=training_field_handler(index, "estimated_burn_kcal"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
 
         def on_add() -> None:
             state.add_training_session()
@@ -1675,66 +1676,89 @@ async def planner_page() -> None:
             )
 
     with ui.left_drawer(bordered=True).classes(
-        "bg-slate-900 p-3 gap-3 flex flex-col overflow-y-auto"
+        "bg-slate-900 p-3 gap-3 flex flex-col h-screen overflow-y-auto w-full max-w-xs"
     ).props(":width=320"):
-        with ui.element("div").classes("flex flex-row items-center gap-1"):
-            ui.icon("settings").classes("text-xs text-slate-500")
-            ui.label("Week setup").classes(
-                "text-xs uppercase tracking-widest text-slate-500"
+        # Pinned above the accordion (sticky, not just first-in-DOM) so the one
+        # action that spends money and writes to disk is never a scroll away,
+        # no matter how many sections below are expanded.
+        with ui.element("div").classes(
+            "sticky top-0 z-10 bg-slate-900 flex flex-col gap-2 pb-2"
+        ):
+            generate = (
+                ui.button("Generate week", icon="bolt", on_click=run_generation)
+                .props("dense")
+                .classes("w-full")
             )
+            with generate:
+                ui.tooltip(
+                    "Generates every meal set to cook in this grid — one API call per "
+                    "cooking day. Overwrites week_plan.json and appends to history."
+                )
+            ui.button(
+                "Reload from disk", icon="refresh", on_click=reload_from_disk
+            ).props("dense flat").classes("w-full")
+            ui.separator()
 
         all_days = list(state.config["weekly_schedule"].keys())
 
-        def on_week_start(event) -> None:
-            # Set the field explicitly before refreshing: `bind_value` keeps
-            # state in sync through the binding loop, which runs *after* this
-            # handler, so a refresh relying on it alone would repaint the old
-            # week order.
-            state.week_start = event.value
-            refresh_all()
+        with ui.expansion("Global Controls", icon="settings", value=True).classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
 
-        ui.select(
-            all_days,
-            label="Week starts on",
-            on_change=on_week_start,
-        ).bind_value(state, "week_start").props("dense outlined").classes("w-full")
+            def on_week_start(event) -> None:
+                # Set the field explicitly before refreshing: `bind_value`
+                # keeps state in sync through the binding loop, which runs
+                # *after* this handler, so a refresh relying on it alone
+                # would repaint the old week order.
+                state.week_start = event.value
+                refresh_all()
 
-        def on_servings(event) -> None:
-            state.servings = int(event.value or 1)
-            refresh_all()
+            ui.select(
+                all_days,
+                label="Week starts on",
+                on_change=on_week_start,
+            ).bind_value(state, "week_start").props("dense outlined").classes(
+                "w-full text-xs"
+            )
 
-        ui.number(
-            label="People per meal",
-            min=1,
-            max=8,
-            step=1,
-            precision=0,
-            on_change=on_servings,
-        ).bind_value(state, "servings").props("dense outlined").classes("w-full")
+            def on_servings(event) -> None:
+                state.servings = int(event.value or 1)
+                refresh_all()
 
-        def on_shop_days(event) -> None:
-            state.shop_days = list(event.value or [])
-            week_summary.refresh()
-            # Shop days *are* the window boundaries, so this repartitions every
-            # list in the shopping drawer.
-            shopping_panel.refresh()
+            ui.number(
+                label="People per meal",
+                min=1,
+                max=8,
+                step=1,
+                precision=0,
+                on_change=on_servings,
+            ).bind_value(state, "servings").props("dense outlined").classes(
+                "w-full text-xs"
+            )
 
-        ui.select(
-            all_days,
-            label="Shopping days",
-            multiple=True,
-            on_change=on_shop_days,
-        ).bind_value(state, "shop_days").props("dense outlined use-chips").classes("w-full")
+            def on_shop_days(event) -> None:
+                state.shop_days = list(event.value or [])
+                week_summary.refresh()
+                # Shop days *are* the window boundaries, so this repartitions
+                # every list in the shopping drawer.
+                shopping_panel.refresh()
 
-        ui.select(MODEL_OPTIONS, label="Model").bind_value(state, "model").props(
-            "dense outlined"
-        ).classes("w-full")
+            ui.select(
+                all_days,
+                label="Shopping days",
+                multiple=True,
+                on_change=on_shop_days,
+            ).bind_value(state, "shop_days").props("dense outlined use-chips").classes(
+                "w-full text-xs"
+            )
 
-        ui.separator()
+            ui.select(MODEL_OPTIONS, label="Model").bind_value(state, "model").props(
+                "dense outlined"
+            ).classes("w-full text-xs")
 
         # Collapsed by default: seven days x three numbers is the densest thing
         # in the drawer, and most weeks run on the config file's targets.
-        with ui.expansion("Daily macro targets & overrides", icon="tune").classes(
+        with ui.expansion("Daily Targets", icon="track_changes").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
             ui.label(
@@ -1743,7 +1767,7 @@ async def planner_page() -> None:
             with ui.element("div").classes("flex flex-col gap-2"):
                 targets_editor()
 
-        with ui.expansion("Inventory to clear (pantry)", icon="kitchen").classes(
+        with ui.expansion("Pantry Clear", icon="kitchen").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
 
@@ -1766,7 +1790,7 @@ async def planner_page() -> None:
             ).props(
                 "dense outlined use-chips use-input hide-dropdown-icon "
                 'input-debounce=0 placeholder="600g chicken thighs — press enter"'
-            ).classes("w-full")
+            ).classes("w-full text-xs")
             ui.label(
                 "A priority, not a rule: the model prefers these where they fit and "
                 "never bends a meal's style, cuisine or macro budget to use one up. "
@@ -1774,7 +1798,7 @@ async def planner_page() -> None:
                 "shopping list."
             ).classes("text-[10px] text-slate-500 mt-1")
 
-        with ui.expansion("Training & Activity Schedule", icon="fitness_center").classes(
+        with ui.expansion("Training Schedule", icon="fitness_center").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
             ui.label(
@@ -1793,26 +1817,6 @@ async def planner_page() -> None:
                 "text-xs uppercase tracking-widest text-slate-500"
             )
         week_summary()
-
-        ui.separator()
-        with ui.element("div").classes("flex flex-col gap-2"):
-            # The one thing here that spends money and overwrites disk, so it
-            # says so on the tooltip rather than in a confirmation step the
-            # user would learn to click through.
-            generate = (
-                ui.button("Generate week", icon="bolt", on_click=run_generation)
-                .props("dense")
-                .classes("w-full")
-            )
-            with generate:
-                ui.tooltip(
-                    "Generates every meal set to cook in this grid — one API call per "
-                    "cooking day. Overwrites week_plan.json and appends to history."
-                )
-
-            ui.button(
-                "Reload from disk", icon="refresh", on_click=reload_from_disk
-            ).props("dense flat").classes("w-full")
 
     canvas()
 

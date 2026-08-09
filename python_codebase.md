@@ -17,13 +17,19 @@ it just did.
 Three regions, mirroring how the week is actually read:
 
 - **Left drawer** — the global knobs (week start, household size, shopping
-  days, model) plus the generation trigger. Everything that applies to the
-  whole week rather than one meal.
+  days, model), the per-day macro targets and the pantry list, plus the
+  generation trigger. Everything that applies to the whole week rather than one
+  meal. Target overrides and the pantry are *inputs to the next run*: they are
+  held in `PlannerState`, merged into `planning_config()`, and never written
+  back to config.json.
 - **Header** — macro telemetry: one horizontal bar per day, in the *same*
   7-column grid as the canvas below, so a day's bar sits directly above its
   column of meals.
 - **Canvas** — 7 day columns x 4 stacked meal cards, cook vs. leftover
   distinguished by colour, border and badge.
+- **Right drawer** — the shopping list, one section per trip, opened from the
+  header. It is derived from the plan on every repaint, so it always describes
+  the week as the grid currently stands rather than as it was generated.
 
 Why this can await the repository directly
 ------------------------------------------
@@ -52,6 +58,7 @@ State is created *inside* the page function on purpose: module-level state
 would be shared by every browser tab connected to this server.
 """
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -62,8 +69,10 @@ from nicegui import ui
 from planner import (
     DEFAULT_MODEL,
     MACRO_KEYS,
+    TRAINING_INTENSITY_SPLIT,
     WeekPlan,
     api_key_error,
+    apply_training_adjustments,
     calculate_daily_targets,
     configure_logging,
     day_slot_macros,
@@ -74,7 +83,12 @@ from planner import (
     resolve_auto_choices,
 )
 from repository import LocalJSONRepository
-from shopping import format_quantity
+from shopping import (
+    aggregate_cook_events,
+    cook_plan_lines,
+    format_quantity,
+    format_shopping_list_keep,
+)
 from week import (
     MODE_COOK,
     MODE_LEFTOVER,
@@ -123,29 +137,41 @@ STATUS_LEFTOVER = "leftover"
 STATUS_SKIP = "skip"
 STATUS_MISSING = "missing"
 
-# Tailwind per status. Cook is solid with a bright left rule; leftover is
-# dimmer and dashed — nothing is bought or cooked for it, so it should read as
-# derived from the card it points at rather than as its own event.
+# Tailwind per status. Each status is a *tint plus a rule*, not just a border
+# colour: cook is the only one that carries a lit background, because it is the
+# only card that costs you an evening. Leftover is dashed and cooler — nothing
+# is bought or cooked for it, so it should read as derived from the card it
+# points at rather than as its own event. `glow` is the hover colour (see
+# `card_css`), and `icon` is what makes the chip legible at a glance down a
+# column of 28.
 STATUS_STYLES = {
     STATUS_COOK: {
-        "card": "border border-slate-700 border-l-4 border-l-emerald-400 bg-slate-800",
-        "badge": "bg-emerald-400/15 text-emerald-300",
+        "card": "border border-emerald-400/25 border-l-[3px] border-l-emerald-400 bg-emerald-400/[0.07]",
+        "badge": "bg-emerald-400/20 text-emerald-200 ring-1 ring-inset ring-emerald-300/30",
         "label": "COOK",
+        "icon": "local_fire_department",
+        "glow": "#34d399",
     },
     STATUS_LEFTOVER: {
-        "card": "border border-dashed border-slate-700 border-l-4 border-l-sky-400 bg-slate-800/40",
-        "badge": "bg-sky-400/15 text-sky-300",
+        "card": "border border-dashed border-sky-400/30 border-l-[3px] border-l-sky-400 bg-sky-400/[0.04]",
+        "badge": "bg-sky-400/15 text-sky-200 ring-1 ring-inset ring-sky-300/30",
         "label": "LEFTOVER",
+        "icon": "restore",
+        "glow": "#38bdf8",
     },
     STATUS_SKIP: {
-        "card": "border border-dashed border-slate-800 border-l-4 border-l-slate-700 bg-slate-900/40",
-        "badge": "bg-slate-700/40 text-slate-400",
+        "card": "border border-dashed border-slate-800 border-l-[3px] border-l-slate-700 bg-slate-900/40",
+        "badge": "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/30",
         "label": "SKIP",
+        "icon": "remove",
+        "glow": "#64748b",
     },
     STATUS_MISSING: {
-        "card": "border border-rose-900 border-l-4 border-l-rose-500 bg-rose-950/30",
-        "badge": "bg-rose-500/15 text-rose-300",
+        "card": "border border-rose-500/30 border-l-[3px] border-l-rose-500 bg-rose-500/[0.07]",
+        "badge": "bg-rose-500/20 text-rose-200 ring-1 ring-inset ring-rose-400/30",
         "label": "NOT GENERATED",
+        "icon": "error_outline",
+        "glow": "#fb7185",
     },
 }
 
@@ -157,6 +183,38 @@ MACRO_LABELS = [
     ("net_carbs_g", "C", "g"),
     ("fat_g", "F", "g"),
 ]
+
+# The three macros that ride behind the calorie figure on a card's micro-pill
+# strip, each with the tint that identifies it everywhere in the UI. Colour is
+# on the letter, not the number: the digits are what you compare between cards,
+# so they stay one weight and one colour down the whole column.
+MACRO_TINTS = {
+    "protein_g": "text-sky-300",
+    "net_carbs_g": "text-amber-300",
+    "fat_g": "text-violet-300",
+}
+
+# A title longer than this can't fit the card's two lines at this column width,
+# so it gets a tooltip carrying the full name. Below it the tooltip would only
+# repeat what is already on screen.
+TITLE_TOOLTIP_CHARS = 38
+
+# How far a telemetry bar can extend past its target before it stops growing.
+# The bar's full width is `max(1, ratio)` capped here, so an overshoot renders
+# as a real second segment rather than a bar pinned at 100% that looks
+# identical to landing exactly on budget.
+BAR_SCALE_LIMIT = 1.6
+
+# Band -> hex, for the telemetry bars. Hex rather than Quasar colour names
+# because these are painted onto plain divs (a two-segment bar is not something
+# `ui.linear_progress` can draw) and the same value has to serve as the
+# overshoot segment at reduced alpha.
+BAND_COLOURS = {
+    "on": "#34d399",  # within ±5% of target
+    "near": "#fbbf24",  # ±5–15%: worth seeing, not worth fixing
+    "off": "#fb7185",  # beyond ±15%
+    "none": "#475569",  # nothing generated for this day yet
+}
 
 # The one-click leftover action: tonight's dinner feeds tomorrow's lunch. This
 # is the overwhelmingly common bulk-cooking pattern (it is the same one
@@ -170,6 +228,21 @@ LINK_ACTION_LABEL = "Link to next lunch"
 # on a busy week — the colour is a hint, the hover outline (keyed on a unique
 # class per chain) is what disambiguates.
 LINK_COLOURS = ["#38bdf8", "#fbbf24", "#a78bfa", "#34d399", "#fb7185", "#22d3ee"]
+
+# The three targets that are editable in the drawer. Fat is deliberately not
+# among them: `derive_fat_g` computes it from the other three, so an input for
+# it could only ever disagree with the number the planner actually uses.
+TARGET_FIELDS = [
+    ("calories", "kcal"),
+    ("protein_g", "protein g"),
+    ("net_carbs_g", "carbs g"),
+]
+
+# Selectable workout types. "rest" is a legitimate entry (a day explicitly
+# marked as no training) but carries no macro split — `apply_training_adjustments`
+# skips it — so it isn't a key in TRAINING_INTENSITY_SPLIT and is appended here.
+TRAINING_TYPES = list(TRAINING_INTENSITY_SPLIT) + ["rest"]
+TRAINING_TYPE_LABELS = {value: humanize(value) for value in TRAINING_TYPES}
 
 
 # --------------------------------------------------------------------------
@@ -235,6 +308,21 @@ class PlannerState:
     model: str = DEFAULT_MODEL
     focus: Optional[SlotView] = None
     edited: bool = False
+    # Food already in the house, to be cooked through. Seeded from config's
+    # `inventory_to_clear` and edited in the drawer; it reaches the model as a
+    # priority, never a constraint (`planner.inventory_instruction`).
+    pantry: List[str] = field(default_factory=list)
+    # day -> partial macro dict, holding only what differs from config.json.
+    # Storing the *difference* rather than a full copy is what lets the drawer
+    # say which days are overridden and reset them one at a time, and means a
+    # day nobody touched still follows the file if the file changes.
+    target_overrides: Dict[str, dict] = field(default_factory=dict)
+    # Workout sessions ({day, time, type, duration_minutes, estimated_burn_kcal}).
+    # Seeded from config's `training_schedule` and edited in the drawer; like
+    # the pantry it is an input to the *next* run, folded into
+    # `planning_config()` by `planner.apply_training_adjustments` and never
+    # written back to config.json.
+    training_schedule: List[dict] = field(default_factory=list)
     # A run holds this client for 30s-3min per cooking day. The loop stays free
     # (planner dispatches each call to a thread), so the browser is still live
     # and perfectly able to click Generate again — this is the flag that says
@@ -258,6 +346,12 @@ class PlannerState:
             servings=int(config.get("serving_rules", {}).get("servings_per_meal", 2)),
             shop_days=list(config.get("shopping", {}).get("shop_days", [])),
             model=config.get("openrouter_model", DEFAULT_MODEL),
+            pantry=[
+                str(item).strip()
+                for item in config.get("inventory_to_clear") or []
+                if str(item).strip()
+            ],
+            training_schedule=[dict(session) for session in config.get("training_schedule") or []],
         )
         await state.reload_plan(repository)
         return state
@@ -396,13 +490,116 @@ class PlannerState:
         self.apply_spec(link_leftover(spec, target_id, source_id))
         return None
 
+    def planning_config(self) -> dict:
+        """Config as the *next* generation will see it.
+
+        The file on disk, plus everything the drawer can change: the model, the
+        per-day target overrides, the pantry list and the training schedule.
+        Assembled here rather than at the call site so one object carries all
+        of it — `generate_week_plan`, `validate_week`, `split_targets` and
+        `inventory_instruction` all read plain config, and each would
+        otherwise need its own patch applied.
+
+        `apply_training_adjustments` runs last, on top of the drawer's target
+        overrides: a workout's burn stacks onto whatever the day target
+        currently reads, edited or not, and its per-meal pin/notes have to be
+        in place before `calculate_daily_targets`/`meal_overrides_for` read
+        this config — that is what makes the telemetry header a live preview
+        of a training edit rather than something only the next generation
+        would show.
+
+        Nothing here is written back to config.json. Overrides are meant to be
+        "this week is different", and generating is still the only thing in
+        this app that touches disk.
+        """
+        schedule = {
+            day: dict(day_config, **self.target_overrides.get(day, {}))
+            for day, day_config in self.config["weekly_schedule"].items()
+        }
+        return apply_training_adjustments(
+            dict(
+                self.config,
+                weekly_schedule=schedule,
+                inventory_to_clear=list(self.pantry),
+                openrouter_model=self.model,
+                training_schedule=[dict(session) for session in self.training_schedule],
+            )
+        )
+
+    def planned_targets(self, day: str) -> dict:
+        """What the next run will aim at for `day` — file numbers plus overrides.
+
+        `fat_g` comes back derived, so the drawer shows the same figure the
+        model will be told rather than one the UI computed its own way.
+        """
+        return calculate_daily_targets(day, self.planning_config())
+
+    def set_target(self, day: str, key: str, value: float) -> None:
+        """Record a drawer edit to one of a day's macro targets.
+
+        A value equal to config.json clears that key instead of storing a no-op
+        override, so "overridden" always means "differs from the file". That is
+        also what makes the reset button able to undo itself: it writes the
+        file's numbers back into the inputs, and the change events those fire
+        land here and cancel out rather than re-creating the override.
+        """
+        base = self.config["weekly_schedule"].get(day, {})
+        override = dict(self.target_overrides.get(day, {}))
+        if float(base.get(key, 0)) == float(value):
+            override.pop(key, None)
+        else:
+            override[key] = float(value)
+
+        if override:
+            self.target_overrides[day] = override
+        else:
+            self.target_overrides.pop(day, None)
+
+    def clear_targets(self, day: Optional[str] = None) -> None:
+        """Drop one day's overrides, or the whole week's."""
+        if day is None:
+            self.target_overrides.clear()
+        else:
+            self.target_overrides.pop(day, None)
+
+    def add_training_session(self) -> None:
+        """Append a new workout row with sane defaults, ready to edit in place."""
+        self.training_schedule.append(
+            {
+                "day": self.days[0] if self.days else "Monday",
+                "time": "07:00",
+                "type": TRAINING_TYPES[0],
+                "duration_minutes": 60,
+                "estimated_burn_kcal": 300,
+            }
+        )
+
+    def remove_training_session(self, index: int) -> None:
+        if 0 <= index < len(self.training_schedule):
+            self.training_schedule.pop(index)
+
+    def has_training(self, day: str) -> bool:
+        return any(session.get("day") == day for session in self.training_schedule)
+
     def targets_for(self, day: str) -> dict:
-        """A generated week's targets are whatever it was generated against;
-        an un-generated one recomputes from config so the header still has a
-        denominator to show."""
+        """The denominator the telemetry header measures a day against.
+
+        An override — or a workout scheduled that day — wins over the
+        generated plan's own targets on purpose: the point of editing a
+        target, or a training session, before a run is to see how far the
+        current week sits from where you are about to aim it. Without this, a
+        cached `week_plan.json` would keep showing yesterday's target and a
+        training edit would silently do nothing until the next generation —
+        exactly the "not live" failure this control exists to avoid. Otherwise
+        a generated week is measured against what it was generated for, and an
+        un-generated one against config, so the header always has something to
+        divide by.
+        """
+        if day in self.target_overrides or self.has_training(day):
+            return self.planned_targets(day)
         if self.week_plan and day in self.week_plan.targets:
             return self.week_plan.targets[day]
-        return calculate_daily_targets(day, self.config)
+        return self.planned_targets(day)
 
     def totals_for(self, day: str) -> dict:
         if not self.week_plan:
@@ -540,6 +737,23 @@ def chain_css(chains: int) -> str:
     return "\n".join(rules)
 
 
+def card_hover_css() -> str:
+    """Per-status glow, keyed off `STATUS_STYLES[...]['glow']`.
+
+    A `box-shadow` rather than a border-width change: the latter reflows
+    neighbouring cards by a pixel on hover, which reads as a jitter down a
+    column of 28 cards rather than as polish.
+    """
+    rules = []
+    for status, look in STATUS_STYLES.items():
+        rules.append(
+            f".meal-card.card-{status}:hover {{"
+            f" border-color: {look['glow']};"
+            f" box-shadow: 0 0 0 1px {look['glow']}66, 0 0 14px 0 {look['glow']}40; }}"
+        )
+    return "\n".join(rules)
+
+
 def link_line(marker: str, text: str, colour: str) -> None:
     """The one-line "this card is tied to that one" note, in its chain's colour.
 
@@ -553,21 +767,46 @@ def link_line(marker: str, text: str, colour: str) -> None:
         ui.label(f"{marker} {text}").classes("text-[9px] truncate").style(f"color: {colour}")
 
 
-def macro_colour(actual: float, target: float) -> str:
-    """Quasar colour for how close a day landed to its calorie target.
+def macro_band(actual: float, target: float) -> str:
+    """Which `BAND_COLOURS` key a day landed in against one macro's target.
 
     A single scale factor can't fix a bad macro *ratio* (CLAUDE.md), so this is
-    a read on the day, not a promise the plan is right — the bands are wide
-    enough that only a genuinely off day goes red.
+    a read on the day, not a promise the plan is right — on ±5%, near ±15%,
+    off beyond that. Wide enough that only a genuinely off day goes red.
     """
     if target <= 0 or actual <= 0:
-        return "grey-7"
-    ratio = actual / target
-    if 0.9 <= ratio <= 1.1:
-        return "positive"
-    if 0.75 <= ratio <= 1.25:
-        return "warning"
-    return "negative"
+        return "none"
+    delta = abs(actual / target - 1)
+    if delta <= 0.05:
+        return "on"
+    if delta <= 0.15:
+        return "near"
+    return "off"
+
+
+def telemetry_bar(actual: float, target: float, *, height: str = "8px") -> None:
+    """A target-vs-actual bar that keeps growing past 100% instead of clipping.
+
+    Plain nested divs, not `ui.linear_progress`: a bar pinned at 100% looks
+    identical whether a day landed on target or blew past it, so the fill
+    is scaled against `BAR_SCALE_LIMIT` and a genuine overshoot renders as a
+    visibly longer bar. The thin marker line is where the target itself sits
+    on that same scale, so "landed short" and "landed long" both read at a
+    glance relative to it.
+    """
+    colour = BAND_COLOURS[macro_band(actual, target)]
+    ratio = (actual / target) if target else 0.0
+    fill_pct = min(max(ratio, 0.0), BAR_SCALE_LIMIT) / BAR_SCALE_LIMIT * 100
+    target_pct = 100 / BAR_SCALE_LIMIT
+    with ui.element("div").classes(
+        "relative w-full rounded-full bg-slate-800 overflow-hidden"
+    ).style(f"height: {height}"):
+        ui.element("div").classes(
+            "absolute inset-y-0 left-0 rounded-full transition-all duration-300"
+        ).style(f"width: {fill_pct:.1f}%; background: {colour};")
+        ui.element("div").classes("absolute inset-y-0 w-px bg-slate-100/50").style(
+            f"left: {target_pct:.1f}%;"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -589,6 +828,8 @@ async def planner_page() -> None:
         # bound is the week's shape, not its current contents, so it stays
         # valid however the grid is edited afterwards.
         + chain_css((len(state.days) * len(state.meal_types)) // 2)
+        + "\n"
+        + card_hover_css()
     )
 
     # ---- recipe detail (read-only) ---------------------------------------
@@ -602,7 +843,9 @@ async def planner_page() -> None:
             ui.label("Nothing to show.").classes("text-slate-400")
             return
 
-        ui.label(view.title).classes("text-lg font-semibold")
+        with ui.element("div").classes("flex flex-row items-center gap-1.5"):
+            ui.icon("restaurant").classes("text-base text-emerald-300")
+            ui.label(view.title).classes("text-lg font-semibold")
         meta = " · ".join(
             part
             for part in [
@@ -687,11 +930,12 @@ async def planner_page() -> None:
         if view is None:
             view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
         look = STATUS_STYLES[view.status]
-        clickable = "cursor-pointer hover:brightness-125" if view.recipe else ""
+        clickable = "cursor-pointer" if view.recipe else ""
         chain = f"chain chain-{view.chain}" if view.chain is not None else ""
 
         with ui.element("div").classes(
-            f"rounded p-2 flex flex-col gap-1 min-w-0 {look['card']} {chain}"
+            f"meal-card card-{view.status} rounded p-2 flex flex-col gap-1 min-w-0 "
+            f"transition-shadow duration-150 {look['card']} {chain}"
         ):
             # The recipe dialog opens from this inner block rather than the
             # card, so the action button below is a sibling of it and a click
@@ -705,13 +949,26 @@ async def planner_page() -> None:
                     ui.label(meal_type[:5].upper()).classes(
                         "text-[9px] font-semibold tracking-widest text-slate-500"
                     )
-                    ui.label(look["label"]).classes(
-                        f"text-[9px] font-semibold px-1 rounded {look['badge']}"
-                    )
+                    with ui.element("div").classes(
+                        "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
+                        f"{look['badge']}"
+                    ):
+                        ui.icon(look["icon"]).classes("text-[10px]")
+                        ui.label(look["label"]).classes(
+                            "text-[8px] font-semibold tracking-wide"
+                        )
 
-                ui.label(view.title).classes(
-                    "text-[11px] leading-tight font-medium text-slate-100 line-clamp-2"
+                # Bold, larger than the rest of the card — the one thing a
+                # scan down a column of 28 cards actually needs to read.
+                # Titles past TITLE_TOOLTIP_CHARS can't fit the two clamped
+                # lines at this column width, so they get a tooltip with the
+                # full name instead of just being cut off silently.
+                title_label = ui.label(view.title).classes(
+                    "text-[12px] leading-tight font-bold text-slate-100 line-clamp-2"
                 )
+                if len(view.title) > TITLE_TOOLTIP_CHARS:
+                    with title_label:
+                        ui.tooltip(view.title)
 
                 tags = " · ".join(part for part in [view.style, view.cuisine] if part)
                 if tags:
@@ -723,14 +980,22 @@ async def planner_page() -> None:
                     link_line("→ feeds", " · ".join(view.feeds), view.chain_colour)
 
                 if view.macros:
-                    with ui.element("div").classes("flex flex-row gap-1.5 mt-0.5"):
-                        for key, short, unit in MACRO_LABELS:
-                            text = (
-                                f"{view.macros[key]:.0f}"
-                                if key == "calories"
-                                else f"{short}{view.macros[key]:.0f}"
+                    # One pill, "450 kcal · 45g P · 30g C · 12g F" — a colour
+                    # per macro (MACRO_TINTS) rather than per digit, so the
+                    # numbers stay comparable down the column while the
+                    # letters carry the identity.
+                    with ui.element("div").classes(
+                        "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
+                        "rounded-full bg-slate-950/40 w-fit max-w-full"
+                    ):
+                        ui.label(f"{view.macros['calories']:.0f} kcal").classes(
+                            "text-[9px] font-mono text-slate-300"
+                        )
+                        for key, short, unit in MACRO_LABELS[1:]:
+                            ui.label("·").classes("text-[9px] text-slate-600")
+                            ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
+                                f"text-[9px] font-mono {MACRO_TINTS[key]}"
                             )
-                            ui.label(text).classes("text-[9px] font-mono text-slate-400")
 
                 if view.mode == MODE_COOK and view.portions:
                     ui.label(
@@ -743,14 +1008,22 @@ async def planner_page() -> None:
                 # Left enabled even when it can't be applied: a disabled Quasar
                 # button swallows hover, so the tooltip explaining *why* would
                 # never appear. Clicking says the same thing in a notification.
+                # Styled as a real (if tiny) primary action — a filled pill
+                # rather than flat text — so the one edit this UI offers reads
+                # as an action, not a caption.
                 button = ui.button(
                     LINK_ACTION_LABEL,
                     icon="subdirectory_arrow_right",
                     on_click=lambda v=view: on_link_next_lunch(v),
                 )
-                button.props("dense flat no-caps size=sm").classes(
-                    "self-start min-h-0 px-1 py-0 text-[9px] "
-                    + ("text-slate-600" if view.link_error else "text-sky-300")
+                button.props("unelevated dense no-caps size=sm").classes(
+                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    "transition-all duration-150 "
+                    + (
+                        "bg-slate-800/60 text-slate-600"
+                        if view.link_error
+                        else "bg-sky-400/15 text-sky-200 hover:bg-sky-400/25 hover:scale-105"
+                    )
                 )
                 with button:
                     ui.tooltip(
@@ -784,28 +1057,47 @@ async def planner_page() -> None:
             for day in state.days:
                 target = state.targets_for(day)
                 totals = state.totals_for(day)
-                kcal, goal = totals["calories"], float(target["calories"])
+                kcal, kcal_goal = totals["calories"], float(target["calories"])
+                protein, protein_goal = totals["protein_g"], float(target["protein_g"])
+                overridden = day in state.target_overrides
+                training = state.has_training(day)
                 with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
-                        ui.label(day[:3].upper()).classes(
-                            "text-[11px] font-semibold tracking-wider text-slate-300"
+                        # A dot is why the denominator moved: amber for a drawer
+                        # target override, emerald for a scheduled workout —
+                        # either way this day is being measured against a live
+                        # preview, not config.json or the numbers the week was
+                        # actually generated for.
+                        marker = "•" if overridden else ("⚡" if training else "")
+                        ui.label(day[:3].upper() + marker).classes(
+                            "text-[11px] font-semibold tracking-wider "
+                            + (
+                                "text-amber-300"
+                                if overridden
+                                else "text-emerald-300" if training else "text-slate-300"
+                            )
                         )
-                        ui.label(f"{kcal:.0f}/{goal:.0f}").classes(
+                        ui.label(f"{kcal:.0f}/{kcal_goal:.0f} kcal").classes(
                             "text-[10px] font-mono text-slate-400"
                         )
-                    # Clamped to 1.0 — an overshoot is reported by the delta
-                    # text and the colour, not by a bar that runs off the end.
-                    ui.linear_progress(
-                        value=min(1.0, kcal / goal) if goal else 0.0,
-                        size="8px",
-                        show_value=False,
-                        color=macro_colour(kcal, goal),
-                    ).props("rounded")
-                    with ui.element("div").classes("flex flex-row gap-2"):
-                        for key, short, unit in MACRO_LABELS[1:]:
+                    # Calories: the primary bar, dual-segmented — fill colour
+                    # bands on how close the day landed (macro_band), and a
+                    # thin marker at the target itself so an overshoot reads as
+                    # "past the line" rather than just "a long green bar".
+                    telemetry_bar(kcal, kcal_goal, height="9px")
+                    with ui.element("div").classes("flex flex-row justify-between items-baseline"):
+                        ui.label("protein").classes(
+                            "text-[9px] uppercase tracking-wide text-slate-500"
+                        )
+                        ui.label(f"{protein:.0f}/{protein_goal:.0f}g").classes(
+                            f"text-[9px] font-mono {MACRO_TINTS['protein_g']}"
+                        )
+                    telemetry_bar(protein, protein_goal, height="5px")
+                    with ui.element("div").classes("flex flex-row gap-2 mt-0.5"):
+                        for key, short, unit in MACRO_LABELS[2:]:
                             ui.label(
                                 f"{short} {totals[key]:.0f}/{float(target[key]):.0f}{unit}"
-                            ).classes("text-[10px] font-mono text-slate-500")
+                            ).classes(f"text-[9px] font-mono {MACRO_TINTS[key]}")
                     with ui.tooltip():
                         for key, short, unit in MACRO_LABELS:
                             delta = totals[key] - float(target[key])
@@ -813,10 +1105,160 @@ async def planner_page() -> None:
                                 f"{short}: {totals[key]:.0f}{unit} "
                                 f"({delta:+.0f} vs {float(target[key]):.0f})"
                             )
+                        if overridden:
+                            ui.label("target overridden — applies on next generation")
+                        if training:
+                            ui.label("training day — burn folded into target, applies on next generation")
+
+    # ---- shopping list: right-hand slide-over ----------------------------
+    # A drawer rather than a dialog because this list is read *against* the
+    # grid — "what is Wednesday's trip for" is answered by looking at both at
+    # once — and a modal would cover the week it describes.
+    #
+    # Everything shown here is derived from the plan on each repaint; nothing
+    # is stored. The ticks are the exception, and they are deliberately not
+    # persisted: this is a scratch list for one trip, not another piece of
+    # state that could disagree with week_plan.json.
+
+    def copy_for_keep(text: str, label: str) -> None:
+        """Put `text` on the system clipboard, formatted for a Keep list.
+
+        `json.dumps` here is escaping a JavaScript string literal, not touching
+        storage — an ingredient name with an apostrophe in it ("Bird's eye
+        chilli", seen on a real run) would otherwise end the literal early and
+        break the whole handler. The `execCommand` branch is for the
+        non-localhost case: `navigator.clipboard` is unavailable outside a
+        secure context, and this server is often reached over plain HTTP on a
+        LAN address.
+        """
+        ui.run_javascript(
+            f"""
+            const text = {json.dumps(text)};
+            if (navigator.clipboard && window.isSecureContext) {{
+                navigator.clipboard.writeText(text);
+            }} else {{
+                const area = document.createElement('textarea');
+                area.value = text;
+                area.style.position = 'fixed';
+                area.style.opacity = '0';
+                document.body.appendChild(area);
+                area.select();
+                document.execCommand('copy');
+                area.remove();
+            }}
+            """
+        )
+        ui.notify(f"{label} copied — paste into a Google Keep list", type="positive")
+
+    @ui.refreshable
+    def shopping_panel() -> None:
+        plan = state.week_plan
+        if plan is None:
+            ui.label("No shopping list yet").classes("text-sm text-slate-300")
+            ui.label(
+                "A list is built from generated recipes, so there is nothing to buy "
+                "until the week has been generated."
+            ).classes("text-xs text-slate-500")
+            return
+
+        windows = shopping_windows(state.days, state.shop_days)
+        if not windows:
+            ui.label("No shopping days set — pick some in the drawer.").classes(
+                "text-xs text-slate-400"
+            )
+            return
+
+        for window in windows:
+            # By cook day, never eating day: a Sunday batch eaten on Wednesday
+            # is bought entirely on the Sunday trip, so its ingredients are
+            # never split across two lists.
+            events = plan.events_on_days(window.days)
+            shopping_list = aggregate_cook_events(events, window.days) if events else None
+
+            with ui.element("div").classes(
+                "flex flex-col gap-2 p-2 rounded border border-slate-800 bg-slate-950/40"
+            ):
+                with ui.element("div").classes("flex flex-row items-center justify-between gap-2"):
+                    with ui.element("div").classes("flex flex-col min-w-0"):
+                        ui.label(window.label).classes("text-xs font-semibold text-slate-100")
+                        ui.label(
+                            f"{len(events)} cook session(s)"
+                            + (f" · {len(shopping_list.items())} items" if shopping_list else "")
+                        ).classes("text-[10px] text-slate-500")
+                    if shopping_list:
+                        ui.button(
+                            "Copy for Keep",
+                            icon="content_copy",
+                            on_click=lambda sl=shopping_list, w=window: copy_for_keep(
+                                format_shopping_list_keep(sl), w.label
+                            ),
+                        ).props("dense flat no-caps size=sm").classes("shrink-0 text-sky-300")
+
+                if not events:
+                    ui.label("Nothing cooked in this window.").classes(
+                        "text-[11px] text-slate-500 italic"
+                    )
+                    continue
+
+                # A failed day contributes no recipe and therefore no
+                # ingredients, so say so here: a short list is otherwise
+                # indistinguishable from a cheap week.
+                failed = [day for day in window.days if day in plan.failures]
+                if failed:
+                    ui.label(
+                        f"{', '.join(failed)} failed to generate — nothing for "
+                        "those meals is on this list."
+                    ).classes("text-[10px] text-rose-300 p-1 rounded bg-rose-500/10")
+
+                # Quoted because NiceGUI's props parser drops an unquoted value
+                # containing brackets — `header-class=text-[11px]` silently
+                # never reaches Quasar at all.
+                with ui.expansion("What this trip is for").props(
+                    "dense header-class='text-[11px] text-slate-400 px-0'"
+                ).classes("w-full"):
+                    ui.label(
+                        "Quantities below already include every portion."
+                    ).classes("text-[10px] text-slate-500")
+                    for line in cook_plan_lines(events):
+                        ui.label(line).classes("text-[10px] text-slate-400")
+
+                for department in sorted(shopping_list.categories):
+                    ui.label(department).classes(
+                        "text-[10px] uppercase tracking-widest text-slate-500 mt-1"
+                    )
+                    for item in shopping_list.categories[department]:
+                        text = f"{item.name} — {format_quantity(item.name, item.total_amount_g)}"
+                        # buy_late is a perishable this window doesn't cook for
+                        # days yet. Annotated, never moved to another trip —
+                        # whether to make a second run is the shopper's call.
+                        if item.buy_late:
+                            text += "  ← buy fresh closer to the day"
+                        ui.checkbox(text).props("dense size=xs color=teal").classes(
+                            "text-[11px] "
+                            + ("text-amber-300" if item.buy_late else "text-slate-200")
+                        )
+
+    with ui.right_drawer(value=False, bordered=True).classes(
+        "bg-slate-900 p-3 flex flex-col gap-3 overflow-y-auto"
+    ).props(":width=420") as shopping_drawer:
+        with ui.element("div").classes("flex flex-row items-center justify-between"):
+            with ui.element("div").classes("flex flex-row items-center gap-1"):
+                ui.icon("shopping_cart").classes("text-sm text-slate-500")
+                ui.label("Shopping list").classes(
+                    "text-xs uppercase tracking-widest text-slate-500"
+                )
+            ui.button(icon="close", on_click=lambda: shopping_drawer.hide()).props(
+                "dense flat size=sm"
+            ).classes("text-slate-400")
+        shopping_panel()
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
         with ui.element("div").classes("flex flex-row items-baseline gap-3"):
-            ui.label("AI Weekly Meal Planner").classes("text-sm font-semibold tracking-wide")
+            with ui.element("div").classes("flex flex-row items-center gap-1.5"):
+                ui.icon("restaurant_menu").classes("text-sm text-slate-300")
+                ui.label("AI Weekly Meal Planner").classes(
+                    "text-sm font-semibold tracking-wide"
+                )
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state,
                 "week_plan",
@@ -836,6 +1278,16 @@ async def planner_page() -> None:
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
             )
+            shopping_button = ui.button(
+                "Shopping list",
+                icon="shopping_cart",
+                on_click=shopping_drawer.toggle,
+            ).props("dense flat no-caps size=sm").classes("text-slate-200")
+            with shopping_button:
+                ui.tooltip(
+                    "Every shopping trip in this week, grouped by department — "
+                    "built from the grid as it stands, including any edits."
+                )
         telemetry()
 
     # ---- left drawer: global controls ------------------------------------
@@ -869,10 +1321,200 @@ async def planner_page() -> None:
                 for day, error in failures.items():
                     ui.label(f"{day}: {error}").classes("text-[10px] text-rose-200/80")
 
+    # ---- left drawer: per-day macro targets ------------------------------
+
+    def day_target_row(day: str) -> None:
+        """One day's editable calorie/protein/carb targets.
+
+        The row is built once and then mutated in place — the derived-fat
+        readout has to keep up with every keystroke, and repainting a section
+        that owns the focused input would take the cursor out of the number
+        being typed. Only `telemetry` is refreshed on an edit, because that is
+        the only other thing on screen showing a target.
+        """
+        target = state.planned_targets(day)
+        inputs: Dict[str, ui.number] = {}
+
+        def sync() -> None:
+            current = state.planned_targets(day)
+            fat_label.text = f"fat {current['fat_g']:.0f}g"
+            reset.set_visibility(day in state.target_overrides)
+            telemetry.refresh()
+
+        def on_edit(key: str, event) -> None:
+            # An empty box is a half-typed number, not a target of zero.
+            # Ignoring it leaves the day on its last real value instead of
+            # briefly planning a 0 kcal Tuesday.
+            if event.value is None or event.value == "":
+                return
+            state.set_target(day, key, float(event.value))
+            sync()
+
+        def on_reset() -> None:
+            state.clear_targets(day)
+            restored = state.planned_targets(day)
+            for key, number in inputs.items():
+                number.value = restored[key]
+            sync()
+
+        with ui.element("div").classes("flex flex-col gap-1"):
+            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+                ui.label(day).classes("text-[11px] font-semibold text-slate-200")
+                with ui.element("div").classes("flex flex-row items-center gap-1"):
+                    # Fat is shown, never typed: it is whatever energy is left
+                    # once protein and carbs are paid for.
+                    fat_label = ui.label(f"fat {target['fat_g']:.0f}g").classes(
+                        "text-[10px] font-mono text-slate-500"
+                    )
+                    reset = (
+                        ui.button(icon="undo", on_click=on_reset)
+                        .props("dense flat size=xs")
+                        .classes("min-h-0 p-0 text-amber-300")
+                    )
+                    reset.set_visibility(day in state.target_overrides)
+                    with reset:
+                        ui.tooltip(f"Reset {day} to config.json")
+            with ui.element("div").classes("grid grid-cols-3 gap-1"):
+                for key, label in TARGET_FIELDS:
+                    inputs[key] = (
+                        ui.number(
+                            label=label,
+                            value=target[key],
+                            min=0,
+                            step=10,
+                            precision=0,
+                            on_change=lambda event, k=key: on_edit(k, event),
+                        )
+                        # Debounced so holding a key doesn't repaint the
+                        # telemetry header once per digit.
+                        .props("dense outlined debounce=350")
+                        .classes("w-full")
+                    )
+
+    @ui.refreshable
+    def targets_editor() -> None:
+        """The whole week's targets, in the same order as the grid.
+
+        Refreshable only so a change of week start reorders it; edits inside it
+        never refresh it (see `day_target_row`).
+        """
+        for day in state.days:
+            day_target_row(day)
+
+        def reset_all() -> None:
+            state.clear_targets()
+            targets_editor.refresh()
+            telemetry.refresh()
+
+        with ui.element("div").classes("flex flex-row items-center justify-between mt-1"):
+            ui.label().classes("text-[10px] text-amber-300").bind_text_from(
+                state,
+                "target_overrides",
+                backward=lambda overrides: (
+                    f"{len(overrides)} day(s) overridden" if overrides else ""
+                ),
+            )
+            ui.button("Reset all", icon="undo", on_click=reset_all).props(
+                "dense flat no-caps size=sm"
+            ).classes("text-slate-400").bind_visibility_from(
+                state, "target_overrides", backward=bool
+            )
+
+    # ---- left drawer: training & activity schedule ------------------------
+
+    def training_field_handler(index: int, key: str):
+        """One `on_change` callback per (row, field) — index and key baked in
+        via closure arguments, not looked up from the row at call time, so a
+        row removed or reordered between render and edit can't corrupt the
+        wrong entry."""
+
+        def handler(event) -> None:
+            if event.value is None or event.value == "":
+                return
+            state.training_schedule[index][key] = event.value
+            # A training edit changes the day's expanded target and, for the
+            # pinned slot, its meal_override — both feed `planned_targets`, so
+            # both live-preview surfaces have to repaint, same as a target
+            # override edit.
+            telemetry.refresh()
+            targets_editor.refresh()
+
+        return handler
+
+    @ui.refreshable
+    def training_editor() -> None:
+        if not state.training_schedule:
+            ui.label("No workouts scheduled.").classes(
+                "text-[10px] text-slate-500 italic"
+            )
+        for index, session in enumerate(state.training_schedule):
+
+            def on_remove(i: int = index) -> None:
+                state.remove_training_session(i)
+                training_editor.refresh()
+                telemetry.refresh()
+                targets_editor.refresh()
+
+            with ui.element("div").classes(
+                "flex flex-col gap-1 p-1.5 rounded border border-slate-800 bg-slate-950/30"
+            ):
+                with ui.element("div").classes("flex flex-row items-center gap-1"):
+                    ui.select(
+                        state.days,
+                        value=session.get("day"),
+                        on_change=training_field_handler(index, "day"),
+                    ).props("dense outlined").classes("flex-1 min-w-0")
+                    ui.button(icon="delete", on_click=on_remove).props(
+                        "dense flat size=xs"
+                    ).classes("min-h-0 p-0 text-slate-500")
+                with ui.element("div").classes("grid grid-cols-2 gap-1"):
+                    ui.input(
+                        label="Time (HH:MM)",
+                        value=session.get("time", ""),
+                        on_change=training_field_handler(index, "time"),
+                    ).props("dense outlined debounce=350").classes("w-full")
+                    ui.select(
+                        TRAINING_TYPE_LABELS,
+                        value=session.get("type"),
+                        on_change=training_field_handler(index, "type"),
+                    ).props("dense outlined").classes("w-full")
+                    ui.number(
+                        label="Duration (min)",
+                        value=session.get("duration_minutes", 0),
+                        min=0,
+                        step=5,
+                        precision=0,
+                        on_change=training_field_handler(index, "duration_minutes"),
+                    ).props("dense outlined debounce=350").classes("w-full")
+                    ui.number(
+                        label="Burn (kcal)",
+                        value=session.get("estimated_burn_kcal", 0),
+                        min=0,
+                        step=10,
+                        precision=0,
+                        on_change=training_field_handler(index, "estimated_burn_kcal"),
+                    ).props("dense outlined debounce=350").classes("w-full")
+
+        def on_add() -> None:
+            state.add_training_session()
+            training_editor.refresh()
+            telemetry.refresh()
+            targets_editor.refresh()
+
+        ui.button("Add session", icon="add", on_click=on_add).props(
+            "dense flat no-caps size=sm"
+        ).classes("text-slate-400 mt-1")
+
     def refresh_all() -> None:
         telemetry.refresh()
         canvas.refresh()
         week_summary.refresh()
+        # The list is derived from the plan, so anything that changes the plan —
+        # a generation, a reload, a leftover link that grows a batch — changes
+        # what you have to buy.
+        shopping_panel.refresh()
+        targets_editor.refresh()
+        training_editor.refresh()
 
     async def reload_from_disk() -> None:
         await state.reload_plan(REPOSITORY)
@@ -893,7 +1535,9 @@ async def planner_page() -> None:
         with ui.element("div").classes(
             "bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full flex flex-col gap-2"
         ):
-            ui.label("Generating week").classes("text-sm font-semibold")
+            with ui.element("div").classes("flex flex-row items-center gap-1.5"):
+                ui.icon("bolt").classes("text-sm text-amber-300")
+                ui.label("Generating week").classes("text-sm font-semibold")
             progress_status = ui.label("Starting…").classes("text-xs text-slate-300")
             progress_bar = ui.linear_progress(value=0.0, size="10px", show_value=False).props(
                 "rounded color=primary"
@@ -934,8 +1578,10 @@ async def planner_page() -> None:
             progress_dialog.close()
 
     async def generate_week() -> None:
-        # The drawer's model wins over config's: it is the one the user can see.
-        config = dict(state.config, openrouter_model=state.model)
+        # The drawer wins over the file throughout: the model, the per-day
+        # target overrides and the pantry list are the ones the user can
+        # actually see, and this run is what they were entered for.
+        config = state.planning_config()
         key_error = api_key_error()
         if key_error:
             # Checked up front rather than left to fail per-day: it would fail
@@ -1029,10 +1675,14 @@ async def planner_page() -> None:
                 type="positive",
             )
 
-    with ui.left_drawer(bordered=True).classes("bg-slate-900 p-3 gap-3 flex flex-col").props(
-        ":width=270"
-    ):
-        ui.label("Week setup").classes("text-xs uppercase tracking-widest text-slate-500")
+    with ui.left_drawer(bordered=True).classes(
+        "bg-slate-900 p-3 gap-3 flex flex-col overflow-y-auto"
+    ).props(":width=320"):
+        with ui.element("div").classes("flex flex-row items-center gap-1"):
+            ui.icon("settings").classes("text-xs text-slate-500")
+            ui.label("Week setup").classes(
+                "text-xs uppercase tracking-widest text-slate-500"
+            )
 
         all_days = list(state.config["weekly_schedule"].keys())
 
@@ -1066,6 +1716,9 @@ async def planner_page() -> None:
         def on_shop_days(event) -> None:
             state.shop_days = list(event.value or [])
             week_summary.refresh()
+            # Shop days *are* the window boundaries, so this repartitions every
+            # list in the shopping drawer.
+            shopping_panel.refresh()
 
         ui.select(
             all_days,
@@ -1079,7 +1732,67 @@ async def planner_page() -> None:
         ).classes("w-full")
 
         ui.separator()
-        ui.label("This week").classes("text-xs uppercase tracking-widest text-slate-500")
+
+        # Collapsed by default: seven days x three numbers is the densest thing
+        # in the drawer, and most weeks run on the config file's targets.
+        with ui.expansion("Daily macro targets & overrides", icon="tune").classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
+            ui.label(
+                "Applies to the next generation only — config.json is not changed."
+            ).classes("text-[10px] text-slate-500 mb-1")
+            with ui.element("div").classes("flex flex-col gap-2"):
+                targets_editor()
+
+        with ui.expansion("Inventory to clear (pantry)", icon="kitchen").classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
+
+            def on_pantry(event) -> None:
+                state.pantry = [
+                    str(item).strip() for item in (event.value or []) if str(item).strip()
+                ]
+
+            # `new_value_mode="add-unique"` is what makes this a free-text
+            # multi-item box rather than a picker: there is no fixed list of
+            # things that can be in your fridge. Seeded from config so an
+            # inventory set on disk shows up already entered.
+            ui.select(
+                list(state.pantry),
+                value=list(state.pantry),
+                label="Things to use up",
+                multiple=True,
+                new_value_mode="add-unique",
+                on_change=on_pantry,
+            ).props(
+                "dense outlined use-chips use-input hide-dropdown-icon "
+                'input-debounce=0 placeholder="600g chicken thighs — press enter"'
+            ).classes("w-full")
+            ui.label(
+                "A priority, not a rule: the model prefers these where they fit and "
+                "never bends a meal's style, cuisine or macro budget to use one up. "
+                "They are still ordinary ingredients, so they still appear on the "
+                "shopping list."
+            ).classes("text-[10px] text-slate-500 mt-1")
+
+        with ui.expansion("Training & Activity Schedule", icon="fitness_center").classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
+            ui.label(
+                "A workout's burn is added to that day's target, and the meal "
+                "closest to it is pinned for glycogen replenishment — see "
+                "Macro targets above and the meal brief once generated. Applies "
+                "to the next generation only, same as targets and pantry."
+            ).classes("text-[10px] text-slate-500 mb-1")
+            with ui.element("div").classes("flex flex-col gap-1.5"):
+                training_editor()
+
+        ui.separator()
+        with ui.element("div").classes("flex flex-row items-center gap-1"):
+            ui.icon("insights").classes("text-xs text-slate-500")
+            ui.label("This week").classes(
+                "text-xs uppercase tracking-widest text-slate-500"
+            )
         week_summary()
 
         ui.separator()
@@ -1213,6 +1926,156 @@ DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack
 # producing an absurd portion (a 30g breakfast, a 900g steak).
 PORTION_TRIM_LIMITS = (0.6, 1.6)
 PORTION_TRIM_DEADBAND = 0.03
+
+# Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
+# glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
+# to 1 per type so the whole burn is accounted for and fat_g (derived from
+# whatever calories are left) is left exactly as it was before the workout.
+TRAINING_INTENSITY_SPLIT = {
+    "gym_hypertrophy": {"carb_share": 0.5, "protein_share": 0.5},
+    "cardio_run": {"carb_share": 0.75, "protein_share": 0.25},
+    "walk": {"carb_share": 0.7, "protein_share": 0.3},
+}
+
+# Approximate clock time for each meal type. The schema has no real per-meal
+# time, so this is a fixed stand-in used only to find which meal a workout
+# sits closest to — good enough to decide "before" vs. "after", not a
+# calendar feature.
+MEAL_TIME_OF_DAY = {
+    "breakfast": "07:00",
+    "lunch": "12:30",
+    "snack": "15:30",
+    "dinner": "19:00",
+}
+
+# A workout within this many minutes *after* a meal is "fuelled by" that
+# meal, per the spec's "within 2 hours" rule for digestion constraints.
+TRAINING_PRE_WORKOUT_DIGESTION_MINUTES = 120
+
+
+def _clock_minutes(value: str) -> int:
+    hours, _, minutes = str(value).partition(":")
+    try:
+        return int(hours or 0) * 60 + int(minutes or 0)
+    except ValueError:
+        # A drawer time field is free text — a malformed value must not take
+        # the whole telemetry preview down with it, same tolerance as a
+        # malformed meal_override.
+        logger.warning("training_schedule: ignoring unparseable time '%s'", value)
+        return 0
+
+
+def apply_training_adjustments(config: dict) -> dict:
+    """Fold `config["training_schedule"]` into targets before they're calculated.
+
+    Returns a new config — this module never mutates the one it's handed —
+    with three changes per scheduled (non-rest) session:
+
+    A. Daily budget expansion: `estimated_burn_kcal` is added straight onto
+       the day's `calories`, and split into `protein_g`/`net_carbs_g`
+       additions by `TRAINING_INTENSITY_SPLIT`. The shares sum to 1, so
+       `derive_fat_g` lands on the same fat_g the day had before the workout
+       — a workout buys back carbs and protein, not fat.
+    B. Meal slot pinning: whichever configured meal type sits closest in
+       clock time (`MEAL_TIME_OF_DAY`) to the workout, on the side it
+       follows, is given a `meal_override` carrying half the day's
+       (post-expansion) carbs, its usual weighted share of protein and fat.
+       `meal_overrides_for`'s two-pass split then takes care of the rest —
+       the other meals absorb what's left exactly as any other pin does. An
+       explicit override the config already set for that meal always wins;
+       this never overwrites one.
+    C. Digestion rules: any meal within `TRAINING_PRE_WORKOUT_DIGESTION_MINUTES`
+       *before* the workout gets a prompt note (`training_notes`, read by
+       `build_slot_brief`) asking for low-fibre, low-fat, easily digestible
+       food — a constraint on what the meal is made of, not its macros, so it
+       doesn't fight step B.
+
+    Called once, up front (CLI: `run_cli`; UI: `PlannerState.planning_config`)
+    so every downstream reader — `week_targets`, `meal_overrides_for`,
+    `build_slot_brief` — sees the same already-adjusted config rather than
+    each needing its own patch.
+    """
+    sessions = [
+        session
+        for session in config.get("training_schedule", [])
+        if session.get("type") != "rest" and float(session.get("estimated_burn_kcal", 0) or 0) > 0
+    ]
+    if not sessions:
+        return config
+
+    schedule = {day: dict(targets) for day, targets in config["weekly_schedule"].items()}
+    notes: Dict[str, Dict[str, str]] = {}
+    weights = config.get("meal_weights", DEFAULT_MEAL_WEIGHTS)
+    day_meals = [meal_type for meal_type in meal_types(config) if meal_type in MEAL_TIME_OF_DAY]
+
+    for session in sessions:
+        day = session.get("day")
+        if day not in schedule:
+            logger.warning("training_schedule: ignoring session for unknown day '%s'", day)
+            continue
+        split = TRAINING_INTENSITY_SPLIT.get(session.get("type"))
+        if split is None:
+            logger.warning(
+                "training_schedule: ignoring session with unknown type '%s' on %s",
+                session.get("type"), day,
+            )
+            continue
+
+        burn = float(session["estimated_burn_kcal"])
+        day_targets = schedule[day]
+        day_targets["calories"] = day_targets.get("calories", 0) + burn
+        day_targets["protein_g"] = (
+            day_targets.get("protein_g", 0) + burn * split["protein_share"] / 4
+        )
+        day_targets["net_carbs_g"] = (
+            day_targets.get("net_carbs_g", 0) + burn * split["carb_share"] / 4
+        )
+
+        if not day_meals:
+            continue
+        workout_minutes = _clock_minutes(session.get("time", "00:00"))
+        nearest = min(
+            day_meals, key=lambda meal: abs(_clock_minutes(MEAL_TIME_OF_DAY[meal]) - workout_minutes)
+        )
+
+        if _clock_minutes(MEAL_TIME_OF_DAY[nearest]) >= workout_minutes:
+            overrides = dict(day_targets.get("meal_overrides") or {})
+            if nearest not in overrides:
+                day_fat_g = derive_fat_g(
+                    day_targets["calories"], day_targets["protein_g"], day_targets["net_carbs_g"]
+                )
+                weight = weights.get(nearest, 0.25) or 0.25
+                pinned_protein = round(day_targets["protein_g"] * weight, 1)
+                pinned_carbs = round(day_targets["net_carbs_g"] * 0.5, 1)
+                pinned_fat = round(day_fat_g * weight, 1)
+                overrides[nearest] = {
+                    "calories": round(pinned_protein * 4 + pinned_carbs * 4 + pinned_fat * 9, 1),
+                    "protein_g": pinned_protein,
+                    "net_carbs_g": pinned_carbs,
+                    "fat_g": pinned_fat,
+                }
+                day_targets["meal_overrides"] = overrides
+                notes.setdefault(day, {})[nearest] = (
+                    "[POST-WORKOUT MEAL: high glycogen replenishment required — "
+                    f"carb-forward to refuel after {humanize(session.get('type'))}]"
+                )
+
+        for meal in day_meals:
+            gap = workout_minutes - _clock_minutes(MEAL_TIME_OF_DAY[meal])
+            # A meal at the exact workout minute (gap 0) already has the
+            # post-workout note from the pin above if it was the nearest one
+            # — setdefault leaves that in place rather than overwriting it.
+            if 0 <= gap <= TRAINING_PRE_WORKOUT_DIGESTION_MINUTES:
+                notes.setdefault(day, {}).setdefault(
+                    meal,
+                    "[PRE-WORKOUT MEAL: low-fibre, ultra-easily digestible, low-fat fuel — "
+                    f"a {humanize(session.get('type'))} session follows at {session.get('time')}]",
+                )
+
+    adjusted = dict(config, weekly_schedule=schedule)
+    if notes:
+        adjusted["training_notes"] = notes
+    return adjusted
 
 
 def is_free_model(model: str) -> bool:
@@ -1895,6 +2758,9 @@ def build_slot_brief(
         parts.append("[fixed budget for this meal — the other meals absorb the rest of the day]")
     if times_eaten_today > 1:
         parts.append(f"[eaten {times_eaten_today}x today, budget already accounts for that]")
+    training_note = config.get("training_notes", {}).get(slot.day, {}).get(slot.meal_type)
+    if training_note:
+        parts.append(training_note)
     return " | ".join(parts)
 
 
@@ -2390,6 +3256,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     config = await repository.load_config()
     if args.model:
         config["openrouter_model"] = args.model
+    config = apply_training_adjustments(config)
     spec = default_week_spec(config, args.week_start, args.servings)
 
     if args.leftover_lunches:
@@ -2934,12 +3801,21 @@ def format_shopping_list_markdown(
 def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
     """One item per line, no bullets/markdown/blank lines. Google Keep turns
     each line of pasted text into its own checkbox item inside a list-type
-    note — bullets or blank lines would just become extra junk items."""
+    note — bullets or blank lines would just become extra junk items.
+
+    The perishable note rides along on the item's own line rather than getting
+    a line of its own: this is the copy you read *in the shop*, which is the
+    one place the warning can still change what you put in the basket, and a
+    separate line would become a checkbox for a thing you can't buy.
+    """
     lines = []
     for department in sorted(shopping_list.categories):
         lines.append(department)
         for item in shopping_list.categories[department]:
-            lines.append(f"{item.name}: {format_quantity(item.name, item.total_amount_g)}")
+            note = " (buy fresh closer to the day)" if item.buy_late else ""
+            lines.append(
+                f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
+            )
     return "\n".join(lines)
 -e 
 

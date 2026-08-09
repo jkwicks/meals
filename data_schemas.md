@@ -34,7 +34,7 @@
       "net_carbs_g": 30,
       "meal_overrides": {}
     },
--e 
+
 
 === Sample Structure: week_plan.json ===
 {
@@ -72,7 +72,7 @@
             "protein_g": 21.2,
             "net_carbs_g": 43.4,
             "fat_g": 1.4
--e 
+
 
 === Sample Structure: meal_plan.json ===
 {
@@ -110,7 +110,7 @@
           "quantity_g": 15.0,
           "nova_group": 2,
           "calories": 135.0,
--e 
+
 
 === Sample Structure: meal_history.json ===
 [
@@ -148,5 +148,43 @@
       "Smoked Salmon & Avocado Scramble",
       "Cajun Blackened Chicken & Vegetable Traybake"
     ]
--e 
+
+
+=== Sample Structure: whfoods.json ===
+[
+  {
+    "food_id": "asparagus",
+    "name": "Asparagus",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 5,
+      "prep_tips": [
+        "Trim ends and steam for 5 minutes until tender-crisp."
+      ]
+    }
+  },
+  {
+    "food_id": "avocado",
+    "name": "Avocado",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Raw",
+      "duration_minutes": null,
+      "prep_tips": [
+        "Eat raw; pair with carotenoid-rich foods to quadruple nutrient absorption."
+      ]
+    }
+  },
+  {
+    "food_id": "beets",
+    "name": "Beets",
+    "category": "Vegetables",
+    "optimal_cooking": {
+      "recommended_method": "Steam",
+      "duration_minutes": 15,
+      "prep_tips": [
+        "Cut into 1/2-inch wedges and steam for 15 minutes."
+      ]
+
 
