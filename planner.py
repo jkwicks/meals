@@ -803,6 +803,37 @@ def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = No
     )
 
 
+# Weeknight slots that eat a Sunday-prepped batch show this instead of the
+# cook's own prep_time_minutes — reheating/plating a dish that's already
+# cooked is a few minutes, not the from-scratch cook time recorded on the day
+# it was actually made.
+SUNDAY_PREP_REHEAT_MINUTES = 10
+
+
+def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
+    """Whether `event` was folded into `week_plan`'s Sunday prep session.
+
+    `prep_notes` is set only for a batch that outlives its cook day (see
+    `Recipe.scale_to_servings`), and `generate_sunday_prep_session` takes
+    every such candidate into the session — so "has prep_notes" plus "a
+    session exists" is exactly "this batch was prepped ahead", without
+    needing a separate stored link.
+    """
+    return bool(event.recipe.prep_notes) and week_plan.sunday_prep_session is not None
+
+
+def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
+    """Active minutes a slot *eating* `event` needs.
+
+    The cook's own card keeps showing `recipe.prep_time_minutes` — that's the
+    real work, on the day it happens. A later slot living off the batch only
+    reheats/assembles it.
+    """
+    if is_sunday_prepped(event, week_plan):
+        return SUNDAY_PREP_REHEAT_MINUTES
+    return event.recipe.prep_time_minutes
+
+
 def scale_recipe(
     recipe: Recipe, portions: int, keeps_for_days: int, config: Optional[dict] = None
 ) -> Recipe:

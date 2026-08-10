@@ -81,11 +81,13 @@ from planner import (
     day_slot_macros,
     generate_week_plan,
     import_external_recipe,
+    is_sunday_prepped,
     meal_overrides_for,
     record_week_history,
     regenerate_single_day,
     resolve_auto_choices,
     split_targets,
+    weeknight_prep_minutes,
 )
 from repository import LocalJSONRepository, recipe_content_key
 from shopping import (
@@ -95,6 +97,7 @@ from shopping import (
     format_shopping_list_keep,
 )
 from week import (
+    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
@@ -186,6 +189,21 @@ STATUS_STYLES = {
         "label": "NOT GENERATED",
         "icon": "error_outline",
         "glow": "#fb7185",
+    },
+}
+
+# `SlotView.prep_badge` — set only on a leftover card eating a Sunday-prepped
+# batch (see `planner.is_sunday_prepped`). "fridge" vs. "freezer" mirrors the
+# same threshold `storage_note` used to write the cook's own storage note, so
+# the badge never disagrees with the text a user would see on the recipe.
+PREP_BADGE_STYLES = {
+    "fridge": {
+        "label": "⚡ Prepped on Sun",
+        "classes": "bg-amber-400/15 text-amber-200 ring-1 ring-inset ring-amber-300/30",
+    },
+    "freezer": {
+        "label": "❄️ From Freezer",
+        "classes": "bg-cyan-400/15 text-cyan-200 ring-1 ring-inset ring-cyan-300/30",
     },
 }
 
@@ -354,6 +372,8 @@ class SlotView:
     prep_minutes: Optional[int] = None
     macros: Optional[dict] = None
     source_label: str = ""
+    prep_badge: str = ""  # "fridge" | "freezer" | "" — see PREP_BADGE_STYLES
+    prep_origin: str = ""  # tooltip: where in the Sunday prep timeline this came from
     recipe: object = None  # planner.Recipe, kept loose to avoid a hard import cycle
 
     # --- leftover chain wiring ---
@@ -944,15 +964,44 @@ class PlannerState:
                 )
                 continue
 
+            # A leftover eating a Sunday-prepped batch gets a badge and a
+            # reheat/assemble estimate instead of the cook's from-scratch
+            # prep time — see `planner.is_sunday_prepped`. "fridge" vs.
+            # "freezer" mirrors the same span-vs-fridge-safe-days threshold
+            # `storage_note` used to write the batch's own storage note.
+            prep_badge, prep_origin = "", ""
+            if slot.mode == MODE_LEFTOVER and is_sunday_prepped(event, self.week_plan):
+                fridge_safe_days = self.config.get("inventory_rules", {}).get(
+                    "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+                )
+                # Per-slot distance from its cook day, not `span_days`'s
+                # whole-batch span to its *farthest* eater — a Tuesday
+                # portion of a batch that runs to next Sunday is still
+                # fridge-fresh even though the Sunday portion isn't.
+                days_since_cook = spec.day_index(slot.day) - spec.day_index(event.day)
+                frozen = days_since_cook >= fridge_safe_days
+                prep_badge = "freezer" if frozen else "fridge"
+                prep_origin = (
+                    f"From the Sunday prep session: {event.recipe.name} "
+                    f"({event.portions} portions, cooked {event.day})"
+                    + (" — frozen, thaw ahead of eating" if frozen else " — kept refrigerated")
+                )
+
             # Style and cuisine come off the event, which recorded whatever
             # `resolve_auto_choices` settled on — the slot may still say
             # "auto".
             views[slot.id] = SlotView(
                 status=STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER,
                 title=event.recipe.name,
-                prep_minutes=event.recipe.prep_time_minutes,
+                prep_minutes=(
+                    weeknight_prep_minutes(event, self.week_plan)
+                    if slot.mode == MODE_LEFTOVER
+                    else event.recipe.prep_time_minutes
+                ),
                 macros=event.recipe.per_serving_macros,
                 recipe=event.recipe,
+                prep_badge=prep_badge,
+                prep_origin=prep_origin,
                 **{
                     **common,
                     "style": humanize(event.style),
@@ -1569,6 +1618,19 @@ async def planner_page() -> None:
                 if view.feeds:
                     link_line("→ feeds", " · ".join(view.feeds), view.chain_colour)
 
+                if view.prep_badge:
+                    badge_look = PREP_BADGE_STYLES[view.prep_badge]
+                    prep_badge_el = ui.element("div").classes(
+                        "flex items-center gap-1 px-1.5 py-[1px] rounded-full w-fit mt-0.5 "
+                        f"{badge_look['classes']}"
+                    )
+                    with prep_badge_el:
+                        ui.label(badge_look["label"]).classes(
+                            "text-[8px] font-semibold tracking-wide"
+                        )
+                        if view.prep_origin:
+                            ui.tooltip(view.prep_origin)
+
                 if view.macros:
                     # One pill, "450 kcal · 45g P · 30g C · 12g F" — a colour
                     # per macro (MACRO_TINTS) rather than per digit, so the
@@ -1593,6 +1655,11 @@ async def planner_page() -> None:
                         if view.prep_minutes is not None
                         else f"{view.portions} portions"
                     ).classes("text-[9px] text-emerald-300/70 truncate")
+
+                if view.mode == MODE_LEFTOVER and view.prep_badge and view.prep_minutes is not None:
+                    ui.label(f"{view.prep_minutes} min reheat/assemble").classes(
+                        "text-[9px] text-amber-300/70 truncate"
+                    )
 
             if view.mode == MODE_COOK and view.meal_type == LINK_SOURCE_MEAL:
                 # Left enabled even when it can't be applied: a disabled Quasar
