@@ -87,7 +87,9 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
 # predating this section) resolves to the number that used to be a bare
 # module constant.
 DEFAULT_PLANNING_RULES = {
-    "history_max_entries": 21,
+    # 28 entries = 4 weeks of daily history, so recipe-name/style/protein
+    # rotation has a full 4-week non-repeat window rather than 3.
+    "history_max_entries": 28,
     "protein_lookback_entries": 3,
     # How many recent main proteins to name in the prompt. Long enough to
     # stop a week of chicken, short enough that a 7-day plan doesn't end up
@@ -104,19 +106,22 @@ MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
 WEEKEND_DAYS = {"Saturday", "Sunday"}
 
 # Stops the model from hitting a high protein budget by linearly scaling a
-# single breakfast ingredient (6 eggs, 400g yoghurt) instead of composing a
-# realistic dish. A supplemental side drink absorbs the remainder instead.
+# single low-density ingredient (6 eggs, 500g yoghurt) instead of composing a
+# realistic dish. Multiple dense protein sources combined instead.
 PORTION_DENSITY_GUARD = (
-    "- NEVER scale a main breakfast ingredient beyond standard human eating "
-    "portions: max 2-3 eggs per serving, max 120-150g yoghurt per serving, "
-    "max 2 slices of bread/toast per serving, max 1 standard tin (90-125g) "
-    "of sardines or mackerel per serving.\n"
-    "- If a slot's protein target is higher than the base dish naturally "
-    "provides, do NOT multiply the primary dish ingredients (never output "
-    "6 eggs or 400g yoghurt to hit a number). Instead keep the primary dish "
-    "at a standard portion and add a supplemental side drink — a scoop of "
-    "plain protein powder mixed into water or milk, or a ready-to-drink "
-    "protein shake — as its own ingredient line to close the gap.\n"
+    "- NEVER scale a single ingredient beyond standard human eating portions "
+    "to hit a protein target: max 2-3 eggs per serving, max 150g yoghurt per "
+    "serving, max 2 slices of bread/toast per serving, max 1 standard tin "
+    "(90-125g) of sardines or mackerel per serving, max ~200g cooked "
+    "meat/poultry/fish per serving.\n"
+    "- If a slot's protein target (e.g. >45g) is higher than one dense "
+    "source can naturally provide at a standard portion, do NOT reach it by "
+    "multiplying a single ingredient (never output 6 eggs or 500g yoghurt to "
+    "hit a number). Instead COMBINE multiple dense protein sources at "
+    "realistic portions each, e.g. whey protein powder + Greek yoghurt + "
+    "hemp seeds, or chicken breast + edamame, or eggs + smoked salmon. The "
+    "target is reached by composing several complementary sources, not by "
+    "inflating one.\n"
 )
 
 # Share of the day each meal type gets when splitting targets across slots.
@@ -424,6 +429,26 @@ def recent_main_proteins(history: List[dict], config: Optional[dict] = None) -> 
     return proteins
 
 
+def recent_recipe_names(history: List[dict]) -> List[str]:
+    """Recipe names across the whole retained history, de-duplicated, so an
+    exact dish is never regenerated within the non-repeat window.
+
+    Unlike `recent_main_proteins`, this is not sliced to
+    `protein_lookback_entries` — it walks every entry `record_week_history`
+    kept, which is exactly `history_max_entries` (28, a 4-week window). A
+    protein just needs to *rotate*; a recipe name is meant not to repeat at
+    all inside that window.
+    """
+    seen = set()
+    names = []
+    for entry in history:
+        for name in entry.get("recipe_names", []):
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
 def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> WeekSpec:
     """Fill in every `auto` style and cuisine with a concrete choice.
 
@@ -715,6 +740,10 @@ class SundayPrepSession(BaseModel):
     total_passive_minutes: int = 0
     aggregated_ingredients: Dict[str, str] = Field(default_factory=dict)
     timeline: List[PrepPhase] = Field(default_factory=list)
+    meals_included: List[str] = Field(
+        default_factory=list,
+        description="Names of the dishes this prep session covers",
+    )
 
 
 class WeekPlan(BaseModel):
@@ -732,6 +761,7 @@ class WeekPlan(BaseModel):
         default=None,
         description="Aggregated Sunday batch-prep plan, when enable_sunday_prep is on",
     )
+    unique_plants: List[str] = Field(default_factory=list)
 
     def by_slot(self) -> Dict[str, CookEvent]:
         return {event.slot_id: event for event in self.cook_events}
@@ -1282,6 +1312,7 @@ def generate_day(
     carried: dict,
     carried_descriptions: List[str],
     avoid_proteins: Optional[List[str]] = None,
+    avoid_recipe_names: Optional[List[str]] = None,
     progress_note=None,
 ) -> Dict[str, Recipe]:
     """Generate one day's cooked recipes, returned keyed by meal_type.
@@ -1299,6 +1330,13 @@ def generate_day(
         "- Avoid making any of these the primary protein again — they were used "
         f"recently: {', '.join(avoid_proteins)}.\n"
         if avoid_proteins
+        else ""
+    )
+    avoid_recipe_name_instruction = (
+        "- Do NOT generate any of these exact dishes again under the same or "
+        "a trivially reworded name — they already appear in recent history "
+        f"and must not repeat: {', '.join(avoid_recipe_names)}.\n"
+        if avoid_recipe_names
         else ""
     )
     leftovers_instruction = (
@@ -1361,6 +1399,7 @@ def generate_day(
         "low-density ingredient to meet high protein targets.\n"
         f"{PORTION_DENSITY_GUARD}"
         f"{avoid_protein_instruction}"
+        f"{avoid_recipe_name_instruction}"
         f"{inventory_instruction(config)}"
         f"{leftovers_instruction}"
         f"{batch_instruction}"
@@ -1474,7 +1513,10 @@ def build_sunday_prep_brief(event: CookEvent, spec: WeekSpec) -> str:
 
     Carries only numbers Python already computed (portions, prep time, which
     days it's eaten, the fridge/freezer storage window) so the model organises
-    a cooking session instead of re-deriving any of them.
+    a cooking session instead of re-deriving any of them. Leads with
+    `event.recipe.name` verbatim, which is also the exact string the system
+    prompt tells the model to echo back into `meals_included` — one dish per
+    candidate line here.
     """
     eaten_days = sorted(
         {parse_slot_id(slot_id)[0] for slot_id in event.eaten_by},
@@ -1540,6 +1582,10 @@ def generate_sunday_prep_session(
         "bags) — time a slow cooker, oven or fridge runs unattended is "
         "passive_minutes, not active_minutes, and does not count against the "
         "cap.\n"
+        "- meals_included must list the name of every dish being prepped in "
+        "this session (one entry per candidate recipe below, verbatim) — "
+        "the aggregated timeline says how to cook them, this says what they "
+        "are.\n"
         "- Aggregate identical prep across recipes into one step instead of "
         "repeating it: if three recipes each need a chopped onion, one phase "
         "chops all the onions together rather than three separate steps.\n"
@@ -1634,6 +1680,7 @@ async def _generate_day_events(
     claims: Dict[str, List[str]],
     carry_events: Dict[str, CookEvent],
     avoid_proteins: List[str],
+    avoid_recipe_names: List[str],
     note_callback=None,
 ) -> Dict[str, CookEvent]:
     """Generate and scale one day's cook events, keyed by slot_id.
@@ -1668,6 +1715,7 @@ async def _generate_day_events(
         carried=carried,
         carried_descriptions=descriptions,
         avoid_proteins=avoid_proteins[-protein_avoid_window:],
+        avoid_recipe_names=avoid_recipe_names,
         progress_note=thread_safe_note,
     )
 
@@ -1734,6 +1782,10 @@ async def generate_week_plan(
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
     avoid_proteins = recent_main_proteins(history, config)
+    # Same seed-then-extend pattern as avoid_proteins, but over the full
+    # history_max_entries window (see recent_recipe_names) rather than a
+    # short lookback — a recipe name must not repeat at all within it.
+    avoid_recipe_names = recent_recipe_names(history)
 
     events: Dict[str, CookEvent] = {}
     failures: Dict[str, str] = {}
@@ -1745,7 +1797,7 @@ async def generate_week_plan(
         try:
             day_events = await _generate_day_events(
                 day, spec, config, targets[day], portions, claims, events,
-                avoid_proteins, note_callback,
+                avoid_proteins, avoid_recipe_names, note_callback,
             )
         except Exception as exc:
             # One bad day must not discard the six good ones. Free routes fail
@@ -1764,6 +1816,8 @@ async def generate_week_plan(
             protein = extract_main_protein(event.recipe)
             if protein and protein not in avoid_proteins:
                 avoid_proteins.append(protein)
+            if event.recipe.name not in avoid_recipe_names:
+                avoid_recipe_names.append(event.recipe.name)
         events.update(day_events)
 
     ordered_events = [events[slot.id] for slot in spec.cook_slots() if slot.id in events]
@@ -1830,18 +1884,24 @@ async def regenerate_single_day(
     # OTHER day's proteins already locked into this plan — `day`'s own
     # (about to be replaced) proteins must not suppress themselves on retry.
     avoid_proteins = recent_main_proteins(history, config)
+    # Same idea for recipe names — history's 4-week window plus every OTHER
+    # day already locked into this plan; `day`'s own (about to be replaced)
+    # recipes must not suppress themselves on retry.
+    avoid_recipe_names = recent_recipe_names(history)
     for event in week_plan.cook_events:
         if event.day == day:
             continue
         protein = extract_main_protein(event.recipe)
         if protein and protein not in avoid_proteins:
             avoid_proteins.append(protein)
+        if event.recipe.name not in avoid_recipe_names:
+            avoid_recipe_names.append(event.recipe.name)
 
     failures = dict(week_plan.failures)
     try:
         day_events = await _generate_day_events(
             day, spec, config, targets[day], portions, claims, by_slot,
-            avoid_proteins, note_callback,
+            avoid_proteins, avoid_recipe_names, note_callback,
         )
     except Exception as exc:
         failures[day] = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
