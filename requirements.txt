@@ -5,3 +5,4 @@ python-dotenv
 eval_type_backport
 urllib3<2
 nicegui
+reportlab
