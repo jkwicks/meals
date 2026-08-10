@@ -110,6 +110,7 @@ from week import (
     slot_label,
     span_days,
     validate_week,
+    week_date_range,
     week_days,
 )
 
@@ -635,6 +636,28 @@ class PlannerState:
 
         self.apply_spec(link_leftover(spec, target_id, source_id))
         return None
+
+    def shuffle_styles(self) -> None:
+        """Blank the style/cuisine on every cook slot so the next generation
+        re-rolls them from scratch.
+
+        `resolve_auto_choices` only picks a fresh style/cuisine when a slot's
+        is empty (planner.py) — once a week has been generated once, its
+        slots carry the concrete values from that run and every later
+        "Generate" re-requests the exact same style/cuisine per slot forever,
+        varying only the dish the model composes inside it. This is the
+        explicit escape hatch: it touches only style/cuisine, not mode or
+        leftover links, so `apply_spec` can go through its normal rescale
+        path unchanged.
+        """
+        spec = self.spec
+        resolved = [
+            slot.model_copy(update={"style": None, "cuisine": None})
+            if slot.mode == MODE_COOK
+            else slot
+            for slot in spec.slots
+        ]
+        self.apply_spec(spec.model_copy(update={"slots": resolved}))
 
     def swap_slot_with_favorite(self, target_slot_id: str, favorite_recipe: dict) -> Optional[str]:
         """Replace a cooked slot's recipe with a saved favorite. Returns why not, or None.
@@ -1632,6 +1655,29 @@ async def planner_page() -> None:
                         if i < len(PIPELINE_STAGES) - 1:
                             ui.icon("chevron_right").classes("text-[10px] text-slate-700")
 
+    # ---- header: week date banner -----------------------------------------
+    # Purely cosmetic — nothing here reads back into state — but `state.days`
+    # only ever carries weekday names (`week_days` rotates names, not dates),
+    # so without this a five-week-old cached plan and this week's plan look
+    # identical at a glance. `week_date_range` anchors on the plan's
+    # `generated_at` so the banner reflects the week that was actually
+    # generated, falling back to today for an un-generated preview.
+
+    @ui.refreshable
+    def week_banner() -> None:
+        start, end = week_date_range(
+            state.days, state.week_plan.generated_at if state.week_plan else None
+        )
+        fmt = "%b %-d, %Y"
+        with ui.element("div").classes(
+            "flex flex-row items-center gap-1.5 px-2 py-1 mb-1 rounded border "
+            "border-slate-800 bg-slate-800/40 w-fit"
+        ):
+            ui.label("📅").classes("text-xs")
+            ui.label(f"Week of {start.strftime(fmt)} – {end.strftime(fmt)}").classes(
+                "text-[11px] font-medium text-slate-300 tracking-wide"
+            )
+
     # ---- header: macro telemetry -----------------------------------------
 
     @ui.refreshable
@@ -1930,6 +1976,7 @@ async def planner_page() -> None:
                     "Every shopping trip in this week, grouped by department — "
                     "built from the grid as it stands, including any edits."
                 )
+        week_banner()
         context_pipeline()
         telemetry()
 
@@ -2150,6 +2197,7 @@ async def planner_page() -> None:
         ).classes("text-slate-400 mt-1")
 
     def refresh_all() -> None:
+        week_banner.refresh()
         telemetry.refresh()
         canvas.refresh()
         week_summary.refresh()
@@ -2465,6 +2513,25 @@ async def planner_page() -> None:
                     "Generates every meal set to cook in this grid — one API call per "
                     "cooking day. Overwrites the selected week's cached plan and "
                     "appends to history."
+                )
+
+            def on_shuffle_styles() -> None:
+                state.shuffle_styles()
+                refresh_all()
+                ui.notify(
+                    "Styles cleared — next Generate will re-roll every cook slot.",
+                    type="positive",
+                )
+
+            with ui.button(
+                "Shuffle styles", icon="casino", on_click=on_shuffle_styles
+            ).props("dense flat").classes("w-full"):
+                ui.tooltip(
+                    "Once a week is generated, its slots keep the style/cuisine they "
+                    "resolved to, so re-generating repeats them and only reworks the "
+                    "dish. This blanks style/cuisine on every cook slot (leftover "
+                    "links and skips are untouched) so the next Generate rotates them "
+                    "fresh — nothing is written to disk until you generate."
                 )
             ui.button(
                 "Reload from disk", icon="refresh", on_click=reload_from_disk

@@ -16,6 +16,7 @@ fully resolved (styles, cuisines, portions, windows) before a single token is
 generated, so the UI can preview exactly what it is about to ask for.
 """
 
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
@@ -79,6 +80,22 @@ def week_days(config: dict, week_start: Optional[str] = None) -> List[str]:
         index = days.index(start)
         days = days[index:] + days[:index]
     return days
+
+
+def week_date_range(days: List[str], generated_at: Optional[str] = None) -> Tuple[date, date]:
+    """The calendar span `days` covers, anchored on `generated_at` (or today).
+
+    Nothing in this codebase stores an actual calendar date — a week is a
+    rotation of weekday *names* (see `week_days`) — so a banner that wants
+    real dates has to derive them. The anchor's weekday tells us how far into
+    the 7-day span it falls, which pins the whole week without needing a
+    stored start date: a Wednesday generation still produces a Monday start
+    if that's what `days[0]` is.
+    """
+    anchor = datetime.fromisoformat(generated_at).date() if generated_at else date.today()
+    target_weekday = datetime.strptime(days[0], "%A").weekday()
+    start = anchor - timedelta(days=(anchor.weekday() - target_weekday) % 7)
+    return start, start + timedelta(days=6)
 
 
 def meal_types(config: dict) -> List[str]:

@@ -49,7 +49,37 @@
     "breakfast": "cook",
     "lunch": "cook",
     "dinner": "cook",
-    "snack": "cook"
+    "snack": "skip"
+  },
+  "meal_styles": {
+    "breakfast": {
+      "shake": "a blended protein shake or smoothie, drunk not eaten",
+      "yoghurt_nuts_seeds": "plain unsweetened yoghurt with nuts, seeds and optional berries",
+      "fish": "an oily-fish breakfast (smoked salmon, sardines, mackerel, kippers)",
+      "baked_beans": "beans as the base (baked beans, white beans, black beans), served hot",
+      "eggs": "an egg-based cooked breakfast (omelette, scramble, frittata, shakshuka, boiled)"
+    },
+    "lunch": {
+      "salad": "a substantial cold salad with a protein on top",
+      "soup": "a hearty soup or broth, reheatable",
+      "wrap": "a wrap, flatbread or hand-held roll",
+      "grain_bowl": "a warm grain or legume bowl with protein and vegetables",
+      "cold_plate": "a no-cook cold plate: cured/cooked protein, cheese, raw veg, dips"
+    },
+    "dinner": {
+      "one_pan": "a single tray-bake or one-pan meal",
+      "curry": "a simmered curry or stew in sauce, served with a side",
+      "grill": "grilled or pan-seared protein with cooked vegetable sides",
+      "stir_fry": "a fast high-heat stir fry",
+      "roast": "a roasted joint or whole bird with roasted vegetables",
+      "braise": "a slow-braised pot dish that improves after resting"
+    },
+    "snack": {
+      "nuts_seeds": "a portion of nuts and seeds",
+      "yoghurt": "yoghurt with a simple topping",
+      "fruit_and_protein": "fruit paired with a protein source",
+      "boiled_eggs": "boiled eggs with seasoning"
+    }
   },
   "meal_weights": {
     "breakfast": 0.25,
@@ -57,17 +87,50 @@
     "dinner": 0.35,
     "snack": 0.10
   },
+  "cuisines": [
+    "mexican",
+    "indian",
+    "thai",
+    "japanese",
+    "korean",
+    "bbq",
+    "middle_eastern",
+    "italian",
+    "mediterranean",
+    "vietnamese",
+    "cajun",
+    "greek"
+  ],
+  "cuisine_meal_types": ["dinner"],
   "serving_rules": {
     "servings_per_meal": 2
   },
   "shopping": {
     "shop_days": ["Sunday", "Wednesday"]
   },
-  "training_schedule": [],
+  "training_schedule": [
+    {
+      "day": "Monday",
+      "time": "18:00",
+      "type": "gym_hypertrophy",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350
+    }
+  ],
   "inventory_to_clear": [],
   "dietary_rules": {
     "allowed_nova_groups": [1, 2, 3],
-    "banned_ingredients": []
+    "banned_ingredients": [
+      "high fructose corn syrup",
+      "artificial sweeteners",
+      "hydrogenated oil",
+      "MSG",
+      "seed oils",
+      "soy protein isolate",
+      "eggplant",
+      "apricot",
+      "banana"
+    ]
   },
   "planning_rules": {
     "history_max_entries": 21,
