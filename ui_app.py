@@ -82,6 +82,7 @@ from planner import (
     import_external_recipe,
     meal_overrides_for,
     record_week_history,
+    regenerate_single_day,
     resolve_auto_choices,
     split_targets,
 )
@@ -423,6 +424,12 @@ class PlannerState:
     # no. Per-client, like everything else here: two tabs generating at once
     # would race to overwrite the same week_plan.json.
     generating: bool = False
+    # Which single day a "Regenerate day" click is mid-flight for, if any.
+    # Same purpose as `generating` but scoped to one day — guards against a
+    # second regenerate click (this day or another) racing the first, and
+    # against overlapping with a whole-week run, without needing a canvas
+    # repaint to show it: the clicked button's own `loading` prop covers that.
+    regenerating_day: Optional[str] = None
 
     # The recipe catalog (recipes_master.json) — every recipe ever favorited
     # or imported, record shape {id, content_key, recipe, is_favorite,
@@ -1568,7 +1575,21 @@ async def planner_page() -> None:
                         "px-1 py-0.5 border-b border-slate-800 flex flex-row "
                         "justify-between items-baseline"
                     ):
-                        ui.label(day).classes("text-xs font-semibold text-slate-200")
+                        with ui.element("div").classes("flex flex-row items-center gap-1"):
+                            ui.label(day).classes("text-xs font-semibold text-slate-200")
+                            # Only offered once a week exists and this day has
+                            # something to cook — regenerating a leftover/skip-only
+                            # day would be a no-op API call for nothing.
+                            if state.week_plan is not None and state.spec.cook_slots_on(day):
+                                regen_button = ui.button(icon="refresh")
+                                regen_button.props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-emerald-300"
+                                )
+                                regen_button.on_click(
+                                    lambda day=day, btn=regen_button: regenerate_day(day, btn)
+                                )
+                                with regen_button:
+                                    ui.tooltip(f"Regenerate {day} — re-cooks just this day")
                         ui.label(str(state.days.index(day) + 1)).classes(
                             "text-[9px] font-mono text-slate-600"
                         )
@@ -2370,6 +2391,75 @@ async def planner_page() -> None:
                 f"{WEEK_SELECTION_LABELS[state.week_selection]}",
                 type="positive",
             )
+
+    async def regenerate_day(day: str, button) -> None:
+        """Re-cook one day's meals in place, via the canvas header's refresh icon.
+
+        Deliberately lighter than `generate_week`: no progress modal, just the
+        clicked button's own `loading` prop, because one day is a single API
+        call rather than up to seven. Mutual exclusion with a whole-week run
+        (and with a second regenerate click) is `state.generating` /
+        `state.regenerating_day` — checked but never surfaced with a toast,
+        same as `run_generation`'s own re-entry guard.
+        """
+        if state.generating or state.regenerating_day:
+            return
+        spec = state.spec
+        if state.week_plan is None or not spec.cook_slots_on(day):
+            return
+
+        config = state.planning_config()
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        state.regenerating_day = day
+        button.props("loading disable")
+        try:
+            history = await REPOSITORY.load_history()
+            # Resolves only what's still `auto` on this day (e.g. after
+            # "Shuffle styles") — every other day's already-concrete
+            # style/cuisine is left exactly as it was.
+            resolved_spec = resolve_auto_choices(spec, config, history)
+            plan = await regenerate_single_day(
+                day,
+                resolved_spec,
+                config,
+                state.week_plan,
+                history,
+                repository=REPOSITORY,
+            )
+            await REPOSITORY.save_week_plan(plan.model_dump(), state.week_selection)
+            await record_week_history(plan, REPOSITORY, config, days=[day])
+        except Exception as exc:
+            ui.notify(
+                f"Regenerating {day} failed: {type(exc).__name__}: {exc}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            state.regenerating_day = None
+            button.props(remove="loading disable")
+
+        # Saved before adopted, same ordering as a full generation — the grid
+        # can't show a day that isn't on disk.
+        state.adopt_plan(plan)
+        refresh_all()
+
+        if day in plan.failures:
+            ui.notify(
+                f"{day} failed to regenerate — {plan.failures[day]}",
+                type="warning",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+        else:
+            ui.notify(f"Regenerated {day}", type="positive")
 
     # ---- recipe catalog & import --------------------------------------------
     # `favorites_list` is referenced by handlers defined above this point

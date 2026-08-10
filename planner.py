@@ -1371,6 +1371,75 @@ def on_calling_loop(callback):
     return forward
 
 
+async def _generate_day_events(
+    day: str,
+    spec: WeekSpec,
+    config: dict,
+    day_targets: dict,
+    portions: Dict[str, int],
+    claims: Dict[str, List[str]],
+    carry_events: Dict[str, CookEvent],
+    avoid_proteins: List[str],
+    note_callback=None,
+) -> Dict[str, CookEvent]:
+    """Generate and scale one day's cook events, keyed by slot_id.
+
+    Shared by `generate_week_plan` (which walks every day) and
+    `regenerate_single_day` (which calls this for just one). `carry_events`
+    supplies the cook events any of `day`'s leftover slots point at — for a
+    full-week walk that's the days already generated this run; for a single
+    day it's whatever is already in the saved plan, since a leftover only
+    ever points backwards and those days aren't being touched.
+
+    Raises on failure rather than swallowing it — callers decide whether
+    that's fatal (a single-day retry) or recoverable (a week walking on to
+    the next day).
+    """
+    cook_slots = spec.cook_slots_on(day)
+    if not cook_slots:
+        return {}
+
+    carried, descriptions = carried_macros(spec, day, carry_events)
+    protein_avoid_window = planning_rule(config, "protein_avoid_window")
+    thread_safe_note = on_calling_loop(note_callback)
+
+    recipes = await asyncio.to_thread(
+        generate_day,
+        day=day,
+        targets=day_targets,
+        cook_slots=cook_slots,
+        config=config,
+        servings_per_meal=spec.servings_per_meal,
+        multiplicity=day_multiplicity(spec, day),
+        carried=carried,
+        carried_descriptions=descriptions,
+        avoid_proteins=avoid_proteins[-protein_avoid_window:],
+        progress_note=thread_safe_note,
+    )
+
+    events: Dict[str, CookEvent] = {}
+    for slot in cook_slots:
+        recipe = recipes[slot.meal_type]
+        claim_ids = claims.get(slot.id, [slot.id])
+        last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+        recipe = recipe.scale_to_servings(
+            portions[slot.id],
+            keeps_for_days=last_day_index - spec.day_index(day),
+            config=config,
+        )
+        events[slot.id] = CookEvent(
+            slot_id=slot.id,
+            day=day,
+            meal_type=slot.meal_type,
+            portions=portions[slot.id],
+            style=slot.style,
+            cuisine=slot.cuisine,
+            eaten_by=claim_ids,
+            recipe=recipe,
+        )
+    return events
+
+
 async def generate_week_plan(
     spec: WeekSpec,
     config: dict,
@@ -1411,34 +1480,18 @@ async def generate_week_plan(
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
     avoid_proteins = recent_main_proteins(history, config)
-    protein_avoid_window = planning_rule(config, "protein_avoid_window")
-    thread_safe_note = on_calling_loop(note_callback)
 
     events: Dict[str, CookEvent] = {}
     failures: Dict[str, str] = {}
 
     for day in spec.days:
-        cook_slots = spec.cook_slots_on(day)
-        carried, descriptions = carried_macros(spec, day, events)
-
         if progress_callback:
-            progress_callback(day, len(cook_slots))
-        if not cook_slots:
-            continue
+            progress_callback(day, len(spec.cook_slots_on(day)))
 
         try:
-            recipes = await asyncio.to_thread(
-                generate_day,
-                day=day,
-                targets=targets[day],
-                cook_slots=cook_slots,
-                config=config,
-                servings_per_meal=spec.servings_per_meal,
-                multiplicity=day_multiplicity(spec, day),
-                carried=carried,
-                carried_descriptions=descriptions,
-                avoid_proteins=avoid_proteins[-protein_avoid_window:],
-                progress_note=thread_safe_note,
+            day_events = await _generate_day_events(
+                day, spec, config, targets[day], portions, claims, events,
+                avoid_proteins, note_callback,
             )
         except Exception as exc:
             # One bad day must not discard the six good ones. Free routes fail
@@ -1453,30 +1506,11 @@ async def generate_week_plan(
                 note_callback(f"{day}: generation failed — {failures[day]}")
             continue
 
-        for recipe in recipes.values():
-            protein = extract_main_protein(recipe)
+        for event in day_events.values():
+            protein = extract_main_protein(event.recipe)
             if protein and protein not in avoid_proteins:
                 avoid_proteins.append(protein)
-
-        for slot in cook_slots:
-            recipe = recipes[slot.meal_type]
-            claim_ids = claims.get(slot.id, [slot.id])
-            last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
-            recipe = recipe.scale_to_servings(
-                portions[slot.id],
-                keeps_for_days=last_day_index - spec.day_index(slot.day),
-                config=config,
-            )
-            events[slot.id] = CookEvent(
-                slot_id=slot.id,
-                day=day,
-                meal_type=slot.meal_type,
-                portions=portions[slot.id],
-                style=slot.style,
-                cuisine=slot.cuisine,
-                eaten_by=claim_ids,
-                recipe=recipe,
-            )
+        events.update(day_events)
 
     ordered_events = [events[slot.id] for slot in spec.cook_slots() if slot.id in events]
     return WeekPlan(
@@ -1487,6 +1521,70 @@ async def generate_week_plan(
         slots=spec.slots,
         targets=targets,
         failures=failures,
+    )
+
+
+async def regenerate_single_day(
+    day: str,
+    spec: WeekSpec,
+    config: dict,
+    week_plan: WeekPlan,
+    history: Optional[List[dict]] = None,
+    note_callback=None,
+    repository: Optional[PlanRepository] = None,
+) -> WeekPlan:
+    """Re-cook just `day`, leaving every other day's cook events untouched.
+
+    Every other day's cook events already live in `week_plan` — a leftover
+    slot on `day` only ever points at an *earlier* day, so its source is
+    already resolved and doesn't need regenerating; a later day's leftover
+    that points *at* `day` keeps pointing at the same slot_id, so it picks up
+    the new recipe automatically once that slot_id is replaced below. Neither
+    direction needs the rest of the week to be walked again — that's the
+    whole difference from `generate_week_plan`.
+    """
+    if history is None:
+        history = await (repository or LocalJSONRepository()).load_history()
+    targets = week_targets(spec, config)
+    portions = portions_for(spec)
+    claims = eaten_on(spec)
+    by_slot = dict(week_plan.by_slot())
+
+    # Seeded from history, same as a full week, then extended with every
+    # OTHER day's proteins already locked into this plan — `day`'s own
+    # (about to be replaced) proteins must not suppress themselves on retry.
+    avoid_proteins = recent_main_proteins(history, config)
+    for event in week_plan.cook_events:
+        if event.day == day:
+            continue
+        protein = extract_main_protein(event.recipe)
+        if protein and protein not in avoid_proteins:
+            avoid_proteins.append(protein)
+
+    failures = dict(week_plan.failures)
+    try:
+        day_events = await _generate_day_events(
+            day, spec, config, targets[day], portions, claims, by_slot,
+            avoid_proteins, note_callback,
+        )
+    except Exception as exc:
+        failures[day] = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        logger.warning("%s: regeneration failed — %s", day, failures[day])
+        if note_callback:
+            note_callback(f"{day}: regeneration failed — {failures[day]}")
+        return week_plan.model_copy(update={"failures": failures})
+
+    by_slot.update(day_events)
+    failures.pop(day, None)
+    ordered_events = [by_slot[slot.id] for slot in spec.cook_slots() if slot.id in by_slot]
+    return week_plan.model_copy(
+        update={
+            "generated_at": datetime.now().isoformat(),
+            "cook_events": ordered_events,
+            "slots": spec.slots,
+            "targets": targets,
+            "failures": failures,
+        }
     )
 
 
@@ -1507,19 +1605,27 @@ async def record_week_history(
     week_plan: WeekPlan,
     repository: Optional[PlanRepository] = None,
     config: Optional[dict] = None,
+    days: Optional[List[str]] = None,
 ) -> None:
     """One history entry per cooked day, so rotation carries across weeks.
 
     `config` supplies `planning_rules.history_max_entries`; omitted (or
     missing the key) falls back to DEFAULT_PLANNING_RULES's value, same as
     every other planning_rule() read.
+
+    `days` restricts which of `week_plan.days` get a new entry — defaults to
+    all of them (a full week's worth). `regenerate_single_day` passes just
+    the one day it touched; recording the whole plan there would re-append
+    history for six days that were never regenerated, throwing off rotation
+    for styles/cuisines/proteins that had nothing to do with this run.
     """
     max_entries = planning_rule(config, "history_max_entries")
     repository = repository or LocalJSONRepository()
     history = await repository.load_history()
     generated_at = week_plan.generated_at
+    target_days = week_plan.days if days is None else days
 
-    for day in week_plan.days:
+    for day in target_days:
         events = [event for event in week_plan.cook_events if event.day == day]
         if not events:
             continue
