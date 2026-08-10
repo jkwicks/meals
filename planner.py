@@ -103,6 +103,22 @@ MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
 
 WEEKEND_DAYS = {"Saturday", "Sunday"}
 
+# Stops the model from hitting a high protein budget by linearly scaling a
+# single breakfast ingredient (6 eggs, 400g yoghurt) instead of composing a
+# realistic dish. A supplemental side drink absorbs the remainder instead.
+PORTION_DENSITY_GUARD = (
+    "- NEVER scale a main breakfast ingredient beyond standard human eating "
+    "portions: max 2-3 eggs per serving, max 120-150g yoghurt per serving, "
+    "max 2 slices of bread/toast per serving, max 1 standard tin (90-125g) "
+    "of sardines or mackerel per serving.\n"
+    "- If a slot's protein target is higher than the base dish naturally "
+    "provides, do NOT multiply the primary dish ingredients (never output "
+    "6 eggs or 400g yoghurt to hit a number). Instead keep the primary dish "
+    "at a standard portion and add a supplemental side drink — a scoop of "
+    "plain protein powder mixed into water or milk, or a ready-to-drink "
+    "protein shake — as its own ingredient line to close the gap.\n"
+)
+
 # Share of the day each meal type gets when splitting targets across slots.
 # Only the ratios matter — they're normalised over whichever slots are
 # actually being cooked, so a day with no snack redistributes its share.
@@ -1343,6 +1359,7 @@ def generate_day(
         "- Combine multiple complementary protein sources (e.g., yoghurt + "
         "protein powder, or eggs + lean meat) rather than scaling up a single "
         "low-density ingredient to meet high protein targets.\n"
+        f"{PORTION_DENSITY_GUARD}"
         f"{avoid_protein_instruction}"
         f"{inventory_instruction(config)}"
         f"{leftovers_instruction}"

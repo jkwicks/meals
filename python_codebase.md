@@ -1,4 +1,4 @@
-=== File: ./ui_app.py ===
+=== File: ui_app.py ===
 """NiceGUI front end — the whole week on one high-density desktop screen.
 
 The only web front end, and now a complete one: it can both generate a week and
@@ -82,11 +82,13 @@ from planner import (
     day_slot_macros,
     generate_week_plan,
     import_external_recipe,
+    is_sunday_prepped,
     meal_overrides_for,
     record_week_history,
     regenerate_single_day,
     resolve_auto_choices,
     split_targets,
+    weeknight_prep_minutes,
 )
 from repository import LocalJSONRepository, recipe_content_key
 from shopping import (
@@ -96,6 +98,7 @@ from shopping import (
     format_shopping_list_keep,
 )
 from week import (
+    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
@@ -190,6 +193,21 @@ STATUS_STYLES = {
     },
 }
 
+# `SlotView.prep_badge` — set only on a leftover card eating a Sunday-prepped
+# batch (see `planner.is_sunday_prepped`). "fridge" vs. "freezer" mirrors the
+# same threshold `storage_note` used to write the cook's own storage note, so
+# the badge never disagrees with the text a user would see on the recipe.
+PREP_BADGE_STYLES = {
+    "fridge": {
+        "label": "⚡ Prepped on Sun",
+        "classes": "bg-amber-400/15 text-amber-200 ring-1 ring-inset ring-amber-300/30",
+    },
+    "freezer": {
+        "label": "❄️ From Freezer",
+        "classes": "bg-cyan-400/15 text-cyan-200 ring-1 ring-inset ring-cyan-300/30",
+    },
+}
+
 # (key, short label, unit suffix). Calories carry no suffix because their
 # short label already reads as one — "kcal: 2200kcal" otherwise.
 MACRO_LABELS = [
@@ -258,6 +276,13 @@ TARGET_FIELDS = [
     ("protein_g", "protein g"),
     ("net_carbs_g", "carbs g"),
 ]
+
+# Indigo marks the Sunday prep column everywhere it appears (telemetry header,
+# canvas, pipeline row) — deliberately outside the emerald/sky/slate/rose
+# palette STATUS_STYLES and BAND_COLOURS already use for day statuses, since
+# this column is prep work, not an eating slot, and must never read as a fifth
+# status.
+PREP_COLUMN_ACCENT = "border border-indigo-400/25 border-l-[3px] border-l-indigo-400 bg-indigo-400/[0.05]"
 
 # Selectable workout types. "rest" is a legitimate entry (a day explicitly
 # marked as no training) but carries no macro split — `apply_training_adjustments`
@@ -348,6 +373,8 @@ class SlotView:
     prep_minutes: Optional[int] = None
     macros: Optional[dict] = None
     source_label: str = ""
+    prep_badge: str = ""  # "fridge" | "freezer" | "" — see PREP_BADGE_STYLES
+    prep_origin: str = ""  # tooltip: where in the Sunday prep timeline this came from
     recipe: object = None  # planner.Recipe, kept loose to avoid a hard import cycle
 
     # --- leftover chain wiring ---
@@ -938,15 +965,44 @@ class PlannerState:
                 )
                 continue
 
+            # A leftover eating a Sunday-prepped batch gets a badge and a
+            # reheat/assemble estimate instead of the cook's from-scratch
+            # prep time — see `planner.is_sunday_prepped`. "fridge" vs.
+            # "freezer" mirrors the same span-vs-fridge-safe-days threshold
+            # `storage_note` used to write the batch's own storage note.
+            prep_badge, prep_origin = "", ""
+            if slot.mode == MODE_LEFTOVER and is_sunday_prepped(event, self.week_plan):
+                fridge_safe_days = self.config.get("inventory_rules", {}).get(
+                    "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+                )
+                # Per-slot distance from its cook day, not `span_days`'s
+                # whole-batch span to its *farthest* eater — a Tuesday
+                # portion of a batch that runs to next Sunday is still
+                # fridge-fresh even though the Sunday portion isn't.
+                days_since_cook = spec.day_index(slot.day) - spec.day_index(event.day)
+                frozen = days_since_cook >= fridge_safe_days
+                prep_badge = "freezer" if frozen else "fridge"
+                prep_origin = (
+                    f"From the Sunday prep session: {event.recipe.name} "
+                    f"({event.portions} portions, cooked {event.day})"
+                    + (" — frozen, thaw ahead of eating" if frozen else " — kept refrigerated")
+                )
+
             # Style and cuisine come off the event, which recorded whatever
             # `resolve_auto_choices` settled on — the slot may still say
             # "auto".
             views[slot.id] = SlotView(
                 status=STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER,
                 title=event.recipe.name,
-                prep_minutes=event.recipe.prep_time_minutes,
+                prep_minutes=(
+                    weeknight_prep_minutes(event, self.week_plan)
+                    if slot.mode == MODE_LEFTOVER
+                    else event.recipe.prep_time_minutes
+                ),
                 macros=event.recipe.per_serving_macros,
                 recipe=event.recipe,
+                prep_badge=prep_badge,
+                prep_origin=prep_origin,
                 **{
                     **common,
                     "style": humanize(event.style),
@@ -1563,6 +1619,19 @@ async def planner_page() -> None:
                 if view.feeds:
                     link_line("→ feeds", " · ".join(view.feeds), view.chain_colour)
 
+                if view.prep_badge:
+                    badge_look = PREP_BADGE_STYLES[view.prep_badge]
+                    prep_badge_el = ui.element("div").classes(
+                        "flex items-center gap-1 px-1.5 py-[1px] rounded-full w-fit mt-0.5 "
+                        f"{badge_look['classes']}"
+                    )
+                    with prep_badge_el:
+                        ui.label(badge_look["label"]).classes(
+                            "text-[8px] font-semibold tracking-wide"
+                        )
+                        if view.prep_origin:
+                            ui.tooltip(view.prep_origin)
+
                 if view.macros:
                     # One pill, "450 kcal · 45g P · 30g C · 12g F" — a colour
                     # per macro (MACRO_TINTS) rather than per digit, so the
@@ -1587,6 +1656,11 @@ async def planner_page() -> None:
                         if view.prep_minutes is not None
                         else f"{view.portions} portions"
                     ).classes("text-[9px] text-emerald-300/70 truncate")
+
+                if view.mode == MODE_LEFTOVER and view.prep_badge and view.prep_minutes is not None:
+                    ui.label(f"{view.prep_minutes} min reheat/assemble").classes(
+                        "text-[9px] text-amber-300/70 truncate"
+                    )
 
             if view.mode == MODE_COOK and view.meal_type == LINK_SOURCE_MEAL:
                 # Left enabled even when it can't be applied: a disabled Quasar
@@ -1616,10 +1690,56 @@ async def planner_page() -> None:
                         "cooking — the batch grows to match."
                     )
 
+    # ---- prep day: Sunday batch-prep column --------------------------------
+    # An eighth grid column, left of day 0, for `week_plan.sunday_prep_session`
+    # — raw prep work aggregated across the week's cook events (see
+    # `planner.generate_sunday_prep_session`), done ahead of the week rather
+    # than repeated per cook day. It is prep work, not an eating slot, so it
+    # gets its own indigo accent (`PREP_COLUMN_ACCENT`) rather than any
+    # `STATUS_STYLES` treatment, and sits outside `state.days` entirely —
+    # there is no slot_id, regen button, or macro target for it.
+
+    def prep_day_column() -> None:
+        session = state.week_plan.sunday_prep_session if state.week_plan else None
+        with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
+            with ui.element("div").classes(
+                "px-1 py-0.5 border-b border-indigo-400/40 flex flex-row "
+                "justify-between items-baseline"
+            ):
+                ui.label("PREP DAY").classes(
+                    "text-xs font-semibold text-indigo-300 tracking-wide"
+                )
+                ui.icon("checklist").classes("text-[11px] text-indigo-400")
+            if session is None:
+                with ui.element("div").classes(
+                    f"rounded-md p-2 {PREP_COLUMN_ACCENT} border-dashed"
+                ):
+                    ui.label("Not generated").classes("text-[10px] text-slate-500")
+                    ui.label(
+                        "Enable enable_sunday_prep and regenerate the week for a "
+                        "batch-prep timeline here."
+                    ).classes("text-[9px] text-slate-600 mt-1")
+                return
+            for phase in session.timeline:
+                with ui.expansion(
+                    phase.name,
+                    caption=f"{phase.active_minutes} active / {phase.passive_minutes} passive min",
+                ).classes(f"rounded-md {PREP_COLUMN_ACCENT} text-[11px] w-full").props(
+                    "dense header-class='text-indigo-200 text-[11px] font-medium'"
+                ):
+                    if phase.description:
+                        ui.label(phase.description).classes(
+                            "text-[10px] text-slate-400 mb-1"
+                        )
+                    ui.checkbox(f"Done: {phase.name}").props(
+                        "dense size=xs color=indigo"
+                    ).classes("text-[10px] text-indigo-200")
+
     @ui.refreshable
     def canvas() -> None:
         views = state.slot_views()
-        with ui.element("div").classes("meal-canvas grid grid-cols-7 gap-2 w-full items-start"):
+        with ui.element("div").classes("meal-canvas grid grid-cols-8 gap-2 w-full items-start"):
+            prep_day_column()
             for day in state.days:
                 with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
                     with ui.element("div").classes(
@@ -1700,7 +1820,11 @@ async def planner_page() -> None:
 
     @ui.refreshable
     def context_pipeline() -> None:
-        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full mb-1"):
+        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full mb-1"):
+            # Empty spacer, not a pipeline row — none of PIPELINE_STAGES applies
+            # to the prep column, but the grid still needs a column 0 here to
+            # stay aligned with telemetry() and canvas() below it.
+            ui.element("div")
             for day in state.days:
                 with ui.element("div").classes(
                     "flex flex-row items-center gap-0.5 cursor-pointer rounded "
@@ -1751,13 +1875,36 @@ async def planner_page() -> None:
             )
 
     # ---- header: macro telemetry -----------------------------------------
+    # `prep_telemetry_cell` replaces the usual kcal/protein bars in the prep
+    # column with labor telemetry instead — active/passive minutes, not
+    # macros, since there's nothing eaten in this column to measure against a
+    # target.
+
+    def prep_telemetry_cell() -> None:
+        session = state.week_plan.sunday_prep_session if state.week_plan else None
+        max_active = state.config.get("max_prep_active_mins", 120)
+        with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
+            with ui.element("div").classes("flex flex-row justify-between items-baseline"):
+                ui.label("PREP").classes(
+                    "text-[11px] font-semibold tracking-wider text-indigo-300"
+                )
+            if session is None:
+                ui.label("Not generated").classes("text-[10px] font-mono text-slate-500")
+            else:
+                ui.label(
+                    f"Active Prep: {session.total_active_minutes} / {max_active} mins"
+                ).classes("text-[10px] font-mono text-indigo-200")
+                ui.label(
+                    f"Passive Time: {session.total_passive_minutes} mins"
+                ).classes("text-[10px] font-mono text-indigo-200/70")
 
     @ui.refreshable
     def telemetry() -> None:
         bar_scale_limit = state.config.get("ui_settings", {}).get(
             "bar_scale_limit", DEFAULT_UI_SETTINGS["bar_scale_limit"]
         )
-        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full"):
+        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full"):
+            prep_telemetry_cell()
             for day in state.days:
                 target = state.targets_for(day)
                 totals = state.totals_for(day)
@@ -2924,9 +3071,9 @@ if __name__ in {"__main__", "__mp_main__"}:
         reload=False,
         show=False,
     )
--e 
 
-=== File: ./planner.py ===
+
+=== File: planner.py ===
 import argparse
 import asyncio
 import logging
@@ -3732,6 +3879,37 @@ def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = No
     )
 
 
+# Weeknight slots that eat a Sunday-prepped batch show this instead of the
+# cook's own prep_time_minutes — reheating/plating a dish that's already
+# cooked is a few minutes, not the from-scratch cook time recorded on the day
+# it was actually made.
+SUNDAY_PREP_REHEAT_MINUTES = 10
+
+
+def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
+    """Whether `event` was folded into `week_plan`'s Sunday prep session.
+
+    `prep_notes` is set only for a batch that outlives its cook day (see
+    `Recipe.scale_to_servings`), and `generate_sunday_prep_session` takes
+    every such candidate into the session — so "has prep_notes" plus "a
+    session exists" is exactly "this batch was prepped ahead", without
+    needing a separate stored link.
+    """
+    return bool(event.recipe.prep_notes) and week_plan.sunday_prep_session is not None
+
+
+def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
+    """Active minutes a slot *eating* `event` needs.
+
+    The cook's own card keeps showing `recipe.prep_time_minutes` — that's the
+    real work, on the day it happens. A later slot living off the batch only
+    reheats/assembles it.
+    """
+    if is_sunday_prepped(event, week_plan):
+        return SUNDAY_PREP_REHEAT_MINUTES
+    return event.recipe.prep_time_minutes
+
+
 def scale_recipe(
     recipe: Recipe, portions: int, keeps_for_days: int, config: Optional[dict] = None
 ) -> Recipe:
@@ -4350,6 +4528,140 @@ def generate_day(
     return fitted
 
 
+def build_sunday_prep_brief(event: CookEvent, spec: WeekSpec) -> str:
+    """One candidate line for the Sunday prep prompt.
+
+    Carries only numbers Python already computed (portions, prep time, which
+    days it's eaten, the fridge/freezer storage window) so the model organises
+    a cooking session instead of re-deriving any of them.
+    """
+    eaten_days = sorted(
+        {parse_slot_id(slot_id)[0] for slot_id in event.eaten_by},
+        key=spec.day_index,
+    )
+    ingredient_list = ", ".join(
+        f"{ingredient.name} {ingredient.quantity_g:.0f}g" for ingredient in event.recipe.ingredients
+    )
+    return (
+        f"- {event.recipe.name} ({event.meal_type}, {event.portions} portions, "
+        f"{event.recipe.prep_time_minutes} min prep-as-written) — eaten on: "
+        f"{', '.join(eaten_days)}. Storage: {event.recipe.prep_notes}\n"
+        f"  Ingredients: {ingredient_list}\n"
+        f"  Method: {' '.join(event.recipe.instructions)}"
+    )
+
+
+def generate_sunday_prep_session(
+    cook_events: List[CookEvent],
+    spec: WeekSpec,
+    config: dict,
+) -> Optional[SundayPrepSession]:
+    """Turn the week's already-generated batch cooks into one Sunday prep timeline.
+
+    Candidates are cook events with a `prep_notes` — `scale_to_servings` only
+    writes one when `keeps_for_days > 0` (via `storage_note`), i.e. the batch
+    has to outlive the day it's cooked. That is exactly "a batch item": a
+    slow-cooker protein, a stew, a Bolognese, a freezer smoothie pack. A week
+    where everything is eaten the day it's made has nothing to aggregate, so
+    this returns None rather than an empty session — same "no candidates, no
+    prompt" rule `inventory_instruction` uses for an empty pantry list.
+
+    This only reorganises recipes the day-generation calls already produced —
+    it never invents food, so unlike `generate_day` there is no macro budget
+    to validate against. The only hard constraint is
+    `SundayPrepSession.total_active_minutes <= 120`, enforced by the schema
+    itself; `config`'s `max_prep_active_mins` is the *target* handed to the
+    model in the prompt and is clamped to that same 120 ceiling, since a
+    config asking for more than the schema allows would fail validation on
+    every single call.
+    """
+    if not config.get("enable_sunday_prep", False):
+        return None
+
+    candidates = [event for event in cook_events if event.recipe.prep_notes]
+    if not candidates:
+        return None
+
+    max_active = min(config.get("max_prep_active_mins", 120), 120)
+    fridge_safe_days = config.get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
+    candidate_briefs = "\n".join(build_sunday_prep_brief(event, spec) for event in candidates)
+
+    system_prompt = (
+        "You are planning ONE Sunday batch-prep session that gets a week's "
+        "worth of already-decided batch cooking done in advance. The recipes "
+        "below are fixed — do not change ingredients, quantities or methods, "
+        "only organise the work of cooking them.\n\n"
+        "Rules:\n"
+        f"- Hard cap: total_active_minutes must not exceed {max_active}. Active "
+        "minutes are hands-on time (chopping, stirring, portioning, sealing "
+        "bags) — time a slow cooker, oven or fridge runs unattended is "
+        "passive_minutes, not active_minutes, and does not count against the "
+        "cap.\n"
+        "- Aggregate identical prep across recipes into one step instead of "
+        "repeating it: if three recipes each need a chopped onion, one phase "
+        "chops all the onions together rather than three separate steps.\n"
+        "- Sequence the timeline chronologically: start the highest-passive-"
+        "time tasks first (slow cookers, roasts, anything that simmers or "
+        "bakes unattended), so their passive time overlaps with the active "
+        "chopping/portioning/bagging work for the other dishes, rather than "
+        "the whole session running start to end back to back.\n"
+        "- 4-Day Storage Rule: each candidate's Storage line below already "
+        "says whether it's fridge-only or fridge-plus-freezer (Python computed "
+        f"this from how many days it has to last against a {fridge_safe_days}-"
+        "day fridge-safe window) — do not recompute it. Any item marked to "
+        "freeze must get its own explicit freeze step (portion, label, date, "
+        "freeze) in the timeline; note the thaw lead time in that phase's "
+        "description (e.g. 'move to fridge the night before eating') rather "
+        "than scheduling a thaw step in this session, since thawing happens "
+        "later in the week, not on Sunday.\n"
+        "- aggregated_ingredients maps a combined prep task to what it covers, "
+        'e.g. {"onions": "4 diced (for chilli, bolognese, curry)"} — only '
+        "include ingredients that are actually shared prep across two or more "
+        "of the candidates; it is not a shopping list.\n"
+        "- Do not show your work or narrate — respond with the structured "
+        "data only."
+    )
+
+    user_prompt = (
+        f"This week's batch-prep candidates ({len(candidates)}):\n\n"
+        f"{candidate_briefs}\n\n"
+        "Build the Sunday prep session for exactly these candidates."
+    )
+
+    model = resolve_planner_model(config)
+    client = build_client(config.get("models"))
+    max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
+
+    logger.info(
+        "sunday_prep: requesting session for %d candidate(s) from %s", len(candidates), model
+    )
+    started = time.monotonic()
+    session, completion = client.chat.completions.create_with_completion(
+        model=model,
+        response_model=SundayPrepSession,
+        max_retries=3,
+        max_tokens=max_tokens,
+        # See CLAUDE.md "Reasoning must be disabled" — same failure mode
+        # applies to every instructor call on this client, not just generate_day.
+        extra_body={"reasoning": {"enabled": False}},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    elapsed = time.monotonic() - started
+    usage = getattr(completion, "usage", None)
+    logger.info(
+        "sunday_prep: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
+        elapsed,
+        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
+        getattr(usage, "completion_tokens", None),
+    )
+    return session
+
+
 def on_calling_loop(callback):
     """Wrap `callback` so a worker thread's call runs back on *this* loop.
 
@@ -4514,6 +4826,27 @@ async def generate_week_plan(
         events.update(day_events)
 
     ordered_events = [events[slot.id] for slot in spec.cook_slots() if slot.id in events]
+
+    # A failed prep session must not fail the week either — same rule as a
+    # failed day (see CLAUDE.md), and for the same reason: this runs after
+    # every day has already succeeded, so losing the whole plan to one extra
+    # call would be the worst possible outcome after a full run.
+    sunday_prep_session = None
+    try:
+        sunday_prep_session = await asyncio.to_thread(
+            generate_sunday_prep_session, ordered_events, spec, config
+        )
+        if sunday_prep_session and note_callback:
+            note_callback(
+                f"Sunday prep session: {sunday_prep_session.total_active_minutes} active "
+                f"min across {len(sunday_prep_session.timeline)} phase(s)"
+            )
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        logger.warning("sunday_prep: generation failed — %s", message)
+        if note_callback:
+            note_callback(f"Sunday prep session generation failed — {message}")
+
     return WeekPlan(
         days=spec.days,
         servings_per_meal=spec.servings_per_meal,
@@ -4522,6 +4855,7 @@ async def generate_week_plan(
         slots=spec.slots,
         targets=targets,
         failures=failures,
+        sunday_prep_session=sunday_prep_session,
     )
 
 
@@ -4578,6 +4912,23 @@ async def regenerate_single_day(
     by_slot.update(day_events)
     failures.pop(day, None)
     ordered_events = [by_slot[slot.id] for slot in spec.cook_slots() if slot.id in by_slot]
+
+    # A saved Sunday prep session names specific recipes/ingredients from the
+    # OLD plan. If `day` contributed a batch cook either before or after this
+    # regeneration, that session may now describe a recipe that no longer
+    # exists — a stale prep plan is worse than none, so drop it rather than
+    # let the timeline silently disagree with the new recipes. It is not
+    # regenerated here: this call is one targeted retry, not a second
+    # sunday_prep API call on top of it.
+    sunday_prep_session = week_plan.sunday_prep_session
+    if sunday_prep_session is not None:
+        was_candidate = any(
+            event.day == day and event.recipe.prep_notes for event in week_plan.cook_events
+        )
+        now_candidate = any(event.recipe.prep_notes for event in day_events.values())
+        if was_candidate or now_candidate:
+            sunday_prep_session = None
+
     return week_plan.model_copy(
         update={
             "generated_at": datetime.now().isoformat(),
@@ -4585,6 +4936,7 @@ async def regenerate_single_day(
             "slots": spec.slots,
             "targets": targets,
             "failures": failures,
+            "sunday_prep_session": sunday_prep_session,
         }
     )
 
@@ -4690,6 +5042,22 @@ def print_week_summary(week_plan: WeekPlan) -> None:
             f"C {totals['net_carbs_g']:.0f}/{target['net_carbs_g']:.0f} · "
             f"F {totals['fat_g']:.0f}/{target['fat_g']:.0f}"
         )
+
+    session = week_plan.sunday_prep_session
+    if session:
+        print(
+            f"\nSunday Prep Session ({session.total_active_minutes} active / "
+            f"{session.total_passive_minutes} passive min)"
+        )
+        print("=" * 26)
+        for phase in session.timeline:
+            print(f"  {phase.name} — {phase.active_minutes} active / {phase.passive_minutes} passive min")
+            if phase.description:
+                print(f"    {phase.description}")
+        if session.aggregated_ingredients:
+            print("  Aggregated prep:")
+            for item, note in session.aggregated_ingredients.items():
+                print(f"    {item}: {note}")
 
 
 def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -> None:
@@ -4859,9 +5227,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
--e 
 
-=== File: ./shopping.py ===
+
+=== File: shopping.py ===
 import re
 from typing import Dict, List, Optional, Sequence
 
@@ -5352,220 +5720,9 @@ def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
                 f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
             )
     return "\n".join(lines)
--e 
-
-=== File: ./export_menu.py ===
-"""Formats a generated week into a printable menu — Markdown text and a PDF.
-
-Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
-`WeekPlan.by_slot()` (cook events), the same source `planner.day_slot_macros`
-reads — not `PlannerState`/`SlotView`, so this module has no UI dependency
-and works the same from the NiceGUI drawer today or a future CLI flag.
-
-`build_week_menu_pdf` needs `reportlab` (pure Python, no system libraries —
-unlike `weasyprint`, which needs Cairo/Pango, it installs cleanly into this
-project's venv with a plain `pip install`).
-"""
-
-from typing import Dict, List, Optional
-from xml.sax.saxutils import escape
-
-from planner import CookEvent, Recipe, WeekPlan, day_slot_macros
-from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, slot_label
-
-MACRO_ROW_LABELS = ["kcal", "P", "C", "F"]
 
 
-def _slot_recipe(by_slot: Dict[str, CookEvent], slot: SlotSpec) -> Optional[Recipe]:
-    source_id = slot.id if slot.mode == MODE_COOK else slot.source
-    event = by_slot.get(source_id)
-    return event.recipe if event else None
-
-
-def _slot_entry(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], slot: SlotSpec) -> dict:
-    """One eating slot's exportable info, shared by both output formats.
-
-    `macros` is `None` for a skipped or ungenerated slot — the caller decides
-    how to render "nothing to show" for its format rather than this function
-    picking blank text vs. a blank table cell.
-    """
-    if slot.mode == MODE_SKIP:
-        return {"meal_type": slot.meal_type, "dish": "Skipped", "macros": None, "note": None}
-    recipe = _slot_recipe(by_slot, slot)
-    if recipe is None:
-        return {
-            "meal_type": slot.meal_type,
-            "dish": "Not generated",
-            "macros": None,
-            "note": week_plan.failures.get(slot.day),
-        }
-    note = (
-        f"leftover from {slot_label(slot.source, short=True)}"
-        if slot.mode == MODE_LEFTOVER
-        else None
-    )
-    return {
-        "meal_type": slot.meal_type,
-        "dish": recipe.name,
-        "macros": recipe.per_serving_macros,
-        "note": note,
-    }
-
-
-def _day_entries(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], day: str) -> List[dict]:
-    return [_slot_entry(week_plan, by_slot, slot) for slot in week_plan.slots if slot.day == day]
-
-
-def _macro_text(macros: dict) -> str:
-    return (
-        f"{macros['calories']:.0f} kcal · {macros['protein_g']:.0f}g P · "
-        f"{macros['net_carbs_g']:.0f}g C · {macros['fat_g']:.0f}g F"
-    )
-
-
-def format_week_menu_markdown(week_plan: WeekPlan) -> str:
-    """The whole week as Markdown — one section per day, one line per meal."""
-    by_slot = week_plan.by_slot()
-    lines = ["# Weekly Menu"]
-    if week_plan.generated_at:
-        lines.append(f"_Generated {week_plan.generated_at[:16].replace('T', ' ')}_")
-    lines.append("")
-
-    for day in week_plan.days:
-        lines.append(f"## {day}")
-        for entry in _day_entries(week_plan, by_slot, day):
-            text = f"**{entry['meal_type'].title()}** — {entry['dish']}"
-            if entry["note"]:
-                text += f" ({entry['note']})"
-            if entry["macros"]:
-                text += f" · {_macro_text(entry['macros'])}"
-            lines.append(f"- {text}")
-        totals = day_slot_macros(week_plan, day)
-        lines.append(f"- **Day total** — {_macro_text(totals)}")
-        lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _pdf_row(entry: dict, cell_style) -> list:
-    from reportlab.platypus import Paragraph
-
-    dish_text = entry["dish"]
-    if entry["note"]:
-        dish_text += f" ({entry['note']})"
-
-    if entry["macros"] is None:
-        dish = Paragraph(f"<i>{escape(dish_text)}</i>", cell_style)
-        return [entry["meal_type"].title(), dish, "", "", "", ""]
-
-    macros = entry["macros"]
-    return [
-        entry["meal_type"].title(),
-        Paragraph(escape(dish_text), cell_style),
-        f"{macros['calories']:.0f}",
-        f"{macros['protein_g']:.0f}g",
-        f"{macros['net_carbs_g']:.0f}g",
-        f"{macros['fat_g']:.0f}g",
-    ]
-
-
-def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
-    """The whole week as a PDF — one table per day, in week order.
-
-    Returns bytes rather than writing to disk: the caller (the NiceGUI
-    shopping drawer today) hands this straight to `ui.download`, and nothing
-    here needs to know whether it's a browser response or a file on disk.
-    """
-    import io
-
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    from reportlab.lib.units import mm
-    from reportlab.platypus import (
-        KeepTogether,
-        Paragraph,
-        SimpleDocTemplate,
-        Spacer,
-        Table,
-        TableStyle,
-    )
-
-    styles = getSampleStyleSheet()
-    day_style = ParagraphStyle("Day", parent=styles["Heading2"], spaceBefore=10, spaceAfter=4)
-    cell_style = ParagraphStyle("Cell", parent=styles["BodyText"], fontSize=9, leading=11)
-    note_style = ParagraphStyle("Note", parent=styles["BodyText"], fontSize=8, textColor=colors.grey)
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=letter,
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm,
-        title="Weekly Menu",
-    )
-
-    story = [Paragraph("Weekly Menu", styles["Title"])]
-    if week_plan.generated_at:
-        story.append(
-            Paragraph(f"Generated {week_plan.generated_at[:16].replace('T', ' ')}", note_style)
-        )
-    story.append(Spacer(1, 8))
-
-    by_slot = week_plan.by_slot()
-    header_row = ["Meal", "Dish"] + MACRO_ROW_LABELS
-    for day in week_plan.days:
-        rows = [header_row]
-        for entry in _day_entries(week_plan, by_slot, day):
-            rows.append(_pdf_row(entry, cell_style))
-        totals = day_slot_macros(week_plan, day)
-        rows.append(
-            [
-                "Day total",
-                "",
-                f"{totals['calories']:.0f}",
-                f"{totals['protein_g']:.0f}g",
-                f"{totals['net_carbs_g']:.0f}g",
-                f"{totals['fat_g']:.0f}g",
-            ]
-        )
-
-        table = Table(
-            rows, colWidths=[22 * mm, 90 * mm, 16 * mm, 14 * mm, 14 * mm, 14 * mm], repeatRows=1
-        )
-        table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, 0), 9),
-                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f3f4f6")),
-                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 3),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ]
-            )
-        )
-        story.append(KeepTogether([Paragraph(day, day_style), table]))
-
-    if week_plan.failures:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Not generated", styles["Heading3"]))
-        for day, error in week_plan.failures.items():
-            story.append(Paragraph(escape(f"{day}: {error}"), note_style))
-
-    doc.build(story)
-    return buffer.getvalue()
--e 
-
-=== File: ./week.py ===
+=== File: week.py ===
 """Week-level planning primitives.
 
 The unit of planning is no longer "a day of recipes" but a grid of **eating
@@ -6077,9 +6234,9 @@ def window_for_day(windows: List[ShoppingWindow], day: str) -> Optional[Shopping
         if day in window.days:
             return window
     return None
--e 
 
-=== File: ./repository.py ===
+
+=== File: repository.py ===
 """Storage boundary for everything the planner reads and writes.
 
 The planner used to `open()` and `json.load()` its own files inline, which
@@ -6477,5 +6634,267 @@ def run_sync(awaitable: Awaitable[T]) -> T:
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, awaitable).result()  # type: ignore[arg-type]
--e 
+
+
+=== File: export_menu.py ===
+"""Formats a generated week into a printable menu — Markdown text and a PDF.
+
+Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
+`WeekPlan.by_slot()` (cook events), the same source `planner.day_slot_macros`
+reads — not `PlannerState`/`SlotView`, so this module has no UI dependency
+and works the same from the NiceGUI drawer today or a future CLI flag.
+
+`build_week_menu_pdf` needs `reportlab` (pure Python, no system libraries —
+unlike `weasyprint`, which needs Cairo/Pango, it installs cleanly into this
+project's venv with a plain `pip install`).
+"""
+
+from typing import Dict, List, Optional
+from xml.sax.saxutils import escape
+
+from planner import CookEvent, Recipe, WeekPlan, day_slot_macros
+from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, slot_label
+
+MACRO_ROW_LABELS = ["kcal", "P", "C", "F"]
+
+
+def _slot_recipe(by_slot: Dict[str, CookEvent], slot: SlotSpec) -> Optional[Recipe]:
+    source_id = slot.id if slot.mode == MODE_COOK else slot.source
+    event = by_slot.get(source_id)
+    return event.recipe if event else None
+
+
+def _slot_entry(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], slot: SlotSpec) -> dict:
+    """One eating slot's exportable info, shared by both output formats.
+
+    `macros` is `None` for a skipped or ungenerated slot — the caller decides
+    how to render "nothing to show" for its format rather than this function
+    picking blank text vs. a blank table cell.
+    """
+    if slot.mode == MODE_SKIP:
+        return {"meal_type": slot.meal_type, "dish": "Skipped", "macros": None, "note": None}
+    recipe = _slot_recipe(by_slot, slot)
+    if recipe is None:
+        return {
+            "meal_type": slot.meal_type,
+            "dish": "Not generated",
+            "macros": None,
+            "note": week_plan.failures.get(slot.day),
+        }
+    note = (
+        f"leftover from {slot_label(slot.source, short=True)}"
+        if slot.mode == MODE_LEFTOVER
+        else None
+    )
+    return {
+        "meal_type": slot.meal_type,
+        "dish": recipe.name,
+        "macros": recipe.per_serving_macros,
+        "note": note,
+    }
+
+
+def _day_entries(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], day: str) -> List[dict]:
+    return [_slot_entry(week_plan, by_slot, slot) for slot in week_plan.slots if slot.day == day]
+
+
+def _macro_text(macros: dict) -> str:
+    return (
+        f"{macros['calories']:.0f} kcal · {macros['protein_g']:.0f}g P · "
+        f"{macros['net_carbs_g']:.0f}g C · {macros['fat_g']:.0f}g F"
+    )
+
+
+def format_week_menu_markdown(week_plan: WeekPlan) -> str:
+    """The whole week as Markdown — one section per day, one line per meal."""
+    by_slot = week_plan.by_slot()
+    lines = ["# Weekly Menu"]
+    if week_plan.generated_at:
+        lines.append(f"_Generated {week_plan.generated_at[:16].replace('T', ' ')}_")
+    lines.append("")
+
+    for day in week_plan.days:
+        lines.append(f"## {day}")
+        for entry in _day_entries(week_plan, by_slot, day):
+            text = f"**{entry['meal_type'].title()}** — {entry['dish']}"
+            if entry["note"]:
+                text += f" ({entry['note']})"
+            if entry["macros"]:
+                text += f" · {_macro_text(entry['macros'])}"
+            lines.append(f"- {text}")
+        totals = day_slot_macros(week_plan, day)
+        lines.append(f"- **Day total** — {_macro_text(totals)}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _pdf_row(entry: dict, cell_style) -> list:
+    from reportlab.platypus import Paragraph
+
+    dish_text = entry["dish"]
+    if entry["note"]:
+        dish_text += f" ({entry['note']})"
+
+    if entry["macros"] is None:
+        dish = Paragraph(f"<i>{escape(dish_text)}</i>", cell_style)
+        return [entry["meal_type"].title(), dish, "", "", "", ""]
+
+    macros = entry["macros"]
+    return [
+        entry["meal_type"].title(),
+        Paragraph(escape(dish_text), cell_style),
+        f"{macros['calories']:.0f}",
+        f"{macros['protein_g']:.0f}g",
+        f"{macros['net_carbs_g']:.0f}g",
+        f"{macros['fat_g']:.0f}g",
+    ]
+
+
+def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
+    """The whole week as a PDF — one table per day, in week order.
+
+    Returns bytes rather than writing to disk: the caller (the NiceGUI
+    shopping drawer today) hands this straight to `ui.download`, and nothing
+    here needs to know whether it's a browser response or a file on disk.
+    """
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        KeepTogether,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    styles = getSampleStyleSheet()
+    day_style = ParagraphStyle("Day", parent=styles["Heading2"], spaceBefore=10, spaceAfter=4)
+    cell_style = ParagraphStyle("Cell", parent=styles["BodyText"], fontSize=9, leading=11)
+    note_style = ParagraphStyle("Note", parent=styles["BodyText"], fontSize=8, textColor=colors.grey)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title="Weekly Menu",
+    )
+
+    story = [Paragraph("Weekly Menu", styles["Title"])]
+    if week_plan.generated_at:
+        story.append(
+            Paragraph(f"Generated {week_plan.generated_at[:16].replace('T', ' ')}", note_style)
+        )
+    story.append(Spacer(1, 8))
+
+    by_slot = week_plan.by_slot()
+    header_row = ["Meal", "Dish"] + MACRO_ROW_LABELS
+    for day in week_plan.days:
+        rows = [header_row]
+        for entry in _day_entries(week_plan, by_slot, day):
+            rows.append(_pdf_row(entry, cell_style))
+        totals = day_slot_macros(week_plan, day)
+        rows.append(
+            [
+                "Day total",
+                "",
+                f"{totals['calories']:.0f}",
+                f"{totals['protein_g']:.0f}g",
+                f"{totals['net_carbs_g']:.0f}g",
+                f"{totals['fat_g']:.0f}g",
+            ]
+        )
+
+        table = Table(
+            rows, colWidths=[22 * mm, 90 * mm, 16 * mm, 14 * mm, 14 * mm, 14 * mm], repeatRows=1
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f3f4f6")),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(KeepTogether([Paragraph(day, day_style), table]))
+
+    if week_plan.failures:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Not generated", styles["Heading3"]))
+        for day, error in week_plan.failures.items():
+            story.append(Paragraph(escape(f"{day}: {error}"), note_style))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+=== File: dev/model-list.py ===
+import csv
+import requests
+
+# Fetch model metadata from OpenRouter API
+response = requests.get("https://openrouter.ai/api/v1/models")
+data = response.json().get("data", [])
+
+# Select the top 50 models
+top_50 = data[:50]
+
+# Define CSV filename and headers
+filename = "openrouter_top_50.csv"
+headers = [
+    "ID",
+    "Name",
+    "Context Length",
+    "Prompt Price (per 1M)",
+    "Completion Price (per 1M)",
+]
+
+# Write data to CSV file
+with open(filename, mode="w", newline="", encoding="utf-8") as file:
+    writer = csv.writer(file)
+    writer.writerow(headers)
+
+    for model in top_50:
+        model_id = model.get("id", "")
+        name = model.get("name", "")
+        context_length = model.get("context_length", 0)
+
+        pricing = model.get("pricing", {})
+        # Convert prices to per-million token rates
+        prompt_price = float(pricing.get("prompt", 0)) * 1_000_000
+        completion_price = float(pricing.get("completion", 0)) * 1_000_000
+
+        writer.writerow(
+            [
+                model_id,
+                name,
+                context_length,
+                f"${prompt_price:.4f}",
+                f"${completion_price:.4f}",
+            ]
+        )
+
+print(
+    f"Successfully exported {len(top_50)} models to '{filename}'. Ready to upload!"
+)
+
 
