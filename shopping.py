@@ -298,6 +298,32 @@ def categorize_department(ingredient_name: str) -> str:
     return best_department
 
 
+def round_ingredient_quantity(name: str, quantity_g: float, department: str) -> float:
+    """Snap a scaled ingredient quantity to an amount a shopper can actually buy.
+
+    A portion trim or batch multiply leaves quantities like 516g — precise but
+    unbuyable. Meat/fish and anything already sizeable (>=100g) round to the
+    nearest 50g, the way it's sold; mid-size amounts round to the nearest 10g;
+    small spice/seasoning amounts (Herbs & Spices, <20g) round to the nearest
+    1g, since 2g of turmeric and 5g are meaningfully different; everything
+    else under 20g rounds to the nearest 5g.
+
+    Floored at one increment rather than letting a rounded-down trace ingredient
+    hit 0g: `Ingredient.quantity_g` requires `gt=0`, and a positive amount that
+    rounds to nothing is still on the recipe, just too small to weigh precisely.
+    """
+    if department in ("Meat & Poultry", "Fish & Seafood") or quantity_g >= 100:
+        increment = 50.0
+    elif quantity_g >= 20:
+        increment = 10.0
+    elif department == "Herbs & Spices":
+        increment = 1.0
+    else:
+        increment = 5.0
+    rounded = round(quantity_g / increment) * increment
+    return rounded if rounded > 0 else increment
+
+
 def aggregate_recipes(
     recipes: Sequence["Recipe"], offsets: Optional[Sequence[int]] = None
 ) -> ShoppingList:
