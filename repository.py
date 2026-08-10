@@ -24,6 +24,7 @@ storage one.
 
 import abc
 import asyncio
+import hashlib
 import json
 import os
 import uuid
@@ -34,9 +35,33 @@ from typing import Any, Awaitable, List, Optional, TypeVar
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_HISTORY_FILE = "meal_history.json"
 DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
-DEFAULT_FAVORITES_FILE = "favorites.json"
+DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
 
 T = TypeVar("T")
+
+
+def recipe_content_key(recipe: dict) -> str:
+    """Identity for "is this the same recipe" purposes: name + ingredient
+    composition, not object identity or a generated id.
+
+    This is what makes favoriting idempotent across regenerations — cooking
+    the same dish again next month (same name, same grams of each
+    ingredient) resolves to the same catalog entry rather than a duplicate,
+    while a same-named dish with different ingredients is treated as a
+    genuinely different recipe. Quantities are rounded to 2dp before hashing
+    so float noise from portion trimming can't split one recipe into two
+    entries.
+    """
+    name = (recipe.get("name") or "").strip().lower()
+    ingredients = sorted(
+        (
+            (ingredient.get("name") or "").strip().lower(),
+            round(float(ingredient.get("quantity_g") or 0), 2),
+        )
+        for ingredient in recipe.get("ingredients", [])
+    )
+    payload = json.dumps([name, ingredients], sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 class PlanRepository(abc.ABC):
@@ -66,16 +91,21 @@ class PlanRepository(abc.ABC):
         caller to its max length)."""
 
     @abc.abstractmethod
-    async def load_week_plan(self) -> Optional[dict]:
+    async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
         """The last generated week as a raw dict, or None if there isn't one.
 
-        Returned unvalidated so this module stays independent of planner's
-        Pydantic models; callers run `WeekPlan.model_validate` themselves.
+        `week_identifier` picks which cached week — `"current"` (the default,
+        and the only one that existed before multi-week support) or `"next"`
+        — since the app now keeps two weeks on disk at once rather than
+        overwriting a single file. Returned unvalidated so this module stays
+        independent of planner's Pydantic models; callers run
+        `WeekPlan.model_validate` themselves.
         """
 
     @abc.abstractmethod
-    async def save_week_plan(self, week_plan: dict) -> None:
-        """Store the generated week, replacing any previous one.
+    async def save_week_plan(self, week_plan: dict, week_identifier: str = "current") -> None:
+        """Store the generated week under `week_identifier`, replacing any
+        previous plan stored under that same identifier.
 
         Not in the original four methods, but the cached week plan is the other
         half of `load_week_plan` and the CLI's `--use-cached-plan` flag reads
@@ -84,39 +114,61 @@ class PlanRepository(abc.ABC):
         """
 
     @abc.abstractmethod
-    async def load_favorites(self) -> List[dict]:
-        """Saved recipes, oldest first. Empty when nothing has been favorited yet."""
+    async def load_recipe_catalog(self) -> List[dict]:
+        """Every recipe ever favorited or imported, oldest first — the single
+        store recipe content lives in outside of the current `week_plan.json`.
 
-    @abc.abstractmethod
-    async def save_favorite(self, recipe: dict) -> dict:
-        """Add `recipe` (a plain dict, same shape `Recipe.model_dump()` produces)
-        to the favorites library. Returns the stored record — `recipe` plus an
-        assigned `id` and a `saved_at` timestamp — so the caller can append it
-        to its in-memory list without a second round trip.
-
-        A recipe whose `name` already matches a saved favorite is not
-        appended again; the existing record is returned instead. Callers can
-        tell the two cases apart by checking whether the returned `id` is
-        already in their in-memory list.
+        Records look like `{id, content_key, recipe, is_favorite, source,
+        added_at, updated_at}`. `week_plan.json` and `meal_history.json` are
+        not this store: the former is overwritten every generation and the
+        latter keeps only lean per-day summaries, so a recipe that isn't
+        favorited or imported has no life beyond the week it was cooked in.
         """
 
     @abc.abstractmethod
-    async def update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
-        """Replace a saved favorite's recipe payload in place.
+    async def get_favorites(self) -> List[dict]:
+        """The subset of the catalog with `is_favorite` true."""
 
-        Returns the updated record, or None if `favorite_id` isn't in the
-        library — a favorite deleted in another tab is a no-op here, not an
-        error, the same tolerance `load_history`/`load_week_plan` extend to a
-        missing file.
+    @abc.abstractmethod
+    async def toggle_favorite(self, recipe: dict) -> bool:
+        """Flip favorite status for the catalog entry matching `recipe`'s
+        name + ingredients (see `recipe_content_key`).
+
+        If no matching entry exists yet, one is created (`source="favorited"`,
+        already favorited) — the first click on a card's bookmark is both
+        "add to catalog" and "favorite it" in one step. An existing entry is
+        never removed by this call, only its flag flipped, so un-favoriting a
+        recipe never drops it from the catalog (see `delete_catalog_recipe`
+        for actual removal). Returns the new `is_favorite` state.
         """
 
     @abc.abstractmethod
-    async def delete_favorite(self, favorite_id: str) -> None:
-        """Remove a saved favorite. A no-op if it's already gone."""
+    async def import_recipe(self, recipe: dict, favorite: bool = False) -> dict:
+        """Add `recipe` to the catalog (`source="imported"`), or fold into a
+        matching existing entry (see `recipe_content_key`) if one exists.
+
+        `favorite` can only ever turn an existing entry's flag on, never off
+        — an import is not how a recipe gets un-favorited. Returns the
+        stored record.
+        """
+
+    @abc.abstractmethod
+    async def rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        """Rename a catalog entry's recipe in place. Returns the updated
+        record, or None if `recipe_id` isn't in the catalog — a favorite
+        deleted in another tab is a no-op here, not an error, the same
+        tolerance `load_history`/`load_week_plan` extend to a missing file.
+        """
+
+    @abc.abstractmethod
+    async def delete_catalog_recipe(self, recipe_id: str) -> None:
+        """Remove an entry from the catalog outright. A no-op if already
+        gone. Distinct from `toggle_favorite`'s un-favorite, which keeps the
+        entry — this is for discarding a bad import or a mistaken save."""
 
 
 class LocalJSONRepository(PlanRepository):
-    """The current on-disk layout: three JSON files next to the code.
+    """The current on-disk layout: four JSON files next to the code.
 
     Paths are constructor arguments rather than module constants so tests (and
     a second week in another directory) don't have to chdir. Writes go to a
@@ -130,12 +182,12 @@ class LocalJSONRepository(PlanRepository):
         config_path: str = DEFAULT_CONFIG_FILE,
         history_path: str = DEFAULT_HISTORY_FILE,
         week_plan_path: str = DEFAULT_WEEK_PLAN_FILE,
-        favorites_path: str = DEFAULT_FAVORITES_FILE,
+        recipe_catalog_path: str = DEFAULT_RECIPE_CATALOG_FILE,
     ) -> None:
         self.config_path = config_path
         self.history_path = history_path
         self.week_plan_path = week_plan_path
-        self.favorites_path = favorites_path
+        self.recipe_catalog_path = recipe_catalog_path
 
     # -- PlanRepository ----------------------------------------------------
 
@@ -151,60 +203,120 @@ class LocalJSONRepository(PlanRepository):
     async def save_history(self, history: List[dict]) -> None:
         await asyncio.to_thread(self._write_json, self.history_path, history)
 
-    async def load_week_plan(self) -> Optional[dict]:
-        return await asyncio.to_thread(self._read_json, self.week_plan_path)
+    async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
+        return await asyncio.to_thread(
+            self._read_json, self._week_plan_path(week_identifier)
+        )
 
-    async def save_week_plan(self, week_plan: dict) -> None:
-        await asyncio.to_thread(self._write_json, self.week_plan_path, week_plan)
+    async def save_week_plan(self, week_plan: dict, week_identifier: str = "current") -> None:
+        await asyncio.to_thread(
+            self._write_json, self._week_plan_path(week_identifier), week_plan
+        )
 
-    async def load_favorites(self) -> List[dict]:
-        return await asyncio.to_thread(self._read_json, self.favorites_path) or []
+    async def load_recipe_catalog(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.recipe_catalog_path) or []
 
-    async def save_favorite(self, recipe: dict) -> dict:
-        return await asyncio.to_thread(self._save_favorite, recipe)
+    async def get_favorites(self) -> List[dict]:
+        catalog = await self.load_recipe_catalog()
+        return [record for record in catalog if record.get("is_favorite")]
 
-    async def update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
-        return await asyncio.to_thread(self._update_favorite, favorite_id, recipe)
+    async def toggle_favorite(self, recipe: dict) -> bool:
+        return await asyncio.to_thread(self._toggle_favorite, recipe)
 
-    async def delete_favorite(self, favorite_id: str) -> None:
-        await asyncio.to_thread(self._delete_favorite, favorite_id)
+    async def import_recipe(self, recipe: dict, favorite: bool = False) -> dict:
+        return await asyncio.to_thread(self._import_recipe, recipe, favorite)
+
+    async def rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        return await asyncio.to_thread(self._rename_catalog_recipe, recipe_id, name)
+
+    async def delete_catalog_recipe(self, recipe_id: str) -> None:
+        await asyncio.to_thread(self._delete_catalog_recipe, recipe_id)
+
+    def _week_plan_path(self, week_identifier: str) -> str:
+        """File for one named week.
+
+        `"current"` maps to the original single-file layout
+        (`self.week_plan_path`, i.e. `week_plan.json`) rather than
+        `week_plan_current.json`, so an existing install with a cached week
+        already on disk needs no migration and no data movement the first
+        time this runs. Every other identifier — `"next"`, or a week-start
+        date — gets its own `week_plan_<identifier>.json` alongside it.
+        """
+        if week_identifier == "current":
+            return self.week_plan_path
+        return f"week_plan_{week_identifier}.json"
 
     # -- blocking helpers, only ever called in a worker thread --------------
 
-    def _save_favorite(self, recipe: dict) -> dict:
-        favorites = self._read_json(self.favorites_path) or []
-        existing = next(
-            (r for r in favorites if r.get("recipe", {}).get("name") == recipe.get("name")),
-            None,
-        )
+    def _find_catalog_entry(self, catalog: List[dict], recipe: dict) -> Optional[dict]:
+        key = recipe_content_key(recipe)
+        return next((r for r in catalog if r.get("content_key") == key), None)
+
+    def _toggle_favorite(self, recipe: dict) -> bool:
+        catalog = self._read_json(self.recipe_catalog_path) or []
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        existing = self._find_catalog_entry(catalog, recipe)
         if existing is not None:
-            return existing
-        record = {
-            "id": uuid.uuid4().hex,
-            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "recipe": recipe,
-        }
-        favorites.append(record)
-        self._write_json(self.favorites_path, favorites)
+            existing["is_favorite"] = not existing.get("is_favorite", False)
+            existing["updated_at"] = now
+            new_state = existing["is_favorite"]
+        else:
+            catalog.append(
+                {
+                    "id": uuid.uuid4().hex,
+                    "content_key": recipe_content_key(recipe),
+                    "recipe": recipe,
+                    "is_favorite": True,
+                    "source": "favorited",
+                    "added_at": now,
+                    "updated_at": now,
+                }
+            )
+            new_state = True
+        self._write_json(self.recipe_catalog_path, catalog)
+        return new_state
+
+    def _import_recipe(self, recipe: dict, favorite: bool) -> dict:
+        catalog = self._read_json(self.recipe_catalog_path) or []
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        existing = self._find_catalog_entry(catalog, recipe)
+        if existing is not None:
+            if favorite and not existing.get("is_favorite", False):
+                existing["is_favorite"] = True
+                existing["updated_at"] = now
+            record = existing
+        else:
+            record = {
+                "id": uuid.uuid4().hex,
+                "content_key": recipe_content_key(recipe),
+                "recipe": recipe,
+                "is_favorite": favorite,
+                "source": "imported",
+                "added_at": now,
+                "updated_at": now,
+            }
+            catalog.append(record)
+        self._write_json(self.recipe_catalog_path, catalog)
         return record
 
-    def _update_favorite(self, favorite_id: str, recipe: dict) -> Optional[dict]:
-        favorites = self._read_json(self.favorites_path) or []
+    def _rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        catalog = self._read_json(self.recipe_catalog_path) or []
         updated = None
-        for record in favorites:
-            if record.get("id") == favorite_id:
-                record["recipe"] = recipe
+        for record in catalog:
+            if record.get("id") == recipe_id:
+                record["recipe"]["name"] = name
+                record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 updated = record
                 break
         if updated is not None:
-            self._write_json(self.favorites_path, favorites)
+            self._write_json(self.recipe_catalog_path, catalog)
         return updated
 
-    def _delete_favorite(self, favorite_id: str) -> None:
-        favorites = self._read_json(self.favorites_path) or []
-        remaining = [record for record in favorites if record.get("id") != favorite_id]
-        if len(remaining) != len(favorites):
-            self._write_json(self.favorites_path, remaining)
+    def _delete_catalog_recipe(self, recipe_id: str) -> None:
+        catalog = self._read_json(self.recipe_catalog_path) or []
+        remaining = [record for record in catalog if record.get("id") != recipe_id]
+        if len(remaining) != len(catalog):
+            self._write_json(self.recipe_catalog_path, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:

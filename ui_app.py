@@ -88,7 +88,7 @@ from planner import (
     scale_recipe,
     split_targets,
 )
-from repository import LocalJSONRepository
+from repository import LocalJSONRepository, recipe_content_key
 from shopping import (
     aggregate_cook_events,
     cook_plan_lines,
@@ -133,6 +133,13 @@ MODEL_OPTIONS = [
     "google/gemma-4-31b-it:free",
     "poolside/laguna-s-2.1:free",
 ]
+
+# The two cached weeks the app keeps on disk at once (see
+# `repository.LocalJSONRepository._week_plan_path`). "current" is the
+# original single-file layout (week_plan.json); "next" is stored alongside it
+# as week_plan_next.json. Keys are what's passed to `load_week_plan`/
+# `save_week_plan`, values are what the header select shows.
+WEEK_SELECTION_LABELS = {"current": "Current Week", "next": "Next Week"}
 
 # A slot's render status is its mode, except that a cook (or the cook a
 # leftover points at) whose day failed to generate has no recipe to show. That
@@ -364,9 +371,20 @@ class PlannerState:
 
     config: dict
     week_plan: Optional[WeekPlan] = None
+    # Which cached week is on screen — a key into WEEK_SELECTION_LABELS, and
+    # the `week_identifier` threaded through every `load_week_plan`/
+    # `save_week_plan` call below. Switching it is what `switch_week` does;
+    # plain reloads/generation act on whichever value is already here.
+    week_selection: str = "current"
     week_start: str = ""
     servings: int = 2
     shop_days: List[str] = field(default_factory=list)
+    # Shopping-drawer display toggle only — never persisted and never fed to
+    # `generate_week_plan`. True partitions the week into one window per cook
+    # day (`shopping_windows(state.days, state.days)`) instead of the
+    # configured `shop_days` trips; the underlying cook events and quantities
+    # are identical either way, only the grouping changes.
+    daily_shop_mode: bool = False
     model: str = DEFAULT_MODEL
     focus: Optional[SlotView] = None
     edited: bool = False
@@ -396,13 +414,16 @@ class PlannerState:
     # would race to overwrite the same week_plan.json.
     generating: bool = False
 
-    # The saved-recipe library (favorites.json), record shape
-    # {id, saved_at, recipe}. Loaded once at startup and kept in sync with
-    # disk by every handler that mutates it — there is no re-read on repaint,
-    # since the whole point is that a browser tab's list doesn't jump around
-    # under a card the user is mid-click on.
-    favorites: List[dict] = field(default_factory=list)
-    favorite_search: str = ""
+    # The recipe catalog (recipes_master.json) — every recipe ever favorited
+    # or imported, record shape {id, content_key, recipe, is_favorite,
+    # source, added_at, updated_at}. It is the single place recipe content
+    # outlives the week it was generated in; `week_plan.json` is overwritten
+    # every run. Loaded once at startup and kept in sync with disk by every
+    # handler that mutates it — there is no re-read on repaint, since the
+    # whole point is that a browser tab's list doesn't jump around under a
+    # card the user is mid-click on.
+    recipe_catalog: List[dict] = field(default_factory=list)
+    catalog_search: str = ""
     # Which card the swap modal is open for, and its in-progress filter/pick.
     # Held on state rather than as dialog-local variables so `swap_dialog_body`
     # can be a plain `@ui.refreshable` that reads state, the same pattern
@@ -411,11 +432,13 @@ class PlannerState:
     swap_filter: Optional[str] = None
     swap_query: str = ""
     swap_selected_id: Optional[str] = None
-    # Import dialog scratch text; cleared once a paste is successfully turned
-    # into a favorite.
+    # Import dialog scratch text/toggle; cleared once a paste is successfully
+    # turned into a catalog entry. `import_as_favorite` defaults off — an
+    # import lands in the catalog but isn't favorited unless asked for.
     import_text: str = ""
-    edit_favorite_id: Optional[str] = None
-    edit_favorite_name: str = ""
+    import_as_favorite: bool = False
+    edit_catalog_id: Optional[str] = None
+    edit_catalog_name: str = ""
 
     # The live week shape. Held rather than re-derived on every access because
     # it is now editable: rebuilding it per read would throw away the links the
@@ -440,14 +463,32 @@ class PlannerState:
             ],
             training_schedule=[dict(session) for session in config.get("training_schedule") or []],
         )
-        state.favorites = await repository.load_favorites()
+        state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
         return state
 
     async def reload_plan(self, repository: LocalJSONRepository) -> None:
         """Pull the cached week off disk. Validation lives here, not in the
-        repository, which deliberately deals in plain dicts."""
-        raw = await repository.load_week_plan()
+        repository, which deliberately deals in plain dicts.
+
+        Acts on whichever week is already selected — `switch_week` is what
+        changes that.
+        """
+        raw = await repository.load_week_plan(self.week_selection)
+        self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
+
+    async def switch_week(self, repository: LocalJSONRepository, target_week: str) -> None:
+        """Change which cached week is on screen, loading it from disk.
+
+        The load happens before `week_selection` is reassigned, same
+        ordering as `reload_plan`: if it raises, the previous week is still
+        the one showing rather than the state flipping to a selection whose
+        plan never actually loaded. No generation call here — this only ever
+        reads what's already on disk, per CLAUDE.md's "generating is the only
+        thing that writes to disk."
+        """
+        raw = await repository.load_week_plan(target_week)
+        self.week_selection = target_week
         self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
 
     def adopt_plan(self, plan: Optional[WeekPlan]) -> None:
@@ -1108,24 +1149,28 @@ async def planner_page() -> None:
     # whole page has finished building — same forward-reference pattern
     # `on_link_next_lunch` already uses for `refresh_all` below.
 
-    def is_favorited(recipe_name: str) -> bool:
-        return any(f["recipe"].get("name") == recipe_name for f in state.favorites)
+    def catalog_entry_for(recipe: dict) -> Optional[dict]:
+        key = recipe_content_key(recipe)
+        return next(
+            (r for r in state.recipe_catalog if r.get("content_key") == key), None
+        )
 
-    async def mark_favorite(view: SlotView) -> None:
-        if view.recipe is None:
-            return
-        record = await REPOSITORY.save_favorite(view.recipe.model_dump())
-        # A duplicate name means the repository handed back an existing
-        # record rather than creating one — it's already in state.favorites,
-        # so appending it again would be the same duplicate the repository
-        # just refused to write to disk.
-        if any(f["id"] == record["id"] for f in state.favorites):
-            ui.notify("Already in favorites", type="warning")
-            return
-        state.favorites.append(record)
+    def is_favorited(recipe: dict) -> bool:
+        entry = catalog_entry_for(recipe)
+        return bool(entry and entry.get("is_favorite"))
+
+    def favorited_catalog() -> List[dict]:
+        return [r for r in state.recipe_catalog if r.get("is_favorite")]
+
+    async def toggle_favorite(recipe: dict) -> None:
+        new_state = await REPOSITORY.toggle_favorite(recipe)
+        state.recipe_catalog = await REPOSITORY.load_recipe_catalog()
         favorites_list.refresh()
         canvas.refresh()
-        ui.notify("Recipe saved to favorites!", type="positive")
+        ui.notify(
+            "Saved to favorites" if new_state else "Removed from favorites",
+            type="positive" if new_state else "info",
+        )
 
     def swap_filter_matches(favorite: dict, meal_type: Optional[str], query: str) -> bool:
         recipe = favorite["recipe"]
@@ -1145,7 +1190,7 @@ async def planner_page() -> None:
         if state.swap_target is None or state.swap_selected_id is None:
             return
         favorite = next(
-            (f for f in state.favorites if f["id"] == state.swap_selected_id), None
+            (f for f in favorited_catalog() if f["id"] == state.swap_selected_id), None
         )
         if favorite is None:
             return
@@ -1172,10 +1217,11 @@ async def planner_page() -> None:
 
         budget = slot_target_budget(state, view)
         meal_filter = None if state.swap_filter in (None, "All meal types") else state.swap_filter
+        favorites = favorited_catalog()
         matches = [
-            f for f in state.favorites if swap_filter_matches(f, meal_filter, state.swap_query)
+            f for f in favorites if swap_filter_matches(f, meal_filter, state.swap_query)
         ]
-        selected = next((f for f in state.favorites if f["id"] == state.swap_selected_id), None)
+        selected = next((f for f in favorites if f["id"] == state.swap_selected_id), None)
 
         if not matches:
             ui.label(
@@ -1340,10 +1386,11 @@ async def planner_page() -> None:
                 with ui.element("div").classes("flex flex-row items-center gap-0.5"):
                     if view.recipe is not None:
                         if view.mode == MODE_COOK:
-                            favorited = is_favorited(view.recipe.name)
+                            recipe_dict = view.recipe.model_dump()
+                            favorited = is_favorited(recipe_dict)
                             fav_button = ui.button(
                                 icon="bookmark" if favorited else "bookmark_border",
-                                on_click=lambda v=view: mark_favorite(v),
+                                on_click=lambda r=recipe_dict: toggle_favorite(r),
                             )
                             fav_button.props("dense flat round size=xs").classes(
                                 "min-h-0 p-0.5 "
@@ -1355,7 +1402,7 @@ async def planner_page() -> None:
                             )
                             with fav_button:
                                 ui.tooltip(
-                                    "Already in favorites" if favorited else "Save to favorites"
+                                    "Remove from favorites" if favorited else "Save to favorites"
                                 )
                         swap_button = ui.button(
                             icon="swap_horiz",
@@ -1666,7 +1713,11 @@ async def planner_page() -> None:
             ).classes("text-xs text-slate-500")
             return
 
-        windows = shopping_windows(state.days, state.shop_days)
+        # Daily mode reuses the same partitioning function with every day
+        # treated as a shop day — the cook events and quantities in each
+        # window are unaffected, only where the boundaries fall.
+        window_days = state.days if state.daily_shop_mode else state.shop_days
+        windows = shopping_windows(state.days, window_days)
         if not windows:
             ui.label("No shopping days set — pick some in the drawer.").classes(
                 "text-xs text-slate-400"
@@ -1755,6 +1806,17 @@ async def planner_page() -> None:
             ui.button(icon="close", on_click=lambda: shopping_drawer.hide()).props(
                 "dense flat size=sm"
             ).classes("text-slate-400")
+
+        def on_daily_shop_toggle(event) -> None:
+            state.daily_shop_mode = event.value
+            shopping_panel.refresh()
+
+        with ui.element("div").classes("flex flex-row items-center justify-between"):
+            ui.label("Shop days (batch trips)").classes("text-[11px] text-slate-400")
+            ui.switch(value=state.daily_shop_mode, on_change=on_daily_shop_toggle).props(
+                "dense size=sm color=teal"
+            )
+            ui.label("Daily shop").classes("text-[11px] text-slate-400")
         shopping_panel()
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
@@ -1764,6 +1826,29 @@ async def planner_page() -> None:
                 ui.label("AI Weekly Meal Planner").classes(
                     "text-sm font-semibold tracking-wide"
                 )
+
+            async def on_week_selection_change(event) -> None:
+                target = event.value
+                if target == state.week_selection:
+                    return
+                # `switch_week` only reads from disk — it never generates —
+                # so this is instant regardless of which week it's loading.
+                await state.switch_week(REPOSITORY, target)
+                refresh_all()
+
+            # No `bind_value` here on purpose: binding would let NiceGUI's
+            # polling loop write `state.week_selection` the moment the user
+            # picks an option, before `switch_week` has loaded that week's
+            # plan — every other piece of state (`week_plan`, `edited`, the
+            # spec) would then disagree with `week_selection` until the
+            # `await` above finishes. `switch_week` is the only thing that's
+            # allowed to set it, and only once the load it names has landed.
+            ui.select(
+                WEEK_SELECTION_LABELS,
+                value=state.week_selection,
+                on_change=on_week_selection_change,
+            ).props("dense outlined size=sm").classes("text-slate-200 w-32")
+
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state,
                 "week_plan",
@@ -1783,11 +1868,29 @@ async def planner_page() -> None:
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
             )
-            shopping_button = ui.button(
-                "Shopping list",
-                icon="shopping_cart",
-                on_click=shopping_drawer.toggle,
-            ).props("dense flat no-caps size=sm").classes("text-slate-200")
+
+            def shopping_item_count(plan: Optional[WeekPlan]) -> str:
+                if plan is None:
+                    return "Shopping list"
+                items = aggregate_cook_events(
+                    plan.events_on_days(state.days), state.days
+                ).items()
+                if not items:
+                    return "Shopping list"
+                return f"Shopping list ({len(items)} items)"
+
+            # Prominent and un-dense on purpose — this is the button that
+            # gets used every single week, not an occasional control, so it
+            # gets the same visual weight as "Generate" rather than blending
+            # into the rest of the flat header icons.
+            shopping_button = (
+                ui.button(icon="shopping_cart", on_click=shopping_drawer.toggle)
+                .props("no-caps unelevated color=teal")
+                .classes("text-slate-900 font-semibold shadow-md shadow-teal-500/20")
+            )
+            shopping_button.bind_text_from(
+                state, "week_plan", backward=shopping_item_count
+            )
             with shopping_button:
                 ui.tooltip(
                     "Every shopping trip in this week, grouped by department — "
@@ -2026,8 +2129,9 @@ async def planner_page() -> None:
     async def reload_from_disk() -> None:
         await state.reload_plan(REPOSITORY)
         refresh_all()
+        label = WEEK_SELECTION_LABELS[state.week_selection]
         ui.notify(
-            "Reloaded week_plan.json" if state.week_plan else "No cached week plan on disk",
+            f"Reloaded {label}" if state.week_plan else f"No cached plan for {label}",
             type="positive" if state.week_plan else "warning",
         )
 
@@ -2145,7 +2249,9 @@ async def planner_page() -> None:
             )
             progress_status.text = "Saving…"
             progress_bar.value = 1.0
-            await REPOSITORY.save_week_plan(week_plan.model_dump())
+            # Targets whichever week is selected in the header — generating
+            # while "Next Week" is showing must not overwrite "current".
+            await REPOSITORY.save_week_plan(week_plan.model_dump(), state.week_selection)
             await record_week_history(week_plan, REPOSITORY)
         except Exception as exc:
             # Per-day failures never reach here — generate_week_plan absorbs
@@ -2178,59 +2284,60 @@ async def planner_page() -> None:
             )
         else:
             ui.notify(
-                f"Generated {cooking_days} cooking day(s) and saved to week_plan.json",
+                f"Generated {cooking_days} cooking day(s) and saved "
+                f"{WEEK_SELECTION_LABELS[state.week_selection]}",
                 type="positive",
             )
 
-    # ---- favorites library & recipe import ---------------------------------
+    # ---- recipe catalog & import --------------------------------------------
     # `favorites_list` is referenced by handlers defined above this point
-    # (`mark_favorite`) and below it (drawer buttons) alike — every one of
+    # (`toggle_favorite`) and below it (drawer buttons) alike — every one of
     # them only runs on a later click, by which time this name already exists
     # in `planner_page`'s scope, same forward-reference pattern as
     # `refresh_all`.
 
-    async def delete_favorite(favorite_id: str) -> None:
-        await REPOSITORY.delete_favorite(favorite_id)
-        state.favorites = [f for f in state.favorites if f["id"] != favorite_id]
+    async def delete_catalog_entry(recipe_id: str) -> None:
+        await REPOSITORY.delete_catalog_recipe(recipe_id)
+        state.recipe_catalog = [r for r in state.recipe_catalog if r["id"] != recipe_id]
         favorites_list.refresh()
-        ui.notify("Favorite deleted", type="positive")
+        canvas.refresh()
+        ui.notify("Removed from catalog", type="positive")
 
-    def open_edit_favorite(favorite: dict) -> None:
-        state.edit_favorite_id = favorite["id"]
-        state.edit_favorite_name = favorite["recipe"]["name"]
+    def open_edit_catalog_entry(entry: dict) -> None:
+        state.edit_catalog_id = entry["id"]
+        state.edit_catalog_name = entry["recipe"]["name"]
         edit_favorite_dialog.open()
 
-    async def save_favorite_edit() -> None:
-        favorite = next(
-            (f for f in state.favorites if f["id"] == state.edit_favorite_id), None
+    async def save_catalog_rename() -> None:
+        entry = next(
+            (r for r in state.recipe_catalog if r["id"] == state.edit_catalog_id), None
         )
-        if favorite is None:
+        if entry is None:
             return
-        new_name = (state.edit_favorite_name or "").strip()
+        new_name = (state.edit_catalog_name or "").strip()
         if not new_name:
             ui.notify("Name can't be empty.", type="warning")
             return
-        updated_recipe = dict(favorite["recipe"], name=new_name)
-        record = await REPOSITORY.update_favorite(favorite["id"], updated_recipe)
+        record = await REPOSITORY.rename_catalog_recipe(entry["id"], new_name)
         if record:
-            favorite["recipe"] = record["recipe"]
+            entry["recipe"] = record["recipe"]
         favorites_list.refresh()
         edit_favorite_dialog.close()
-        ui.notify("Favorite updated", type="positive")
+        ui.notify("Recipe renamed", type="positive")
 
     with ui.dialog() as edit_favorite_dialog:
         with ui.element("div").classes(
             "bg-slate-900 rounded-lg p-4 w-96 max-w-full flex flex-col gap-2"
         ):
-            ui.label("Rename favorite").classes("text-sm font-semibold")
-            ui.input(label="Name").bind_value(state, "edit_favorite_name").props(
+            ui.label("Rename recipe").classes("text-sm font-semibold")
+            ui.input(label="Name").bind_value(state, "edit_catalog_name").props(
                 "dense outlined"
             ).classes("w-full text-xs")
             with ui.row().classes("justify-end gap-2 mt-2"):
                 ui.button("Cancel", on_click=edit_favorite_dialog.close).props(
                     "dense flat no-caps"
                 )
-                ui.button("Save", on_click=save_favorite_edit).props("dense no-caps")
+                ui.button("Save", on_click=save_catalog_rename).props("dense no-caps")
 
     async def on_import() -> None:
         text = (state.import_text or "").strip()
@@ -2259,12 +2366,17 @@ async def planner_page() -> None:
         finally:
             import_button.props(remove="loading")
 
-        record = await REPOSITORY.save_favorite(recipe.model_dump())
-        state.favorites.append(record)
+        favorite = state.import_as_favorite
+        await REPOSITORY.import_recipe(recipe.model_dump(), favorite=favorite)
+        state.recipe_catalog = await REPOSITORY.load_recipe_catalog()
         favorites_list.refresh()
         state.import_text = ""
+        state.import_as_favorite = False
         import_dialog.close()
-        ui.notify(f"Imported \"{recipe.name}\" into favorites.", type="positive")
+        ui.notify(
+            f"Imported \"{recipe.name}\"" + (" and favorited it." if favorite else "."),
+            type="positive",
+        )
 
     with ui.dialog() as import_dialog:
         with ui.element("div").classes(
@@ -2280,6 +2392,9 @@ async def planner_page() -> None:
                 state, "import_text"
             ).props("dense outlined").classes("w-full text-xs").style(
                 "min-height: 8rem"
+            )
+            ui.checkbox("Mark as favorite").bind_value(state, "import_as_favorite").classes(
+                "text-xs"
             )
             with ui.row().classes("justify-end gap-2 mt-2"):
                 ui.button("Cancel", on_click=import_dialog.close).props(
@@ -2299,14 +2414,23 @@ async def planner_page() -> None:
             "sticky top-0 z-10 bg-slate-900 flex flex-col gap-2 pb-2"
         ):
             generate = (
-                ui.button("Generate week", icon="bolt", on_click=run_generation)
+                ui.button(icon="bolt", on_click=run_generation)
                 .props("dense")
                 .classes("w-full")
+            )
+            # Labelled after whichever week the header select has chosen, so
+            # the button never reads "Generate week" while "Next Week" is on
+            # screen and about to be the one overwritten.
+            generate.bind_text_from(
+                state,
+                "week_selection",
+                backward=lambda w: f"Generate {WEEK_SELECTION_LABELS[w]}",
             )
             with generate:
                 ui.tooltip(
                     "Generates every meal set to cook in this grid — one API call per "
-                    "cooking day. Overwrites week_plan.json and appends to history."
+                    "cooking day. Overwrites the selected week's cached plan and "
+                    "appends to history."
                 )
             ui.button(
                 "Reload from disk", icon="refresh", on_click=reload_from_disk
@@ -2424,40 +2548,41 @@ async def planner_page() -> None:
             with ui.element("div").classes("flex flex-col gap-1.5"):
                 training_editor()
 
-        with ui.expansion("Favorite Recipes & Imports", icon="favorite").classes(
+        with ui.expansion("Recipe Catalog", icon="favorite").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
 
-            def on_favorite_search(event) -> None:
-                state.favorite_search = (event.value or "").strip()
+            def on_catalog_search(event) -> None:
+                state.catalog_search = (event.value or "").strip()
                 favorites_list.refresh()
 
             ui.input(
-                placeholder="Search favorites…",
-                on_change=on_favorite_search,
+                placeholder="Search catalog…",
+                on_change=on_catalog_search,
             ).props("dense outlined clearable").classes("w-full text-xs")
 
             @ui.refreshable
             def favorites_list() -> None:
-                query = state.favorite_search.lower()
+                query = state.catalog_search.lower()
                 matches = [
-                    f
-                    for f in state.favorites
+                    r
+                    for r in state.recipe_catalog
                     if not query
-                    or query in f["recipe"]["name"].lower()
-                    or query in f["recipe"].get("meal_type", "").lower()
+                    or query in r["recipe"]["name"].lower()
+                    or query in r["recipe"].get("meal_type", "").lower()
                 ]
-                if not state.favorites:
+                if not state.recipe_catalog:
                     ui.label(
-                        "No favorites saved yet — mark a cooked meal or import one."
+                        "Catalog is empty — bookmark a cooked meal or import one."
                     ).classes("text-[10px] text-slate-500 italic")
                 elif not matches:
-                    ui.label("No favorites match that search.").classes(
+                    ui.label("No recipes match that search.").classes(
                         "text-[10px] text-slate-500 italic"
                     )
                 with ui.element("div").classes("flex flex-col gap-1 max-h-56 overflow-y-auto"):
-                    for favorite in matches:
-                        recipe = favorite["recipe"]
+                    for entry in matches:
+                        recipe = entry["recipe"]
+                        favorited = bool(entry.get("is_favorite"))
                         with ui.element("div").classes(
                             "flex flex-row items-center justify-between gap-1 p-1 rounded "
                             "border border-slate-800 bg-slate-950/30"
@@ -2472,15 +2597,27 @@ async def planner_page() -> None:
                             with ui.element("div").classes(
                                 "flex flex-row items-center gap-0.5 shrink-0"
                             ):
+                                fav_toggle = ui.button(
+                                    icon="bookmark" if favorited else "bookmark_border",
+                                    on_click=lambda r=recipe: toggle_favorite(r),
+                                ).props("dense flat round size=xs")
+                                fav_toggle.classes(
+                                    "min-h-0 p-0.5 "
+                                    + (
+                                        "text-amber-300"
+                                        if favorited
+                                        else "text-slate-500 hover:text-amber-300"
+                                    )
+                                )
                                 ui.button(
                                     icon="edit",
-                                    on_click=lambda f=favorite: open_edit_favorite(f),
+                                    on_click=lambda e=entry: open_edit_catalog_entry(e),
                                 ).props("dense flat round size=xs").classes(
                                     "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
                                 )
                                 ui.button(
                                     icon="delete",
-                                    on_click=lambda fid=favorite["id"]: delete_favorite(fid),
+                                    on_click=lambda rid=entry["id"]: delete_catalog_entry(rid),
                                 ).props("dense flat round size=xs").classes(
                                     "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
                                 )
