@@ -258,6 +258,13 @@ TARGET_FIELDS = [
     ("net_carbs_g", "carbs g"),
 ]
 
+# Indigo marks the Sunday prep column everywhere it appears (telemetry header,
+# canvas, pipeline row) — deliberately outside the emerald/sky/slate/rose
+# palette STATUS_STYLES and BAND_COLOURS already use for day statuses, since
+# this column is prep work, not an eating slot, and must never read as a fifth
+# status.
+PREP_COLUMN_ACCENT = "border border-indigo-400/25 border-l-[3px] border-l-indigo-400 bg-indigo-400/[0.05]"
+
 # Selectable workout types. "rest" is a legitimate entry (a day explicitly
 # marked as no training) but carries no macro split — `apply_training_adjustments`
 # skips it — so it isn't a key in TRAINING_INTENSITY_SPLIT and is appended here.
@@ -1615,10 +1622,56 @@ async def planner_page() -> None:
                         "cooking — the batch grows to match."
                     )
 
+    # ---- prep day: Sunday batch-prep column --------------------------------
+    # An eighth grid column, left of day 0, for `week_plan.sunday_prep_session`
+    # — raw prep work aggregated across the week's cook events (see
+    # `planner.generate_sunday_prep_session`), done ahead of the week rather
+    # than repeated per cook day. It is prep work, not an eating slot, so it
+    # gets its own indigo accent (`PREP_COLUMN_ACCENT`) rather than any
+    # `STATUS_STYLES` treatment, and sits outside `state.days` entirely —
+    # there is no slot_id, regen button, or macro target for it.
+
+    def prep_day_column() -> None:
+        session = state.week_plan.sunday_prep_session if state.week_plan else None
+        with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
+            with ui.element("div").classes(
+                "px-1 py-0.5 border-b border-indigo-400/40 flex flex-row "
+                "justify-between items-baseline"
+            ):
+                ui.label("PREP DAY").classes(
+                    "text-xs font-semibold text-indigo-300 tracking-wide"
+                )
+                ui.icon("checklist").classes("text-[11px] text-indigo-400")
+            if session is None:
+                with ui.element("div").classes(
+                    f"rounded-md p-2 {PREP_COLUMN_ACCENT} border-dashed"
+                ):
+                    ui.label("Not generated").classes("text-[10px] text-slate-500")
+                    ui.label(
+                        "Enable enable_sunday_prep and regenerate the week for a "
+                        "batch-prep timeline here."
+                    ).classes("text-[9px] text-slate-600 mt-1")
+                return
+            for phase in session.timeline:
+                with ui.expansion(
+                    phase.name,
+                    caption=f"{phase.active_minutes} active / {phase.passive_minutes} passive min",
+                ).classes(f"rounded-md {PREP_COLUMN_ACCENT} text-[11px] w-full").props(
+                    "dense header-class='text-indigo-200 text-[11px] font-medium'"
+                ):
+                    if phase.description:
+                        ui.label(phase.description).classes(
+                            "text-[10px] text-slate-400 mb-1"
+                        )
+                    ui.checkbox(f"Done: {phase.name}").props(
+                        "dense size=xs color=indigo"
+                    ).classes("text-[10px] text-indigo-200")
+
     @ui.refreshable
     def canvas() -> None:
         views = state.slot_views()
-        with ui.element("div").classes("meal-canvas grid grid-cols-7 gap-2 w-full items-start"):
+        with ui.element("div").classes("meal-canvas grid grid-cols-8 gap-2 w-full items-start"):
+            prep_day_column()
             for day in state.days:
                 with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
                     with ui.element("div").classes(
@@ -1699,7 +1752,11 @@ async def planner_page() -> None:
 
     @ui.refreshable
     def context_pipeline() -> None:
-        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full mb-1"):
+        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full mb-1"):
+            # Empty spacer, not a pipeline row — none of PIPELINE_STAGES applies
+            # to the prep column, but the grid still needs a column 0 here to
+            # stay aligned with telemetry() and canvas() below it.
+            ui.element("div")
             for day in state.days:
                 with ui.element("div").classes(
                     "flex flex-row items-center gap-0.5 cursor-pointer rounded "
@@ -1750,13 +1807,36 @@ async def planner_page() -> None:
             )
 
     # ---- header: macro telemetry -----------------------------------------
+    # `prep_telemetry_cell` replaces the usual kcal/protein bars in the prep
+    # column with labor telemetry instead — active/passive minutes, not
+    # macros, since there's nothing eaten in this column to measure against a
+    # target.
+
+    def prep_telemetry_cell() -> None:
+        session = state.week_plan.sunday_prep_session if state.week_plan else None
+        max_active = state.config.get("max_prep_active_mins", 120)
+        with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
+            with ui.element("div").classes("flex flex-row justify-between items-baseline"):
+                ui.label("PREP").classes(
+                    "text-[11px] font-semibold tracking-wider text-indigo-300"
+                )
+            if session is None:
+                ui.label("Not generated").classes("text-[10px] font-mono text-slate-500")
+            else:
+                ui.label(
+                    f"Active Prep: {session.total_active_minutes} / {max_active} mins"
+                ).classes("text-[10px] font-mono text-indigo-200")
+                ui.label(
+                    f"Passive Time: {session.total_passive_minutes} mins"
+                ).classes("text-[10px] font-mono text-indigo-200/70")
 
     @ui.refreshable
     def telemetry() -> None:
         bar_scale_limit = state.config.get("ui_settings", {}).get(
             "bar_scale_limit", DEFAULT_UI_SETTINGS["bar_scale_limit"]
         )
-        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full"):
+        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full"):
+            prep_telemetry_cell()
             for day in state.days:
                 target = state.targets_for(day)
                 totals = state.totals_for(day)
