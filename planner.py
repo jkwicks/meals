@@ -1421,6 +1421,140 @@ def generate_day(
     return fitted
 
 
+def build_sunday_prep_brief(event: CookEvent, spec: WeekSpec) -> str:
+    """One candidate line for the Sunday prep prompt.
+
+    Carries only numbers Python already computed (portions, prep time, which
+    days it's eaten, the fridge/freezer storage window) so the model organises
+    a cooking session instead of re-deriving any of them.
+    """
+    eaten_days = sorted(
+        {parse_slot_id(slot_id)[0] for slot_id in event.eaten_by},
+        key=spec.day_index,
+    )
+    ingredient_list = ", ".join(
+        f"{ingredient.name} {ingredient.quantity_g:.0f}g" for ingredient in event.recipe.ingredients
+    )
+    return (
+        f"- {event.recipe.name} ({event.meal_type}, {event.portions} portions, "
+        f"{event.recipe.prep_time_minutes} min prep-as-written) — eaten on: "
+        f"{', '.join(eaten_days)}. Storage: {event.recipe.prep_notes}\n"
+        f"  Ingredients: {ingredient_list}\n"
+        f"  Method: {' '.join(event.recipe.instructions)}"
+    )
+
+
+def generate_sunday_prep_session(
+    cook_events: List[CookEvent],
+    spec: WeekSpec,
+    config: dict,
+) -> Optional[SundayPrepSession]:
+    """Turn the week's already-generated batch cooks into one Sunday prep timeline.
+
+    Candidates are cook events with a `prep_notes` — `scale_to_servings` only
+    writes one when `keeps_for_days > 0` (via `storage_note`), i.e. the batch
+    has to outlive the day it's cooked. That is exactly "a batch item": a
+    slow-cooker protein, a stew, a Bolognese, a freezer smoothie pack. A week
+    where everything is eaten the day it's made has nothing to aggregate, so
+    this returns None rather than an empty session — same "no candidates, no
+    prompt" rule `inventory_instruction` uses for an empty pantry list.
+
+    This only reorganises recipes the day-generation calls already produced —
+    it never invents food, so unlike `generate_day` there is no macro budget
+    to validate against. The only hard constraint is
+    `SundayPrepSession.total_active_minutes <= 120`, enforced by the schema
+    itself; `config`'s `max_prep_active_mins` is the *target* handed to the
+    model in the prompt and is clamped to that same 120 ceiling, since a
+    config asking for more than the schema allows would fail validation on
+    every single call.
+    """
+    if not config.get("enable_sunday_prep", False):
+        return None
+
+    candidates = [event for event in cook_events if event.recipe.prep_notes]
+    if not candidates:
+        return None
+
+    max_active = min(config.get("max_prep_active_mins", 120), 120)
+    fridge_safe_days = config.get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
+    candidate_briefs = "\n".join(build_sunday_prep_brief(event, spec) for event in candidates)
+
+    system_prompt = (
+        "You are planning ONE Sunday batch-prep session that gets a week's "
+        "worth of already-decided batch cooking done in advance. The recipes "
+        "below are fixed — do not change ingredients, quantities or methods, "
+        "only organise the work of cooking them.\n\n"
+        "Rules:\n"
+        f"- Hard cap: total_active_minutes must not exceed {max_active}. Active "
+        "minutes are hands-on time (chopping, stirring, portioning, sealing "
+        "bags) — time a slow cooker, oven or fridge runs unattended is "
+        "passive_minutes, not active_minutes, and does not count against the "
+        "cap.\n"
+        "- Aggregate identical prep across recipes into one step instead of "
+        "repeating it: if three recipes each need a chopped onion, one phase "
+        "chops all the onions together rather than three separate steps.\n"
+        "- Sequence the timeline chronologically: start the highest-passive-"
+        "time tasks first (slow cookers, roasts, anything that simmers or "
+        "bakes unattended), so their passive time overlaps with the active "
+        "chopping/portioning/bagging work for the other dishes, rather than "
+        "the whole session running start to end back to back.\n"
+        "- 4-Day Storage Rule: each candidate's Storage line below already "
+        "says whether it's fridge-only or fridge-plus-freezer (Python computed "
+        f"this from how many days it has to last against a {fridge_safe_days}-"
+        "day fridge-safe window) — do not recompute it. Any item marked to "
+        "freeze must get its own explicit freeze step (portion, label, date, "
+        "freeze) in the timeline; note the thaw lead time in that phase's "
+        "description (e.g. 'move to fridge the night before eating') rather "
+        "than scheduling a thaw step in this session, since thawing happens "
+        "later in the week, not on Sunday.\n"
+        "- aggregated_ingredients maps a combined prep task to what it covers, "
+        'e.g. {"onions": "4 diced (for chilli, bolognese, curry)"} — only '
+        "include ingredients that are actually shared prep across two or more "
+        "of the candidates; it is not a shopping list.\n"
+        "- Do not show your work or narrate — respond with the structured "
+        "data only."
+    )
+
+    user_prompt = (
+        f"This week's batch-prep candidates ({len(candidates)}):\n\n"
+        f"{candidate_briefs}\n\n"
+        "Build the Sunday prep session for exactly these candidates."
+    )
+
+    model = resolve_planner_model(config)
+    client = build_client(config.get("models"))
+    max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
+
+    logger.info(
+        "sunday_prep: requesting session for %d candidate(s) from %s", len(candidates), model
+    )
+    started = time.monotonic()
+    session, completion = client.chat.completions.create_with_completion(
+        model=model,
+        response_model=SundayPrepSession,
+        max_retries=3,
+        max_tokens=max_tokens,
+        # See CLAUDE.md "Reasoning must be disabled" — same failure mode
+        # applies to every instructor call on this client, not just generate_day.
+        extra_body={"reasoning": {"enabled": False}},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    )
+    elapsed = time.monotonic() - started
+    usage = getattr(completion, "usage", None)
+    logger.info(
+        "sunday_prep: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
+        elapsed,
+        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
+        getattr(usage, "completion_tokens", None),
+    )
+    return session
+
+
 def on_calling_loop(callback):
     """Wrap `callback` so a worker thread's call runs back on *this* loop.
 
@@ -1585,6 +1719,27 @@ async def generate_week_plan(
         events.update(day_events)
 
     ordered_events = [events[slot.id] for slot in spec.cook_slots() if slot.id in events]
+
+    # A failed prep session must not fail the week either — same rule as a
+    # failed day (see CLAUDE.md), and for the same reason: this runs after
+    # every day has already succeeded, so losing the whole plan to one extra
+    # call would be the worst possible outcome after a full run.
+    sunday_prep_session = None
+    try:
+        sunday_prep_session = await asyncio.to_thread(
+            generate_sunday_prep_session, ordered_events, spec, config
+        )
+        if sunday_prep_session and note_callback:
+            note_callback(
+                f"Sunday prep session: {sunday_prep_session.total_active_minutes} active "
+                f"min across {len(sunday_prep_session.timeline)} phase(s)"
+            )
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        logger.warning("sunday_prep: generation failed — %s", message)
+        if note_callback:
+            note_callback(f"Sunday prep session generation failed — {message}")
+
     return WeekPlan(
         days=spec.days,
         servings_per_meal=spec.servings_per_meal,
@@ -1593,6 +1748,7 @@ async def generate_week_plan(
         slots=spec.slots,
         targets=targets,
         failures=failures,
+        sunday_prep_session=sunday_prep_session,
     )
 
 
@@ -1649,6 +1805,23 @@ async def regenerate_single_day(
     by_slot.update(day_events)
     failures.pop(day, None)
     ordered_events = [by_slot[slot.id] for slot in spec.cook_slots() if slot.id in by_slot]
+
+    # A saved Sunday prep session names specific recipes/ingredients from the
+    # OLD plan. If `day` contributed a batch cook either before or after this
+    # regeneration, that session may now describe a recipe that no longer
+    # exists — a stale prep plan is worse than none, so drop it rather than
+    # let the timeline silently disagree with the new recipes. It is not
+    # regenerated here: this call is one targeted retry, not a second
+    # sunday_prep API call on top of it.
+    sunday_prep_session = week_plan.sunday_prep_session
+    if sunday_prep_session is not None:
+        was_candidate = any(
+            event.day == day and event.recipe.prep_notes for event in week_plan.cook_events
+        )
+        now_candidate = any(event.recipe.prep_notes for event in day_events.values())
+        if was_candidate or now_candidate:
+            sunday_prep_session = None
+
     return week_plan.model_copy(
         update={
             "generated_at": datetime.now().isoformat(),
@@ -1656,6 +1829,7 @@ async def regenerate_single_day(
             "slots": spec.slots,
             "targets": targets,
             "failures": failures,
+            "sunday_prep_session": sunday_prep_session,
         }
     )
 
@@ -1761,6 +1935,22 @@ def print_week_summary(week_plan: WeekPlan) -> None:
             f"C {totals['net_carbs_g']:.0f}/{target['net_carbs_g']:.0f} · "
             f"F {totals['fat_g']:.0f}/{target['fat_g']:.0f}"
         )
+
+    session = week_plan.sunday_prep_session
+    if session:
+        print(
+            f"\nSunday Prep Session ({session.total_active_minutes} active / "
+            f"{session.total_passive_minutes} passive min)"
+        )
+        print("=" * 26)
+        for phase in session.timeline:
+            print(f"  {phase.name} — {phase.active_minutes} active / {phase.passive_minutes} passive min")
+            if phase.description:
+                print(f"    {phase.description}")
+        if session.aggregated_ingredients:
+            print("  Aggregated prep:")
+            for item, note in session.aggregated_ingredients.items():
+                print(f"    {item}: {note}")
 
 
 def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -> None:
