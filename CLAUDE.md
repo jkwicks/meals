@@ -187,6 +187,40 @@ un-generated `WeekSpec` into the same `SlotView` shape, so the card widget has
 one code path and a cold start previews the planned week rather than rendering
 28 empty cells.
 
+### Printing and PDF export
+
+Two independent paths, because they solve different problems:
+
+- **"Print Menu"** (header, printer icon) just calls `window.print()`.
+  `print_css()` (added once via the same `ui.add_css()` call as `chain_css`/
+  `card_hover_css`) is a `@media print` block that hides both drawers, every
+  dialog and every clickable control (`.q-drawer`, `.q-dialog`, `.q-btn`,
+  `.q-field`), un-fixes the header (`position: static` — a `position: fixed`
+  element repeats or clips at every page break instead of flowing once), and
+  forces light-on-white text. That last part has to reach every descendant
+  (`.meal-canvas *`, not just `.meal-canvas`): Tailwind's text-colour
+  utilities (`text-slate-100`, `text-emerald-200`, ...) set `color` directly
+  on the element they're applied to, so they never inherit an ancestor's
+  override — an ancestor-only rule left the dark theme's near-white card text
+  illegible on the forced-white page. `.q-page-container` needs its own
+  `padding: 0` too: Quasar reserves space for the (now-hidden) left drawer and
+  the fixed header as *inline* padding set by its own JS, not a stylesheet
+  class, so leaving it in place squeezed the whole canvas into a leftover
+  sliver instead of using the full page width.
+- **"Download PDF Menu"** (shopping drawer, above the per-window "Copy for
+  Keep" buttons) exports the whole week rather than one shopping trip, so it
+  lives once near the top of the drawer rather than repeated per window.
+  `export_menu.build_week_menu_pdf()` does the formatting — it reads
+  `WeekPlan.slots`/`WeekPlan.by_slot()` directly, the same source
+  `planner.day_slot_macros` does, not `PlannerState`/`SlotView`, so the
+  module has no UI dependency and would work the same from a future CLI
+  export flag. It needs `reportlab`: pure Python, so it installs into this
+  venv with a plain `pip install` — unlike `weasyprint`, which needs
+  Cairo/Pango system libraries this project doesn't otherwise depend on.
+  `format_week_menu_markdown()` in the same module is the Markdown
+  equivalent, sharing the per-slot walk (`_slot_entry`) so the two formats
+  can't silently disagree about what a slot says.
+
 ## Architecture
 
 ### The central idea: cook events vs. eating slots

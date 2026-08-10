@@ -66,6 +66,7 @@ from dotenv import load_dotenv
 from nicegui import ui
 from pydantic import ValidationError
 
+from export_menu import build_week_menu_pdf
 from planner import (
     DEFAULT_MODELS_CONFIG,
     MACRO_KEYS,
@@ -1000,6 +1001,53 @@ def card_hover_css() -> str:
     return "\n".join(rules)
 
 
+def print_css() -> str:
+    """Rules for the "Print Menu" button — printing is the canvas and the
+    telemetry bar above it, nothing else.
+
+    Both drawers, every dialog and every clickable control (buttons, the week
+    selector) are hidden rather than picked apart one at a time: `.q-drawer`
+    and `.q-dialog` are Quasar's own wrapper classes, so hiding them catches
+    the shopping list and every modal regardless of what's inside, and
+    `.q-btn`/`.q-field` inside the header or canvas catches per-card actions
+    (favorite, swap, "Link to next lunch", regenerate) without naming each
+    one. `!important` throughout because these are overriding Quasar's own
+    dark-theme background, not just Tailwind utility classes.
+
+    `.q-page-container` needs its own reset, not just `.nicegui-content`'s:
+    Quasar reserves space for the (now-hidden) left drawer and the fixed
+    header as *inline* `padding-left`/`padding-top` on that element, set by
+    its own JS rather than a stylesheet class — leaving it in place once the
+    header is un-fixed below squeezes the whole canvas into a leftover
+    sliver down the middle of the page instead of the full width. Unfixing
+    the header (`position: static`) matters for the same reason `.q-dialog`
+    is hidden outright: a `position: fixed` element repeats or clips at
+    every page break rather than flowing once at the top.
+    """
+    return (
+        "@media print {\n"
+        "  .q-drawer, .q-drawer__backdrop, .q-dialog, .q-tooltip { display: none !important; }\n"
+        "  .q-header .q-btn, .q-header .q-field, .meal-canvas .q-btn"
+        " { display: none !important; }\n"
+        "  .q-header { position: static !important; box-shadow: none !important; }\n"
+        "  .q-page-container { padding: 0 !important; }\n"
+        "  .nicegui-content { padding: 0 !important; }\n"
+        "  body, .q-layout, .q-header, .q-page-container, .nicegui-content"
+        " { background: #fff !important; }\n"
+        # Every Tailwind text-colour utility (text-slate-100, text-emerald-200,
+        # ...) sets `color` directly on the element it's applied to, so it
+        # never inherits an ancestor's override — the `*` here is what makes
+        # this actually reach the title/macro/badge text instead of leaving
+        # dark-theme light-grey-on-white, illegible on the page.
+        "  .q-header, .q-header *, .meal-canvas, .meal-canvas *"
+        " { color: #111 !important; }\n"
+        "  .meal-canvas { grid-template-columns: repeat(7, minmax(0, 1fr)) !important; }\n"
+        "  .meal-card { break-inside: avoid; page-break-inside: avoid; }\n"
+        "  @page { size: landscape; margin: 10mm; }\n"
+        "}\n"
+    )
+
+
 def link_line(marker: str, text: str, colour: str) -> None:
     """The one-line "this card is tied to that one" note, in its chain's colour.
 
@@ -1130,6 +1178,8 @@ async def planner_page() -> None:
         + chain_css((len(state.days) * len(state.meal_types)) // 2)
         + "\n"
         + card_hover_css()
+        + "\n"
+        + print_css()
     )
 
     # ---- recipe detail (read-only) ---------------------------------------
@@ -1918,6 +1968,25 @@ async def planner_page() -> None:
                 "dense size=sm color=teal"
             )
             ui.label("Daily shop").classes("text-[11px] text-slate-400")
+
+        # Whole-week export, not a per-window one like "Copy for Keep" above —
+        # it reads the same `state.week_plan` the grid shows, so it always
+        # matches whatever edits (leftover links, regenerated days) are on
+        # screen right now.
+        def download_pdf_menu() -> None:
+            if state.week_plan is None:
+                ui.notify("Generate a week first — there's nothing to export yet.", type="warning")
+                return
+            ui.download(
+                build_week_menu_pdf(state.week_plan),
+                filename="weekly_menu.pdf",
+                media_type="application/pdf",
+            )
+
+        ui.button(
+            "Download PDF Menu", icon="picture_as_pdf", on_click=download_pdf_menu
+        ).props("dense flat no-caps size=sm").classes("self-start text-rose-300")
+
         shopping_panel()
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
@@ -1979,6 +2048,16 @@ async def planner_page() -> None:
                 if not items:
                     return "Shopping list"
                 return f"Shopping list ({len(items)} items)"
+
+            # `window.print()` rather than a server-rendered PDF: printing is
+            # the browser's job, and the @media print block above (`print_css`)
+            # is what makes that output just the canvas and telemetry bar
+            # instead of the whole dark dashboard.
+            print_button = ui.button(
+                icon="print", on_click=lambda: ui.run_javascript("window.print()")
+            ).props("dense flat no-caps").classes("text-slate-300")
+            with print_button:
+                ui.tooltip("Print this week — drawers and controls are hidden on the page.")
 
             # Prominent and un-dense on purpose — this is the button that
             # gets used every single week, not an occasional control, so it
