@@ -19,8 +19,10 @@ from repository import (
 )
 from shopping import (
     aggregate_cook_events,
+    categorize_department,
     format_shopping_list_markdown,
     format_shopping_list_text,
+    round_ingredient_quantity,
 )
 from week import (
     DEFAULT_INVENTORY_RULES,
@@ -98,6 +100,8 @@ FREE_MODEL_MAX_TOKENS = 8000
 PAID_MODEL_MAX_TOKENS = 16000
 
 MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
+
+WEEKEND_DAYS = {"Saturday", "Sunday"}
 
 # Share of the day each meal type gets when splitting targets across slots.
 # Only the ratios matter — they're normalised over whichever slots are
@@ -492,11 +496,14 @@ class Ingredient(BaseModel):
         return {key: getattr(self, key) / servings for key in MACRO_KEYS}
 
     def scaled(self, factor: float) -> "Ingredient":
-        """Multiply quantity and macros by `factor`, rounded via `round_quantity`."""
+        """Multiply quantity and macros by `factor`, quantity snapped to a
+        practical grocery amount via `round_ingredient_quantity`."""
         return self.model_copy(
             update=dict(
                 {key: round(getattr(self, key) * factor, 1) for key in MACRO_KEYS},
-                quantity_g=round_quantity(self.quantity_g * factor),
+                quantity_g=round_ingredient_quantity(
+                    self.name, self.quantity_g * factor, categorize_department(self.name)
+                ),
             )
         )
 
@@ -521,6 +528,17 @@ class Recipe(BaseModel):
         description="Storage/reheating notes. Set by Python for multi-meal cooks.",
     )
 
+    @field_validator("prep_time_minutes")
+    @classmethod
+    def enforce_weeknight_prep_limit(cls, v: int, info: ValidationInfo) -> int:
+        day = info.context.get("day") if info.context else None
+        if day and day not in WEEKEND_DAYS and v > 30:
+            raise ValueError(
+                f"prep_time_minutes {v} exceeds the 30-minute weeknight limit for {day}; "
+                "simplify the recipe to a quick weeknight meal."
+            )
+        return v
+
     @property
     def total_macros(self) -> Dict[str, float]:
         totals = {key: 0.0 for key in MACRO_KEYS}
@@ -543,6 +561,31 @@ class Recipe(BaseModel):
         """
         return self.model_copy(
             update={"ingredients": [ingredient.scaled(factor) for ingredient in self.ingredients]}
+        )
+
+    def round_ingredient_quantities(self) -> "Recipe":
+        """Snap every ingredient's quantity to a practical grocery amount.
+
+        `resize_by_factor` already does this via `Ingredient.scaled()` — this
+        covers the untrimmed path, where `fit_recipe_to_budget` leaves a
+        recipe's raw model-generated quantities untouched (within its
+        deadband, or when there's no budget to trim to).
+        """
+        return self.model_copy(
+            update={
+                "ingredients": [
+                    ingredient.model_copy(
+                        update={
+                            "quantity_g": round_ingredient_quantity(
+                                ingredient.name,
+                                ingredient.quantity_g,
+                                categorize_department(ingredient.name),
+                            )
+                        }
+                    )
+                    for ingredient in self.ingredients
+                ]
+            }
         )
 
     def scale_to_servings(
@@ -668,16 +711,6 @@ def per_serving_totals(recipe: Recipe) -> dict:
     return recipe.per_serving_macros
 
 
-def round_quantity(grams: float) -> float:
-    """Whole grams once there's enough of something to weigh out that way.
-
-    Trimming portions by a fraction produces quantities like 393.8g, which is
-    noise on a shopping list. Spices and oils keep a decimal because 2.4g of
-    turmeric and 2g are meaningfully different amounts.
-    """
-    return max(0.1, round(grams) if grams >= 10 else round(grams, 1))
-
-
 def resize_recipe(recipe: Recipe, factor: float) -> Recipe:
     """Deprecated: use `recipe.resize_by_factor(factor)`."""
     return recipe.resize_by_factor(factor)
@@ -697,14 +730,14 @@ def fit_recipe_to_budget(
     actual = recipe.total_macros["calories"]
     target = budget.get("calories", 0)
     if actual <= 0 or target <= 0:
-        return recipe, 1.0
+        return recipe.round_ingredient_quantities(), 1.0
 
     low, high = planning_rule(config, "portion_trim_limits")
     deadband = planning_rule(config, "portion_trim_deadband")
     factor = target / actual
     factor = min(max(factor, low), high)
     if abs(factor - 1.0) < deadband:
-        return recipe, 1.0
+        return recipe.round_ingredient_quantities(), 1.0
     return recipe.resize_by_factor(factor), factor
 
 
@@ -1156,6 +1189,10 @@ def build_slot_brief(
     training_note = config.get("training_notes", {}).get(slot.day, {}).get(slot.meal_type)
     if training_note:
         parts.append(training_note)
+    if slot.day in WEEKEND_DAYS:
+        parts.append("[Weekend meal: multi-step or slow-cooked recipes up to 180 minutes allowed.]")
+    else:
+        parts.append("[Max prep/cook time: 30 minutes. Focus on quick weeknight meals.]")
     return " | ".join(parts)
 
 
@@ -1304,6 +1341,7 @@ def generate_day(
         # twice, so the recipes legitimately total less than the day does.
         context={
             "config": config,
+            "day": day,
             "day_budget": {
                 key: sum(budget[key] for budget in budgets.values()) for key in MACRO_KEYS
             },
