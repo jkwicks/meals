@@ -49,7 +49,7 @@
     "breakfast": "cook",
     "lunch": "cook",
     "dinner": "cook",
-    "snack": "skip"
+    "snack": "cook"
   },
   "meal_styles": {
     "breakfast": {
@@ -82,9 +82,9 @@
     }
   },
   "meal_weights": {
-    "breakfast": 0.25,
+    "breakfast": 0.30,
     "lunch": 0.30,
-    "dinner": 0.35,
+    "dinner": 0.30,
     "snack": 0.10
   },
   "cuisines": [
