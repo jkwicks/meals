@@ -1,4 +1,4 @@
-=== File: ./ui_app.py ===
+=== File: ui_app.py ===
 """NiceGUI front end — the whole week on one high-density desktop screen.
 
 The only web front end, and now a complete one: it can both generate a week and
@@ -65,11 +65,14 @@ from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from nicegui import ui
+from pydantic import ValidationError
 
 from planner import (
-    DEFAULT_MODEL,
+    DEFAULT_MODELS_CONFIG,
     MACRO_KEYS,
     TRAINING_INTENSITY_SPLIT,
+    CookEvent,
+    Recipe,
     WeekPlan,
     api_key_error,
     apply_training_adjustments,
@@ -77,12 +80,13 @@ from planner import (
     configure_logging,
     day_slot_macros,
     generate_week_plan,
-    per_serving_totals,
+    import_external_recipe,
+    meal_overrides_for,
     record_week_history,
-    rescale_cook_event,
     resolve_auto_choices,
+    split_targets,
 )
-from repository import LocalJSONRepository
+from repository import LocalJSONRepository, recipe_content_key
 from shopping import (
     aggregate_cook_events,
     cook_plan_lines,
@@ -113,20 +117,28 @@ from week import (
 load_dotenv()
 configure_logging()
 
-CONFIG_PATH = "config.json"
-
 # One repository for the server, imported once rather than re-executed per
 # interaction. It holds paths only, so pointing the app at a different backend
-# stays a one-line change here.
-REPOSITORY = LocalJSONRepository(config_path=CONFIG_PATH)
+# stays a one-line change here. File names live on REPOSITORY.paths
+# (repository.py's StoragePaths), not as a module constant here.
+REPOSITORY = LocalJSONRepository()
 
-MODEL_OPTIONS = [
+# Fallback for the drawer's model select when models.json is missing or omits
+# "selectable_options" — the list the app offered before that file existed.
+DEFAULT_MODEL_OPTIONS = [
     "anthropic/claude-sonnet-5",
     "deepseek/deepseek-v4-flash",
     "google/gemma-4-26b-a4b-it:free",
     "google/gemma-4-31b-it:free",
     "poolside/laguna-s-2.1:free",
 ]
+
+# The two cached weeks the app keeps on disk at once (see
+# `repository.LocalJSONRepository._week_plan_path`). "current" is the
+# original single-file layout (week_plan.json); "next" is stored alongside it
+# as week_plan_next.json. Keys are what's passed to `load_week_plan`/
+# `save_week_plan`, values are what the header select shows.
+WEEK_SELECTION_LABELS = {"current": "Current Week", "next": "Next Week"}
 
 # A slot's render status is its mode, except that a cook (or the cook a
 # leftover points at) whose day failed to generate has no recipe to show. That
@@ -194,16 +206,22 @@ MACRO_TINTS = {
     "fat_g": "text-violet-300",
 }
 
-# A title longer than this can't fit the card's two lines at this column width,
-# so it gets a tooltip carrying the full name. Below it the tooltip would only
-# repeat what is already on screen.
-TITLE_TOOLTIP_CHARS = 38
+# Fallbacks for config.json's "ui_settings" object, used when a config.json
+# predates that section.
+#
+# A title longer than title_tooltip_chars can't fit the card's two lines at
+# this column width, so it gets a tooltip carrying the full name. Below it the
+# tooltip would only repeat what is already on screen.
+DEFAULT_UI_SETTINGS = {
+    "bar_scale_limit": 1.6,
+    "title_tooltip_chars": 38,
+}
 
-# How far a telemetry bar can extend past its target before it stops growing.
-# The bar's full width is `max(1, ratio)` capped here, so an overshoot renders
-# as a real second segment rather than a bar pinned at 100% that looks
-# identical to landing exactly on budget.
-BAR_SCALE_LIMIT = 1.6
+# bar_scale_limit (in DEFAULT_UI_SETTINGS above) is how far a telemetry bar
+# can extend past its target before it stops growing. The bar's full width is
+# `max(1, ratio)` capped there, so an overshoot renders as a real second
+# segment rather than a bar pinned at 100% that looks identical to landing
+# exactly on budget.
 
 # Band -> hex, for the telemetry bars. Hex rather than Quasar colour names
 # because these are painted onto plain divs (a two-segment bar is not something
@@ -243,6 +261,62 @@ TARGET_FIELDS = [
 # skips it — so it isn't a key in TRAINING_INTENSITY_SPLIT and is appended here.
 TRAINING_TYPES = list(TRAINING_INTENSITY_SPLIT) + ["rest"]
 TRAINING_TYPE_LABELS = {value: humanize(value) for value in TRAINING_TYPES}
+
+# The context pipeline shown above the telemetry header: what's supposed to
+# feed a day's plan, in dependency order. (key, label, icon, description,
+# connected). `connected=False` stages have no data source wired up yet —
+# they render as a permanently dashed/muted chip until something real lands
+# in `pipeline_value()`. "Meal Plan" isn't a fifth stage here because
+# `telemetry()` already renders it immediately below this row.
+PIPELINE_STAGES = [
+    (
+        "readiness",
+        "Morning Readiness",
+        "self_improvement",
+        "Subjective readiness check-in — not built yet.",
+        False,
+    ),
+    (
+        "sync",
+        "Health Connect Sync",
+        "monitor_heart",
+        "Garmin sleep/Body Battery — not built yet.",
+        False,
+    ),
+    (
+        "context",
+        "Calendar/Location",
+        "event",
+        "WFH vs. in-office, meeting load — not built yet.",
+        False,
+    ),
+    (
+        "workout",
+        "Adaptive Workout",
+        "fitness_center",
+        "Training session for the day, from the drawer's schedule.",
+        True,
+    ),
+]
+
+
+def pipeline_value(state: "PlannerState", day: str, key: str) -> Optional[str]:
+    """What a connected pipeline stage has for `day`, or None if unset.
+
+    Only "workout" is wired today — it reads the same `training_schedule`
+    `has_training()`/the telemetry ⚡ marker already use, so this is a real
+    signal, not a placeholder, from the day this pipeline ships. The other
+    stages stay in `PIPELINE_STAGES` with `connected=False` and never reach
+    here.
+    """
+    if key == "workout":
+        session = next(
+            (s for s in state.training_schedule if s.get("day") == day), None
+        )
+        if session is None:
+            return None
+        return TRAINING_TYPE_LABELS.get(session["type"], session["type"])
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -301,11 +375,27 @@ class PlannerState:
     """
 
     config: dict
+    # models.json, loaded alongside config — the drawer's model select reads
+    # `models_config["selectable_options"]` and `.load()` uses
+    # `models_config["default_planner_model"]` as `model`'s starting value
+    # when config.json has no `openrouter_model` override.
+    models_config: dict = field(default_factory=dict)
     week_plan: Optional[WeekPlan] = None
+    # Which cached week is on screen — a key into WEEK_SELECTION_LABELS, and
+    # the `week_identifier` threaded through every `load_week_plan`/
+    # `save_week_plan` call below. Switching it is what `switch_week` does;
+    # plain reloads/generation act on whichever value is already here.
+    week_selection: str = "current"
     week_start: str = ""
     servings: int = 2
     shop_days: List[str] = field(default_factory=list)
-    model: str = DEFAULT_MODEL
+    # Shopping-drawer display toggle only — never persisted and never fed to
+    # `generate_week_plan`. True partitions the week into one window per cook
+    # day (`shopping_windows(state.days, state.days)`) instead of the
+    # configured `shop_days` trips; the underlying cook events and quantities
+    # are identical either way, only the grouping changes.
+    daily_shop_mode: bool = False
+    model: str = DEFAULT_MODELS_CONFIG["default_planner_model"]
     focus: Optional[SlotView] = None
     edited: bool = False
     # Food already in the house, to be cooked through. Seeded from config's
@@ -323,12 +413,42 @@ class PlannerState:
     # `planning_config()` by `planner.apply_training_adjustments` and never
     # written back to config.json.
     training_schedule: List[dict] = field(default_factory=list)
+    # Which day's context-pipeline dialog is open, if any. Held the same way
+    # as `focus` is for the recipe detail dialog: one dialog reused for all
+    # seven days, refreshable off this key rather than seven pre-built dialogs.
+    pipeline_day: Optional[str] = None
     # A run holds this client for 30s-3min per cooking day. The loop stays free
     # (planner dispatches each call to a thread), so the browser is still live
     # and perfectly able to click Generate again — this is the flag that says
     # no. Per-client, like everything else here: two tabs generating at once
     # would race to overwrite the same week_plan.json.
     generating: bool = False
+
+    # The recipe catalog (recipes_master.json) — every recipe ever favorited
+    # or imported, record shape {id, content_key, recipe, is_favorite,
+    # source, added_at, updated_at}. It is the single place recipe content
+    # outlives the week it was generated in; `week_plan.json` is overwritten
+    # every run. Loaded once at startup and kept in sync with disk by every
+    # handler that mutates it — there is no re-read on repaint, since the
+    # whole point is that a browser tab's list doesn't jump around under a
+    # card the user is mid-click on.
+    recipe_catalog: List[dict] = field(default_factory=list)
+    catalog_search: str = ""
+    # Which card the swap modal is open for, and its in-progress filter/pick.
+    # Held on state rather than as dialog-local variables so `swap_dialog_body`
+    # can be a plain `@ui.refreshable` that reads state, the same pattern
+    # `recipe_detail` uses for `state.focus`.
+    swap_target: Optional[SlotView] = None
+    swap_filter: Optional[str] = None
+    swap_query: str = ""
+    swap_selected_id: Optional[str] = None
+    # Import dialog scratch text/toggle; cleared once a paste is successfully
+    # turned into a catalog entry. `import_as_favorite` defaults off — an
+    # import lands in the catalog but isn't favorited unless asked for.
+    import_text: str = ""
+    import_as_favorite: bool = False
+    edit_catalog_id: Optional[str] = None
+    edit_catalog_name: str = ""
 
     # The live week shape. Held rather than re-derived on every access because
     # it is now editable: rebuilding it per read would throw away the links the
@@ -340,12 +460,15 @@ class PlannerState:
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
         config = await repository.load_config()
+        models_config = await repository.load_models_config()
         state = cls(
             config=config,
+            models_config=models_config,
             week_start=config.get("week_start_day") or list(config["weekly_schedule"])[0],
             servings=int(config.get("serving_rules", {}).get("servings_per_meal", 2)),
             shop_days=list(config.get("shopping", {}).get("shop_days", [])),
-            model=config.get("openrouter_model", DEFAULT_MODEL),
+            model=config.get("openrouter_model")
+            or models_config.get("default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]),
             pantry=[
                 str(item).strip()
                 for item in config.get("inventory_to_clear") or []
@@ -353,13 +476,32 @@ class PlannerState:
             ],
             training_schedule=[dict(session) for session in config.get("training_schedule") or []],
         )
+        state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
         return state
 
     async def reload_plan(self, repository: LocalJSONRepository) -> None:
         """Pull the cached week off disk. Validation lives here, not in the
-        repository, which deliberately deals in plain dicts."""
-        raw = await repository.load_week_plan()
+        repository, which deliberately deals in plain dicts.
+
+        Acts on whichever week is already selected — `switch_week` is what
+        changes that.
+        """
+        raw = await repository.load_week_plan(self.week_selection)
+        self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
+
+    async def switch_week(self, repository: LocalJSONRepository, target_week: str) -> None:
+        """Change which cached week is on screen, loading it from disk.
+
+        The load happens before `week_selection` is reassigned, same
+        ordering as `reload_plan`: if it raises, the previous week is still
+        the one showing rather than the state flipping to a selection whose
+        plan never actually loaded. No generation call here — this only ever
+        reads what's already on disk, per CLAUDE.md's "generating is the only
+        thing that writes to disk."
+        """
+        raw = await repository.load_week_plan(target_week)
+        self.week_selection = target_week
         self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
 
     def adopt_plan(self, plan: Optional[WeekPlan]) -> None:
@@ -445,23 +587,28 @@ class PlannerState:
 
         portions = portions_for(spec)
         claims = eaten_on(spec)
+
+        def rescaled(event: CookEvent) -> CookEvent:
+            if event.slot_id not in portions or event.portions <= 0:
+                return event
+            target = portions[event.slot_id]
+            return event.model_copy(
+                update={
+                    "portions": target,
+                    "eaten_by": list(claims.get(event.slot_id, [event.slot_id])),
+                    "recipe": event.recipe.scale_to_servings(
+                        target, span_days(spec, event.slot_id)
+                    ),
+                }
+            )
+
         self.week_plan = plan.model_copy(
             update={
                 "slots": list(spec.slots),
                 # A slot that stopped being a cook keeps its event in the list,
                 # orphaned: nothing resolves to it any more, and holding it
                 # means the recipe is still there if the week is re-pointed.
-                "cook_events": [
-                    rescale_cook_event(
-                        event,
-                        portions[event.slot_id],
-                        span_days(spec, event.slot_id),
-                        claims.get(event.slot_id, [event.slot_id]),
-                    )
-                    if event.slot_id in portions
-                    else event
-                    for event in plan.cook_events
-                ],
+                "cook_events": [rescaled(event) for event in plan.cook_events],
             }
         )
         self._spec_shape = self._shape()
@@ -488,6 +635,70 @@ class PlannerState:
             return error
 
         self.apply_spec(link_leftover(spec, target_id, source_id))
+        return None
+
+    def swap_slot_with_favorite(self, target_slot_id: str, favorite_recipe: dict) -> Optional[str]:
+        """Replace a cooked slot's recipe with a saved favorite. Returns why not, or None.
+
+        Same shape as `link_to_next_lunch`: a single sentence about the one
+        slot clicked, state only mutates on success, and the caller is the one
+        that repaints (`refresh_all`) — this class stays free of `ui.*` calls,
+        same as everywhere else in `PlannerState`.
+
+        Resolved through `source` for a leftover slot, same as `slot_views`,
+        because the recipe belongs to the cook event, not the eating slot —
+        swapping a leftover's favorite has to change the meal everyone in that
+        chain eats, not fork a second copy only this slot sees.
+        """
+        if self.week_plan is None:
+            return "Generate a week before swapping in a favorite."
+
+        spec = self.spec
+        slot = spec.by_id().get(target_slot_id)
+        if slot is None:
+            return "That meal isn't part of this week."
+        if slot.mode == MODE_SKIP:
+            return f"{slot_label(target_slot_id)} is skipped — nothing to swap."
+
+        source_id = slot.id if slot.mode == MODE_COOK else slot.source
+        event = self.week_plan.by_slot().get(source_id or "")
+        if event is None:
+            return f"{slot_label(target_slot_id)} hasn't been generated yet — nothing to swap."
+
+        try:
+            recipe = Recipe.model_validate(favorite_recipe)
+        except ValidationError as exc:
+            return f"That favorite isn't a usable recipe: {exc}"
+
+        # Favorites are expected in the same shape generation produces: one
+        # serving. A favorite saved off an already-scaled batch card would
+        # carry servings > 1, so it's normalised back to one serving first —
+        # `scale_to_servings` below is what re-expands it to this slot's batch.
+        if recipe.servings != 1:
+            recipe = recipe.resize_by_factor(1 / recipe.servings).model_copy(
+                update={"servings": 1}
+            )
+
+        # portions/keeps_for_days mirror `apply_spec`'s rescale: the batch
+        # size is still derived from how many slots claim this cook, a
+        # favorite swap doesn't change that.
+        scaled = recipe.scale_to_servings(
+            event.portions,
+            keeps_for_days=span_days(spec, source_id),
+        )
+        new_event = event.model_copy(update={"recipe": scaled})
+        self.week_plan = self.week_plan.model_copy(
+            update={
+                "cook_events": [
+                    new_event if e.slot_id == source_id else e
+                    for e in self.week_plan.cook_events
+                ]
+            }
+        )
+        # No apply_spec here: the slot's mode/source didn't change, only the
+        # cook event's recipe, which day_slot_macros and slot_views already
+        # read live off week_plan.cook_events — no _spec rebuild needed.
+        self.edited = True
         return None
 
     def planning_config(self) -> dict:
@@ -523,6 +734,12 @@ class PlannerState:
                 inventory_to_clear=list(self.pantry),
                 openrouter_model=self.model,
                 training_schedule=[dict(session) for session in self.training_schedule],
+                # generate_week_plan/build_client/fit_recipe_to_budget etc.
+                # all read `config.get("models")` — see planner.py — so this
+                # is what lets a run resolve request_timeout_seconds and the
+                # base URL from models.json instead of the pre-models.json
+                # literals.
+                models=self.models_config,
             )
         )
 
@@ -697,7 +914,7 @@ class PlannerState:
                 status=STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER,
                 title=event.recipe.name,
                 prep_minutes=event.recipe.prep_time_minutes,
-                macros=per_serving_totals(event.recipe),
+                macros=event.recipe.per_serving_macros,
                 recipe=event.recipe,
                 **{
                     **common,
@@ -784,20 +1001,27 @@ def macro_band(actual: float, target: float) -> str:
     return "off"
 
 
-def telemetry_bar(actual: float, target: float, *, height: str = "8px") -> None:
+def telemetry_bar(
+    actual: float,
+    target: float,
+    *,
+    height: str = "8px",
+    bar_scale_limit: float = DEFAULT_UI_SETTINGS["bar_scale_limit"],
+) -> None:
     """A target-vs-actual bar that keeps growing past 100% instead of clipping.
 
     Plain nested divs, not `ui.linear_progress`: a bar pinned at 100% looks
     identical whether a day landed on target or blew past it, so the fill
-    is scaled against `BAR_SCALE_LIMIT` and a genuine overshoot renders as a
+    is scaled against `bar_scale_limit` (config.json's
+    `ui_settings.bar_scale_limit`) and a genuine overshoot renders as a
     visibly longer bar. The thin marker line is where the target itself sits
     on that same scale, so "landed short" and "landed long" both read at a
     glance relative to it.
     """
     colour = BAND_COLOURS[macro_band(actual, target)]
     ratio = (actual / target) if target else 0.0
-    fill_pct = min(max(ratio, 0.0), BAR_SCALE_LIMIT) / BAR_SCALE_LIMIT * 100
-    target_pct = 100 / BAR_SCALE_LIMIT
+    fill_pct = min(max(ratio, 0.0), bar_scale_limit) / bar_scale_limit * 100
+    target_pct = 100 / bar_scale_limit
     with ui.element("div").classes(
         "relative w-full rounded-full bg-slate-800 overflow-hidden"
     ).style(f"height: {height}"):
@@ -807,6 +1031,53 @@ def telemetry_bar(actual: float, target: float, *, height: str = "8px") -> None:
         ui.element("div").classes("absolute inset-y-0 w-px bg-slate-100/50").style(
             f"left: {target_pct:.1f}%;"
         )
+
+
+def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
+    """The per-serving macro budget generation would aim this slot at right now.
+
+    Mirrors `generate_day`'s own split rather than a rough per-day average:
+    leftover slots eaten that day have their macros subtracted from the day
+    target first, then the remainder is divided across the day's cook slots
+    by `split_targets` — the same function and the same order of operations
+    generation uses. So the swap modal's "target" column is the number a
+    fresh generation would have handed the model for this slot, not an
+    approximation of it.
+    """
+    if not view.day:
+        return None
+    spec = state.spec
+    config = state.planning_config()
+    day_slots = [slot for slot in spec.slots if slot.day == view.day]
+    cook_slots = [slot for slot in day_slots if slot.mode == MODE_COOK]
+    if not cook_slots:
+        return None
+
+    claims = eaten_on(spec)
+    multiplicity = {slot.id: len(claims.get(slot.id, [slot.id])) for slot in cook_slots}
+
+    events = state.week_plan.by_slot() if state.week_plan else {}
+    carried = {key: 0.0 for key in MACRO_KEYS}
+    for slot in day_slots:
+        if slot.mode != MODE_LEFTOVER:
+            continue
+        event = events.get(slot.source or "")
+        if event is None:
+            continue
+        per_serving = event.recipe.per_serving_macros
+        for key in MACRO_KEYS:
+            carried[key] += per_serving[key]
+
+    targets = state.targets_for(view.day)
+    remaining = {key: max(0.0, float(targets[key]) - carried[key]) for key in MACRO_KEYS}
+    overrides = meal_overrides_for(view.day, config)
+    budgets = split_targets(remaining, cook_slots, multiplicity, config, overrides)
+
+    slot = spec.by_id().get(view.id)
+    if slot is None:
+        return None
+    source_id = slot.id if slot.mode == MODE_COOK else slot.source
+    return budgets.get(source_id or "")
 
 
 # --------------------------------------------------------------------------
@@ -902,6 +1173,201 @@ async def planner_page() -> None:
         recipe_detail.refresh()
         detail_dialog.open()
 
+    # ---- favorites: mark, and swap-in modal -------------------------------
+    # `favorites_list` (drawer) is defined later, inside the left drawer
+    # section, but every handler here only *runs* on a click long after the
+    # whole page has finished building — same forward-reference pattern
+    # `on_link_next_lunch` already uses for `refresh_all` below.
+
+    def catalog_entry_for(recipe: dict) -> Optional[dict]:
+        key = recipe_content_key(recipe)
+        return next(
+            (r for r in state.recipe_catalog if r.get("content_key") == key), None
+        )
+
+    def is_favorited(recipe: dict) -> bool:
+        entry = catalog_entry_for(recipe)
+        return bool(entry and entry.get("is_favorite"))
+
+    def favorited_catalog() -> List[dict]:
+        return [r for r in state.recipe_catalog if r.get("is_favorite")]
+
+    async def toggle_favorite(recipe: dict) -> None:
+        new_state = await REPOSITORY.toggle_favorite(recipe)
+        state.recipe_catalog = await REPOSITORY.load_recipe_catalog()
+        favorites_list.refresh()
+        canvas.refresh()
+        ui.notify(
+            "Saved to favorites" if new_state else "Removed from favorites",
+            type="positive" if new_state else "info",
+        )
+
+    def swap_filter_matches(favorite: dict, meal_type: Optional[str], query: str) -> bool:
+        recipe = favorite["recipe"]
+        if meal_type and recipe.get("meal_type") != meal_type:
+            return False
+        if query:
+            haystack = f"{recipe.get('name', '')} {recipe.get('cuisine', '')}".lower()
+            if query.lower() not in haystack:
+                return False
+        return True
+
+    def select_swap_favorite(favorite_id: str) -> None:
+        state.swap_selected_id = favorite_id
+        swap_matches.refresh()
+
+    def confirm_swap() -> None:
+        if state.swap_target is None or state.swap_selected_id is None:
+            return
+        favorite = next(
+            (f for f in favorited_catalog() if f["id"] == state.swap_selected_id), None
+        )
+        if favorite is None:
+            return
+        error = state.swap_slot_with_favorite(state.swap_target.id, favorite["recipe"])
+        if error:
+            ui.notify(error, type="warning")
+            return
+        swap_dialog.close()
+        refresh_all()
+        ui.notify(f"Swapped in \"{favorite['recipe']['name']}\"", type="positive")
+
+    @ui.refreshable
+    def swap_matches() -> None:
+        """The results list + budget comparison. Refreshed on every filter/query/selection
+        change — kept separate from `swap_dialog_body` so those refreshes never touch the
+        search `ui.input` itself. Rebuilding an input on every keystroke (the previous
+        shape of this dialog) destroys and recreates the DOM node each time, which steals
+        focus after one character — see the `day_target_row` note in CLAUDE.md for the same
+        trap elsewhere in this file.
+        """
+        view = state.swap_target
+        if view is None:
+            return
+
+        budget = slot_target_budget(state, view)
+        meal_filter = None if state.swap_filter in (None, "All meal types") else state.swap_filter
+        favorites = favorited_catalog()
+        matches = [
+            f for f in favorites if swap_filter_matches(f, meal_filter, state.swap_query)
+        ]
+        selected = next((f for f in favorites if f["id"] == state.swap_selected_id), None)
+
+        if not matches:
+            ui.label(
+                "No favorites match — clear the filter or import one."
+            ).classes("text-xs text-slate-500 italic")
+
+        with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
+            for favorite in matches:
+                recipe = favorite["recipe"]
+                macros = Recipe.model_validate(recipe).per_serving_macros
+                is_selected = favorite["id"] == state.swap_selected_id
+                with ui.element("div").classes(
+                    "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
+                    "cursor-pointer border "
+                    + (
+                        "bg-emerald-400/15 border-emerald-400/40"
+                        if is_selected
+                        else "border-slate-800 hover:border-slate-600"
+                    )
+                ).on("click", lambda f=favorite: select_swap_favorite(f["id"])):
+                    with ui.element("div").classes("flex flex-col min-w-0"):
+                        ui.label(recipe["name"]).classes(
+                            "text-xs font-semibold truncate"
+                        )
+                        ui.label(recipe.get("meal_type", "").title()).classes(
+                            "text-[10px] text-slate-500"
+                        )
+                    ui.label(f"{macros['calories']:.0f} kcal").classes(
+                        "text-[10px] font-mono text-slate-300 shrink-0"
+                    )
+
+        ui.separator()
+        with ui.element("div").classes("flex flex-row gap-4"):
+            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                ui.label("Target slot budget").classes(
+                    "text-[10px] uppercase tracking-wide text-slate-500"
+                )
+                if budget:
+                    for key, short, unit in MACRO_LABELS:
+                        ui.label(f"{short}: {budget[key]:.0f}{unit}").classes(
+                            "text-xs text-slate-300"
+                        )
+                else:
+                    ui.label("—").classes("text-xs text-slate-500")
+            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                ui.label("Selected favorite (per serving)").classes(
+                    "text-[10px] uppercase tracking-wide text-slate-500"
+                )
+                if selected:
+                    macros = Recipe.model_validate(selected["recipe"]).per_serving_macros
+                    for key, short, unit in MACRO_LABELS:
+                        ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
+                            "text-xs text-emerald-200"
+                        )
+                else:
+                    ui.label("Pick a favorite above").classes(
+                        "text-xs text-slate-500 italic"
+                    )
+
+    @ui.refreshable
+    def swap_dialog_body() -> None:
+        view = state.swap_target
+        if view is None:
+            return
+
+        with ui.element("div").classes("flex flex-col gap-2"):
+            ui.label(f"Swap {slot_label(view.id)}").classes("text-sm font-semibold")
+
+            def on_filter_change(event) -> None:
+                state.swap_filter = event.value
+                swap_matches.refresh()
+
+            def on_query_change(event) -> None:
+                state.swap_query = event.value or ""
+                swap_matches.refresh()
+
+            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+                ui.select(
+                    ["All meal types"] + state.meal_types,
+                    value=state.swap_filter or "All meal types",
+                    on_change=on_filter_change,
+                ).props("dense outlined").classes("flex-1 text-xs")
+                ui.input(
+                    placeholder="Search favorites…",
+                    value=state.swap_query,
+                    on_change=on_query_change,
+                ).props("dense outlined clearable").classes("flex-1 text-xs")
+
+            swap_matches()
+
+            with ui.row().classes("justify-end gap-2 mt-1"):
+                ui.button("Cancel", on_click=swap_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                ui.button(
+                    "Confirm swap", icon="swap_horiz", on_click=confirm_swap
+                ).props("dense no-caps").bind_enabled_from(
+                    state, "swap_selected_id", backward=bool
+                )
+
+    with ui.dialog() as swap_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-[36rem] max-w-full max-h-[85vh] overflow-y-auto"
+        ):
+            swap_dialog_body()
+
+    def open_swap_modal(view: SlotView) -> None:
+        if view.recipe is None:
+            return
+        state.swap_target = view
+        state.swap_filter = view.meal_type
+        state.swap_query = ""
+        state.swap_selected_id = None
+        swap_dialog_body.refresh()
+        swap_dialog.open()
+
     # ---- canvas: 7 day columns x 4 meal cards -----------------------------
     # Defined before the header and drawer, rendered after them: attaching a
     # `bind_value` fires an initial change event, so every handler's callees
@@ -937,18 +1403,44 @@ async def planner_page() -> None:
             f"meal-card card-{view.status} rounded p-2 flex flex-col gap-1 min-w-0 "
             f"transition-shadow duration-150 {look['card']} {chain}"
         ):
-            # The recipe dialog opens from this inner block rather than the
-            # card, so the action button below is a sibling of it and a click
-            # on the button can't also open the dialog on its way up.
-            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
-            if view.recipe:
-                body.on("click", lambda v=view: open_detail(v))
-
-            with body:
-                with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
-                    ui.label(meal_type[:5].upper()).classes(
-                        "text-[9px] font-semibold tracking-widest text-slate-500"
-                    )
+            # Header row is a sibling of the clickable body below, not a child
+            # of it — same reasoning as the "Link to next lunch" button: a
+            # click on the favorite/swap buttons would otherwise bubble up
+            # through `body`'s click handler and open the detail dialog too.
+            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+                ui.label(meal_type[:5].upper()).classes(
+                    "text-[9px] font-semibold tracking-widest text-slate-500"
+                )
+                with ui.element("div").classes("flex flex-row items-center gap-0.5"):
+                    if view.recipe is not None:
+                        if view.mode == MODE_COOK:
+                            recipe_dict = view.recipe.model_dump()
+                            favorited = is_favorited(recipe_dict)
+                            fav_button = ui.button(
+                                icon="bookmark" if favorited else "bookmark_border",
+                                on_click=lambda r=recipe_dict: toggle_favorite(r),
+                            )
+                            fav_button.props("dense flat round size=xs").classes(
+                                "min-h-0 p-0.5 "
+                                + (
+                                    "text-amber-300"
+                                    if favorited
+                                    else "text-slate-500 hover:text-amber-300"
+                                )
+                            )
+                            with fav_button:
+                                ui.tooltip(
+                                    "Remove from favorites" if favorited else "Save to favorites"
+                                )
+                        swap_button = ui.button(
+                            icon="swap_horiz",
+                            on_click=lambda v=view: open_swap_modal(v),
+                        )
+                        swap_button.props("dense flat round size=xs").classes(
+                            "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                        )
+                        with swap_button:
+                            ui.tooltip("Swap with a favorite")
                     with ui.element("div").classes(
                         "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
                         f"{look['badge']}"
@@ -958,15 +1450,27 @@ async def planner_page() -> None:
                             "text-[8px] font-semibold tracking-wide"
                         )
 
+            # The recipe dialog opens from this inner block rather than the
+            # card, so the action buttons above are siblings of it and a click
+            # on them can't also open the dialog on its way up.
+            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
+            if view.recipe:
+                body.on("click", lambda v=view: open_detail(v))
+
+            with body:
                 # Bold, larger than the rest of the card — the one thing a
                 # scan down a column of 28 cards actually needs to read.
-                # Titles past TITLE_TOOLTIP_CHARS can't fit the two clamped
-                # lines at this column width, so they get a tooltip with the
-                # full name instead of just being cut off silently.
+                # Titles past ui_settings.title_tooltip_chars can't fit the
+                # two clamped lines at this column width, so they get a
+                # tooltip with the full name instead of just being cut off
+                # silently.
                 title_label = ui.label(view.title).classes(
                     "text-[12px] leading-tight font-bold text-slate-100 line-clamp-2"
                 )
-                if len(view.title) > TITLE_TOOLTIP_CHARS:
+                title_tooltip_chars = state.config.get("ui_settings", {}).get(
+                    "title_tooltip_chars", DEFAULT_UI_SETTINGS["title_tooltip_chars"]
+                )
+                if len(view.title) > title_tooltip_chars:
                     with title_label:
                         ui.tooltip(view.title)
 
@@ -1049,10 +1553,93 @@ async def planner_page() -> None:
                     for meal_type in state.meal_types:
                         meal_card(views.get(slot_id(day, meal_type)), meal_type)
 
+    # ---- context pipeline: what fed a day's plan --------------------------
+    # One dialog reused for every day, refreshable off state.pipeline_day —
+    # same pattern as recipe_detail/state.focus above. The expanded ui.stepper
+    # lives here rather than inline because a stepper's headers need more
+    # width than a grid-cols-7 column has (telemetry already fights this
+    # squeezing three macro numbers into the same column).
+
+    @ui.refreshable
+    def pipeline_detail() -> None:
+        day = state.pipeline_day
+        if day is None:
+            return
+        ui.label(f"{day} — context pipeline").classes(
+            "text-sm font-semibold text-slate-200 mb-2"
+        )
+        with ui.stepper().props("header-nav flat").classes("bg-transparent w-full"):
+            for key, label, icon, description, connected in PIPELINE_STAGES:
+                value = pipeline_value(state, day, key)
+                step = ui.step(label, icon=icon)
+                if not connected:
+                    step.props("disable")
+                with step:
+                    ui.label(description).classes("text-xs text-slate-400")
+                    if connected:
+                        ui.label(value if value is not None else "Nothing scheduled").classes(
+                            "text-sm font-mono mt-1 "
+                            + ("text-emerald-300" if value is not None else "text-slate-500")
+                        )
+                    else:
+                        ui.label("Not connected").classes(
+                            "text-[10px] uppercase tracking-wide text-slate-600 mt-1"
+                        )
+
+    with ui.dialog() as pipeline_dialog:
+        with ui.element("div").classes("bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full"):
+            pipeline_detail()
+
+    def open_pipeline(day: str) -> None:
+        state.pipeline_day = day
+        pipeline_detail.refresh()
+        pipeline_dialog.open()
+
+    # ---- header: context pipeline ------------------------------------------
+    # Compact icon-chip row, one per pipeline stage, directly above the
+    # telemetry it explains. A row of chips rather than an inline
+    # ui.stepper — same width problem as above — connected by a thin
+    # chevron line like a mini timeline. Clicking a day's row opens the full
+    # stepper. Three of the four stages have no data source yet
+    # (`connected=False` in PIPELINE_STAGES) and render dashed/muted;
+    # "Adaptive Workout" is already live off the drawer's training schedule.
+
+    @ui.refreshable
+    def context_pipeline() -> None:
+        with ui.element("div").classes("grid grid-cols-7 gap-2 w-full mb-1"):
+            for day in state.days:
+                with ui.element("div").classes(
+                    "flex flex-row items-center gap-0.5 cursor-pointer rounded "
+                    "px-0.5 py-0.5 hover:bg-slate-800/60"
+                ).on("click", lambda day=day: open_pipeline(day)):
+                    for i, (key, label, icon, description, connected) in enumerate(
+                        PIPELINE_STAGES
+                    ):
+                        value = pipeline_value(state, day, key)
+                        if connected and value is not None:
+                            look = "bg-emerald-400/20 text-emerald-300"
+                            tip = f"{label}: {value}"
+                        elif connected:
+                            look = "bg-slate-800/60 text-slate-400 border border-slate-700"
+                            tip = f"{label}: none scheduled"
+                        else:
+                            look = (
+                                "bg-slate-800/60 text-slate-600 "
+                                "border border-dashed border-slate-700"
+                            )
+                            tip = f"{label} — not connected yet"
+                        with ui.icon(icon).classes(f"text-[13px] rounded-full p-1 {look}"):
+                            ui.tooltip(tip)
+                        if i < len(PIPELINE_STAGES) - 1:
+                            ui.icon("chevron_right").classes("text-[10px] text-slate-700")
+
     # ---- header: macro telemetry -----------------------------------------
 
     @ui.refreshable
     def telemetry() -> None:
+        bar_scale_limit = state.config.get("ui_settings", {}).get(
+            "bar_scale_limit", DEFAULT_UI_SETTINGS["bar_scale_limit"]
+        )
         with ui.element("div").classes("grid grid-cols-7 gap-2 w-full"):
             for day in state.days:
                 target = state.targets_for(day)
@@ -1084,7 +1671,7 @@ async def planner_page() -> None:
                     # bands on how close the day landed (macro_band), and a
                     # thin marker at the target itself so an overshoot reads as
                     # "past the line" rather than just "a long green bar".
-                    telemetry_bar(kcal, kcal_goal, height="9px")
+                    telemetry_bar(kcal, kcal_goal, height="9px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         ui.label("protein").classes(
                             "text-[9px] uppercase tracking-wide text-slate-500"
@@ -1092,7 +1679,7 @@ async def planner_page() -> None:
                         ui.label(f"{protein:.0f}/{protein_goal:.0f}g").classes(
                             f"text-[9px] font-mono {MACRO_TINTS['protein_g']}"
                         )
-                    telemetry_bar(protein, protein_goal, height="5px")
+                    telemetry_bar(protein, protein_goal, height="5px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row gap-2 mt-0.5"):
                         for key, short, unit in MACRO_LABELS[2:]:
                             ui.label(
@@ -1161,7 +1748,11 @@ async def planner_page() -> None:
             ).classes("text-xs text-slate-500")
             return
 
-        windows = shopping_windows(state.days, state.shop_days)
+        # Daily mode reuses the same partitioning function with every day
+        # treated as a shop day — the cook events and quantities in each
+        # window are unaffected, only where the boundaries fall.
+        window_days = state.days if state.daily_shop_mode else state.shop_days
+        windows = shopping_windows(state.days, window_days)
         if not windows:
             ui.label("No shopping days set — pick some in the drawer.").classes(
                 "text-xs text-slate-400"
@@ -1250,6 +1841,17 @@ async def planner_page() -> None:
             ui.button(icon="close", on_click=lambda: shopping_drawer.hide()).props(
                 "dense flat size=sm"
             ).classes("text-slate-400")
+
+        def on_daily_shop_toggle(event) -> None:
+            state.daily_shop_mode = event.value
+            shopping_panel.refresh()
+
+        with ui.element("div").classes("flex flex-row items-center justify-between"):
+            ui.label("Shop days (batch trips)").classes("text-[11px] text-slate-400")
+            ui.switch(value=state.daily_shop_mode, on_change=on_daily_shop_toggle).props(
+                "dense size=sm color=teal"
+            )
+            ui.label("Daily shop").classes("text-[11px] text-slate-400")
         shopping_panel()
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
@@ -1259,6 +1861,29 @@ async def planner_page() -> None:
                 ui.label("AI Weekly Meal Planner").classes(
                     "text-sm font-semibold tracking-wide"
                 )
+
+            async def on_week_selection_change(event) -> None:
+                target = event.value
+                if target == state.week_selection:
+                    return
+                # `switch_week` only reads from disk — it never generates —
+                # so this is instant regardless of which week it's loading.
+                await state.switch_week(REPOSITORY, target)
+                refresh_all()
+
+            # No `bind_value` here on purpose: binding would let NiceGUI's
+            # polling loop write `state.week_selection` the moment the user
+            # picks an option, before `switch_week` has loaded that week's
+            # plan — every other piece of state (`week_plan`, `edited`, the
+            # spec) would then disagree with `week_selection` until the
+            # `await` above finishes. `switch_week` is the only thing that's
+            # allowed to set it, and only once the load it names has landed.
+            ui.select(
+                WEEK_SELECTION_LABELS,
+                value=state.week_selection,
+                on_change=on_week_selection_change,
+            ).props("dense outlined size=sm").classes("text-slate-200 w-32")
+
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state,
                 "week_plan",
@@ -1278,16 +1903,35 @@ async def planner_page() -> None:
             ui.label().classes("text-[11px] text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
             )
-            shopping_button = ui.button(
-                "Shopping list",
-                icon="shopping_cart",
-                on_click=shopping_drawer.toggle,
-            ).props("dense flat no-caps size=sm").classes("text-slate-200")
+
+            def shopping_item_count(plan: Optional[WeekPlan]) -> str:
+                if plan is None:
+                    return "Shopping list"
+                items = aggregate_cook_events(
+                    plan.events_on_days(state.days), state.days
+                ).items()
+                if not items:
+                    return "Shopping list"
+                return f"Shopping list ({len(items)} items)"
+
+            # Prominent and un-dense on purpose — this is the button that
+            # gets used every single week, not an occasional control, so it
+            # gets the same visual weight as "Generate" rather than blending
+            # into the rest of the flat header icons.
+            shopping_button = (
+                ui.button(icon="shopping_cart", on_click=shopping_drawer.toggle)
+                .props("no-caps unelevated color=teal")
+                .classes("text-slate-900 font-semibold shadow-md shadow-teal-500/20")
+            )
+            shopping_button.bind_text_from(
+                state, "week_plan", backward=shopping_item_count
+            )
             with shopping_button:
                 ui.tooltip(
                     "Every shopping trip in this week, grouped by department — "
                     "built from the grid as it stands, including any edits."
                 )
+        context_pipeline()
         telemetry()
 
     # ---- left drawer: global controls ------------------------------------
@@ -1374,7 +2018,7 @@ async def planner_page() -> None:
                     reset.set_visibility(day in state.target_overrides)
                     with reset:
                         ui.tooltip(f"Reset {day} to config.json")
-            with ui.element("div").classes("grid grid-cols-3 gap-1"):
+            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                 for key, label in TARGET_FIELDS:
                     inputs[key] = (
                         ui.number(
@@ -1388,7 +2032,7 @@ async def planner_page() -> None:
                         # Debounced so holding a key doesn't repaint the
                         # telemetry header once per digit.
                         .props("dense outlined debounce=350")
-                        .classes("w-full")
+                        .classes("flex-1 text-xs")
                     )
 
     @ui.refreshable
@@ -1463,21 +2107,22 @@ async def planner_page() -> None:
                         state.days,
                         value=session.get("day"),
                         on_change=training_field_handler(index, "day"),
-                    ).props("dense outlined").classes("flex-1 min-w-0")
+                    ).props("dense outlined").classes("flex-1 min-w-0 text-xs")
                     ui.button(icon="delete", on_click=on_remove).props(
                         "dense flat size=xs"
                     ).classes("min-h-0 p-0 text-slate-500")
-                with ui.element("div").classes("grid grid-cols-2 gap-1"):
+                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                     ui.input(
                         label="Time (HH:MM)",
                         value=session.get("time", ""),
                         on_change=training_field_handler(index, "time"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
                     ui.select(
                         TRAINING_TYPE_LABELS,
                         value=session.get("type"),
                         on_change=training_field_handler(index, "type"),
-                    ).props("dense outlined").classes("w-full")
+                    ).props("dense outlined").classes("flex-1 text-xs")
+                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
                     ui.number(
                         label="Duration (min)",
                         value=session.get("duration_minutes", 0),
@@ -1485,7 +2130,7 @@ async def planner_page() -> None:
                         step=5,
                         precision=0,
                         on_change=training_field_handler(index, "duration_minutes"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
                     ui.number(
                         label="Burn (kcal)",
                         value=session.get("estimated_burn_kcal", 0),
@@ -1493,7 +2138,7 @@ async def planner_page() -> None:
                         step=10,
                         precision=0,
                         on_change=training_field_handler(index, "estimated_burn_kcal"),
-                    ).props("dense outlined debounce=350").classes("w-full")
+                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
 
         def on_add() -> None:
             state.add_training_session()
@@ -1519,8 +2164,9 @@ async def planner_page() -> None:
     async def reload_from_disk() -> None:
         await state.reload_plan(REPOSITORY)
         refresh_all()
+        label = WEEK_SELECTION_LABELS[state.week_selection]
         ui.notify(
-            "Reloaded week_plan.json" if state.week_plan else "No cached week plan on disk",
+            f"Reloaded {label}" if state.week_plan else f"No cached plan for {label}",
             type="positive" if state.week_plan else "warning",
         )
 
@@ -1638,8 +2284,10 @@ async def planner_page() -> None:
             )
             progress_status.text = "Saving…"
             progress_bar.value = 1.0
-            await REPOSITORY.save_week_plan(week_plan.model_dump())
-            await record_week_history(week_plan, REPOSITORY)
+            # Targets whichever week is selected in the header — generating
+            # while "Next Week" is showing must not overwrite "current".
+            await REPOSITORY.save_week_plan(week_plan.model_dump(), state.week_selection)
+            await record_week_history(week_plan, REPOSITORY, config)
         except Exception as exc:
             # Per-day failures never reach here — generate_week_plan absorbs
             # those into WeekPlan.failures. This is the whole run coming apart
@@ -1671,71 +2319,220 @@ async def planner_page() -> None:
             )
         else:
             ui.notify(
-                f"Generated {cooking_days} cooking day(s) and saved to week_plan.json",
+                f"Generated {cooking_days} cooking day(s) and saved "
+                f"{WEEK_SELECTION_LABELS[state.week_selection]}",
                 type="positive",
             )
 
-    with ui.left_drawer(bordered=True).classes(
-        "bg-slate-900 p-3 gap-3 flex flex-col overflow-y-auto"
-    ).props(":width=320"):
-        with ui.element("div").classes("flex flex-row items-center gap-1"):
-            ui.icon("settings").classes("text-xs text-slate-500")
-            ui.label("Week setup").classes(
-                "text-xs uppercase tracking-widest text-slate-500"
+    # ---- recipe catalog & import --------------------------------------------
+    # `favorites_list` is referenced by handlers defined above this point
+    # (`toggle_favorite`) and below it (drawer buttons) alike — every one of
+    # them only runs on a later click, by which time this name already exists
+    # in `planner_page`'s scope, same forward-reference pattern as
+    # `refresh_all`.
+
+    async def delete_catalog_entry(recipe_id: str) -> None:
+        await REPOSITORY.delete_catalog_recipe(recipe_id)
+        state.recipe_catalog = [r for r in state.recipe_catalog if r["id"] != recipe_id]
+        favorites_list.refresh()
+        canvas.refresh()
+        ui.notify("Removed from catalog", type="positive")
+
+    def open_edit_catalog_entry(entry: dict) -> None:
+        state.edit_catalog_id = entry["id"]
+        state.edit_catalog_name = entry["recipe"]["name"]
+        edit_favorite_dialog.open()
+
+    async def save_catalog_rename() -> None:
+        entry = next(
+            (r for r in state.recipe_catalog if r["id"] == state.edit_catalog_id), None
+        )
+        if entry is None:
+            return
+        new_name = (state.edit_catalog_name or "").strip()
+        if not new_name:
+            ui.notify("Name can't be empty.", type="warning")
+            return
+        record = await REPOSITORY.rename_catalog_recipe(entry["id"], new_name)
+        if record:
+            entry["recipe"] = record["recipe"]
+        favorites_list.refresh()
+        edit_favorite_dialog.close()
+        ui.notify("Recipe renamed", type="positive")
+
+    with ui.dialog() as edit_favorite_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-96 max-w-full flex flex-col gap-2"
+        ):
+            ui.label("Rename recipe").classes("text-sm font-semibold")
+            ui.input(label="Name").bind_value(state, "edit_catalog_name").props(
+                "dense outlined"
+            ).classes("w-full text-xs")
+            with ui.row().classes("justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=edit_favorite_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                ui.button("Save", on_click=save_catalog_rename).props("dense no-caps")
+
+    async def on_import() -> None:
+        text = (state.import_text or "").strip()
+        if not text:
+            ui.notify("Paste some recipe text first.", type="warning")
+            return
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        import_button.props("loading")
+        try:
+            recipe = await import_external_recipe(
+                text, config=state.planning_config(), repository=REPOSITORY
             )
+        except Exception as exc:
+            ui.notify(
+                f"Import failed: {type(exc).__name__}: {exc}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            import_button.props(remove="loading")
+
+        favorite = state.import_as_favorite
+        await REPOSITORY.import_recipe(recipe.model_dump(), favorite=favorite)
+        state.recipe_catalog = await REPOSITORY.load_recipe_catalog()
+        favorites_list.refresh()
+        state.import_text = ""
+        state.import_as_favorite = False
+        import_dialog.close()
+        ui.notify(
+            f"Imported \"{recipe.name}\"" + (" and favorited it." if favorite else "."),
+            type="positive",
+        )
+
+    with ui.dialog() as import_dialog:
+        with ui.element("div").classes(
+            "bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full flex flex-col gap-2"
+        ):
+            ui.label("Import a recipe").classes("text-sm font-semibold")
+            ui.label(
+                "Paste raw recipe text, an ingredient list, or a URL — it's turned "
+                "into grams, macros and NOVA groups under the same dietary rules "
+                "generation uses."
+            ).classes("text-[10px] text-slate-500")
+            ui.textarea(placeholder="Paste recipe text or a URL…").bind_value(
+                state, "import_text"
+            ).props("dense outlined").classes("w-full text-xs").style(
+                "min-height: 8rem"
+            )
+            ui.checkbox("Mark as favorite").bind_value(state, "import_as_favorite").classes(
+                "text-xs"
+            )
+            with ui.row().classes("justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=import_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                import_button = ui.button(
+                    "Analyze & Import", icon="auto_awesome", on_click=on_import
+                ).props("dense no-caps")
+
+    with ui.left_drawer(bordered=True).classes(
+        "bg-slate-900 p-3 gap-3 flex flex-col h-screen overflow-y-auto w-full max-w-xs"
+    ).props(":width=320"):
+        # Pinned above the accordion (sticky, not just first-in-DOM) so the one
+        # action that spends money and writes to disk is never a scroll away,
+        # no matter how many sections below are expanded.
+        with ui.element("div").classes(
+            "sticky top-0 z-10 bg-slate-900 flex flex-col gap-2 pb-2"
+        ):
+            generate = (
+                ui.button(icon="bolt", on_click=run_generation)
+                .props("dense")
+                .classes("w-full")
+            )
+            # Labelled after whichever week the header select has chosen, so
+            # the button never reads "Generate week" while "Next Week" is on
+            # screen and about to be the one overwritten.
+            generate.bind_text_from(
+                state,
+                "week_selection",
+                backward=lambda w: f"Generate {WEEK_SELECTION_LABELS[w]}",
+            )
+            with generate:
+                ui.tooltip(
+                    "Generates every meal set to cook in this grid — one API call per "
+                    "cooking day. Overwrites the selected week's cached plan and "
+                    "appends to history."
+                )
+            ui.button(
+                "Reload from disk", icon="refresh", on_click=reload_from_disk
+            ).props("dense flat").classes("w-full")
+            ui.separator()
 
         all_days = list(state.config["weekly_schedule"].keys())
 
-        def on_week_start(event) -> None:
-            # Set the field explicitly before refreshing: `bind_value` keeps
-            # state in sync through the binding loop, which runs *after* this
-            # handler, so a refresh relying on it alone would repaint the old
-            # week order.
-            state.week_start = event.value
-            refresh_all()
+        with ui.expansion("Global Controls", icon="settings", value=True).classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
 
-        ui.select(
-            all_days,
-            label="Week starts on",
-            on_change=on_week_start,
-        ).bind_value(state, "week_start").props("dense outlined").classes("w-full")
+            def on_week_start(event) -> None:
+                # Set the field explicitly before refreshing: `bind_value`
+                # keeps state in sync through the binding loop, which runs
+                # *after* this handler, so a refresh relying on it alone
+                # would repaint the old week order.
+                state.week_start = event.value
+                refresh_all()
 
-        def on_servings(event) -> None:
-            state.servings = int(event.value or 1)
-            refresh_all()
+            ui.select(
+                all_days,
+                label="Week starts on",
+                on_change=on_week_start,
+            ).bind_value(state, "week_start").props("dense outlined").classes(
+                "w-full text-xs"
+            )
 
-        ui.number(
-            label="People per meal",
-            min=1,
-            max=8,
-            step=1,
-            precision=0,
-            on_change=on_servings,
-        ).bind_value(state, "servings").props("dense outlined").classes("w-full")
+            def on_servings(event) -> None:
+                state.servings = int(event.value or 1)
+                refresh_all()
 
-        def on_shop_days(event) -> None:
-            state.shop_days = list(event.value or [])
-            week_summary.refresh()
-            # Shop days *are* the window boundaries, so this repartitions every
-            # list in the shopping drawer.
-            shopping_panel.refresh()
+            ui.number(
+                label="People per meal",
+                min=1,
+                max=8,
+                step=1,
+                precision=0,
+                on_change=on_servings,
+            ).bind_value(state, "servings").props("dense outlined").classes(
+                "w-full text-xs"
+            )
 
-        ui.select(
-            all_days,
-            label="Shopping days",
-            multiple=True,
-            on_change=on_shop_days,
-        ).bind_value(state, "shop_days").props("dense outlined use-chips").classes("w-full")
+            def on_shop_days(event) -> None:
+                state.shop_days = list(event.value or [])
+                week_summary.refresh()
+                # Shop days *are* the window boundaries, so this repartitions
+                # every list in the shopping drawer.
+                shopping_panel.refresh()
 
-        ui.select(MODEL_OPTIONS, label="Model").bind_value(state, "model").props(
-            "dense outlined"
-        ).classes("w-full")
+            ui.select(
+                all_days,
+                label="Shopping days",
+                multiple=True,
+                on_change=on_shop_days,
+            ).bind_value(state, "shop_days").props("dense outlined use-chips").classes(
+                "w-full text-xs"
+            )
 
-        ui.separator()
+            ui.select(
+                state.models_config.get("selectable_options") or DEFAULT_MODEL_OPTIONS,
+                label="Model",
+            ).bind_value(state, "model").props("dense outlined").classes("w-full text-xs")
 
         # Collapsed by default: seven days x three numbers is the densest thing
         # in the drawer, and most weeks run on the config file's targets.
-        with ui.expansion("Daily macro targets & overrides", icon="tune").classes(
+        with ui.expansion("Daily Targets", icon="track_changes").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
             ui.label(
@@ -1744,7 +2541,7 @@ async def planner_page() -> None:
             with ui.element("div").classes("flex flex-col gap-2"):
                 targets_editor()
 
-        with ui.expansion("Inventory to clear (pantry)", icon="kitchen").classes(
+        with ui.expansion("Pantry Clear", icon="kitchen").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
 
@@ -1767,7 +2564,7 @@ async def planner_page() -> None:
             ).props(
                 "dense outlined use-chips use-input hide-dropdown-icon "
                 'input-debounce=0 placeholder="600g chicken thighs — press enter"'
-            ).classes("w-full")
+            ).classes("w-full text-xs")
             ui.label(
                 "A priority, not a rule: the model prefers these where they fit and "
                 "never bends a meal's style, cuisine or macro budget to use one up. "
@@ -1775,7 +2572,7 @@ async def planner_page() -> None:
                 "shopping list."
             ).classes("text-[10px] text-slate-500 mt-1")
 
-        with ui.expansion("Training & Activity Schedule", icon="fitness_center").classes(
+        with ui.expansion("Training Schedule", icon="fitness_center").classes(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
             ui.label(
@@ -1787,6 +2584,87 @@ async def planner_page() -> None:
             with ui.element("div").classes("flex flex-col gap-1.5"):
                 training_editor()
 
+        with ui.expansion("Recipe Catalog", icon="favorite").classes(
+            "w-full"
+        ).props("dense header-class='text-xs px-0'"):
+
+            def on_catalog_search(event) -> None:
+                state.catalog_search = (event.value or "").strip()
+                favorites_list.refresh()
+
+            ui.input(
+                placeholder="Search catalog…",
+                on_change=on_catalog_search,
+            ).props("dense outlined clearable").classes("w-full text-xs")
+
+            @ui.refreshable
+            def favorites_list() -> None:
+                query = state.catalog_search.lower()
+                matches = [
+                    r
+                    for r in state.recipe_catalog
+                    if not query
+                    or query in r["recipe"]["name"].lower()
+                    or query in r["recipe"].get("meal_type", "").lower()
+                ]
+                if not state.recipe_catalog:
+                    ui.label(
+                        "Catalog is empty — bookmark a cooked meal or import one."
+                    ).classes("text-[10px] text-slate-500 italic")
+                elif not matches:
+                    ui.label("No recipes match that search.").classes(
+                        "text-[10px] text-slate-500 italic"
+                    )
+                with ui.element("div").classes("flex flex-col gap-1 max-h-56 overflow-y-auto"):
+                    for entry in matches:
+                        recipe = entry["recipe"]
+                        favorited = bool(entry.get("is_favorite"))
+                        with ui.element("div").classes(
+                            "flex flex-row items-center justify-between gap-1 p-1 rounded "
+                            "border border-slate-800 bg-slate-950/30"
+                        ):
+                            with ui.element("div").classes("flex flex-col min-w-0"):
+                                ui.label(recipe["name"]).classes(
+                                    "text-[11px] font-semibold truncate"
+                                )
+                                ui.label(recipe.get("meal_type", "").title()).classes(
+                                    "text-[9px] text-slate-500"
+                                )
+                            with ui.element("div").classes(
+                                "flex flex-row items-center gap-0.5 shrink-0"
+                            ):
+                                fav_toggle = ui.button(
+                                    icon="bookmark" if favorited else "bookmark_border",
+                                    on_click=lambda r=recipe: toggle_favorite(r),
+                                ).props("dense flat round size=xs")
+                                fav_toggle.classes(
+                                    "min-h-0 p-0.5 "
+                                    + (
+                                        "text-amber-300"
+                                        if favorited
+                                        else "text-slate-500 hover:text-amber-300"
+                                    )
+                                )
+                                ui.button(
+                                    icon="edit",
+                                    on_click=lambda e=entry: open_edit_catalog_entry(e),
+                                ).props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                                )
+                                ui.button(
+                                    icon="delete",
+                                    on_click=lambda rid=entry["id"]: delete_catalog_entry(rid),
+                                ).props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
+                                )
+
+            favorites_list()
+
+            ui.separator().classes("my-1")
+            ui.button(
+                "Import recipe", icon="upload_file", on_click=import_dialog.open
+            ).props("dense flat no-caps size=sm").classes("w-full text-slate-300")
+
         ui.separator()
         with ui.element("div").classes("flex flex-row items-center gap-1"):
             ui.icon("insights").classes("text-xs text-slate-500")
@@ -1794,26 +2672,6 @@ async def planner_page() -> None:
                 "text-xs uppercase tracking-widest text-slate-500"
             )
         week_summary()
-
-        ui.separator()
-        with ui.element("div").classes("flex flex-col gap-2"):
-            # The one thing here that spends money and overwrites disk, so it
-            # says so on the tooltip rather than in a confirmation step the
-            # user would learn to click through.
-            generate = (
-                ui.button("Generate week", icon="bolt", on_click=run_generation)
-                .props("dense")
-                .classes("w-full")
-            )
-            with generate:
-                ui.tooltip(
-                    "Generates every meal set to cook in this grid — one API call per "
-                    "cooking day. Overwrites week_plan.json and appends to history."
-                )
-
-            ui.button(
-                "Reload from disk", icon="refresh", on_click=reload_from_disk
-            ).props("dense flat").classes("w-full")
 
     canvas()
 
@@ -1830,9 +2688,9 @@ if __name__ in {"__main__", "__mp_main__"}:
         reload=False,
         show=False,
     )
--e 
 
-=== File: ./planner.py ===
+
+=== File: planner.py ===
 import argparse
 import asyncio
 import logging
@@ -1843,15 +2701,13 @@ from typing import Dict, List, Optional, Tuple
 
 import instructor
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from repository import (
-    DEFAULT_CONFIG_FILE,
-    DEFAULT_HISTORY_FILE,
-    DEFAULT_WEEK_PLAN_FILE,
     LocalJSONRepository,
     PlanRepository,
+    StoragePaths,
     run_sync,
 )
 from shopping import (
@@ -1860,7 +2716,7 @@ from shopping import (
     format_shopping_list_text,
 )
 from week import (
-    FRIDGE_SAFE_DAYS,
+    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
@@ -1871,6 +2727,7 @@ from week import (
     eaten_on,
     humanize,
     meal_types,
+    parse_slot_id,
     portions_for,
     shopping_windows,
     styles_for,
@@ -1880,11 +2737,22 @@ from week import (
 load_dotenv()
 
 DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"
-# Where the local files live is repository.py's business now; these names are
-# kept only for the CLI's help text and log messages.
-WEEK_PLAN_CACHE_FILE = DEFAULT_WEEK_PLAN_FILE
+
+# Fallbacks used only when models.json omits a key (or doesn't exist at all —
+# a fresh install, or `LocalJSONRepository.load_models_config()` tolerating a
+# missing file). models.json is the source of truth once it exists; these
+# values are what generation used before that file existed, kept so a missing
+# key degrades to old behaviour instead of a KeyError three calls deep.
+DEFAULT_MODELS_CONFIG = {
+    "default_planner_model": "google/gemma-4-26b-a4b-it:free",
+    "openrouter_base_url": "https://openrouter.ai/api/v1",
+    "request_timeout_seconds": 120.0,
+}
+# Where the local files live is repository.py's business now; this default
+# instance exists only so the CLI's --help text and pre-repository log
+# messages have a filename to print before a LocalJSONRepository is
+# constructed. Once a repository exists, read its own `.paths` instead.
+DEFAULT_STORAGE_PATHS = StoragePaths()
 LOG_FILE = "meals.log"
 
 logger = logging.getLogger("meals")
@@ -1904,13 +2772,21 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     handler = logging.FileHandler(log_file)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
-MEAL_HISTORY_FILE = DEFAULT_HISTORY_FILE
-HISTORY_MAX_ENTRIES = 21
-PROTEIN_LOOKBACK_ENTRIES = 3
-# How many recent main proteins to name in the prompt. Long enough to stop a
-# week of chicken, short enough that a 7-day plan doesn't end up banning
-# everything the model knows by Friday.
-PROTEIN_AVOID_WINDOW = 6
+
+# Fallbacks for config.json's "planning_rules" object — same tolerance
+# pattern as DEFAULT_MODELS_CONFIG above: an omitted key (or a config.json
+# predating this section) resolves to the number that used to be a bare
+# module constant.
+DEFAULT_PLANNING_RULES = {
+    "history_max_entries": 21,
+    "protein_lookback_entries": 3,
+    # How many recent main proteins to name in the prompt. Long enough to
+    # stop a week of chicken, short enough that a 7-day plan doesn't end up
+    # banning everything the model knows by Friday.
+    "protein_avoid_window": 6,
+    "portion_trim_limits": (0.6, 1.6),
+    "portion_trim_deadband": 0.03,
+}
 FREE_MODEL_MAX_TOKENS = 8000
 PAID_MODEL_MAX_TOKENS = 16000
 
@@ -1923,9 +2799,17 @@ DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack
 
 # Models compose plausible meals but size them badly, so portions are corrected
 # after the fact by scaling every quantity linearly. The clamp stops a trim
-# producing an absurd portion (a 30g breakfast, a 900g steak).
-PORTION_TRIM_LIMITS = (0.6, 1.6)
-PORTION_TRIM_DEADBAND = 0.03
+# producing an absurd portion (a 30g breakfast, a 900g steak). Values now live
+# in config.json's "planning_rules" (see DEFAULT_PLANNING_RULES above); these
+# names are kept as the resolved values a call site actually reads, filled in
+# by planning_rule() below rather than being literals themselves.
+
+
+def planning_rule(config: Optional[dict], key: str):
+    """Read one `planning_rules` value out of `config`, falling back to
+    `DEFAULT_PLANNING_RULES` if `config` is None, the section is missing, or
+    this particular key predates it in an older config.json."""
+    return (config or {}).get("planning_rules", {}).get(key, DEFAULT_PLANNING_RULES[key])
 
 # Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
 # glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
@@ -2199,11 +3083,10 @@ def history_styles(history: List[dict], meal_type: str) -> List[str]:
     return values
 
 
-def recent_main_proteins(
-    history: List[dict], lookback_entries: int = PROTEIN_LOOKBACK_ENTRIES
-) -> List[str]:
+def recent_main_proteins(history: List[dict], config: Optional[dict] = None) -> List[str]:
     """Main proteins across the last few days, de-duplicated, so the model can
     be told not to repeat them."""
+    lookback_entries = planning_rule(config, "protein_lookback_entries")
     seen = set()
     proteins = []
     for entry in history[-lookback_entries:]:
@@ -2297,6 +3180,19 @@ class Ingredient(BaseModel):
                 )
         return v
 
+    def per_serving_macros(self, total_servings: int = 1) -> Dict[str, float]:
+        servings = max(1, total_servings)
+        return {key: getattr(self, key) / servings for key in MACRO_KEYS}
+
+    def scaled(self, factor: float) -> "Ingredient":
+        """Multiply quantity and macros by `factor`, rounded via `round_quantity`."""
+        return self.model_copy(
+            update=dict(
+                {key: round(getattr(self, key) * factor, 1) for key in MACRO_KEYS},
+                quantity_g=round_quantity(self.quantity_g * factor),
+            )
+        )
+
 
 class Recipe(BaseModel):
     name: str = Field(..., description="Recipe name")
@@ -2318,6 +3214,52 @@ class Recipe(BaseModel):
         description="Storage/reheating notes. Set by Python for multi-meal cooks.",
     )
 
+    @property
+    def total_macros(self) -> Dict[str, float]:
+        totals = {key: 0.0 for key in MACRO_KEYS}
+        for ingredient in self.ingredients:
+            for key in MACRO_KEYS:
+                totals[key] += getattr(ingredient, key)
+        return totals
+
+    @property
+    def per_serving_macros(self) -> Dict[str, float]:
+        servings = max(1, self.servings)
+        return {key: value / servings for key, value in self.total_macros.items()}
+
+    def resize_by_factor(self, factor: float) -> "Recipe":
+        """Multiply every ingredient's quantity and macros by `factor`.
+
+        `servings` is left untouched — this is the single-serving portion
+        trim (`fit_recipe_to_budget`), not a change in how many servings the
+        recipe yields. `scale_to_servings` is the one that changes `servings`.
+        """
+        return self.model_copy(
+            update={"ingredients": [ingredient.scaled(factor) for ingredient in self.ingredients]}
+        )
+
+    def scale_to_servings(
+        self,
+        target_servings: int,
+        keeps_for_days: int = 0,
+        config: Optional[dict] = None,
+    ) -> "Recipe":
+        """Rescale from `self.servings` to `target_servings` and refresh storage notes.
+
+        The factor is relative to `self.servings`, not assumed to be 1, so
+        this covers both the model's single-serving output growing into a
+        batch and an already-scaled batch being resized again after a grid
+        edit changes how many slots claim it.
+        """
+        factor = target_servings / max(1, self.servings)
+        scaled = self.resize_by_factor(factor) if factor != 1.0 else self
+
+        prep_notes = scaled.prep_notes
+        if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
+            prep_notes = storage_note(target_servings, keeps_for_days, config) or None
+
+        return scaled.model_copy(update={"servings": target_servings, "prep_notes": prep_notes})
+
 
 class DayRecipes(BaseModel):
     """The model's response for a single day: one recipe per cook slot."""
@@ -2328,7 +3270,7 @@ class DayRecipes(BaseModel):
     def reject_untrimmable_macro_miss(self, info: ValidationInfo) -> "DayRecipes":
         """Bounce a response too far off budget for the portion trim to rescue.
 
-        The threshold is derived from PORTION_TRIM_LIMITS rather than picked:
+        The threshold is derived from planning_rules.portion_trim_limits rather than picked:
         anything the trim can scale onto its budget is accepted and corrected
         silently, and only a response needing a factor outside the clamp is
         rejected so instructor can hand the model its own numbers back and
@@ -2340,7 +3282,8 @@ class DayRecipes(BaseModel):
         covered by leftovers, the model ignores the reduced target and writes
         a full day anyway.
         """
-        budget = (info.context or {}).get("day_budget")
+        context = info.context or {}
+        budget = context.get("day_budget")
         if not budget or not self.recipes:
             return self
 
@@ -2354,7 +3297,7 @@ class DayRecipes(BaseModel):
             return self
 
         factor = target / total
-        low, high = PORTION_TRIM_LIMITS
+        low, high = planning_rule(context.get("config"), "portion_trim_limits")
         if not low <= factor <= high:
             raise ValueError(
                 f"the recipes total {total:.0f} kcal per serving but the budget for "
@@ -2409,16 +3352,13 @@ class WeekPlan(BaseModel):
 
 
 def compute_recipe_totals(recipe: Recipe) -> dict:
-    totals = {key: 0.0 for key in MACRO_KEYS}
-    for ingredient in recipe.ingredients:
-        for key in MACRO_KEYS:
-            totals[key] += getattr(ingredient, key)
-    return totals
+    """Deprecated: use `recipe.total_macros`."""
+    return recipe.total_macros
 
 
 def per_serving_totals(recipe: Recipe) -> dict:
-    servings = max(1, recipe.servings)
-    return {key: value / servings for key, value in compute_recipe_totals(recipe).items()}
+    """Deprecated: use `recipe.per_serving_macros`."""
+    return recipe.per_serving_macros
 
 
 def round_quantity(grams: float) -> float:
@@ -2432,23 +3372,13 @@ def round_quantity(grams: float) -> float:
 
 
 def resize_recipe(recipe: Recipe, factor: float) -> Recipe:
-    """Multiply every ingredient quantity and its macros by `factor`."""
-    return recipe.model_copy(
-        update={
-            "ingredients": [
-                ingredient.model_copy(
-                    update=dict(
-                        {key: round(getattr(ingredient, key) * factor, 1) for key in MACRO_KEYS},
-                        quantity_g=round_quantity(ingredient.quantity_g * factor),
-                    )
-                )
-                for ingredient in recipe.ingredients
-            ]
-        }
-    )
+    """Deprecated: use `recipe.resize_by_factor(factor)`."""
+    return recipe.resize_by_factor(factor)
 
 
-def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
+def fit_recipe_to_budget(
+    recipe: Recipe, budget: dict, config: Optional[dict] = None
+) -> Tuple[Recipe, float]:
     """Resize one serving of a recipe so its calories land on its budget.
 
     Models pick sensible *ingredients* and implausible *amounts*, and every
@@ -2457,16 +3387,18 @@ def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
     the right calories and the wrong protein split stays wrong, and shows up
     as a visible delta in the day summary rather than being papered over.
     """
-    actual = compute_recipe_totals(recipe)["calories"]
+    actual = recipe.total_macros["calories"]
     target = budget.get("calories", 0)
     if actual <= 0 or target <= 0:
         return recipe, 1.0
 
+    low, high = planning_rule(config, "portion_trim_limits")
+    deadband = planning_rule(config, "portion_trim_deadband")
     factor = target / actual
-    factor = min(max(factor, PORTION_TRIM_LIMITS[0]), PORTION_TRIM_LIMITS[1])
-    if abs(factor - 1.0) < PORTION_TRIM_DEADBAND:
+    factor = min(max(factor, low), high)
+    if abs(factor - 1.0) < deadband:
         return recipe, 1.0
-    return resize_recipe(recipe, factor), factor
+    return recipe.resize_by_factor(factor), factor
 
 
 # Opening words of a storage note we wrote ourselves. Used to tell our note
@@ -2477,18 +3409,24 @@ def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
 STORAGE_NOTE_PREFIX = "Yields "
 
 
-def storage_note(portions: int, keeps_for_days: int) -> str:
+def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = None) -> str:
     """How to keep a batch that has to last until the meal that finishes it.
 
     Empty for a single serving eaten the day it's cooked — there is nothing to
-    say, and `scale_recipe` leaves `prep_notes` alone rather than writing one.
+    say, and `scale_to_servings` leaves `prep_notes` alone rather than writing one.
+
+    `config` supplies `inventory_rules.fridge_safe_days`; omitted (or missing
+    the key) falls back to week.DEFAULT_INVENTORY_RULES's value.
     """
     if portions <= 1 or keeps_for_days <= 0:
         return ""
+    fridge_safe_days = (config or {}).get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
     storage = (
         "refrigerate in airtight containers"
-        if keeps_for_days < FRIDGE_SAFE_DAYS
-        else f"refrigerate what you'll eat within {FRIDGE_SAFE_DAYS} days and freeze the rest"
+        if keeps_for_days < fridge_safe_days
+        else f"refrigerate what you'll eat within {fridge_safe_days} days and freeze the rest"
     )
     return (
         f"{STORAGE_NOTE_PREFIX}{portions} portions, eaten across {keeps_for_days} day(s). "
@@ -2496,52 +3434,31 @@ def storage_note(portions: int, keeps_for_days: int) -> str:
     )
 
 
-def scale_recipe(recipe: Recipe, portions: int, keeps_for_days: int) -> Recipe:
-    """Scale a recipe from the model's single serving up to its full yield.
-
-    The model reports one serving; the portion count comes from how many slots
-    claim this cook (see week.portions_for), so this stays a plain linear
-    multiply and the arithmetic never leaves Python.
-    """
-    scaled = resize_recipe(recipe, portions)
-    prep_notes = recipe.prep_notes or storage_note(portions, keeps_for_days) or None
-    return scaled.model_copy(update={"servings": portions, "prep_notes": prep_notes})
+def scale_recipe(
+    recipe: Recipe, portions: int, keeps_for_days: int, config: Optional[dict] = None
+) -> Recipe:
+    """Deprecated: use `recipe.scale_to_servings(portions, keeps_for_days, config)`."""
+    return recipe.scale_to_servings(portions, keeps_for_days, config)
 
 
 def rescale_cook_event(
-    event: CookEvent, portions: int, keeps_for_days: int, eaten_by: List[str]
+    event: CookEvent,
+    portions: int,
+    keeps_for_days: int,
+    eaten_by: List[str],
+    config: Optional[dict] = None,
 ) -> CookEvent:
-    """Resize an already-scaled cook event's batch to a new portion count.
+    """Deprecated: use `event.recipe.scale_to_servings(...)` and rebuild the event.
 
-    Editing the week changes how many slots claim a cook, and portions are
-    *derived* from exactly that (`week.portions_for`) — so the batch has to
-    follow, or the card says "6 portions" over ingredients weighed for 4,
-    which is the disagreement the derived-portion rule exists to prevent.
-
-    This is the same linear arithmetic as `scale_recipe`, just starting from a
-    batch instead of a single serving, so re-pointing a leftover costs no
-    generation call. It cannot invent a new dish — only more or less of this
-    one — which is exactly right for "the same recipe now feeds another meal".
+    Kept only as a thin wrapper for callers not yet migrated; new call sites
+    should scale the recipe directly (see `PlannerState.apply_spec`).
     """
     if event.portions <= 0:
         return event
 
-    recipe = event.recipe
-    if portions != event.portions:
-        recipe = resize_recipe(recipe, portions / event.portions)
-
-    prep_notes = recipe.prep_notes
-    if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
-        prep_notes = storage_note(portions, keeps_for_days) or None
-
+    recipe = event.recipe.scale_to_servings(portions, keeps_for_days, config)
     return event.model_copy(
-        update={
-            "portions": portions,
-            "eaten_by": list(eaten_by),
-            "recipe": recipe.model_copy(
-                update={"servings": portions, "prep_notes": prep_notes}
-            ),
-        }
+        update={"portions": portions, "eaten_by": list(eaten_by), "recipe": recipe}
     )
 
 
@@ -2556,7 +3473,7 @@ def day_slot_macros(week_plan: WeekPlan, day: str) -> dict:
         event = by_slot.get(source_id)
         if event is None:
             continue
-        serving = per_serving_totals(event.recipe)
+        serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             totals[key] += serving[key]
     return totals
@@ -2588,7 +3505,7 @@ def carried_macros(
         event = events.get(slot.source)
         if event is None:
             continue
-        serving = per_serving_totals(event.recipe)
+        serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             totals[key] += serving[key]
         descriptions.append(
@@ -2620,16 +3537,187 @@ def api_key_error() -> Optional[str]:
     return None
 
 
-def build_client() -> instructor.Instructor:
+def build_client(models_config: Optional[dict] = None) -> instructor.Instructor:
+    """`models_config` is the loaded `models.json` (or a dict-alike with the
+    same keys) — pass `config.get("models")` from a caller that already
+    merged it in, or `None` to get pre-models.json behaviour."""
+    models_config = models_config or {}
     error = api_key_error()
     if error:
         raise RuntimeError(error)
     openai_client = OpenAI(
-        base_url=OPENROUTER_BASE_URL,
+        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
         api_key=os.environ["OPENROUTER_API_KEY"],
-        timeout=120.0,
+        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
     )
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+def build_async_client(models_config: Optional[dict] = None) -> instructor.Instructor:
+    """Async twin of `build_client`, for callers that already run on a loop.
+
+    `import_external_recipe` is one call, not seven sequential days, so unlike
+    `generate_day` there's no thread-per-call dance to do here — it can
+    `await` OpenRouter directly instead of going through `asyncio.to_thread`
+    the way a day's generation has to (see "Storage goes through an async
+    repository" in CLAUDE.md for why that dance exists at all).
+    """
+    models_config = models_config or {}
+    error = api_key_error()
+    if error:
+        raise RuntimeError(error)
+    openai_client = AsyncOpenAI(
+        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
+    )
+    # MD_JSON, not JSON/TOOLS — same reason as build_client: Recipe nests
+    # Ingredient, and several free OpenRouter providers 422 on the $defs/$ref
+    # a schema-carrying mode emits for a nested model.
+    return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+def resolve_planner_model(config: dict) -> str:
+    """The model a weekly-generation call should use: config.json's explicit
+    `openrouter_model` override wins (the CLI's `--model` flag and the
+    NiceGUI drawer's model select both write this), else models.json's
+    `default_planner_model`, else the last-resort literal in
+    DEFAULT_MODELS_CONFIG (pre-models.json behaviour)."""
+    return config.get("openrouter_model") or (config.get("models") or {}).get(
+        "default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]
+    )
+
+
+def resolve_recipe_parser_model(config: dict) -> str:
+    """The model `import_external_recipe` should use.
+
+    Deliberately does *not* consult `openrouter_model` — that field is the
+    weekly planner's per-run override (CLI `--model`, the drawer's model
+    select) and has nothing to do with parsing a pasted recipe. models.json's
+    model-selection strategy names this the "Vision AI / Scans & Web Recipe
+    Parser" role precisely so a cheap/fast model can be used here regardless
+    of which (usually pricier) model the week is generating with.
+    """
+    models_config = config.get("models") or {}
+    return (
+        models_config.get("recipe_parser_model")
+        or models_config.get("default_planner_model")
+        or DEFAULT_MODELS_CONFIG["default_planner_model"]
+    )
+
+
+async def load_config_with_models(repository: PlanRepository) -> dict:
+    """`load_config()` plus `load_models_config()` merged under `config["models"]`.
+
+    One call so every caller that needs a *usable* config — CLI, recipe
+    import — gets model selection resolved the same way, instead of each
+    remembering to also load models.json.
+    """
+    config = await repository.load_config()
+    config["models"] = await repository.load_models_config()
+    return config
+
+
+async def import_external_recipe(
+    raw_input: str,
+    config: Optional[dict] = None,
+    repository: Optional[PlanRepository] = None,
+) -> Recipe:
+    """Parse pasted recipe text (or a scrape) into a typed, validated Recipe.
+
+    `config` lets a caller that already has one (the NiceGUI drawer,
+    mid-session) skip a reload; left out, one is loaded fresh so this also
+    works as a standalone call. Dietary rules are enforced the same way
+    generation enforces them — nova_group and banned_ingredients read
+    `info.context["config"]` (see `Ingredient`'s validators) — so an imported
+    recipe answers to the same rules a generated one does, not a weaker set.
+
+    Unlike `generate_day`, there's no day budget to trim against: an imported
+    recipe is reported as written, servings included, with ingredient
+    quantities and macros for the FULL recipe at that serving count — exactly
+    what `Recipe`/`Ingredient` already assume elsewhere (`per_serving_macros`
+    divides by `servings`), so no extra scaling step belongs here. A caller
+    dropping this into a specific slot (see `PlannerState.swap_slot_with_favorite`)
+    normalises to one serving and rescales there, same as it would for any
+    other favorite.
+    """
+    if config is None:
+        config = await load_config_with_models(repository or LocalJSONRepository())
+
+    dietary_rules = config["dietary_rules"]
+    client = build_async_client(config.get("models"))
+
+    system_prompt = (
+        "You turn unformatted recipe text — pasted from a website, a photo's "
+        "OCR, a handwritten note — into structured, precise data. Extract "
+        "exactly one recipe.\n\n"
+        "Rules:\n"
+        "- Convert every quantity to grams (quantity_g). Normalize cups, "
+        "tablespoons, teaspoons, ounces, pounds and count-based amounts "
+        "('1 onion', '2 eggs') using standard ingredient densities/weights — "
+        "never leave a non-metric unit in the output.\n"
+        "- Every ingredient's nova_group must be one of: "
+        f"{dietary_rules['allowed_nova_groups']} (1=unprocessed/minimally "
+        "processed, 2=processed culinary ingredients, 3=processed foods). "
+        "Classify honestly — if the source is genuinely an ultra-processed "
+        "product (Group 4), classify it as 4 rather than mislabeling it; the "
+        "schema will reject it rather than let it through unnoticed.\n"
+        "- Never use any of these banned ingredients: "
+        f"{', '.join(dietary_rules['banned_ingredients']) or '(none configured)'}.\n"
+        "- Report calories, protein_g, net_carbs_g and fat_g for every "
+        "ingredient. If the source doesn't state an ingredient's macros, "
+        "estimate them from standard nutrition data for that food and "
+        "quantity — every macro field is required and must be a real number, "
+        "never null or omitted, even when your best estimate is 0.\n"
+        "- `servings` is however many portions the recipe as written yields "
+        "(read it off the source if stated, e.g. 'serves 4'; otherwise your "
+        "best judgement, minimum 1). Ingredient quantities and macros are for "
+        "the FULL recipe at that serving count, not for one serving.\n"
+        "- If meal_type isn't stated, infer breakfast/lunch/dinner/snack from "
+        "the dish itself.\n"
+        "- Do not invent ingredients or steps absent from the source, and add "
+        "no commentary — respond with the structured data only."
+    )
+
+    model = resolve_recipe_parser_model(config)
+    max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
+
+    logger.info("import_external_recipe: requesting parse from %s", model)
+    started = time.monotonic()
+    try:
+        recipe, completion = await client.chat.completions.create_with_completion(
+            model=model,
+            response_model=Recipe,
+            max_retries=3,
+            max_tokens=max_tokens,
+            # Non-optional — see CLAUDE.md "Reasoning must be disabled": the
+            # identical prompt shape measured 303s and, on two real runs, zero
+            # content, with this switch left on.
+            extra_body={"reasoning": {"enabled": False}},
+            context={"config": config},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": raw_input},
+            ],
+        )
+    except Exception as exc:
+        logger.warning(
+            "import_external_recipe: failed after %.1fs — %s: %s",
+            time.monotonic() - started,
+            type(exc).__name__,
+            str(exc).split("\n")[0][:300],
+        )
+        raise
+
+    elapsed = time.monotonic() - started
+    usage = getattr(completion, "usage", None)
+    logger.info(
+        "import_external_recipe: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
+        elapsed,
+        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
+        getattr(usage, "completion_tokens", None),
+    )
+    return recipe
 
 
 def split_targets(
@@ -2782,7 +3870,7 @@ def generate_day(
     subtracted from the day's target first, so the model is asked for the
     remaining gap rather than a full day it would then overshoot.
     """
-    client = build_client()
+    client = build_client(config.get("models"))
     dietary_rules = config["dietary_rules"]
 
     remaining = {key: max(0.0, targets[key] - carried.get(key, 0.0)) for key in MACRO_KEYS}
@@ -2884,7 +3972,7 @@ def generate_day(
         f"- Fat: {remaining['fat_g']:.0f} g\n"
     )
 
-    model = config.get("openrouter_model", DEFAULT_MODEL)
+    model = resolve_planner_model(config)
     max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
 
     logger.info("%s: requesting %d recipe(s) from %s", day, len(cook_slots), model)
@@ -2944,7 +4032,7 @@ def generate_day(
 
     fitted = {}
     for slot in cook_slots:
-        recipe, factor = fit_recipe_to_budget(by_meal_type[slot.meal_type], budgets[slot.id])
+        recipe, factor = fit_recipe_to_budget(by_meal_type[slot.meal_type], budgets[slot.id], config)
         if factor != 1.0 and progress_note:
             progress_note(
                 f"{day} {slot.meal_type}: portions resized x{factor:.2f} to hit "
@@ -3015,7 +4103,8 @@ async def generate_week_plan(
     # Seeded from previous weeks, then extended as this week generates —
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
-    avoid_proteins = recent_main_proteins(history)
+    avoid_proteins = recent_main_proteins(history, config)
+    protein_avoid_window = planning_rule(config, "protein_avoid_window")
     thread_safe_note = on_calling_loop(note_callback)
 
     events: Dict[str, CookEvent] = {}
@@ -3041,7 +4130,7 @@ async def generate_week_plan(
                 multiplicity=day_multiplicity(spec, day),
                 carried=carried,
                 carried_descriptions=descriptions,
-                avoid_proteins=avoid_proteins[-PROTEIN_AVOID_WINDOW:],
+                avoid_proteins=avoid_proteins[-protein_avoid_window:],
                 progress_note=thread_safe_note,
             )
         except Exception as exc:
@@ -3065,11 +4154,11 @@ async def generate_week_plan(
         for slot in cook_slots:
             recipe = recipes[slot.meal_type]
             claim_ids = claims.get(slot.id, [slot.id])
-            last_day_index = max(spec.day_index(value.split(":")[0]) for value in claim_ids)
-            recipe = scale_recipe(
-                recipe,
-                portions=portions[slot.id],
+            last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+            recipe = recipe.scale_to_servings(
+                portions[slot.id],
                 keeps_for_days=last_day_index - spec.day_index(slot.day),
+                config=config,
             )
             events[slot.id] = CookEvent(
                 slot_id=slot.id,
@@ -3110,9 +4199,15 @@ def extract_main_protein(recipe: Recipe) -> Optional[str]:
 async def record_week_history(
     week_plan: WeekPlan,
     repository: Optional[PlanRepository] = None,
-    max_entries: int = HISTORY_MAX_ENTRIES,
+    config: Optional[dict] = None,
 ) -> None:
-    """One history entry per cooked day, so rotation carries across weeks."""
+    """One history entry per cooked day, so rotation carries across weeks.
+
+    `config` supplies `planning_rules.history_max_entries`; omitted (or
+    missing the key) falls back to DEFAULT_PLANNING_RULES's value, same as
+    every other planning_rule() read.
+    """
+    max_entries = planning_rule(config, "history_max_entries")
     repository = repository or LocalJSONRepository()
     history = await repository.load_history()
     generated_at = week_plan.generated_at
@@ -3198,7 +4293,7 @@ def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Weekly Meal Planner CLI")
     parser.add_argument(
-        "--config", default=DEFAULT_CONFIG_FILE, help="Path to config JSON file"
+        "--config", default=DEFAULT_STORAGE_PATHS.config, help="Path to config JSON file"
     )
     parser.add_argument(
         "--model",
@@ -3238,7 +4333,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--use-cached-plan",
         action="store_true",
         help=(
-            f"Load the week from {WEEK_PLAN_CACHE_FILE} instead of calling "
+            f"Load the week from {DEFAULT_STORAGE_PATHS.week_plan} instead of calling "
             "OpenRouter (for iterating on the shopping list without API calls)."
         ),
     )
@@ -3253,7 +4348,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     future backend expects, and the reason storage calls are awaited here
     rather than bridged individually.
     """
-    config = await repository.load_config()
+    config = await load_config_with_models(repository)
     if args.model:
         config["openrouter_model"] = args.model
     config = apply_training_adjustments(config)
@@ -3265,10 +4360,10 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
         spec = autofill_leftovers(spec, "lunch", "dinner")
 
     if args.use_cached_plan:
-        print(f"Loading cached week plan from {WEEK_PLAN_CACHE_FILE}...", flush=True)
+        print(f"Loading cached week plan from {repository.paths.week_plan}...", flush=True)
         cached = await repository.load_week_plan()
         if cached is None:
-            print(f"No cached week plan found ({WEEK_PLAN_CACHE_FILE}). Generate one first.")
+            print(f"No cached week plan found ({repository.paths.week_plan}). Generate one first.")
             raise SystemExit(1)
         week_plan = WeekPlan.model_validate(cached)
     else:
@@ -3282,7 +4377,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
                 print(f"  - {error}")
             raise SystemExit(1)
 
-        model = config.get("openrouter_model", DEFAULT_MODEL)
+        model = resolve_planner_model(config)
         cook_days = len({slot.day for slot in spec.cook_slots()})
         print(
             f"Generating {len(spec.days)}-day plan ({len(spec.cook_slots())} cooks "
@@ -3303,7 +4398,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
         )
 
         await repository.save_week_plan(week_plan.model_dump())
-        await record_week_history(week_plan, repository)
+        await record_week_history(week_plan, repository, config)
 
     print_week_summary(week_plan)
 
@@ -3350,9 +4445,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
--e 
 
-=== File: ./shopping.py ===
+
+=== File: shopping.py ===
 import re
 from typing import Dict, List, Optional, Sequence
 
@@ -3817,9 +4912,9 @@ def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
                 f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
             )
     return "\n".join(lines)
--e 
 
-=== File: ./week.py ===
+
+=== File: week.py ===
 """Week-level planning primitives.
 
 The unit of planning is no longer "a day of recipes" but a grid of **eating
@@ -3838,7 +4933,7 @@ fully resolved (styles, cuisines, portions, windows) before a single token is
 generated, so the UI can preview exactly what it is about to ask for.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -3862,12 +4957,26 @@ PERISHABLE_DEPARTMENTS = {
     "Meat & Poultry",
     "Dairy & Eggs",
 }
-PERISHABLE_DAY_GAP = 3
 
-# Cooked food keeps ~3-4 days refrigerated, so a leftover eaten 4+ days after
-# its cook day is at the edge — flagged in the grid and reflected in the
-# recipe's storage note rather than silently planned.
-FRIDGE_SAFE_DAYS = 4
+# Fallbacks for config.json's "inventory_rules" object, used when a caller has
+# no config (or an older config.json predates this section). The canonical
+# values now live in config.json; these are what the app used before that
+# section existed.
+DEFAULT_INVENTORY_RULES = {
+    # Cooked food keeps ~3-4 days refrigerated, so a leftover eaten 4+ days
+    # after its cook day is at the edge — flagged in the grid and reflected
+    # in the recipe's storage note rather than silently planned.
+    "fridge_safe_days": 4,
+    "perishable_day_gap": 3,
+}
+
+# `shopping.py`'s `ShoppingItem.buy_late` still reads this module constant
+# directly (it's a plain computed property with no config in scope at
+# evaluation time) — dynamic wiring there would need `aggregate_cook_events`
+# to thread a config through to `ShoppingItem` construction, which is outside
+# this refactor. config.json's inventory_rules.perishable_day_gap is the
+# value to edit; keep this constant in sync with it by hand until that's done.
+PERISHABLE_DAY_GAP = DEFAULT_INVENTORY_RULES["perishable_day_gap"]
 
 
 def humanize(value: Optional[str]) -> str:
@@ -3917,6 +5026,18 @@ def slot_id(day: str, meal_type: str) -> str:
     return f"{day}:{meal_type}"
 
 
+def parse_slot_id(value: str) -> Tuple[str, str]:
+    """Inverse of `slot_id`: 'Monday:dinner' -> ('Monday', 'dinner').
+
+    The only place a slot id's `:` should get split apart — callers that need
+    just the day (`span_days`, `generate_week_plan`) still go through this
+    rather than a bare `.split(":")`, so a future change to the id format has
+    one place to change.
+    """
+    day, _, meal_type = value.partition(":")
+    return day, meal_type
+
+
 def slot_label(value: str, short: bool = False) -> str:
     """A slot id as prose: 'Monday:dinner' -> 'Monday dinner' / 'Mon dinner'.
 
@@ -3924,7 +5045,7 @@ def slot_label(value: str, short: bool = False) -> str:
     sitting in the middle of a sentence. Anything that names a slot to the
     user goes through here instead.
     """
-    day, _, meal_type = value.partition(":")
+    day, meal_type = parse_slot_id(value)
     return f"{day[:3] if short else day} {meal_type}".strip()
 
 
@@ -4189,8 +5310,11 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
     return errors
 
 
-def week_warnings(spec: WeekSpec) -> List[str]:
+def week_warnings(spec: WeekSpec, config: Optional[dict] = None) -> List[str]:
     """Non-blocking notes — things that are legal but probably not intended."""
+    fridge_safe_days = (config or {}).get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
     warnings: List[str] = []
     counts = claim_counts(spec)
     by_id = spec.by_id()
@@ -4204,7 +5328,7 @@ def week_warnings(spec: WeekSpec) -> List[str]:
                 f"{span_days(spec, cook_id)} days."
             )
         span = span_days(spec, cook_id)
-        if span >= FRIDGE_SAFE_DAYS:
+        if span >= fridge_safe_days:
             warnings.append(
                 f"{slot.day} {slot.meal_type} is eaten up to {span} days after cooking — "
                 "at or past safe fridge storage, so plan to freeze the later portions."
@@ -4231,8 +5355,8 @@ def span_days(spec: WeekSpec, cook_id: str) -> int:
     claims = eaten_on(spec).get(cook_id, [])
     if not claims:
         return 0
-    cook_index = spec.day_index(cook_id.split(":")[0])
-    last_index = max(spec.day_index(value.split(":")[0]) for value in claims)
+    cook_index = spec.day_index(parse_slot_id(cook_id)[0])
+    last_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claims)
     return last_index - cook_index
 
 
@@ -4285,9 +5409,9 @@ def window_for_day(windows: List[ShoppingWindow], day: str) -> Optional[Shopping
         if day in window.days:
             return window
     return None
--e 
 
-=== File: ./repository.py ===
+
+=== File: repository.py ===
 """Storage boundary for everything the planner reads and writes.
 
 The planner used to `open()` and `json.load()` its own files inline, which
@@ -4314,16 +5438,70 @@ storage one.
 
 import abc
 import asyncio
+import hashlib
 import json
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Awaitable, List, Optional, TypeVar
 
 DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_HISTORY_FILE = "meal_history.json"
 DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
+DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
+DEFAULT_MODELS_FILE = "models.json"
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class StoragePaths:
+    """The on-disk filename for every JSON file the app persists.
+
+    The single source of truth for these names — before this existed,
+    `ui_app.py` and `planner.py` each redeclared "config.json"/"week_plan.json"
+    as their own module constants, and the two copies were free to drift from
+    whatever `LocalJSONRepository` actually defaulted to. Callers that need a
+    path (a CLI `--help` string, a "loading from X" message) read it off a
+    `LocalJSONRepository`'s `.paths` instead of naming the file themselves.
+
+    There is no `favorites` entry: favoriting doesn't have its own file, it's
+    an `is_favorite` flag on an entry in `recipe_catalog`
+    (`recipes_master.json`) — adding a path here that nothing ever reads or
+    writes would just be a second, misleading name for that same file.
+    """
+
+    config: str = DEFAULT_CONFIG_FILE
+    history: str = DEFAULT_HISTORY_FILE
+    week_plan: str = DEFAULT_WEEK_PLAN_FILE
+    recipe_catalog: str = DEFAULT_RECIPE_CATALOG_FILE
+    models: str = DEFAULT_MODELS_FILE
+
+
+def recipe_content_key(recipe: dict) -> str:
+    """Identity for "is this the same recipe" purposes: name + ingredient
+    composition, not object identity or a generated id.
+
+    This is what makes favoriting idempotent across regenerations — cooking
+    the same dish again next month (same name, same grams of each
+    ingredient) resolves to the same catalog entry rather than a duplicate,
+    while a same-named dish with different ingredients is treated as a
+    genuinely different recipe. Quantities are rounded to 2dp before hashing
+    so float noise from portion trimming can't split one recipe into two
+    entries.
+    """
+    name = (recipe.get("name") or "").strip().lower()
+    ingredients = sorted(
+        (
+            (ingredient.get("name") or "").strip().lower(),
+            round(float(ingredient.get("quantity_g") or 0), 2),
+        )
+        for ingredient in recipe.get("ingredients", [])
+    )
+    payload = json.dumps([name, ingredients], sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 class PlanRepository(abc.ABC):
@@ -4340,6 +5518,18 @@ class PlanRepository(abc.ABC):
         """Targets, dietary rules, styles, cuisines. Raises if unavailable."""
 
     @abc.abstractmethod
+    async def load_models_config(self) -> dict:
+        """Model selection and LLM call parameters (models.json).
+
+        Unlike `load_config`, a missing file is not an error: this data is
+        supplemental defaults (which model, which base URL, which timeout),
+        every one of which already has an in-code fallback, so a fresh
+        install with no `models.json` yet must plan exactly as it did before
+        this file existed, not fail to start. Implementations return `{}`
+        when the file is absent.
+        """
+
+    @abc.abstractmethod
     async def load_history(self) -> List[dict]:
         """Past days, oldest first. Empty when nothing has been generated yet.
 
@@ -4353,16 +5543,21 @@ class PlanRepository(abc.ABC):
         caller to its max length)."""
 
     @abc.abstractmethod
-    async def load_week_plan(self) -> Optional[dict]:
+    async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
         """The last generated week as a raw dict, or None if there isn't one.
 
-        Returned unvalidated so this module stays independent of planner's
-        Pydantic models; callers run `WeekPlan.model_validate` themselves.
+        `week_identifier` picks which cached week — `"current"` (the default,
+        and the only one that existed before multi-week support) or `"next"`
+        — since the app now keeps two weeks on disk at once rather than
+        overwriting a single file. Returned unvalidated so this module stays
+        independent of planner's Pydantic models; callers run
+        `WeekPlan.model_validate` themselves.
         """
 
     @abc.abstractmethod
-    async def save_week_plan(self, week_plan: dict) -> None:
-        """Store the generated week, replacing any previous one.
+    async def save_week_plan(self, week_plan: dict, week_identifier: str = "current") -> None:
+        """Store the generated week under `week_identifier`, replacing any
+        previous plan stored under that same identifier.
 
         Not in the original four methods, but the cached week plan is the other
         half of `load_week_plan` and the CLI's `--use-cached-plan` flag reads
@@ -4370,9 +5565,62 @@ class PlanRepository(abc.ABC):
         behind in planner.py, which is the thing this module exists to remove.
         """
 
+    @abc.abstractmethod
+    async def load_recipe_catalog(self) -> List[dict]:
+        """Every recipe ever favorited or imported, oldest first — the single
+        store recipe content lives in outside of the current `week_plan.json`.
+
+        Records look like `{id, content_key, recipe, is_favorite, source,
+        added_at, updated_at}`. `week_plan.json` and `meal_history.json` are
+        not this store: the former is overwritten every generation and the
+        latter keeps only lean per-day summaries, so a recipe that isn't
+        favorited or imported has no life beyond the week it was cooked in.
+        """
+
+    @abc.abstractmethod
+    async def get_favorites(self) -> List[dict]:
+        """The subset of the catalog with `is_favorite` true."""
+
+    @abc.abstractmethod
+    async def toggle_favorite(self, recipe: dict) -> bool:
+        """Flip favorite status for the catalog entry matching `recipe`'s
+        name + ingredients (see `recipe_content_key`).
+
+        If no matching entry exists yet, one is created (`source="favorited"`,
+        already favorited) — the first click on a card's bookmark is both
+        "add to catalog" and "favorite it" in one step. An existing entry is
+        never removed by this call, only its flag flipped, so un-favoriting a
+        recipe never drops it from the catalog (see `delete_catalog_recipe`
+        for actual removal). Returns the new `is_favorite` state.
+        """
+
+    @abc.abstractmethod
+    async def import_recipe(self, recipe: dict, favorite: bool = False) -> dict:
+        """Add `recipe` to the catalog (`source="imported"`), or fold into a
+        matching existing entry (see `recipe_content_key`) if one exists.
+
+        `favorite` can only ever turn an existing entry's flag on, never off
+        — an import is not how a recipe gets un-favorited. Returns the
+        stored record.
+        """
+
+    @abc.abstractmethod
+    async def rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        """Rename a catalog entry's recipe in place. Returns the updated
+        record, or None if `recipe_id` isn't in the catalog — a favorite
+        deleted in another tab is a no-op here, not an error, the same
+        tolerance `load_history`/`load_week_plan` extend to a missing file.
+        """
+
+    @abc.abstractmethod
+    async def delete_catalog_recipe(self, recipe_id: str) -> None:
+        """Remove an entry from the catalog outright. A no-op if already
+        gone. Distinct from `toggle_favorite`'s un-favorite, which keeps the
+        entry — this is for discarding a bad import or a mistaken save."""
+
 
 class LocalJSONRepository(PlanRepository):
-    """The current on-disk layout: three JSON files next to the code.
+    """The current on-disk layout: four JSON files next to the code.
 
     Paths are constructor arguments rather than module constants so tests (and
     a second week in another directory) don't have to chdir. Writes go to a
@@ -4386,32 +5634,148 @@ class LocalJSONRepository(PlanRepository):
         config_path: str = DEFAULT_CONFIG_FILE,
         history_path: str = DEFAULT_HISTORY_FILE,
         week_plan_path: str = DEFAULT_WEEK_PLAN_FILE,
+        recipe_catalog_path: str = DEFAULT_RECIPE_CATALOG_FILE,
+        models_path: str = DEFAULT_MODELS_FILE,
     ) -> None:
-        self.config_path = config_path
-        self.history_path = history_path
-        self.week_plan_path = week_plan_path
+        self.paths = StoragePaths(
+            config=config_path,
+            history=history_path,
+            week_plan=week_plan_path,
+            recipe_catalog=recipe_catalog_path,
+            models=models_path,
+        )
 
     # -- PlanRepository ----------------------------------------------------
 
     async def load_config(self) -> dict:
-        config = await asyncio.to_thread(self._read_json, self.config_path)
+        config = await asyncio.to_thread(self._read_json, self.paths.config)
         if config is None:
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+            raise FileNotFoundError(f"Config file not found: {self.paths.config}")
         return config
 
+    async def load_models_config(self) -> dict:
+        return await asyncio.to_thread(self._read_json, self.paths.models) or {}
+
     async def load_history(self) -> List[dict]:
-        return await asyncio.to_thread(self._read_json, self.history_path) or []
+        return await asyncio.to_thread(self._read_json, self.paths.history) or []
 
     async def save_history(self, history: List[dict]) -> None:
-        await asyncio.to_thread(self._write_json, self.history_path, history)
+        await asyncio.to_thread(self._write_json, self.paths.history, history)
 
-    async def load_week_plan(self) -> Optional[dict]:
-        return await asyncio.to_thread(self._read_json, self.week_plan_path)
+    async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
+        return await asyncio.to_thread(
+            self._read_json, self._week_plan_path(week_identifier)
+        )
 
-    async def save_week_plan(self, week_plan: dict) -> None:
-        await asyncio.to_thread(self._write_json, self.week_plan_path, week_plan)
+    async def save_week_plan(self, week_plan: dict, week_identifier: str = "current") -> None:
+        await asyncio.to_thread(
+            self._write_json, self._week_plan_path(week_identifier), week_plan
+        )
+
+    async def load_recipe_catalog(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.paths.recipe_catalog) or []
+
+    async def get_favorites(self) -> List[dict]:
+        catalog = await self.load_recipe_catalog()
+        return [record for record in catalog if record.get("is_favorite")]
+
+    async def toggle_favorite(self, recipe: dict) -> bool:
+        return await asyncio.to_thread(self._toggle_favorite, recipe)
+
+    async def import_recipe(self, recipe: dict, favorite: bool = False) -> dict:
+        return await asyncio.to_thread(self._import_recipe, recipe, favorite)
+
+    async def rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        return await asyncio.to_thread(self._rename_catalog_recipe, recipe_id, name)
+
+    async def delete_catalog_recipe(self, recipe_id: str) -> None:
+        await asyncio.to_thread(self._delete_catalog_recipe, recipe_id)
+
+    def _week_plan_path(self, week_identifier: str) -> str:
+        """File for one named week.
+
+        `"current"` maps to the original single-file layout
+        (`self.paths.week_plan`, i.e. `week_plan.json`) rather than
+        `week_plan_current.json`, so an existing install with a cached week
+        already on disk needs no migration and no data movement the first
+        time this runs. Every other identifier — `"next"`, or a week-start
+        date — gets its own `week_plan_<identifier>.json` alongside it.
+        """
+        if week_identifier == "current":
+            return self.paths.week_plan
+        return f"week_plan_{week_identifier}.json"
 
     # -- blocking helpers, only ever called in a worker thread --------------
+
+    def _find_catalog_entry(self, catalog: List[dict], recipe: dict) -> Optional[dict]:
+        key = recipe_content_key(recipe)
+        return next((r for r in catalog if r.get("content_key") == key), None)
+
+    def _toggle_favorite(self, recipe: dict) -> bool:
+        catalog = self._read_json(self.paths.recipe_catalog) or []
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        existing = self._find_catalog_entry(catalog, recipe)
+        if existing is not None:
+            existing["is_favorite"] = not existing.get("is_favorite", False)
+            existing["updated_at"] = now
+            new_state = existing["is_favorite"]
+        else:
+            catalog.append(
+                {
+                    "id": uuid.uuid4().hex,
+                    "content_key": recipe_content_key(recipe),
+                    "recipe": recipe,
+                    "is_favorite": True,
+                    "source": "favorited",
+                    "added_at": now,
+                    "updated_at": now,
+                }
+            )
+            new_state = True
+        self._write_json(self.paths.recipe_catalog, catalog)
+        return new_state
+
+    def _import_recipe(self, recipe: dict, favorite: bool) -> dict:
+        catalog = self._read_json(self.paths.recipe_catalog) or []
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        existing = self._find_catalog_entry(catalog, recipe)
+        if existing is not None:
+            if favorite and not existing.get("is_favorite", False):
+                existing["is_favorite"] = True
+                existing["updated_at"] = now
+            record = existing
+        else:
+            record = {
+                "id": uuid.uuid4().hex,
+                "content_key": recipe_content_key(recipe),
+                "recipe": recipe,
+                "is_favorite": favorite,
+                "source": "imported",
+                "added_at": now,
+                "updated_at": now,
+            }
+            catalog.append(record)
+        self._write_json(self.paths.recipe_catalog, catalog)
+        return record
+
+    def _rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
+        catalog = self._read_json(self.paths.recipe_catalog) or []
+        updated = None
+        for record in catalog:
+            if record.get("id") == recipe_id:
+                record["recipe"]["name"] = name
+                record["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                updated = record
+                break
+        if updated is not None:
+            self._write_json(self.paths.recipe_catalog, catalog)
+        return updated
+
+    def _delete_catalog_recipe(self, recipe_id: str) -> None:
+        catalog = self._read_json(self.paths.recipe_catalog) or []
+        remaining = [record for record in catalog if record.get("id") != recipe_id]
+        if len(remaining) != len(catalog):
+            self._write_json(self.paths.recipe_catalog, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:
@@ -4445,5 +5809,56 @@ def run_sync(awaitable: Awaitable[T]) -> T:
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, awaitable).result()  # type: ignore[arg-type]
--e 
+
+
+=== File: model-list.py ===
+import csv
+import requests
+
+# Fetch model metadata from OpenRouter API
+response = requests.get("https://openrouter.ai/api/v1/models")
+data = response.json().get("data", [])
+
+# Select the top 50 models
+top_50 = data[:50]
+
+# Define CSV filename and headers
+filename = "openrouter_top_50.csv"
+headers = [
+    "ID",
+    "Name",
+    "Context Length",
+    "Prompt Price (per 1M)",
+    "Completion Price (per 1M)",
+]
+
+# Write data to CSV file
+with open(filename, mode="w", newline="", encoding="utf-8") as file:
+    writer = csv.writer(file)
+    writer.writerow(headers)
+
+    for model in top_50:
+        model_id = model.get("id", "")
+        name = model.get("name", "")
+        context_length = model.get("context_length", 0)
+
+        pricing = model.get("pricing", {})
+        # Convert prices to per-million token rates
+        prompt_price = float(pricing.get("prompt", 0)) * 1_000_000
+        completion_price = float(pricing.get("completion", 0)) * 1_000_000
+
+        writer.writerow(
+            [
+                model_id,
+                name,
+                context_length,
+                f"${prompt_price:.4f}",
+                f"${completion_price:.4f}",
+            ]
+        )
+
+print(
+    f"Successfully exported {len(top_50)} models to '{filename}'. Ready to upload!"
+)
+
 

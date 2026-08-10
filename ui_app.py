@@ -67,9 +67,10 @@ from nicegui import ui
 from pydantic import ValidationError
 
 from planner import (
-    DEFAULT_MODEL,
+    DEFAULT_MODELS_CONFIG,
     MACRO_KEYS,
     TRAINING_INTENSITY_SPLIT,
+    CookEvent,
     Recipe,
     WeekPlan,
     api_key_error,
@@ -80,12 +81,8 @@ from planner import (
     generate_week_plan,
     import_external_recipe,
     meal_overrides_for,
-    per_serving_totals,
     record_week_history,
-    rescale_cook_event,
-    resize_recipe,
     resolve_auto_choices,
-    scale_recipe,
     split_targets,
 )
 from repository import LocalJSONRepository, recipe_content_key
@@ -119,14 +116,15 @@ from week import (
 load_dotenv()
 configure_logging()
 
-CONFIG_PATH = "config.json"
-
 # One repository for the server, imported once rather than re-executed per
 # interaction. It holds paths only, so pointing the app at a different backend
-# stays a one-line change here.
-REPOSITORY = LocalJSONRepository(config_path=CONFIG_PATH)
+# stays a one-line change here. File names live on REPOSITORY.paths
+# (repository.py's StoragePaths), not as a module constant here.
+REPOSITORY = LocalJSONRepository()
 
-MODEL_OPTIONS = [
+# Fallback for the drawer's model select when models.json is missing or omits
+# "selectable_options" — the list the app offered before that file existed.
+DEFAULT_MODEL_OPTIONS = [
     "anthropic/claude-sonnet-5",
     "deepseek/deepseek-v4-flash",
     "google/gemma-4-26b-a4b-it:free",
@@ -207,16 +205,22 @@ MACRO_TINTS = {
     "fat_g": "text-violet-300",
 }
 
-# A title longer than this can't fit the card's two lines at this column width,
-# so it gets a tooltip carrying the full name. Below it the tooltip would only
-# repeat what is already on screen.
-TITLE_TOOLTIP_CHARS = 38
+# Fallbacks for config.json's "ui_settings" object, used when a config.json
+# predates that section.
+#
+# A title longer than title_tooltip_chars can't fit the card's two lines at
+# this column width, so it gets a tooltip carrying the full name. Below it the
+# tooltip would only repeat what is already on screen.
+DEFAULT_UI_SETTINGS = {
+    "bar_scale_limit": 1.6,
+    "title_tooltip_chars": 38,
+}
 
-# How far a telemetry bar can extend past its target before it stops growing.
-# The bar's full width is `max(1, ratio)` capped here, so an overshoot renders
-# as a real second segment rather than a bar pinned at 100% that looks
-# identical to landing exactly on budget.
-BAR_SCALE_LIMIT = 1.6
+# bar_scale_limit (in DEFAULT_UI_SETTINGS above) is how far a telemetry bar
+# can extend past its target before it stops growing. The bar's full width is
+# `max(1, ratio)` capped there, so an overshoot renders as a real second
+# segment rather than a bar pinned at 100% that looks identical to landing
+# exactly on budget.
 
 # Band -> hex, for the telemetry bars. Hex rather than Quasar colour names
 # because these are painted onto plain divs (a two-segment bar is not something
@@ -370,6 +374,11 @@ class PlannerState:
     """
 
     config: dict
+    # models.json, loaded alongside config — the drawer's model select reads
+    # `models_config["selectable_options"]` and `.load()` uses
+    # `models_config["default_planner_model"]` as `model`'s starting value
+    # when config.json has no `openrouter_model` override.
+    models_config: dict = field(default_factory=dict)
     week_plan: Optional[WeekPlan] = None
     # Which cached week is on screen — a key into WEEK_SELECTION_LABELS, and
     # the `week_identifier` threaded through every `load_week_plan`/
@@ -385,7 +394,7 @@ class PlannerState:
     # configured `shop_days` trips; the underlying cook events and quantities
     # are identical either way, only the grouping changes.
     daily_shop_mode: bool = False
-    model: str = DEFAULT_MODEL
+    model: str = DEFAULT_MODELS_CONFIG["default_planner_model"]
     focus: Optional[SlotView] = None
     edited: bool = False
     # Food already in the house, to be cooked through. Seeded from config's
@@ -450,12 +459,15 @@ class PlannerState:
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
         config = await repository.load_config()
+        models_config = await repository.load_models_config()
         state = cls(
             config=config,
+            models_config=models_config,
             week_start=config.get("week_start_day") or list(config["weekly_schedule"])[0],
             servings=int(config.get("serving_rules", {}).get("servings_per_meal", 2)),
             shop_days=list(config.get("shopping", {}).get("shop_days", [])),
-            model=config.get("openrouter_model", DEFAULT_MODEL),
+            model=config.get("openrouter_model")
+            or models_config.get("default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]),
             pantry=[
                 str(item).strip()
                 for item in config.get("inventory_to_clear") or []
@@ -574,23 +586,28 @@ class PlannerState:
 
         portions = portions_for(spec)
         claims = eaten_on(spec)
+
+        def rescaled(event: CookEvent) -> CookEvent:
+            if event.slot_id not in portions or event.portions <= 0:
+                return event
+            target = portions[event.slot_id]
+            return event.model_copy(
+                update={
+                    "portions": target,
+                    "eaten_by": list(claims.get(event.slot_id, [event.slot_id])),
+                    "recipe": event.recipe.scale_to_servings(
+                        target, span_days(spec, event.slot_id)
+                    ),
+                }
+            )
+
         self.week_plan = plan.model_copy(
             update={
                 "slots": list(spec.slots),
                 # A slot that stopped being a cook keeps its event in the list,
                 # orphaned: nothing resolves to it any more, and holding it
                 # means the recipe is still there if the week is re-pointed.
-                "cook_events": [
-                    rescale_cook_event(
-                        event,
-                        portions[event.slot_id],
-                        span_days(spec, event.slot_id),
-                        claims.get(event.slot_id, [event.slot_id]),
-                    )
-                    if event.slot_id in portions
-                    else event
-                    for event in plan.cook_events
-                ],
+                "cook_events": [rescaled(event) for event in plan.cook_events],
             }
         )
         self._spec_shape = self._shape()
@@ -655,18 +672,17 @@ class PlannerState:
         # Favorites are expected in the same shape generation produces: one
         # serving. A favorite saved off an already-scaled batch card would
         # carry servings > 1, so it's normalised back to one serving first —
-        # `scale_recipe` below is what re-expands it to this slot's batch.
+        # `scale_to_servings` below is what re-expands it to this slot's batch.
         if recipe.servings != 1:
-            recipe = resize_recipe(recipe, 1 / recipe.servings).model_copy(
+            recipe = recipe.resize_by_factor(1 / recipe.servings).model_copy(
                 update={"servings": 1}
             )
 
-        # portions/keeps_for_days mirror `apply_spec`'s call to
-        # `rescale_cook_event`: the batch size is still derived from how many
-        # slots claim this cook, a favorite swap doesn't change that.
-        scaled = scale_recipe(
-            recipe,
-            portions=event.portions,
+        # portions/keeps_for_days mirror `apply_spec`'s rescale: the batch
+        # size is still derived from how many slots claim this cook, a
+        # favorite swap doesn't change that.
+        scaled = recipe.scale_to_servings(
+            event.portions,
             keeps_for_days=span_days(spec, source_id),
         )
         new_event = event.model_copy(update={"recipe": scaled})
@@ -717,6 +733,12 @@ class PlannerState:
                 inventory_to_clear=list(self.pantry),
                 openrouter_model=self.model,
                 training_schedule=[dict(session) for session in self.training_schedule],
+                # generate_week_plan/build_client/fit_recipe_to_budget etc.
+                # all read `config.get("models")` — see planner.py — so this
+                # is what lets a run resolve request_timeout_seconds and the
+                # base URL from models.json instead of the pre-models.json
+                # literals.
+                models=self.models_config,
             )
         )
 
@@ -891,7 +913,7 @@ class PlannerState:
                 status=STATUS_COOK if slot.mode == MODE_COOK else STATUS_LEFTOVER,
                 title=event.recipe.name,
                 prep_minutes=event.recipe.prep_time_minutes,
-                macros=per_serving_totals(event.recipe),
+                macros=event.recipe.per_serving_macros,
                 recipe=event.recipe,
                 **{
                     **common,
@@ -978,20 +1000,27 @@ def macro_band(actual: float, target: float) -> str:
     return "off"
 
 
-def telemetry_bar(actual: float, target: float, *, height: str = "8px") -> None:
+def telemetry_bar(
+    actual: float,
+    target: float,
+    *,
+    height: str = "8px",
+    bar_scale_limit: float = DEFAULT_UI_SETTINGS["bar_scale_limit"],
+) -> None:
     """A target-vs-actual bar that keeps growing past 100% instead of clipping.
 
     Plain nested divs, not `ui.linear_progress`: a bar pinned at 100% looks
     identical whether a day landed on target or blew past it, so the fill
-    is scaled against `BAR_SCALE_LIMIT` and a genuine overshoot renders as a
+    is scaled against `bar_scale_limit` (config.json's
+    `ui_settings.bar_scale_limit`) and a genuine overshoot renders as a
     visibly longer bar. The thin marker line is where the target itself sits
     on that same scale, so "landed short" and "landed long" both read at a
     glance relative to it.
     """
     colour = BAND_COLOURS[macro_band(actual, target)]
     ratio = (actual / target) if target else 0.0
-    fill_pct = min(max(ratio, 0.0), BAR_SCALE_LIMIT) / BAR_SCALE_LIMIT * 100
-    target_pct = 100 / BAR_SCALE_LIMIT
+    fill_pct = min(max(ratio, 0.0), bar_scale_limit) / bar_scale_limit * 100
+    target_pct = 100 / bar_scale_limit
     with ui.element("div").classes(
         "relative w-full rounded-full bg-slate-800 overflow-hidden"
     ).style(f"height: {height}"):
@@ -1034,7 +1063,7 @@ def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
         event = events.get(slot.source or "")
         if event is None:
             continue
-        per_serving = per_serving_totals(event.recipe)
+        per_serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             carried[key] += per_serving[key]
 
@@ -1231,7 +1260,7 @@ async def planner_page() -> None:
         with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
             for favorite in matches:
                 recipe = favorite["recipe"]
-                macros = per_serving_totals(Recipe.model_validate(recipe))
+                macros = Recipe.model_validate(recipe).per_serving_macros
                 is_selected = favorite["id"] == state.swap_selected_id
                 with ui.element("div").classes(
                     "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
@@ -1271,9 +1300,7 @@ async def planner_page() -> None:
                     "text-[10px] uppercase tracking-wide text-slate-500"
                 )
                 if selected:
-                    macros = per_serving_totals(
-                        Recipe.model_validate(selected["recipe"])
-                    )
+                    macros = Recipe.model_validate(selected["recipe"]).per_serving_macros
                     for key, short, unit in MACRO_LABELS:
                         ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
                             "text-xs text-emerald-200"
@@ -1432,13 +1459,17 @@ async def planner_page() -> None:
             with body:
                 # Bold, larger than the rest of the card — the one thing a
                 # scan down a column of 28 cards actually needs to read.
-                # Titles past TITLE_TOOLTIP_CHARS can't fit the two clamped
-                # lines at this column width, so they get a tooltip with the
-                # full name instead of just being cut off silently.
+                # Titles past ui_settings.title_tooltip_chars can't fit the
+                # two clamped lines at this column width, so they get a
+                # tooltip with the full name instead of just being cut off
+                # silently.
                 title_label = ui.label(view.title).classes(
                     "text-[12px] leading-tight font-bold text-slate-100 line-clamp-2"
                 )
-                if len(view.title) > TITLE_TOOLTIP_CHARS:
+                title_tooltip_chars = state.config.get("ui_settings", {}).get(
+                    "title_tooltip_chars", DEFAULT_UI_SETTINGS["title_tooltip_chars"]
+                )
+                if len(view.title) > title_tooltip_chars:
                     with title_label:
                         ui.tooltip(view.title)
 
@@ -1605,6 +1636,9 @@ async def planner_page() -> None:
 
     @ui.refreshable
     def telemetry() -> None:
+        bar_scale_limit = state.config.get("ui_settings", {}).get(
+            "bar_scale_limit", DEFAULT_UI_SETTINGS["bar_scale_limit"]
+        )
         with ui.element("div").classes("grid grid-cols-7 gap-2 w-full"):
             for day in state.days:
                 target = state.targets_for(day)
@@ -1636,7 +1670,7 @@ async def planner_page() -> None:
                     # bands on how close the day landed (macro_band), and a
                     # thin marker at the target itself so an overshoot reads as
                     # "past the line" rather than just "a long green bar".
-                    telemetry_bar(kcal, kcal_goal, height="9px")
+                    telemetry_bar(kcal, kcal_goal, height="9px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         ui.label("protein").classes(
                             "text-[9px] uppercase tracking-wide text-slate-500"
@@ -1644,7 +1678,7 @@ async def planner_page() -> None:
                         ui.label(f"{protein:.0f}/{protein_goal:.0f}g").classes(
                             f"text-[9px] font-mono {MACRO_TINTS['protein_g']}"
                         )
-                    telemetry_bar(protein, protein_goal, height="5px")
+                    telemetry_bar(protein, protein_goal, height="5px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row gap-2 mt-0.5"):
                         for key, short, unit in MACRO_LABELS[2:]:
                             ui.label(
@@ -2252,7 +2286,7 @@ async def planner_page() -> None:
             # Targets whichever week is selected in the header — generating
             # while "Next Week" is showing must not overwrite "current".
             await REPOSITORY.save_week_plan(week_plan.model_dump(), state.week_selection)
-            await record_week_history(week_plan, REPOSITORY)
+            await record_week_history(week_plan, REPOSITORY, config)
         except Exception as exc:
             # Per-day failures never reach here — generate_week_plan absorbs
             # those into WeekPlan.failures. This is the whole run coming apart
@@ -2490,9 +2524,10 @@ async def planner_page() -> None:
                 "w-full text-xs"
             )
 
-            ui.select(MODEL_OPTIONS, label="Model").bind_value(state, "model").props(
-                "dense outlined"
-            ).classes("w-full text-xs")
+            ui.select(
+                state.models_config.get("selectable_options") or DEFAULT_MODEL_OPTIONS,
+                label="Model",
+            ).bind_value(state, "model").props("dense outlined").classes("w-full text-xs")
 
         # Collapsed by default: seven days x three numbers is the densest thing
         # in the drawer, and most weeks run on the config file's targets.

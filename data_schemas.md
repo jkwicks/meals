@@ -48,7 +48,7 @@
     "Sunday"
   ],
   "servings_per_meal": 2,
-  "generated_at": "2026-08-08T20:16:50.125936",
+  "generated_at": "2026-08-09T14:54:13.930514",
   "cook_events": [
     {
       "slot_id": "Monday:breakfast",
@@ -61,25 +61,25 @@
         "Monday:breakfast"
       ],
       "recipe": {
-        "name": "Protein-Packed Baked White Beans with Egg and Greens",
+        "name": "Smoky White Bean and Turkey Bacon Bake",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "canned white beans (no salt added)",
-            "quantity_g": 272,
-            "nova_group": 3,
-            "calories": 325.4,
-            "protein_g": 21.2,
-            "net_carbs_g": 43.4,
-            "fat_g": 1.4
+            "name": "cannellini beans, cooked",
+            "quantity_g": 422,
+            "nova_group": 2,
+            "calories": 389.2,
+            "protein_g": 27.6,
+            "net_carbs_g": 51.8,
+            "fat_g": 1.6
 
 
 === Sample Structure: meal_plan.json ===
 {
   "day_of_week": "Sunday",
-  "target_calories": 2000.0,
-  "target_protein_g": 160.0,
-  "target_net_carbs_g": 30.0,
+  "target_calories": 1500.0,
+  "target_protein_g": 110.0,
+  "target_net_carbs_g": 50.0,
   "target_fat_g": 137.8,
   "is_keto": true,
   "recipes": [
@@ -116,37 +116,37 @@
 [
   {
     "day_of_week": "Monday",
-    "generated_at": "2026-08-08T08:58:38.128339",
-    "cuisine": "bbq",
+    "generated_at": "2026-08-08T09:10:26.124153",
+    "cuisine": "korean",
     "styles": {
-      "breakfast": "yoghurt_nuts_seeds",
-      "lunch": "soup",
-      "dinner": "curry"
+      "breakfast": "baked_beans",
+      "lunch": "wrap",
+      "dinner": "one_pan"
     },
     "main_proteins": [
-      "chicken breast, boneless skinless",
-      "beef chuck, cubed"
+      "chicken breast (skinless, boneless, cooked, shredded)",
+      "chicken thigh (boneless, skinless)"
     ],
     "recipe_names": [
-      "Yoghurt Bowl with Nuts, Seeds and Berries",
-      "Hearty Chicken and Vegetable Soup",
-      "BBQ Beef Curry with Smoky Pepper and Sweet Potato"
+      "Hearty Baked Beans with Poached Egg and Turkey Sausage",
+      "Spicy Chicken and Avocado Whole Wheat Wrap",
+      "Korean Gochujang Chicken and Vegetable Traybake"
     ]
   },
   {
     "day_of_week": "Tuesday",
-    "generated_at": "2026-08-08T08:58:38.128339",
-    "cuisine": "cajun",
+    "generated_at": "2026-08-08T09:10:26.124153",
+    "cuisine": "middle_eastern",
     "styles": {
-      "breakfast": "fish",
-      "dinner": "one_pan"
+      "breakfast": "eggs",
+      "dinner": "grill"
     },
     "main_proteins": [
-      "Chicken thighs, skinless, boneless"
+      "ground lamb"
     ],
     "recipe_names": [
-      "Smoked Salmon & Avocado Scramble",
-      "Cajun Blackened Chicken & Vegetable Traybake"
+      "Greek Scramble with Feta and Spinach",
+      "Middle Eastern Grilled Lamb Kofta with Roasted Vegetables and Tahini Sauce"
     ]
 
 
@@ -186,5 +186,141 @@
       "prep_tips": [
         "Cut into 1/2-inch wedges and steam for 15 minutes."
       ]
+
+
+=== Sample Structure: recipes_master.json ===
+[
+  {
+    "id": "d0757d64d0d244db9d801d95131d42b8",
+    "content_key": "b7a30c249a357f6c",
+    "recipe": {
+      "name": "Spinach, Feta and Turkey Scramble",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "eggs",
+          "quantity_g": 228.0,
+          "nova_group": 1,
+          "calories": 352.6,
+          "protein_g": 28.8,
+          "net_carbs_g": 1.8,
+          "fat_g": 24.4
+        },
+        {
+          "name": "ground turkey breast, raw",
+          "quantity_g": 122.0,
+          "nova_group": 1,
+          "calories": 152.0,
+          "protein_g": 32.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.0
+        },
+        {
+          "name": "baby spinach",
+          "quantity_g": 92.0,
+          "nova_group": 1,
+          "calories": 21.2,
+          "protein_g": 2.6,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.4
+        },
+
+
+=== Sample Structure: favorites.json ===
+[
+  {
+    "id": "d0757d64d0d244db9d801d95131d42b8",
+    "saved_at": "2026-08-09T05:36:08+00:00",
+    "recipe": {
+      "name": "Spinach, Feta and Turkey Scramble",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "eggs",
+          "quantity_g": 228.0,
+          "nova_group": 1,
+          "calories": 352.6,
+          "protein_g": 28.8,
+          "net_carbs_g": 1.8,
+          "fat_g": 24.4
+        },
+        {
+          "name": "ground turkey breast, raw",
+          "quantity_g": 122.0,
+          "nova_group": 1,
+          "calories": 152.0,
+          "protein_g": 32.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.0
+        },
+        {
+          "name": "baby spinach",
+          "quantity_g": 92.0,
+          "nova_group": 1,
+          "calories": 21.2,
+          "protein_g": 2.6,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.4
+        },
+
+
+=== Sample Structure: models.json ===
+{
+  "default_planner_model": "anthropic/claude-sonnet-5",
+  "quick_swap_model": "google/gemini-3.6-flash",
+  "vision_model": "google/gemini-3.6-flash",
+  "recipe_parser_model": "google/gemini-3.6-flash",
+  "openrouter_base_url": "https://openrouter.ai/api/v1",
+  "request_timeout_seconds": 120.0,
+  "max_tokens": {
+    "weekly_planner": 16000,
+    "quick_swap": 4000
+  },
+  "selectable_options": [
+    "anthropic/claude-sonnet-5",
+    "google/gemini-3.6-flash",
+    "openai/gpt-5",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free"
+  ]
+}
+
+
+=== Sample Structure: openrouter_top_50.csv ===
+ID,Name,Context Length,Prompt Price (per 1M),Completion Price (per 1M)
+inclusionai/ling-3.0-tiny:free,inclusionAI: Ling 3.0 Tiny (free),262144,$0.0000,$0.0000
+meta/muse-spark-1.2,Meta: Muse Spark 1.2,1048576,$1.2500,$4.2500
+qwen/qwen3.8-max,Qwen: Qwen3.8 Max,1000000,$2.0000,$6.0000
+~deepseek/deepseek-v4-flash-latest,DeepSeek V4 Flash Latest,1048576,$0.0800,$0.2520
+deepseek/deepseek-v4-flash-0731,DeepSeek: DeepSeek V4 Flash 0731,1048576,$0.0900,$0.1800
+thinkingmachines/inkling-small,Thinking Machines: Inkling Small,524288,$0.4500,$1.2000
+qwen/qwen3.7-flash,Qwen: Qwen3.7 Flash,1000000,$0.0300,$0.1300
+anthropic/claude-opus-5-fast,Claude Opus 5 (Fast),1000000,$10.0000,$50.0000
+anthropic/claude-opus-5,Claude Opus 5,1000000,$5.0000,$25.0000
+anthropic/claude-opus-5:batch,Claude Opus 5 (batch),1000000,$2.5000,$12.5000
+inclusionai/ling-3.0-flash,Ling-3.0-flash,262144,$0.0210,$0.0630
+poolside/laguna-s-2.1,Poolside: Laguna S 2.1,1048576,$0.0900,$0.1800
+poolside/laguna-s-2.1:free,Poolside: Laguna S 2.1 (free),262144,$0.0000,$0.0000
+google/gemini-3.6-flash,Google: Gemini 3.6 Flash,1048576,$1.5000,$7.5000
+google/gemini-3.6-flash:batch,Google: Gemini 3.6 Flash (batch),1048576,$0.7500,$3.7500
+google/gemini-3.5-flash-lite,Google: Gemini 3.5 Flash Lite,1048576,$0.3000,$2.5000
+google/gemini-3.5-flash-lite:batch,Google: Gemini 3.5 Flash Lite (batch),1048576,$0.1500,$1.2500
+meituan/longcat-2.0,Meituan: LongCat 2.0,1048756,$0.3000,$1.2000
+thinkingmachines/inkling,Thinking Machines: Inkling,1048576,$0.9500,$4.0500
+thinkingmachines/inkling:batch,Thinking Machines: Inkling (batch),524288,$0.5000,$2.0250
+openrouter/auto-beta,Auto Router (Beta),2000000,$-1000000.0000,$-1000000.0000
+moonshotai/kimi-k3,MoonshotAI: Kimi K3,1048576,$3.0000,$15.0000
+meta/muse-spark-1.1,Meta: Muse Spark 1.1,1048576,$1.2500,$4.2500
+kwaipilot/kat-coder-air-v2.5,Kwaipilot: KAT-Coder-Air V2.5,256000,$0.1500,$0.6000
+kwaipilot/kat-coder-pro-v2.5,Kwaipilot: KAT-Coder-Pro V2.5,256000,$0.7400,$2.9600
+openai/gpt-5.6-luna-pro,OpenAI: GPT-5.6 Luna Pro,1050000,$0.1000,$0.6000
+openai/gpt-5.6-luna-pro:batch,OpenAI: GPT-5.6 Luna Pro (batch),1050000,$0.1000,$0.6000
+openai/gpt-5.6-luna,OpenAI: GPT-5.6 Luna,1050000,$0.1000,$0.6000
+openai/gpt-5.6-luna:batch,OpenAI: GPT-5.6 Luna (batch),1050000,$0.1000,$0.6000
+openai/gpt-5.6-terra-pro,OpenAI: GPT-5.6 Terra Pro,1050000,$1.0000,$6.0000
+openai/gpt-5.6-terra-pro:batch,OpenAI: GPT-5.6 Terra Pro (batch),1050000,$1.0000,$6.0000
+openai/gpt-5.6-terra,OpenAI: GPT-5.6 Terra,1050000,$1.0000,$6.0000
+openai/gpt-5.6-terra:batch,OpenAI: GPT-5.6 Terra (batch),1050000,$1.0000,$6.0000
+openai/gpt-5.6-sol-pro,OpenAI: GPT-5.6 Sol Pro,1050000,$5.0000,$30.0000
 
 
