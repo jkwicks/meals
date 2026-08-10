@@ -2,38 +2,38 @@
 {
   "week_start_day": "Monday",
   "meal_types": ["breakfast", "lunch", "dinner", "snack"],
-  "weekly_schedule": {
-    "Monday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Tuesday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Wednesday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Thursday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Friday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Saturday": {
+"weekly_schedule": {
+  "Monday": {
+    "calories": 1500,
+    "protein_g": 120,
+    "net_carbs_g": 130,
+    "fat_g": 55,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
+    }
+  },
+  "Tuesday": {
+    "calories": 1200,
+    "protein_g": 115,
+    "net_carbs_g": 85,
+    "fat_g": 44,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
+    }
+  },
+  "Wednesday": {
+    "calories": 1000,
+    "protein_g": 110,
+    "net_carbs_g": 60,
+    "fat_g": 35,
+    "meal_overrides": {
+      "breakfast": { "calories": 350, "protein_g": 30, "net_carbs_g": 25, "fat_g": 12 }
+    }
+  },
+  "Thursday": {
+    "calories": 1000,
+    "protein_g": 110,
+    "net_carbs_g": 60,
 
 
 === Sample Structure: week_plan.json ===
@@ -48,30 +48,68 @@
     "Sunday"
   ],
   "servings_per_meal": 2,
-  "generated_at": "2026-08-10T17:00:07.390809",
+  "generated_at": "2026-08-11T08:48:35.484539",
   "cook_events": [
     {
       "slot_id": "Monday:breakfast",
       "day": "Monday",
       "meal_type": "breakfast",
       "portions": 2,
-      "style": "yoghurt_nuts_seeds",
+      "style": "yoghurt_bowl",
       "cuisine": null,
       "eaten_by": [
         "Monday:breakfast"
       ],
       "recipe": {
-        "name": "Greek Yoghurt Bowl with Walnuts, Pumpkin Seeds and Berries",
+        "name": "Greek Yoghurt Berry Seed Bowl with Protein Boost",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain unsweetened Greek yoghurt (0% fat)",
-            "quantity_g": 800.0,
+            "name": "Plain Greek yoghurt",
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 472.0,
-            "protein_g": 80.0,
-            "net_carbs_g": 32.0,
-            "fat_g": 1.6
+            "calories": 156.0,
+            "protein_g": 25.0,
+            "net_carbs_g": 8.8,
+            "fat_g": 1.0
+
+
+=== Sample Structure: week_plan_next.json ===
+{
+  "days": [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday"
+  ],
+  "servings_per_meal": 2,
+  "generated_at": "2026-08-10T20:16:21.325401",
+  "cook_events": [
+    {
+      "slot_id": "Monday:breakfast",
+      "day": "Monday",
+      "meal_type": "breakfast",
+      "portions": 2,
+      "style": "baked_beans",
+      "cuisine": null,
+      "eaten_by": [
+        "Monday:breakfast"
+      ],
+      "recipe": {
+        "name": "White Bean Baked Beans with Turkey Bacon and Egg",
+        "meal_type": "breakfast",
+        "ingredients": [
+          {
+            "name": "White beans, cooked",
+            "quantity_g": 400.0,
+            "nova_group": 1,
+            "calories": 290.0,
+            "protein_g": 20.0,
+            "net_carbs_g": 36.0,
+            "fat_g": 1.0
 
 
 === Sample Structure: meal_plan.json ===
@@ -115,39 +153,39 @@
 === Sample Structure: meal_history.json ===
 [
   {
-    "day_of_week": "Tuesday",
-    "generated_at": "2026-08-10T15:03:41.907942",
-    "cuisine": "middle_eastern",
+    "day_of_week": "Monday",
+    "generated_at": "2026-08-10T20:03:21.493208",
+    "cuisine": "mexican",
     "styles": {
-      "breakfast": "eggs",
+      "breakfast": "yoghurt_nuts_seeds",
+      "lunch": "salad",
       "dinner": "grill"
     },
     "main_proteins": [
-      "boneless skinless chicken thigh"
+      "Chicken breast, skinless",
+      "Flank steak"
     ],
     "recipe_names": [
-      "Egg White and Herb Scramble",
-      "Grilled Za'atar Chicken Thighs with Charred Vegetables and Tahini Sauce"
+      "Greek Yoghurt Bowl with Walnuts, Chia and Vanilla Protein",
+      "Grilled Chicken and Chickpea Power Salad",
+      "Carne Asada with Cilantro-Lime Rice and Charred Peppers"
     ]
   },
   {
-    "day_of_week": "Wednesday",
-    "generated_at": "2026-08-10T15:03:41.907942",
-    "cuisine": "italian",
+    "day_of_week": "Tuesday",
+    "generated_at": "2026-08-10T20:03:21.493208",
+    "cuisine": "indian",
     "styles": {
-      "breakfast": "shake",
-      "dinner": "stir_fry"
+      "breakfast": "fish",
+      "dinner": "roast"
     },
     "main_proteins": [
-      "Italian pork sausage, casing removed"
+      "Chicken thighs, skin-on, boneless"
     ],
     "recipe_names": [
-      "Vanilla Almond Protein Shake with Blueberries",
-      "Italian Sausage, Cannellini and Broccoli Rabe Stir Fry"
+      "Peppered Mackerel with Lemon-Yoghurt and Cucumber",
+      "Tandoori-Style Roast Chicken Thighs with Roasted Cauliflower and Spinach"
     ]
-  },
-  {
-    "day_of_week": "Thursday",
 
 
 === Sample Structure: whfoods.json ===
