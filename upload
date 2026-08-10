@@ -3,9 +3,10 @@
 # 1. Clean up old bundle files
 rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
 
-# 2. Bundle core Python application files
+# 2. Bundle core Python application source code
+# (Captures app scripts, dev scripts, and utility modules)
 {
-  for py_file in ui_app.py planner.py shopping.py week.py repository.py model-list.py; do
+  for py_file in ui_app.py planner.py shopping.py week.py repository.py export_menu.py dev/model-list.py; do
     if [ -f "$py_file" ]; then
       echo "=== File: $py_file ==="
       cat "$py_file"
@@ -14,13 +15,14 @@ rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
   done
 } > python_codebase.md
 
-# 3. Bundle architecture docs, rules, skills, and shell scripts
+# 3. Bundle project context, dependencies, deployment scripts, and Claude config
 {
   [ -f CLAUDE.md ] && echo "=== File: CLAUDE.md ===" && cat CLAUDE.md && echo -e "\n"
   [ -f README.md ] && echo "=== File: README.md ===" && cat README.md && echo -e "\n"
   [ -f requirements.txt ] && echo "=== File: requirements.txt ===" && cat requirements.txt && echo -e "\n"
   
-  for script in prepare.sh server.sh claude-queue.sh; do
+  # Include operational and release shell scripts
+  for script in prepare.sh server.sh claude-queue.sh release.sh; do
     if [ -f "$script" ]; then
       echo "=== File: $script ==="
       cat "$script"
@@ -28,23 +30,24 @@ rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
     fi
   done
 
+  # Include Claude local rules and skills
   if [ -d .claude ]; then
     find .claude -type f \( -name "*.md" -o -name "*.txt" \) ! -path "*/settings.local.json*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
   fi
 } > project_context.md
 
-# 4. Extract data structures and schemas (first 35 lines of JSON/CSV files)
+# 4. Generate structural schema previews for JSON and CSV configuration/reference files
 {
-  for file in config.json week_plan.json meal_plan.json meal_history.json whfoods.json recipes_master.json favorites.json models.json openrouter_top_50.csv; do
-    if [ -f "$file" ]; then
-      echo "=== Sample Structure: $file ==="
-      head -n 35 "$file"
+  for data_file in config.json week_plan.json meal_plan.json meal_history.json whfoods.json recipes_master.json favorites.json models.json openrouter_top_50.csv; do
+    if [ -f "$data_file" ]; then
+      echo "=== Sample Structure: $data_file ==="
+      head -n 35 "$data_file"
       echo -e "\n"
     fi
   done
 } > data_schemas.md
 
-# 5. Bundle prompt history
+# 5. Bundle prompt engineering history
 if [ -d .prompts ]; then
   {
     find .prompts -type f -name "*.md" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;

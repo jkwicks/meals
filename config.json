@@ -1,50 +1,71 @@
 {
   "week_start_day": "Monday",
   "meal_types": ["breakfast", "lunch", "dinner", "snack"],
-  "weekly_schedule": {
-    "Monday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Tuesday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Wednesday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Thursday": {
-      "calories": 1200,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Friday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Saturday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
-    },
-    "Sunday": {
-      "calories": 1500,
-      "protein_g": 120,
-      "net_carbs_g": 50,
-      "meal_overrides": {}
+"weekly_schedule": {
+  "Monday": {
+    "calories": 1500,
+    "protein_g": 120,
+    "net_carbs_g": 130,
+    "fat_g": 55,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
     }
   },
+  "Tuesday": {
+    "calories": 1200,
+    "protein_g": 115,
+    "net_carbs_g": 85,
+    "fat_g": 44,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
+    }
+  },
+  "Wednesday": {
+    "calories": 1000,
+    "protein_g": 110,
+    "net_carbs_g": 60,
+    "fat_g": 35,
+    "meal_overrides": {
+      "breakfast": { "calories": 350, "protein_g": 30, "net_carbs_g": 25, "fat_g": 12 }
+    }
+  },
+  "Thursday": {
+    "calories": 1000,
+    "protein_g": 110,
+    "net_carbs_g": 60,
+    "fat_g": 35,
+    "meal_overrides": {
+      "breakfast": { "calories": 350, "protein_g": 30, "net_carbs_g": 25, "fat_g": 12 }
+    }
+  },
+  "Friday": {
+    "calories": 1000,
+    "protein_g": 110,
+    "net_carbs_g": 60,
+    "fat_g": 35,
+    "meal_overrides": {
+      "breakfast": { "calories": 350, "protein_g": 30, "net_carbs_g": 25, "fat_g": 12 }
+    }
+  },
+  "Saturday": {
+    "calories": 1200,
+    "protein_g": 115,
+    "net_carbs_g": 85,
+    "fat_g": 44,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
+    }
+  },
+  "Sunday": {
+    "calories": 1500,
+    "protein_g": 120,
+    "net_carbs_g": 130,
+    "fat_g": 55,
+    "meal_overrides": {
+      "breakfast": { "calories": 400, "protein_g": 30, "net_carbs_g": 35, "fat_g": 15 }
+    }
+  }
+},
   "week_defaults": {
     "breakfast": "cook",
     "lunch": "cook",
@@ -53,11 +74,11 @@
   },
   "meal_styles": {
     "breakfast": {
-      "shake": "a blended protein shake or smoothie, drunk not eaten",
-      "yoghurt_nuts_seeds": "plain unsweetened yoghurt with nuts, seeds and optional berries",
-      "fish": "an oily-fish breakfast (smoked salmon, sardines, mackerel, kippers)",
-      "baked_beans": "beans as the base (baked beans, white beans, black beans), served hot",
-      "eggs": "an egg-based cooked breakfast (omelette, scramble, frittata, shakshuka, boiled)"
+      "custom_shake": "Protein Shake Template. BASE (REQUIRED): 1.5 scoops protein powder, 5g creatine, 300ml water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g Barley max, 15g Oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
+      "eggs_salmon": "Scrambled eggs and smoked salmon served on toasted whole-grain bread.",
+      "fish_pate": "Tinned sardines or tinned mackerel pate served on toasted whole-grain bread.",
+      "beans_toast": "Classic baked beans served on toasted whole-grain bread.",
+      "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds, pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
     },
     "lunch": {
       "salad": "a substantial cold salad with a protein on top",
@@ -131,7 +152,8 @@
       "soy protein isolate",
       "eggplant",
       "apricot",
-      "banana"
+      "banana",
+      "Almond milk"
     ]
   },
   "planning_rules": {
