@@ -676,6 +676,31 @@ class CookEvent(BaseModel):
     recipe: Recipe
 
 
+class PrepPhase(BaseModel):
+    """One step in the Sunday batch-prep timeline, run in order."""
+
+    name: str
+    description: Optional[str] = None
+    active_minutes: int = 0
+    passive_minutes: int = 0
+
+
+class SundayPrepSession(BaseModel):
+    """Optional Sunday batch-prep plan: raw prep work aggregated across the
+    week's cook events (e.g. "dice all onions" once instead of per cook day),
+    done ahead of time rather than repeated on each cook day.
+
+    `total_active_minutes` is capped at 120 to match config's
+    `max_prep_active_mins` default — hands-on prep time, not the passive
+    minutes spent simmering/roasting/chilling while unattended.
+    """
+
+    total_active_minutes: int = Field(..., le=120)
+    total_passive_minutes: int = 0
+    aggregated_ingredients: Dict[str, str] = Field(default_factory=dict)
+    timeline: List[PrepPhase] = Field(default_factory=list)
+
+
 class WeekPlan(BaseModel):
     days: List[str]
     servings_per_meal: int
@@ -686,6 +711,10 @@ class WeekPlan(BaseModel):
     failures: Dict[str, str] = Field(
         default_factory=dict,
         description="day -> error, for days whose generation failed outright",
+    )
+    sunday_prep_session: Optional[SundayPrepSession] = Field(
+        default=None,
+        description="Aggregated Sunday batch-prep plan, when enable_sunday_prep is on",
     )
 
     def by_slot(self) -> Dict[str, CookEvent]:

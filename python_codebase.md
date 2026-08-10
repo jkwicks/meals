@@ -1,4 +1,4 @@
-=== File: ui_app.py ===
+=== File: ./ui_app.py ===
 """NiceGUI front end — the whole week on one high-density desktop screen.
 
 The only web front end, and now a complete one: it can both generate a week and
@@ -67,6 +67,7 @@ from dotenv import load_dotenv
 from nicegui import ui
 from pydantic import ValidationError
 
+from export_menu import build_week_menu_pdf
 from planner import (
     DEFAULT_MODELS_CONFIG,
     MACRO_KEYS,
@@ -83,6 +84,7 @@ from planner import (
     import_external_recipe,
     meal_overrides_for,
     record_week_history,
+    regenerate_single_day,
     resolve_auto_choices,
     split_targets,
 )
@@ -111,6 +113,7 @@ from week import (
     slot_label,
     span_days,
     validate_week,
+    week_date_range,
     week_days,
 )
 
@@ -423,6 +426,12 @@ class PlannerState:
     # no. Per-client, like everything else here: two tabs generating at once
     # would race to overwrite the same week_plan.json.
     generating: bool = False
+    # Which single day a "Regenerate day" click is mid-flight for, if any.
+    # Same purpose as `generating` but scoped to one day — guards against a
+    # second regenerate click (this day or another) racing the first, and
+    # against overlapping with a whole-week run, without needing a canvas
+    # repaint to show it: the clicked button's own `loading` prop covers that.
+    regenerating_day: Optional[str] = None
 
     # The recipe catalog (recipes_master.json) — every recipe ever favorited
     # or imported, record shape {id, content_key, recipe, is_favorite,
@@ -636,6 +645,28 @@ class PlannerState:
 
         self.apply_spec(link_leftover(spec, target_id, source_id))
         return None
+
+    def shuffle_styles(self) -> None:
+        """Blank the style/cuisine on every cook slot so the next generation
+        re-rolls them from scratch.
+
+        `resolve_auto_choices` only picks a fresh style/cuisine when a slot's
+        is empty (planner.py) — once a week has been generated once, its
+        slots carry the concrete values from that run and every later
+        "Generate" re-requests the exact same style/cuisine per slot forever,
+        varying only the dish the model composes inside it. This is the
+        explicit escape hatch: it touches only style/cuisine, not mode or
+        leftover links, so `apply_spec` can go through its normal rescale
+        path unchanged.
+        """
+        spec = self.spec
+        resolved = [
+            slot.model_copy(update={"style": None, "cuisine": None})
+            if slot.mode == MODE_COOK
+            else slot
+            for slot in spec.slots
+        ]
+        self.apply_spec(spec.model_copy(update={"slots": resolved}))
 
     def swap_slot_with_favorite(self, target_slot_id: str, favorite_recipe: dict) -> Optional[str]:
         """Replace a cooked slot's recipe with a saved favorite. Returns why not, or None.
@@ -971,6 +1002,53 @@ def card_hover_css() -> str:
     return "\n".join(rules)
 
 
+def print_css() -> str:
+    """Rules for the "Print Menu" button — printing is the canvas and the
+    telemetry bar above it, nothing else.
+
+    Both drawers, every dialog and every clickable control (buttons, the week
+    selector) are hidden rather than picked apart one at a time: `.q-drawer`
+    and `.q-dialog` are Quasar's own wrapper classes, so hiding them catches
+    the shopping list and every modal regardless of what's inside, and
+    `.q-btn`/`.q-field` inside the header or canvas catches per-card actions
+    (favorite, swap, "Link to next lunch", regenerate) without naming each
+    one. `!important` throughout because these are overriding Quasar's own
+    dark-theme background, not just Tailwind utility classes.
+
+    `.q-page-container` needs its own reset, not just `.nicegui-content`'s:
+    Quasar reserves space for the (now-hidden) left drawer and the fixed
+    header as *inline* `padding-left`/`padding-top` on that element, set by
+    its own JS rather than a stylesheet class — leaving it in place once the
+    header is un-fixed below squeezes the whole canvas into a leftover
+    sliver down the middle of the page instead of the full width. Unfixing
+    the header (`position: static`) matters for the same reason `.q-dialog`
+    is hidden outright: a `position: fixed` element repeats or clips at
+    every page break rather than flowing once at the top.
+    """
+    return (
+        "@media print {\n"
+        "  .q-drawer, .q-drawer__backdrop, .q-dialog, .q-tooltip { display: none !important; }\n"
+        "  .q-header .q-btn, .q-header .q-field, .meal-canvas .q-btn"
+        " { display: none !important; }\n"
+        "  .q-header { position: static !important; box-shadow: none !important; }\n"
+        "  .q-page-container { padding: 0 !important; }\n"
+        "  .nicegui-content { padding: 0 !important; }\n"
+        "  body, .q-layout, .q-header, .q-page-container, .nicegui-content"
+        " { background: #fff !important; }\n"
+        # Every Tailwind text-colour utility (text-slate-100, text-emerald-200,
+        # ...) sets `color` directly on the element it's applied to, so it
+        # never inherits an ancestor's override — the `*` here is what makes
+        # this actually reach the title/macro/badge text instead of leaving
+        # dark-theme light-grey-on-white, illegible on the page.
+        "  .q-header, .q-header *, .meal-canvas, .meal-canvas *"
+        " { color: #111 !important; }\n"
+        "  .meal-canvas { grid-template-columns: repeat(7, minmax(0, 1fr)) !important; }\n"
+        "  .meal-card { break-inside: avoid; page-break-inside: avoid; }\n"
+        "  @page { size: landscape; margin: 10mm; }\n"
+        "}\n"
+    )
+
+
 def link_line(marker: str, text: str, colour: str) -> None:
     """The one-line "this card is tied to that one" note, in its chain's colour.
 
@@ -1101,6 +1179,8 @@ async def planner_page() -> None:
         + chain_css((len(state.days) * len(state.meal_types)) // 2)
         + "\n"
         + card_hover_css()
+        + "\n"
+        + print_css()
     )
 
     # ---- recipe detail (read-only) ---------------------------------------
@@ -1546,7 +1626,21 @@ async def planner_page() -> None:
                         "px-1 py-0.5 border-b border-slate-800 flex flex-row "
                         "justify-between items-baseline"
                     ):
-                        ui.label(day).classes("text-xs font-semibold text-slate-200")
+                        with ui.element("div").classes("flex flex-row items-center gap-1"):
+                            ui.label(day).classes("text-xs font-semibold text-slate-200")
+                            # Only offered once a week exists and this day has
+                            # something to cook — regenerating a leftover/skip-only
+                            # day would be a no-op API call for nothing.
+                            if state.week_plan is not None and state.spec.cook_slots_on(day):
+                                regen_button = ui.button(icon="refresh")
+                                regen_button.props("dense flat round size=xs").classes(
+                                    "min-h-0 p-0.5 text-slate-500 hover:text-emerald-300"
+                                )
+                                regen_button.on_click(
+                                    lambda day=day, btn=regen_button: regenerate_day(day, btn)
+                                )
+                                with regen_button:
+                                    ui.tooltip(f"Regenerate {day} — re-cooks just this day")
                         ui.label(str(state.days.index(day) + 1)).classes(
                             "text-[9px] font-mono text-slate-600"
                         )
@@ -1632,6 +1726,29 @@ async def planner_page() -> None:
                             ui.tooltip(tip)
                         if i < len(PIPELINE_STAGES) - 1:
                             ui.icon("chevron_right").classes("text-[10px] text-slate-700")
+
+    # ---- header: week date banner -----------------------------------------
+    # Purely cosmetic — nothing here reads back into state — but `state.days`
+    # only ever carries weekday names (`week_days` rotates names, not dates),
+    # so without this a five-week-old cached plan and this week's plan look
+    # identical at a glance. `week_date_range` anchors on the plan's
+    # `generated_at` so the banner reflects the week that was actually
+    # generated, falling back to today for an un-generated preview.
+
+    @ui.refreshable
+    def week_banner() -> None:
+        start, end = week_date_range(
+            state.days, state.week_plan.generated_at if state.week_plan else None
+        )
+        fmt = "%b %-d, %Y"
+        with ui.element("div").classes(
+            "flex flex-row items-center gap-1.5 px-2 py-1 mb-1 rounded border "
+            "border-slate-800 bg-slate-800/40 w-fit"
+        ):
+            ui.label("📅").classes("text-xs")
+            ui.label(f"Week of {start.strftime(fmt)} – {end.strftime(fmt)}").classes(
+                "text-[11px] font-medium text-slate-300 tracking-wide"
+            )
 
     # ---- header: macro telemetry -----------------------------------------
 
@@ -1852,6 +1969,25 @@ async def planner_page() -> None:
                 "dense size=sm color=teal"
             )
             ui.label("Daily shop").classes("text-[11px] text-slate-400")
+
+        # Whole-week export, not a per-window one like "Copy for Keep" above —
+        # it reads the same `state.week_plan` the grid shows, so it always
+        # matches whatever edits (leftover links, regenerated days) are on
+        # screen right now.
+        def download_pdf_menu() -> None:
+            if state.week_plan is None:
+                ui.notify("Generate a week first — there's nothing to export yet.", type="warning")
+                return
+            ui.download(
+                build_week_menu_pdf(state.week_plan),
+                filename="weekly_menu.pdf",
+                media_type="application/pdf",
+            )
+
+        ui.button(
+            "Download PDF Menu", icon="picture_as_pdf", on_click=download_pdf_menu
+        ).props("dense flat no-caps size=sm").classes("self-start text-rose-300")
+
         shopping_panel()
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
@@ -1914,6 +2050,16 @@ async def planner_page() -> None:
                     return "Shopping list"
                 return f"Shopping list ({len(items)} items)"
 
+            # `window.print()` rather than a server-rendered PDF: printing is
+            # the browser's job, and the @media print block above (`print_css`)
+            # is what makes that output just the canvas and telemetry bar
+            # instead of the whole dark dashboard.
+            print_button = ui.button(
+                icon="print", on_click=lambda: ui.run_javascript("window.print()")
+            ).props("dense flat no-caps").classes("text-slate-300")
+            with print_button:
+                ui.tooltip("Print this week — drawers and controls are hidden on the page.")
+
             # Prominent and un-dense on purpose — this is the button that
             # gets used every single week, not an occasional control, so it
             # gets the same visual weight as "Generate" rather than blending
@@ -1931,6 +2077,7 @@ async def planner_page() -> None:
                     "Every shopping trip in this week, grouped by department — "
                     "built from the grid as it stands, including any edits."
                 )
+        week_banner()
         context_pipeline()
         telemetry()
 
@@ -2151,6 +2298,7 @@ async def planner_page() -> None:
         ).classes("text-slate-400 mt-1")
 
     def refresh_all() -> None:
+        week_banner.refresh()
         telemetry.refresh()
         canvas.refresh()
         week_summary.refresh()
@@ -2324,6 +2472,75 @@ async def planner_page() -> None:
                 type="positive",
             )
 
+    async def regenerate_day(day: str, button) -> None:
+        """Re-cook one day's meals in place, via the canvas header's refresh icon.
+
+        Deliberately lighter than `generate_week`: no progress modal, just the
+        clicked button's own `loading` prop, because one day is a single API
+        call rather than up to seven. Mutual exclusion with a whole-week run
+        (and with a second regenerate click) is `state.generating` /
+        `state.regenerating_day` — checked but never surfaced with a toast,
+        same as `run_generation`'s own re-entry guard.
+        """
+        if state.generating or state.regenerating_day:
+            return
+        spec = state.spec
+        if state.week_plan is None or not spec.cook_slots_on(day):
+            return
+
+        config = state.planning_config()
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        state.regenerating_day = day
+        button.props("loading disable")
+        try:
+            history = await REPOSITORY.load_history()
+            # Resolves only what's still `auto` on this day (e.g. after
+            # "Shuffle styles") — every other day's already-concrete
+            # style/cuisine is left exactly as it was.
+            resolved_spec = resolve_auto_choices(spec, config, history)
+            plan = await regenerate_single_day(
+                day,
+                resolved_spec,
+                config,
+                state.week_plan,
+                history,
+                repository=REPOSITORY,
+            )
+            await REPOSITORY.save_week_plan(plan.model_dump(), state.week_selection)
+            await record_week_history(plan, REPOSITORY, config, days=[day])
+        except Exception as exc:
+            ui.notify(
+                f"Regenerating {day} failed: {type(exc).__name__}: {exc}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            state.regenerating_day = None
+            button.props(remove="loading disable")
+
+        # Saved before adopted, same ordering as a full generation — the grid
+        # can't show a day that isn't on disk.
+        state.adopt_plan(plan)
+        refresh_all()
+
+        if day in plan.failures:
+            ui.notify(
+                f"{day} failed to regenerate — {plan.failures[day]}",
+                type="warning",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+        else:
+            ui.notify(f"Regenerated {day}", type="positive")
+
     # ---- recipe catalog & import --------------------------------------------
     # `favorites_list` is referenced by handlers defined above this point
     # (`toggle_favorite`) and below it (drawer buttons) alike — every one of
@@ -2466,6 +2683,25 @@ async def planner_page() -> None:
                     "Generates every meal set to cook in this grid — one API call per "
                     "cooking day. Overwrites the selected week's cached plan and "
                     "appends to history."
+                )
+
+            def on_shuffle_styles() -> None:
+                state.shuffle_styles()
+                refresh_all()
+                ui.notify(
+                    "Styles cleared — next Generate will re-roll every cook slot.",
+                    type="positive",
+                )
+
+            with ui.button(
+                "Shuffle styles", icon="casino", on_click=on_shuffle_styles
+            ).props("dense flat").classes("w-full"):
+                ui.tooltip(
+                    "Once a week is generated, its slots keep the style/cuisine they "
+                    "resolved to, so re-generating repeats them and only reworks the "
+                    "dish. This blanks style/cuisine on every cook slot (leftover "
+                    "links and skips are untouched) so the next Generate rotates them "
+                    "fresh — nothing is written to disk until you generate."
                 )
             ui.button(
                 "Reload from disk", icon="refresh", on_click=reload_from_disk
@@ -2688,9 +2924,9 @@ if __name__ in {"__main__", "__mp_main__"}:
         reload=False,
         show=False,
     )
+-e 
 
-
-=== File: planner.py ===
+=== File: ./planner.py ===
 import argparse
 import asyncio
 import logging
@@ -2712,8 +2948,10 @@ from repository import (
 )
 from shopping import (
     aggregate_cook_events,
+    categorize_department,
     format_shopping_list_markdown,
     format_shopping_list_text,
+    round_ingredient_quantity,
 )
 from week import (
     DEFAULT_INVENTORY_RULES,
@@ -2792,10 +3030,12 @@ PAID_MODEL_MAX_TOKENS = 16000
 
 MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
 
+WEEKEND_DAYS = {"Saturday", "Sunday"}
+
 # Share of the day each meal type gets when splitting targets across slots.
 # Only the ratios matter — they're normalised over whichever slots are
 # actually being cooked, so a day with no snack redistributes its share.
-DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack": 0.10}
+DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.30, "lunch": 0.30, "dinner": 0.30, "snack": 0.10}
 
 # Models compose plausible meals but size them badly, so portions are corrected
 # after the fact by scaling every quantity linearly. The clamp stops a trim
@@ -3185,11 +3425,14 @@ class Ingredient(BaseModel):
         return {key: getattr(self, key) / servings for key in MACRO_KEYS}
 
     def scaled(self, factor: float) -> "Ingredient":
-        """Multiply quantity and macros by `factor`, rounded via `round_quantity`."""
+        """Multiply quantity and macros by `factor`, quantity snapped to a
+        practical grocery amount via `round_ingredient_quantity`."""
         return self.model_copy(
             update=dict(
                 {key: round(getattr(self, key) * factor, 1) for key in MACRO_KEYS},
-                quantity_g=round_quantity(self.quantity_g * factor),
+                quantity_g=round_ingredient_quantity(
+                    self.name, self.quantity_g * factor, categorize_department(self.name)
+                ),
             )
         )
 
@@ -3214,6 +3457,17 @@ class Recipe(BaseModel):
         description="Storage/reheating notes. Set by Python for multi-meal cooks.",
     )
 
+    @field_validator("prep_time_minutes")
+    @classmethod
+    def enforce_weeknight_prep_limit(cls, v: int, info: ValidationInfo) -> int:
+        day = info.context.get("day") if info.context else None
+        if day and day not in WEEKEND_DAYS and v > 30:
+            raise ValueError(
+                f"prep_time_minutes {v} exceeds the 30-minute weeknight limit for {day}; "
+                "simplify the recipe to a quick weeknight meal."
+            )
+        return v
+
     @property
     def total_macros(self) -> Dict[str, float]:
         totals = {key: 0.0 for key in MACRO_KEYS}
@@ -3236,6 +3490,31 @@ class Recipe(BaseModel):
         """
         return self.model_copy(
             update={"ingredients": [ingredient.scaled(factor) for ingredient in self.ingredients]}
+        )
+
+    def round_ingredient_quantities(self) -> "Recipe":
+        """Snap every ingredient's quantity to a practical grocery amount.
+
+        `resize_by_factor` already does this via `Ingredient.scaled()` — this
+        covers the untrimmed path, where `fit_recipe_to_budget` leaves a
+        recipe's raw model-generated quantities untouched (within its
+        deadband, or when there's no budget to trim to).
+        """
+        return self.model_copy(
+            update={
+                "ingredients": [
+                    ingredient.model_copy(
+                        update={
+                            "quantity_g": round_ingredient_quantity(
+                                ingredient.name,
+                                ingredient.quantity_g,
+                                categorize_department(ingredient.name),
+                            )
+                        }
+                    )
+                    for ingredient in self.ingredients
+                ]
+            }
         )
 
     def scale_to_servings(
@@ -3326,6 +3605,31 @@ class CookEvent(BaseModel):
     recipe: Recipe
 
 
+class PrepPhase(BaseModel):
+    """One step in the Sunday batch-prep timeline, run in order."""
+
+    name: str
+    description: Optional[str] = None
+    active_minutes: int = 0
+    passive_minutes: int = 0
+
+
+class SundayPrepSession(BaseModel):
+    """Optional Sunday batch-prep plan: raw prep work aggregated across the
+    week's cook events (e.g. "dice all onions" once instead of per cook day),
+    done ahead of time rather than repeated on each cook day.
+
+    `total_active_minutes` is capped at 120 to match config's
+    `max_prep_active_mins` default — hands-on prep time, not the passive
+    minutes spent simmering/roasting/chilling while unattended.
+    """
+
+    total_active_minutes: int = Field(..., le=120)
+    total_passive_minutes: int = 0
+    aggregated_ingredients: Dict[str, str] = Field(default_factory=dict)
+    timeline: List[PrepPhase] = Field(default_factory=list)
+
+
 class WeekPlan(BaseModel):
     days: List[str]
     servings_per_meal: int
@@ -3336,6 +3640,10 @@ class WeekPlan(BaseModel):
     failures: Dict[str, str] = Field(
         default_factory=dict,
         description="day -> error, for days whose generation failed outright",
+    )
+    sunday_prep_session: Optional[SundayPrepSession] = Field(
+        default=None,
+        description="Aggregated Sunday batch-prep plan, when enable_sunday_prep is on",
     )
 
     def by_slot(self) -> Dict[str, CookEvent]:
@@ -3361,16 +3669,6 @@ def per_serving_totals(recipe: Recipe) -> dict:
     return recipe.per_serving_macros
 
 
-def round_quantity(grams: float) -> float:
-    """Whole grams once there's enough of something to weigh out that way.
-
-    Trimming portions by a fraction produces quantities like 393.8g, which is
-    noise on a shopping list. Spices and oils keep a decimal because 2.4g of
-    turmeric and 2g are meaningfully different amounts.
-    """
-    return max(0.1, round(grams) if grams >= 10 else round(grams, 1))
-
-
 def resize_recipe(recipe: Recipe, factor: float) -> Recipe:
     """Deprecated: use `recipe.resize_by_factor(factor)`."""
     return recipe.resize_by_factor(factor)
@@ -3390,14 +3688,14 @@ def fit_recipe_to_budget(
     actual = recipe.total_macros["calories"]
     target = budget.get("calories", 0)
     if actual <= 0 or target <= 0:
-        return recipe, 1.0
+        return recipe.round_ingredient_quantities(), 1.0
 
     low, high = planning_rule(config, "portion_trim_limits")
     deadband = planning_rule(config, "portion_trim_deadband")
     factor = target / actual
     factor = min(max(factor, low), high)
     if abs(factor - 1.0) < deadband:
-        return recipe, 1.0
+        return recipe.round_ingredient_quantities(), 1.0
     return recipe.resize_by_factor(factor), factor
 
 
@@ -3849,6 +4147,10 @@ def build_slot_brief(
     training_note = config.get("training_notes", {}).get(slot.day, {}).get(slot.meal_type)
     if training_note:
         parts.append(training_note)
+    if slot.day in WEEKEND_DAYS:
+        parts.append("[Weekend meal: multi-step or slow-cooked recipes up to 180 minutes allowed.]")
+    else:
+        parts.append("[Max prep/cook time: 30 minutes. Focus on quick weeknight meals.]")
     return " | ".join(parts)
 
 
@@ -3934,6 +4236,11 @@ def generate_day(
         "spices and protein sources across the day and minimize ingredient "
         "overlap between meals, the way a registered dietitian would design a "
         "menu — not just whatever hits the numbers with the fewest ingredients.\n"
+        "- Keep single dairy/staple portions realistic (e.g., max 200–250g "
+        "yoghurt or cottage cheese per serving).\n"
+        "- Combine multiple complementary protein sources (e.g., yoghurt + "
+        "protein powder, or eggs + lean meat) rather than scaling up a single "
+        "low-density ingredient to meet high protein targets.\n"
         f"{avoid_protein_instruction}"
         f"{inventory_instruction(config)}"
         f"{leftovers_instruction}"
@@ -3997,6 +4304,7 @@ def generate_day(
         # twice, so the recipes legitimately total less than the day does.
         context={
             "config": config,
+            "day": day,
             "day_budget": {
                 key: sum(budget[key] for budget in budgets.values()) for key in MACRO_KEYS
             },
@@ -4064,6 +4372,75 @@ def on_calling_loop(callback):
     return forward
 
 
+async def _generate_day_events(
+    day: str,
+    spec: WeekSpec,
+    config: dict,
+    day_targets: dict,
+    portions: Dict[str, int],
+    claims: Dict[str, List[str]],
+    carry_events: Dict[str, CookEvent],
+    avoid_proteins: List[str],
+    note_callback=None,
+) -> Dict[str, CookEvent]:
+    """Generate and scale one day's cook events, keyed by slot_id.
+
+    Shared by `generate_week_plan` (which walks every day) and
+    `regenerate_single_day` (which calls this for just one). `carry_events`
+    supplies the cook events any of `day`'s leftover slots point at — for a
+    full-week walk that's the days already generated this run; for a single
+    day it's whatever is already in the saved plan, since a leftover only
+    ever points backwards and those days aren't being touched.
+
+    Raises on failure rather than swallowing it — callers decide whether
+    that's fatal (a single-day retry) or recoverable (a week walking on to
+    the next day).
+    """
+    cook_slots = spec.cook_slots_on(day)
+    if not cook_slots:
+        return {}
+
+    carried, descriptions = carried_macros(spec, day, carry_events)
+    protein_avoid_window = planning_rule(config, "protein_avoid_window")
+    thread_safe_note = on_calling_loop(note_callback)
+
+    recipes = await asyncio.to_thread(
+        generate_day,
+        day=day,
+        targets=day_targets,
+        cook_slots=cook_slots,
+        config=config,
+        servings_per_meal=spec.servings_per_meal,
+        multiplicity=day_multiplicity(spec, day),
+        carried=carried,
+        carried_descriptions=descriptions,
+        avoid_proteins=avoid_proteins[-protein_avoid_window:],
+        progress_note=thread_safe_note,
+    )
+
+    events: Dict[str, CookEvent] = {}
+    for slot in cook_slots:
+        recipe = recipes[slot.meal_type]
+        claim_ids = claims.get(slot.id, [slot.id])
+        last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+        recipe = recipe.scale_to_servings(
+            portions[slot.id],
+            keeps_for_days=last_day_index - spec.day_index(day),
+            config=config,
+        )
+        events[slot.id] = CookEvent(
+            slot_id=slot.id,
+            day=day,
+            meal_type=slot.meal_type,
+            portions=portions[slot.id],
+            style=slot.style,
+            cuisine=slot.cuisine,
+            eaten_by=claim_ids,
+            recipe=recipe,
+        )
+    return events
+
+
 async def generate_week_plan(
     spec: WeekSpec,
     config: dict,
@@ -4104,34 +4481,18 @@ async def generate_week_plan(
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
     avoid_proteins = recent_main_proteins(history, config)
-    protein_avoid_window = planning_rule(config, "protein_avoid_window")
-    thread_safe_note = on_calling_loop(note_callback)
 
     events: Dict[str, CookEvent] = {}
     failures: Dict[str, str] = {}
 
     for day in spec.days:
-        cook_slots = spec.cook_slots_on(day)
-        carried, descriptions = carried_macros(spec, day, events)
-
         if progress_callback:
-            progress_callback(day, len(cook_slots))
-        if not cook_slots:
-            continue
+            progress_callback(day, len(spec.cook_slots_on(day)))
 
         try:
-            recipes = await asyncio.to_thread(
-                generate_day,
-                day=day,
-                targets=targets[day],
-                cook_slots=cook_slots,
-                config=config,
-                servings_per_meal=spec.servings_per_meal,
-                multiplicity=day_multiplicity(spec, day),
-                carried=carried,
-                carried_descriptions=descriptions,
-                avoid_proteins=avoid_proteins[-protein_avoid_window:],
-                progress_note=thread_safe_note,
+            day_events = await _generate_day_events(
+                day, spec, config, targets[day], portions, claims, events,
+                avoid_proteins, note_callback,
             )
         except Exception as exc:
             # One bad day must not discard the six good ones. Free routes fail
@@ -4146,30 +4507,11 @@ async def generate_week_plan(
                 note_callback(f"{day}: generation failed — {failures[day]}")
             continue
 
-        for recipe in recipes.values():
-            protein = extract_main_protein(recipe)
+        for event in day_events.values():
+            protein = extract_main_protein(event.recipe)
             if protein and protein not in avoid_proteins:
                 avoid_proteins.append(protein)
-
-        for slot in cook_slots:
-            recipe = recipes[slot.meal_type]
-            claim_ids = claims.get(slot.id, [slot.id])
-            last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
-            recipe = recipe.scale_to_servings(
-                portions[slot.id],
-                keeps_for_days=last_day_index - spec.day_index(slot.day),
-                config=config,
-            )
-            events[slot.id] = CookEvent(
-                slot_id=slot.id,
-                day=day,
-                meal_type=slot.meal_type,
-                portions=portions[slot.id],
-                style=slot.style,
-                cuisine=slot.cuisine,
-                eaten_by=claim_ids,
-                recipe=recipe,
-            )
+        events.update(day_events)
 
     ordered_events = [events[slot.id] for slot in spec.cook_slots() if slot.id in events]
     return WeekPlan(
@@ -4180,6 +4522,70 @@ async def generate_week_plan(
         slots=spec.slots,
         targets=targets,
         failures=failures,
+    )
+
+
+async def regenerate_single_day(
+    day: str,
+    spec: WeekSpec,
+    config: dict,
+    week_plan: WeekPlan,
+    history: Optional[List[dict]] = None,
+    note_callback=None,
+    repository: Optional[PlanRepository] = None,
+) -> WeekPlan:
+    """Re-cook just `day`, leaving every other day's cook events untouched.
+
+    Every other day's cook events already live in `week_plan` — a leftover
+    slot on `day` only ever points at an *earlier* day, so its source is
+    already resolved and doesn't need regenerating; a later day's leftover
+    that points *at* `day` keeps pointing at the same slot_id, so it picks up
+    the new recipe automatically once that slot_id is replaced below. Neither
+    direction needs the rest of the week to be walked again — that's the
+    whole difference from `generate_week_plan`.
+    """
+    if history is None:
+        history = await (repository or LocalJSONRepository()).load_history()
+    targets = week_targets(spec, config)
+    portions = portions_for(spec)
+    claims = eaten_on(spec)
+    by_slot = dict(week_plan.by_slot())
+
+    # Seeded from history, same as a full week, then extended with every
+    # OTHER day's proteins already locked into this plan — `day`'s own
+    # (about to be replaced) proteins must not suppress themselves on retry.
+    avoid_proteins = recent_main_proteins(history, config)
+    for event in week_plan.cook_events:
+        if event.day == day:
+            continue
+        protein = extract_main_protein(event.recipe)
+        if protein and protein not in avoid_proteins:
+            avoid_proteins.append(protein)
+
+    failures = dict(week_plan.failures)
+    try:
+        day_events = await _generate_day_events(
+            day, spec, config, targets[day], portions, claims, by_slot,
+            avoid_proteins, note_callback,
+        )
+    except Exception as exc:
+        failures[day] = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        logger.warning("%s: regeneration failed — %s", day, failures[day])
+        if note_callback:
+            note_callback(f"{day}: regeneration failed — {failures[day]}")
+        return week_plan.model_copy(update={"failures": failures})
+
+    by_slot.update(day_events)
+    failures.pop(day, None)
+    ordered_events = [by_slot[slot.id] for slot in spec.cook_slots() if slot.id in by_slot]
+    return week_plan.model_copy(
+        update={
+            "generated_at": datetime.now().isoformat(),
+            "cook_events": ordered_events,
+            "slots": spec.slots,
+            "targets": targets,
+            "failures": failures,
+        }
     )
 
 
@@ -4200,19 +4606,27 @@ async def record_week_history(
     week_plan: WeekPlan,
     repository: Optional[PlanRepository] = None,
     config: Optional[dict] = None,
+    days: Optional[List[str]] = None,
 ) -> None:
     """One history entry per cooked day, so rotation carries across weeks.
 
     `config` supplies `planning_rules.history_max_entries`; omitted (or
     missing the key) falls back to DEFAULT_PLANNING_RULES's value, same as
     every other planning_rule() read.
+
+    `days` restricts which of `week_plan.days` get a new entry — defaults to
+    all of them (a full week's worth). `regenerate_single_day` passes just
+    the one day it touched; recording the whole plan there would re-append
+    history for six days that were never regenerated, throwing off rotation
+    for styles/cuisines/proteins that had nothing to do with this run.
     """
     max_entries = planning_rule(config, "history_max_entries")
     repository = repository or LocalJSONRepository()
     history = await repository.load_history()
     generated_at = week_plan.generated_at
+    target_days = week_plan.days if days is None else days
 
-    for day in week_plan.days:
+    for day in target_days:
         events = [event for event in week_plan.cook_events if event.day == day]
         if not events:
             continue
@@ -4445,9 +4859,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+-e 
 
-
-=== File: shopping.py ===
+=== File: ./shopping.py ===
 import re
 from typing import Dict, List, Optional, Sequence
 
@@ -4748,6 +5162,32 @@ def categorize_department(ingredient_name: str) -> str:
     return best_department
 
 
+def round_ingredient_quantity(name: str, quantity_g: float, department: str) -> float:
+    """Snap a scaled ingredient quantity to an amount a shopper can actually buy.
+
+    A portion trim or batch multiply leaves quantities like 516g — precise but
+    unbuyable. Meat/fish and anything already sizeable (>=100g) round to the
+    nearest 50g, the way it's sold; mid-size amounts round to the nearest 10g;
+    small spice/seasoning amounts (Herbs & Spices, <20g) round to the nearest
+    1g, since 2g of turmeric and 5g are meaningfully different; everything
+    else under 20g rounds to the nearest 5g.
+
+    Floored at one increment rather than letting a rounded-down trace ingredient
+    hit 0g: `Ingredient.quantity_g` requires `gt=0`, and a positive amount that
+    rounds to nothing is still on the recipe, just too small to weigh precisely.
+    """
+    if department in ("Meat & Poultry", "Fish & Seafood") or quantity_g >= 100:
+        increment = 50.0
+    elif quantity_g >= 20:
+        increment = 10.0
+    elif department == "Herbs & Spices":
+        increment = 1.0
+    else:
+        increment = 5.0
+    rounded = round(quantity_g / increment) * increment
+    return rounded if rounded > 0 else increment
+
+
 def aggregate_recipes(
     recipes: Sequence["Recipe"], offsets: Optional[Sequence[int]] = None
 ) -> ShoppingList:
@@ -4912,9 +5352,220 @@ def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
                 f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
             )
     return "\n".join(lines)
+-e 
+
+=== File: ./export_menu.py ===
+"""Formats a generated week into a printable menu — Markdown text and a PDF.
+
+Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
+`WeekPlan.by_slot()` (cook events), the same source `planner.day_slot_macros`
+reads — not `PlannerState`/`SlotView`, so this module has no UI dependency
+and works the same from the NiceGUI drawer today or a future CLI flag.
+
+`build_week_menu_pdf` needs `reportlab` (pure Python, no system libraries —
+unlike `weasyprint`, which needs Cairo/Pango, it installs cleanly into this
+project's venv with a plain `pip install`).
+"""
+
+from typing import Dict, List, Optional
+from xml.sax.saxutils import escape
+
+from planner import CookEvent, Recipe, WeekPlan, day_slot_macros
+from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, slot_label
+
+MACRO_ROW_LABELS = ["kcal", "P", "C", "F"]
 
 
-=== File: week.py ===
+def _slot_recipe(by_slot: Dict[str, CookEvent], slot: SlotSpec) -> Optional[Recipe]:
+    source_id = slot.id if slot.mode == MODE_COOK else slot.source
+    event = by_slot.get(source_id)
+    return event.recipe if event else None
+
+
+def _slot_entry(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], slot: SlotSpec) -> dict:
+    """One eating slot's exportable info, shared by both output formats.
+
+    `macros` is `None` for a skipped or ungenerated slot — the caller decides
+    how to render "nothing to show" for its format rather than this function
+    picking blank text vs. a blank table cell.
+    """
+    if slot.mode == MODE_SKIP:
+        return {"meal_type": slot.meal_type, "dish": "Skipped", "macros": None, "note": None}
+    recipe = _slot_recipe(by_slot, slot)
+    if recipe is None:
+        return {
+            "meal_type": slot.meal_type,
+            "dish": "Not generated",
+            "macros": None,
+            "note": week_plan.failures.get(slot.day),
+        }
+    note = (
+        f"leftover from {slot_label(slot.source, short=True)}"
+        if slot.mode == MODE_LEFTOVER
+        else None
+    )
+    return {
+        "meal_type": slot.meal_type,
+        "dish": recipe.name,
+        "macros": recipe.per_serving_macros,
+        "note": note,
+    }
+
+
+def _day_entries(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], day: str) -> List[dict]:
+    return [_slot_entry(week_plan, by_slot, slot) for slot in week_plan.slots if slot.day == day]
+
+
+def _macro_text(macros: dict) -> str:
+    return (
+        f"{macros['calories']:.0f} kcal · {macros['protein_g']:.0f}g P · "
+        f"{macros['net_carbs_g']:.0f}g C · {macros['fat_g']:.0f}g F"
+    )
+
+
+def format_week_menu_markdown(week_plan: WeekPlan) -> str:
+    """The whole week as Markdown — one section per day, one line per meal."""
+    by_slot = week_plan.by_slot()
+    lines = ["# Weekly Menu"]
+    if week_plan.generated_at:
+        lines.append(f"_Generated {week_plan.generated_at[:16].replace('T', ' ')}_")
+    lines.append("")
+
+    for day in week_plan.days:
+        lines.append(f"## {day}")
+        for entry in _day_entries(week_plan, by_slot, day):
+            text = f"**{entry['meal_type'].title()}** — {entry['dish']}"
+            if entry["note"]:
+                text += f" ({entry['note']})"
+            if entry["macros"]:
+                text += f" · {_macro_text(entry['macros'])}"
+            lines.append(f"- {text}")
+        totals = day_slot_macros(week_plan, day)
+        lines.append(f"- **Day total** — {_macro_text(totals)}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _pdf_row(entry: dict, cell_style) -> list:
+    from reportlab.platypus import Paragraph
+
+    dish_text = entry["dish"]
+    if entry["note"]:
+        dish_text += f" ({entry['note']})"
+
+    if entry["macros"] is None:
+        dish = Paragraph(f"<i>{escape(dish_text)}</i>", cell_style)
+        return [entry["meal_type"].title(), dish, "", "", "", ""]
+
+    macros = entry["macros"]
+    return [
+        entry["meal_type"].title(),
+        Paragraph(escape(dish_text), cell_style),
+        f"{macros['calories']:.0f}",
+        f"{macros['protein_g']:.0f}g",
+        f"{macros['net_carbs_g']:.0f}g",
+        f"{macros['fat_g']:.0f}g",
+    ]
+
+
+def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
+    """The whole week as a PDF — one table per day, in week order.
+
+    Returns bytes rather than writing to disk: the caller (the NiceGUI
+    shopping drawer today) hands this straight to `ui.download`, and nothing
+    here needs to know whether it's a browser response or a file on disk.
+    """
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        KeepTogether,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
+    styles = getSampleStyleSheet()
+    day_style = ParagraphStyle("Day", parent=styles["Heading2"], spaceBefore=10, spaceAfter=4)
+    cell_style = ParagraphStyle("Cell", parent=styles["BodyText"], fontSize=9, leading=11)
+    note_style = ParagraphStyle("Note", parent=styles["BodyText"], fontSize=8, textColor=colors.grey)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title="Weekly Menu",
+    )
+
+    story = [Paragraph("Weekly Menu", styles["Title"])]
+    if week_plan.generated_at:
+        story.append(
+            Paragraph(f"Generated {week_plan.generated_at[:16].replace('T', ' ')}", note_style)
+        )
+    story.append(Spacer(1, 8))
+
+    by_slot = week_plan.by_slot()
+    header_row = ["Meal", "Dish"] + MACRO_ROW_LABELS
+    for day in week_plan.days:
+        rows = [header_row]
+        for entry in _day_entries(week_plan, by_slot, day):
+            rows.append(_pdf_row(entry, cell_style))
+        totals = day_slot_macros(week_plan, day)
+        rows.append(
+            [
+                "Day total",
+                "",
+                f"{totals['calories']:.0f}",
+                f"{totals['protein_g']:.0f}g",
+                f"{totals['net_carbs_g']:.0f}g",
+                f"{totals['fat_g']:.0f}g",
+            ]
+        )
+
+        table = Table(
+            rows, colWidths=[22 * mm, 90 * mm, 16 * mm, 14 * mm, 14 * mm, 14 * mm], repeatRows=1
+        )
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f3f4f6")),
+                    ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(KeepTogether([Paragraph(day, day_style), table]))
+
+    if week_plan.failures:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Not generated", styles["Heading3"]))
+        for day, error in week_plan.failures.items():
+            story.append(Paragraph(escape(f"{day}: {error}"), note_style))
+
+    doc.build(story)
+    return buffer.getvalue()
+-e 
+
+=== File: ./week.py ===
 """Week-level planning primitives.
 
 The unit of planning is no longer "a day of recipes" but a grid of **eating
@@ -4933,6 +5584,7 @@ fully resolved (styles, cuisines, portions, windows) before a single token is
 generated, so the UI can preview exactly what it is about to ask for.
 """
 
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
@@ -4996,6 +5648,22 @@ def week_days(config: dict, week_start: Optional[str] = None) -> List[str]:
         index = days.index(start)
         days = days[index:] + days[:index]
     return days
+
+
+def week_date_range(days: List[str], generated_at: Optional[str] = None) -> Tuple[date, date]:
+    """The calendar span `days` covers, anchored on `generated_at` (or today).
+
+    Nothing in this codebase stores an actual calendar date — a week is a
+    rotation of weekday *names* (see `week_days`) — so a banner that wants
+    real dates has to derive them. The anchor's weekday tells us how far into
+    the 7-day span it falls, which pins the whole week without needing a
+    stored start date: a Wednesday generation still produces a Monday start
+    if that's what `days[0]` is.
+    """
+    anchor = datetime.fromisoformat(generated_at).date() if generated_at else date.today()
+    target_weekday = datetime.strptime(days[0], "%A").weekday()
+    start = anchor - timedelta(days=(anchor.weekday() - target_weekday) % 7)
+    return start, start + timedelta(days=6)
 
 
 def meal_types(config: dict) -> List[str]:
@@ -5409,9 +6077,9 @@ def window_for_day(windows: List[ShoppingWindow], day: str) -> Optional[Shopping
         if day in window.days:
             return window
     return None
+-e 
 
-
-=== File: repository.py ===
+=== File: ./repository.py ===
 """Storage boundary for everything the planner reads and writes.
 
 The planner used to `open()` and `json.load()` its own files inline, which
@@ -5809,56 +6477,5 @@ def run_sync(awaitable: Awaitable[T]) -> T:
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, awaitable).result()  # type: ignore[arg-type]
-
-
-=== File: model-list.py ===
-import csv
-import requests
-
-# Fetch model metadata from OpenRouter API
-response = requests.get("https://openrouter.ai/api/v1/models")
-data = response.json().get("data", [])
-
-# Select the top 50 models
-top_50 = data[:50]
-
-# Define CSV filename and headers
-filename = "openrouter_top_50.csv"
-headers = [
-    "ID",
-    "Name",
-    "Context Length",
-    "Prompt Price (per 1M)",
-    "Completion Price (per 1M)",
-]
-
-# Write data to CSV file
-with open(filename, mode="w", newline="", encoding="utf-8") as file:
-    writer = csv.writer(file)
-    writer.writerow(headers)
-
-    for model in top_50:
-        model_id = model.get("id", "")
-        name = model.get("name", "")
-        context_length = model.get("context_length", 0)
-
-        pricing = model.get("pricing", {})
-        # Convert prices to per-million token rates
-        prompt_price = float(pricing.get("prompt", 0)) * 1_000_000
-        completion_price = float(pricing.get("completion", 0)) * 1_000_000
-
-        writer.writerow(
-            [
-                model_id,
-                name,
-                context_length,
-                f"${prompt_price:.4f}",
-                f"${completion_price:.4f}",
-            ]
-        )
-
-print(
-    f"Successfully exported {len(top_50)} models to '{filename}'. Ready to upload!"
-)
-
+-e 
 
