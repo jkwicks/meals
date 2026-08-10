@@ -106,7 +106,7 @@ WEEKEND_DAYS = {"Saturday", "Sunday"}
 # Share of the day each meal type gets when splitting targets across slots.
 # Only the ratios matter — they're normalised over whichever slots are
 # actually being cooked, so a day with no snack redistributes its share.
-DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack": 0.10}
+DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.30, "lunch": 0.30, "dinner": 0.30, "snack": 0.10}
 
 # Models compose plausible meals but size them badly, so portions are corrected
 # after the fact by scaling every quantity linearly. The clamp stops a trim
