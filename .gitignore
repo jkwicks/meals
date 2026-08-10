@@ -19,3 +19,6 @@ nicegui.log
 
 # macOS
 .DS_Store
+
+# app
+openrouter_top_50.csv

@@ -29,6 +29,7 @@ import json
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, List, Optional, TypeVar
 
@@ -36,8 +37,33 @@ DEFAULT_CONFIG_FILE = "config.json"
 DEFAULT_HISTORY_FILE = "meal_history.json"
 DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
 DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
+DEFAULT_MODELS_FILE = "models.json"
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class StoragePaths:
+    """The on-disk filename for every JSON file the app persists.
+
+    The single source of truth for these names — before this existed,
+    `ui_app.py` and `planner.py` each redeclared "config.json"/"week_plan.json"
+    as their own module constants, and the two copies were free to drift from
+    whatever `LocalJSONRepository` actually defaulted to. Callers that need a
+    path (a CLI `--help` string, a "loading from X" message) read it off a
+    `LocalJSONRepository`'s `.paths` instead of naming the file themselves.
+
+    There is no `favorites` entry: favoriting doesn't have its own file, it's
+    an `is_favorite` flag on an entry in `recipe_catalog`
+    (`recipes_master.json`) — adding a path here that nothing ever reads or
+    writes would just be a second, misleading name for that same file.
+    """
+
+    config: str = DEFAULT_CONFIG_FILE
+    history: str = DEFAULT_HISTORY_FILE
+    week_plan: str = DEFAULT_WEEK_PLAN_FILE
+    recipe_catalog: str = DEFAULT_RECIPE_CATALOG_FILE
+    models: str = DEFAULT_MODELS_FILE
 
 
 def recipe_content_key(recipe: dict) -> str:
@@ -76,6 +102,18 @@ class PlanRepository(abc.ABC):
     @abc.abstractmethod
     async def load_config(self) -> dict:
         """Targets, dietary rules, styles, cuisines. Raises if unavailable."""
+
+    @abc.abstractmethod
+    async def load_models_config(self) -> dict:
+        """Model selection and LLM call parameters (models.json).
+
+        Unlike `load_config`, a missing file is not an error: this data is
+        supplemental defaults (which model, which base URL, which timeout),
+        every one of which already has an in-code fallback, so a fresh
+        install with no `models.json` yet must plan exactly as it did before
+        this file existed, not fail to start. Implementations return `{}`
+        when the file is absent.
+        """
 
     @abc.abstractmethod
     async def load_history(self) -> List[dict]:
@@ -183,25 +221,32 @@ class LocalJSONRepository(PlanRepository):
         history_path: str = DEFAULT_HISTORY_FILE,
         week_plan_path: str = DEFAULT_WEEK_PLAN_FILE,
         recipe_catalog_path: str = DEFAULT_RECIPE_CATALOG_FILE,
+        models_path: str = DEFAULT_MODELS_FILE,
     ) -> None:
-        self.config_path = config_path
-        self.history_path = history_path
-        self.week_plan_path = week_plan_path
-        self.recipe_catalog_path = recipe_catalog_path
+        self.paths = StoragePaths(
+            config=config_path,
+            history=history_path,
+            week_plan=week_plan_path,
+            recipe_catalog=recipe_catalog_path,
+            models=models_path,
+        )
 
     # -- PlanRepository ----------------------------------------------------
 
     async def load_config(self) -> dict:
-        config = await asyncio.to_thread(self._read_json, self.config_path)
+        config = await asyncio.to_thread(self._read_json, self.paths.config)
         if config is None:
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+            raise FileNotFoundError(f"Config file not found: {self.paths.config}")
         return config
 
+    async def load_models_config(self) -> dict:
+        return await asyncio.to_thread(self._read_json, self.paths.models) or {}
+
     async def load_history(self) -> List[dict]:
-        return await asyncio.to_thread(self._read_json, self.history_path) or []
+        return await asyncio.to_thread(self._read_json, self.paths.history) or []
 
     async def save_history(self, history: List[dict]) -> None:
-        await asyncio.to_thread(self._write_json, self.history_path, history)
+        await asyncio.to_thread(self._write_json, self.paths.history, history)
 
     async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
         return await asyncio.to_thread(
@@ -214,7 +259,7 @@ class LocalJSONRepository(PlanRepository):
         )
 
     async def load_recipe_catalog(self) -> List[dict]:
-        return await asyncio.to_thread(self._read_json, self.recipe_catalog_path) or []
+        return await asyncio.to_thread(self._read_json, self.paths.recipe_catalog) or []
 
     async def get_favorites(self) -> List[dict]:
         catalog = await self.load_recipe_catalog()
@@ -236,14 +281,14 @@ class LocalJSONRepository(PlanRepository):
         """File for one named week.
 
         `"current"` maps to the original single-file layout
-        (`self.week_plan_path`, i.e. `week_plan.json`) rather than
+        (`self.paths.week_plan`, i.e. `week_plan.json`) rather than
         `week_plan_current.json`, so an existing install with a cached week
         already on disk needs no migration and no data movement the first
         time this runs. Every other identifier — `"next"`, or a week-start
         date — gets its own `week_plan_<identifier>.json` alongside it.
         """
         if week_identifier == "current":
-            return self.week_plan_path
+            return self.paths.week_plan
         return f"week_plan_{week_identifier}.json"
 
     # -- blocking helpers, only ever called in a worker thread --------------
@@ -253,7 +298,7 @@ class LocalJSONRepository(PlanRepository):
         return next((r for r in catalog if r.get("content_key") == key), None)
 
     def _toggle_favorite(self, recipe: dict) -> bool:
-        catalog = self._read_json(self.recipe_catalog_path) or []
+        catalog = self._read_json(self.paths.recipe_catalog) or []
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         existing = self._find_catalog_entry(catalog, recipe)
         if existing is not None:
@@ -273,11 +318,11 @@ class LocalJSONRepository(PlanRepository):
                 }
             )
             new_state = True
-        self._write_json(self.recipe_catalog_path, catalog)
+        self._write_json(self.paths.recipe_catalog, catalog)
         return new_state
 
     def _import_recipe(self, recipe: dict, favorite: bool) -> dict:
-        catalog = self._read_json(self.recipe_catalog_path) or []
+        catalog = self._read_json(self.paths.recipe_catalog) or []
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         existing = self._find_catalog_entry(catalog, recipe)
         if existing is not None:
@@ -296,11 +341,11 @@ class LocalJSONRepository(PlanRepository):
                 "updated_at": now,
             }
             catalog.append(record)
-        self._write_json(self.recipe_catalog_path, catalog)
+        self._write_json(self.paths.recipe_catalog, catalog)
         return record
 
     def _rename_catalog_recipe(self, recipe_id: str, name: str) -> Optional[dict]:
-        catalog = self._read_json(self.recipe_catalog_path) or []
+        catalog = self._read_json(self.paths.recipe_catalog) or []
         updated = None
         for record in catalog:
             if record.get("id") == recipe_id:
@@ -309,14 +354,14 @@ class LocalJSONRepository(PlanRepository):
                 updated = record
                 break
         if updated is not None:
-            self._write_json(self.recipe_catalog_path, catalog)
+            self._write_json(self.paths.recipe_catalog, catalog)
         return updated
 
     def _delete_catalog_recipe(self, recipe_id: str) -> None:
-        catalog = self._read_json(self.recipe_catalog_path) or []
+        catalog = self._read_json(self.paths.recipe_catalog) or []
         remaining = [record for record in catalog if record.get("id") != recipe_id]
         if len(remaining) != len(catalog):
-            self._write_json(self.recipe_catalog_path, remaining)
+            self._write_json(self.paths.recipe_catalog, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:

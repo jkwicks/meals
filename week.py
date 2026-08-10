@@ -16,7 +16,7 @@ fully resolved (styles, cuisines, portions, windows) before a single token is
 generated, so the UI can preview exactly what it is about to ask for.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -40,12 +40,26 @@ PERISHABLE_DEPARTMENTS = {
     "Meat & Poultry",
     "Dairy & Eggs",
 }
-PERISHABLE_DAY_GAP = 3
 
-# Cooked food keeps ~3-4 days refrigerated, so a leftover eaten 4+ days after
-# its cook day is at the edge — flagged in the grid and reflected in the
-# recipe's storage note rather than silently planned.
-FRIDGE_SAFE_DAYS = 4
+# Fallbacks for config.json's "inventory_rules" object, used when a caller has
+# no config (or an older config.json predates this section). The canonical
+# values now live in config.json; these are what the app used before that
+# section existed.
+DEFAULT_INVENTORY_RULES = {
+    # Cooked food keeps ~3-4 days refrigerated, so a leftover eaten 4+ days
+    # after its cook day is at the edge — flagged in the grid and reflected
+    # in the recipe's storage note rather than silently planned.
+    "fridge_safe_days": 4,
+    "perishable_day_gap": 3,
+}
+
+# `shopping.py`'s `ShoppingItem.buy_late` still reads this module constant
+# directly (it's a plain computed property with no config in scope at
+# evaluation time) — dynamic wiring there would need `aggregate_cook_events`
+# to thread a config through to `ShoppingItem` construction, which is outside
+# this refactor. config.json's inventory_rules.perishable_day_gap is the
+# value to edit; keep this constant in sync with it by hand until that's done.
+PERISHABLE_DAY_GAP = DEFAULT_INVENTORY_RULES["perishable_day_gap"]
 
 
 def humanize(value: Optional[str]) -> str:
@@ -95,6 +109,18 @@ def slot_id(day: str, meal_type: str) -> str:
     return f"{day}:{meal_type}"
 
 
+def parse_slot_id(value: str) -> Tuple[str, str]:
+    """Inverse of `slot_id`: 'Monday:dinner' -> ('Monday', 'dinner').
+
+    The only place a slot id's `:` should get split apart — callers that need
+    just the day (`span_days`, `generate_week_plan`) still go through this
+    rather than a bare `.split(":")`, so a future change to the id format has
+    one place to change.
+    """
+    day, _, meal_type = value.partition(":")
+    return day, meal_type
+
+
 def slot_label(value: str, short: bool = False) -> str:
     """A slot id as prose: 'Monday:dinner' -> 'Monday dinner' / 'Mon dinner'.
 
@@ -102,7 +128,7 @@ def slot_label(value: str, short: bool = False) -> str:
     sitting in the middle of a sentence. Anything that names a slot to the
     user goes through here instead.
     """
-    day, _, meal_type = value.partition(":")
+    day, meal_type = parse_slot_id(value)
     return f"{day[:3] if short else day} {meal_type}".strip()
 
 
@@ -367,8 +393,11 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
     return errors
 
 
-def week_warnings(spec: WeekSpec) -> List[str]:
+def week_warnings(spec: WeekSpec, config: Optional[dict] = None) -> List[str]:
     """Non-blocking notes — things that are legal but probably not intended."""
+    fridge_safe_days = (config or {}).get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
     warnings: List[str] = []
     counts = claim_counts(spec)
     by_id = spec.by_id()
@@ -382,7 +411,7 @@ def week_warnings(spec: WeekSpec) -> List[str]:
                 f"{span_days(spec, cook_id)} days."
             )
         span = span_days(spec, cook_id)
-        if span >= FRIDGE_SAFE_DAYS:
+        if span >= fridge_safe_days:
             warnings.append(
                 f"{slot.day} {slot.meal_type} is eaten up to {span} days after cooking — "
                 "at or past safe fridge storage, so plan to freeze the later portions."
@@ -409,8 +438,8 @@ def span_days(spec: WeekSpec, cook_id: str) -> int:
     claims = eaten_on(spec).get(cook_id, [])
     if not claims:
         return 0
-    cook_index = spec.day_index(cook_id.split(":")[0])
-    last_index = max(spec.day_index(value.split(":")[0]) for value in claims)
+    cook_index = spec.day_index(parse_slot_id(cook_id)[0])
+    last_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claims)
     return last_index - cook_index
 
 

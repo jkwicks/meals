@@ -12,11 +12,9 @@ from openai import AsyncOpenAI, OpenAI
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from repository import (
-    DEFAULT_CONFIG_FILE,
-    DEFAULT_HISTORY_FILE,
-    DEFAULT_WEEK_PLAN_FILE,
     LocalJSONRepository,
     PlanRepository,
+    StoragePaths,
     run_sync,
 )
 from shopping import (
@@ -25,7 +23,7 @@ from shopping import (
     format_shopping_list_text,
 )
 from week import (
-    FRIDGE_SAFE_DAYS,
+    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
@@ -36,6 +34,7 @@ from week import (
     eaten_on,
     humanize,
     meal_types,
+    parse_slot_id,
     portions_for,
     shopping_windows,
     styles_for,
@@ -45,11 +44,22 @@ from week import (
 load_dotenv()
 
 DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"
-# Where the local files live is repository.py's business now; these names are
-# kept only for the CLI's help text and log messages.
-WEEK_PLAN_CACHE_FILE = DEFAULT_WEEK_PLAN_FILE
+
+# Fallbacks used only when models.json omits a key (or doesn't exist at all —
+# a fresh install, or `LocalJSONRepository.load_models_config()` tolerating a
+# missing file). models.json is the source of truth once it exists; these
+# values are what generation used before that file existed, kept so a missing
+# key degrades to old behaviour instead of a KeyError three calls deep.
+DEFAULT_MODELS_CONFIG = {
+    "default_planner_model": "google/gemma-4-26b-a4b-it:free",
+    "openrouter_base_url": "https://openrouter.ai/api/v1",
+    "request_timeout_seconds": 120.0,
+}
+# Where the local files live is repository.py's business now; this default
+# instance exists only so the CLI's --help text and pre-repository log
+# messages have a filename to print before a LocalJSONRepository is
+# constructed. Once a repository exists, read its own `.paths` instead.
+DEFAULT_STORAGE_PATHS = StoragePaths()
 LOG_FILE = "meals.log"
 
 logger = logging.getLogger("meals")
@@ -69,13 +79,21 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     handler = logging.FileHandler(log_file)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
-MEAL_HISTORY_FILE = DEFAULT_HISTORY_FILE
-HISTORY_MAX_ENTRIES = 21
-PROTEIN_LOOKBACK_ENTRIES = 3
-# How many recent main proteins to name in the prompt. Long enough to stop a
-# week of chicken, short enough that a 7-day plan doesn't end up banning
-# everything the model knows by Friday.
-PROTEIN_AVOID_WINDOW = 6
+
+# Fallbacks for config.json's "planning_rules" object — same tolerance
+# pattern as DEFAULT_MODELS_CONFIG above: an omitted key (or a config.json
+# predating this section) resolves to the number that used to be a bare
+# module constant.
+DEFAULT_PLANNING_RULES = {
+    "history_max_entries": 21,
+    "protein_lookback_entries": 3,
+    # How many recent main proteins to name in the prompt. Long enough to
+    # stop a week of chicken, short enough that a 7-day plan doesn't end up
+    # banning everything the model knows by Friday.
+    "protein_avoid_window": 6,
+    "portion_trim_limits": (0.6, 1.6),
+    "portion_trim_deadband": 0.03,
+}
 FREE_MODEL_MAX_TOKENS = 8000
 PAID_MODEL_MAX_TOKENS = 16000
 
@@ -88,9 +106,17 @@ DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.25, "lunch": 0.30, "dinner": 0.35, "snack
 
 # Models compose plausible meals but size them badly, so portions are corrected
 # after the fact by scaling every quantity linearly. The clamp stops a trim
-# producing an absurd portion (a 30g breakfast, a 900g steak).
-PORTION_TRIM_LIMITS = (0.6, 1.6)
-PORTION_TRIM_DEADBAND = 0.03
+# producing an absurd portion (a 30g breakfast, a 900g steak). Values now live
+# in config.json's "planning_rules" (see DEFAULT_PLANNING_RULES above); these
+# names are kept as the resolved values a call site actually reads, filled in
+# by planning_rule() below rather than being literals themselves.
+
+
+def planning_rule(config: Optional[dict], key: str):
+    """Read one `planning_rules` value out of `config`, falling back to
+    `DEFAULT_PLANNING_RULES` if `config` is None, the section is missing, or
+    this particular key predates it in an older config.json."""
+    return (config or {}).get("planning_rules", {}).get(key, DEFAULT_PLANNING_RULES[key])
 
 # Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
 # glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
@@ -364,11 +390,10 @@ def history_styles(history: List[dict], meal_type: str) -> List[str]:
     return values
 
 
-def recent_main_proteins(
-    history: List[dict], lookback_entries: int = PROTEIN_LOOKBACK_ENTRIES
-) -> List[str]:
+def recent_main_proteins(history: List[dict], config: Optional[dict] = None) -> List[str]:
     """Main proteins across the last few days, de-duplicated, so the model can
     be told not to repeat them."""
+    lookback_entries = planning_rule(config, "protein_lookback_entries")
     seen = set()
     proteins = []
     for entry in history[-lookback_entries:]:
@@ -462,6 +487,19 @@ class Ingredient(BaseModel):
                 )
         return v
 
+    def per_serving_macros(self, total_servings: int = 1) -> Dict[str, float]:
+        servings = max(1, total_servings)
+        return {key: getattr(self, key) / servings for key in MACRO_KEYS}
+
+    def scaled(self, factor: float) -> "Ingredient":
+        """Multiply quantity and macros by `factor`, rounded via `round_quantity`."""
+        return self.model_copy(
+            update=dict(
+                {key: round(getattr(self, key) * factor, 1) for key in MACRO_KEYS},
+                quantity_g=round_quantity(self.quantity_g * factor),
+            )
+        )
+
 
 class Recipe(BaseModel):
     name: str = Field(..., description="Recipe name")
@@ -483,6 +521,52 @@ class Recipe(BaseModel):
         description="Storage/reheating notes. Set by Python for multi-meal cooks.",
     )
 
+    @property
+    def total_macros(self) -> Dict[str, float]:
+        totals = {key: 0.0 for key in MACRO_KEYS}
+        for ingredient in self.ingredients:
+            for key in MACRO_KEYS:
+                totals[key] += getattr(ingredient, key)
+        return totals
+
+    @property
+    def per_serving_macros(self) -> Dict[str, float]:
+        servings = max(1, self.servings)
+        return {key: value / servings for key, value in self.total_macros.items()}
+
+    def resize_by_factor(self, factor: float) -> "Recipe":
+        """Multiply every ingredient's quantity and macros by `factor`.
+
+        `servings` is left untouched — this is the single-serving portion
+        trim (`fit_recipe_to_budget`), not a change in how many servings the
+        recipe yields. `scale_to_servings` is the one that changes `servings`.
+        """
+        return self.model_copy(
+            update={"ingredients": [ingredient.scaled(factor) for ingredient in self.ingredients]}
+        )
+
+    def scale_to_servings(
+        self,
+        target_servings: int,
+        keeps_for_days: int = 0,
+        config: Optional[dict] = None,
+    ) -> "Recipe":
+        """Rescale from `self.servings` to `target_servings` and refresh storage notes.
+
+        The factor is relative to `self.servings`, not assumed to be 1, so
+        this covers both the model's single-serving output growing into a
+        batch and an already-scaled batch being resized again after a grid
+        edit changes how many slots claim it.
+        """
+        factor = target_servings / max(1, self.servings)
+        scaled = self.resize_by_factor(factor) if factor != 1.0 else self
+
+        prep_notes = scaled.prep_notes
+        if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
+            prep_notes = storage_note(target_servings, keeps_for_days, config) or None
+
+        return scaled.model_copy(update={"servings": target_servings, "prep_notes": prep_notes})
+
 
 class DayRecipes(BaseModel):
     """The model's response for a single day: one recipe per cook slot."""
@@ -493,7 +577,7 @@ class DayRecipes(BaseModel):
     def reject_untrimmable_macro_miss(self, info: ValidationInfo) -> "DayRecipes":
         """Bounce a response too far off budget for the portion trim to rescue.
 
-        The threshold is derived from PORTION_TRIM_LIMITS rather than picked:
+        The threshold is derived from planning_rules.portion_trim_limits rather than picked:
         anything the trim can scale onto its budget is accepted and corrected
         silently, and only a response needing a factor outside the clamp is
         rejected so instructor can hand the model its own numbers back and
@@ -505,7 +589,8 @@ class DayRecipes(BaseModel):
         covered by leftovers, the model ignores the reduced target and writes
         a full day anyway.
         """
-        budget = (info.context or {}).get("day_budget")
+        context = info.context or {}
+        budget = context.get("day_budget")
         if not budget or not self.recipes:
             return self
 
@@ -519,7 +604,7 @@ class DayRecipes(BaseModel):
             return self
 
         factor = target / total
-        low, high = PORTION_TRIM_LIMITS
+        low, high = planning_rule(context.get("config"), "portion_trim_limits")
         if not low <= factor <= high:
             raise ValueError(
                 f"the recipes total {total:.0f} kcal per serving but the budget for "
@@ -574,16 +659,13 @@ class WeekPlan(BaseModel):
 
 
 def compute_recipe_totals(recipe: Recipe) -> dict:
-    totals = {key: 0.0 for key in MACRO_KEYS}
-    for ingredient in recipe.ingredients:
-        for key in MACRO_KEYS:
-            totals[key] += getattr(ingredient, key)
-    return totals
+    """Deprecated: use `recipe.total_macros`."""
+    return recipe.total_macros
 
 
 def per_serving_totals(recipe: Recipe) -> dict:
-    servings = max(1, recipe.servings)
-    return {key: value / servings for key, value in compute_recipe_totals(recipe).items()}
+    """Deprecated: use `recipe.per_serving_macros`."""
+    return recipe.per_serving_macros
 
 
 def round_quantity(grams: float) -> float:
@@ -597,23 +679,13 @@ def round_quantity(grams: float) -> float:
 
 
 def resize_recipe(recipe: Recipe, factor: float) -> Recipe:
-    """Multiply every ingredient quantity and its macros by `factor`."""
-    return recipe.model_copy(
-        update={
-            "ingredients": [
-                ingredient.model_copy(
-                    update=dict(
-                        {key: round(getattr(ingredient, key) * factor, 1) for key in MACRO_KEYS},
-                        quantity_g=round_quantity(ingredient.quantity_g * factor),
-                    )
-                )
-                for ingredient in recipe.ingredients
-            ]
-        }
-    )
+    """Deprecated: use `recipe.resize_by_factor(factor)`."""
+    return recipe.resize_by_factor(factor)
 
 
-def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
+def fit_recipe_to_budget(
+    recipe: Recipe, budget: dict, config: Optional[dict] = None
+) -> Tuple[Recipe, float]:
     """Resize one serving of a recipe so its calories land on its budget.
 
     Models pick sensible *ingredients* and implausible *amounts*, and every
@@ -622,16 +694,18 @@ def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
     the right calories and the wrong protein split stays wrong, and shows up
     as a visible delta in the day summary rather than being papered over.
     """
-    actual = compute_recipe_totals(recipe)["calories"]
+    actual = recipe.total_macros["calories"]
     target = budget.get("calories", 0)
     if actual <= 0 or target <= 0:
         return recipe, 1.0
 
+    low, high = planning_rule(config, "portion_trim_limits")
+    deadband = planning_rule(config, "portion_trim_deadband")
     factor = target / actual
-    factor = min(max(factor, PORTION_TRIM_LIMITS[0]), PORTION_TRIM_LIMITS[1])
-    if abs(factor - 1.0) < PORTION_TRIM_DEADBAND:
+    factor = min(max(factor, low), high)
+    if abs(factor - 1.0) < deadband:
         return recipe, 1.0
-    return resize_recipe(recipe, factor), factor
+    return recipe.resize_by_factor(factor), factor
 
 
 # Opening words of a storage note we wrote ourselves. Used to tell our note
@@ -642,18 +716,24 @@ def fit_recipe_to_budget(recipe: Recipe, budget: dict) -> Tuple[Recipe, float]:
 STORAGE_NOTE_PREFIX = "Yields "
 
 
-def storage_note(portions: int, keeps_for_days: int) -> str:
+def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = None) -> str:
     """How to keep a batch that has to last until the meal that finishes it.
 
     Empty for a single serving eaten the day it's cooked — there is nothing to
-    say, and `scale_recipe` leaves `prep_notes` alone rather than writing one.
+    say, and `scale_to_servings` leaves `prep_notes` alone rather than writing one.
+
+    `config` supplies `inventory_rules.fridge_safe_days`; omitted (or missing
+    the key) falls back to week.DEFAULT_INVENTORY_RULES's value.
     """
     if portions <= 1 or keeps_for_days <= 0:
         return ""
+    fridge_safe_days = (config or {}).get("inventory_rules", {}).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
     storage = (
         "refrigerate in airtight containers"
-        if keeps_for_days < FRIDGE_SAFE_DAYS
-        else f"refrigerate what you'll eat within {FRIDGE_SAFE_DAYS} days and freeze the rest"
+        if keeps_for_days < fridge_safe_days
+        else f"refrigerate what you'll eat within {fridge_safe_days} days and freeze the rest"
     )
     return (
         f"{STORAGE_NOTE_PREFIX}{portions} portions, eaten across {keeps_for_days} day(s). "
@@ -661,52 +741,31 @@ def storage_note(portions: int, keeps_for_days: int) -> str:
     )
 
 
-def scale_recipe(recipe: Recipe, portions: int, keeps_for_days: int) -> Recipe:
-    """Scale a recipe from the model's single serving up to its full yield.
-
-    The model reports one serving; the portion count comes from how many slots
-    claim this cook (see week.portions_for), so this stays a plain linear
-    multiply and the arithmetic never leaves Python.
-    """
-    scaled = resize_recipe(recipe, portions)
-    prep_notes = recipe.prep_notes or storage_note(portions, keeps_for_days) or None
-    return scaled.model_copy(update={"servings": portions, "prep_notes": prep_notes})
+def scale_recipe(
+    recipe: Recipe, portions: int, keeps_for_days: int, config: Optional[dict] = None
+) -> Recipe:
+    """Deprecated: use `recipe.scale_to_servings(portions, keeps_for_days, config)`."""
+    return recipe.scale_to_servings(portions, keeps_for_days, config)
 
 
 def rescale_cook_event(
-    event: CookEvent, portions: int, keeps_for_days: int, eaten_by: List[str]
+    event: CookEvent,
+    portions: int,
+    keeps_for_days: int,
+    eaten_by: List[str],
+    config: Optional[dict] = None,
 ) -> CookEvent:
-    """Resize an already-scaled cook event's batch to a new portion count.
+    """Deprecated: use `event.recipe.scale_to_servings(...)` and rebuild the event.
 
-    Editing the week changes how many slots claim a cook, and portions are
-    *derived* from exactly that (`week.portions_for`) — so the batch has to
-    follow, or the card says "6 portions" over ingredients weighed for 4,
-    which is the disagreement the derived-portion rule exists to prevent.
-
-    This is the same linear arithmetic as `scale_recipe`, just starting from a
-    batch instead of a single serving, so re-pointing a leftover costs no
-    generation call. It cannot invent a new dish — only more or less of this
-    one — which is exactly right for "the same recipe now feeds another meal".
+    Kept only as a thin wrapper for callers not yet migrated; new call sites
+    should scale the recipe directly (see `PlannerState.apply_spec`).
     """
     if event.portions <= 0:
         return event
 
-    recipe = event.recipe
-    if portions != event.portions:
-        recipe = resize_recipe(recipe, portions / event.portions)
-
-    prep_notes = recipe.prep_notes
-    if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
-        prep_notes = storage_note(portions, keeps_for_days) or None
-
+    recipe = event.recipe.scale_to_servings(portions, keeps_for_days, config)
     return event.model_copy(
-        update={
-            "portions": portions,
-            "eaten_by": list(eaten_by),
-            "recipe": recipe.model_copy(
-                update={"servings": portions, "prep_notes": prep_notes}
-            ),
-        }
+        update={"portions": portions, "eaten_by": list(eaten_by), "recipe": recipe}
     )
 
 
@@ -721,7 +780,7 @@ def day_slot_macros(week_plan: WeekPlan, day: str) -> dict:
         event = by_slot.get(source_id)
         if event is None:
             continue
-        serving = per_serving_totals(event.recipe)
+        serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             totals[key] += serving[key]
     return totals
@@ -753,7 +812,7 @@ def carried_macros(
         event = events.get(slot.source)
         if event is None:
             continue
-        serving = per_serving_totals(event.recipe)
+        serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             totals[key] += serving[key]
         descriptions.append(
@@ -785,19 +844,23 @@ def api_key_error() -> Optional[str]:
     return None
 
 
-def build_client() -> instructor.Instructor:
+def build_client(models_config: Optional[dict] = None) -> instructor.Instructor:
+    """`models_config` is the loaded `models.json` (or a dict-alike with the
+    same keys) — pass `config.get("models")` from a caller that already
+    merged it in, or `None` to get pre-models.json behaviour."""
+    models_config = models_config or {}
     error = api_key_error()
     if error:
         raise RuntimeError(error)
     openai_client = OpenAI(
-        base_url=OPENROUTER_BASE_URL,
+        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
         api_key=os.environ["OPENROUTER_API_KEY"],
-        timeout=120.0,
+        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
     )
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
 
 
-def build_async_client() -> instructor.Instructor:
+def build_async_client(models_config: Optional[dict] = None) -> instructor.Instructor:
     """Async twin of `build_client`, for callers that already run on a loop.
 
     `import_external_recipe` is one call, not seven sequential days, so unlike
@@ -806,18 +869,60 @@ def build_async_client() -> instructor.Instructor:
     the way a day's generation has to (see "Storage goes through an async
     repository" in CLAUDE.md for why that dance exists at all).
     """
+    models_config = models_config or {}
     error = api_key_error()
     if error:
         raise RuntimeError(error)
     openai_client = AsyncOpenAI(
-        base_url=OPENROUTER_BASE_URL,
+        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
         api_key=os.environ["OPENROUTER_API_KEY"],
-        timeout=120.0,
+        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
     )
     # MD_JSON, not JSON/TOOLS — same reason as build_client: Recipe nests
     # Ingredient, and several free OpenRouter providers 422 on the $defs/$ref
     # a schema-carrying mode emits for a nested model.
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+def resolve_planner_model(config: dict) -> str:
+    """The model a weekly-generation call should use: config.json's explicit
+    `openrouter_model` override wins (the CLI's `--model` flag and the
+    NiceGUI drawer's model select both write this), else models.json's
+    `default_planner_model`, else the last-resort literal in
+    DEFAULT_MODELS_CONFIG (pre-models.json behaviour)."""
+    return config.get("openrouter_model") or (config.get("models") or {}).get(
+        "default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]
+    )
+
+
+def resolve_recipe_parser_model(config: dict) -> str:
+    """The model `import_external_recipe` should use.
+
+    Deliberately does *not* consult `openrouter_model` — that field is the
+    weekly planner's per-run override (CLI `--model`, the drawer's model
+    select) and has nothing to do with parsing a pasted recipe. models.json's
+    model-selection strategy names this the "Vision AI / Scans & Web Recipe
+    Parser" role precisely so a cheap/fast model can be used here regardless
+    of which (usually pricier) model the week is generating with.
+    """
+    models_config = config.get("models") or {}
+    return (
+        models_config.get("recipe_parser_model")
+        or models_config.get("default_planner_model")
+        or DEFAULT_MODELS_CONFIG["default_planner_model"]
+    )
+
+
+async def load_config_with_models(repository: PlanRepository) -> dict:
+    """`load_config()` plus `load_models_config()` merged under `config["models"]`.
+
+    One call so every caller that needs a *usable* config — CLI, recipe
+    import — gets model selection resolved the same way, instead of each
+    remembering to also load models.json.
+    """
+    config = await repository.load_config()
+    config["models"] = await repository.load_models_config()
+    return config
 
 
 async def import_external_recipe(
@@ -837,17 +942,17 @@ async def import_external_recipe(
     Unlike `generate_day`, there's no day budget to trim against: an imported
     recipe is reported as written, servings included, with ingredient
     quantities and macros for the FULL recipe at that serving count — exactly
-    what `Recipe`/`Ingredient` already assume elsewhere (`per_serving_totals`
+    what `Recipe`/`Ingredient` already assume elsewhere (`per_serving_macros`
     divides by `servings`), so no extra scaling step belongs here. A caller
     dropping this into a specific slot (see `PlannerState.swap_slot_with_favorite`)
     normalises to one serving and rescales there, same as it would for any
     other favorite.
     """
     if config is None:
-        config = await (repository or LocalJSONRepository()).load_config()
+        config = await load_config_with_models(repository or LocalJSONRepository())
 
     dietary_rules = config["dietary_rules"]
-    client = build_async_client()
+    client = build_async_client(config.get("models"))
 
     system_prompt = (
         "You turn unformatted recipe text — pasted from a website, a photo's "
@@ -881,7 +986,7 @@ async def import_external_recipe(
         "no commentary — respond with the structured data only."
     )
 
-    model = config.get("openrouter_model", DEFAULT_MODEL)
+    model = resolve_recipe_parser_model(config)
     max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
 
     logger.info("import_external_recipe: requesting parse from %s", model)
@@ -1072,7 +1177,7 @@ def generate_day(
     subtracted from the day's target first, so the model is asked for the
     remaining gap rather than a full day it would then overshoot.
     """
-    client = build_client()
+    client = build_client(config.get("models"))
     dietary_rules = config["dietary_rules"]
 
     remaining = {key: max(0.0, targets[key] - carried.get(key, 0.0)) for key in MACRO_KEYS}
@@ -1174,7 +1279,7 @@ def generate_day(
         f"- Fat: {remaining['fat_g']:.0f} g\n"
     )
 
-    model = config.get("openrouter_model", DEFAULT_MODEL)
+    model = resolve_planner_model(config)
     max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
 
     logger.info("%s: requesting %d recipe(s) from %s", day, len(cook_slots), model)
@@ -1234,7 +1339,7 @@ def generate_day(
 
     fitted = {}
     for slot in cook_slots:
-        recipe, factor = fit_recipe_to_budget(by_meal_type[slot.meal_type], budgets[slot.id])
+        recipe, factor = fit_recipe_to_budget(by_meal_type[slot.meal_type], budgets[slot.id], config)
         if factor != 1.0 and progress_note:
             progress_note(
                 f"{day} {slot.meal_type}: portions resized x{factor:.2f} to hit "
@@ -1305,7 +1410,8 @@ async def generate_week_plan(
     # Seeded from previous weeks, then extended as this week generates —
     # otherwise every day is told to avoid the same stale list and nothing
     # stops all seven dinners being chicken.
-    avoid_proteins = recent_main_proteins(history)
+    avoid_proteins = recent_main_proteins(history, config)
+    protein_avoid_window = planning_rule(config, "protein_avoid_window")
     thread_safe_note = on_calling_loop(note_callback)
 
     events: Dict[str, CookEvent] = {}
@@ -1331,7 +1437,7 @@ async def generate_week_plan(
                 multiplicity=day_multiplicity(spec, day),
                 carried=carried,
                 carried_descriptions=descriptions,
-                avoid_proteins=avoid_proteins[-PROTEIN_AVOID_WINDOW:],
+                avoid_proteins=avoid_proteins[-protein_avoid_window:],
                 progress_note=thread_safe_note,
             )
         except Exception as exc:
@@ -1355,11 +1461,11 @@ async def generate_week_plan(
         for slot in cook_slots:
             recipe = recipes[slot.meal_type]
             claim_ids = claims.get(slot.id, [slot.id])
-            last_day_index = max(spec.day_index(value.split(":")[0]) for value in claim_ids)
-            recipe = scale_recipe(
-                recipe,
-                portions=portions[slot.id],
+            last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+            recipe = recipe.scale_to_servings(
+                portions[slot.id],
                 keeps_for_days=last_day_index - spec.day_index(slot.day),
+                config=config,
             )
             events[slot.id] = CookEvent(
                 slot_id=slot.id,
@@ -1400,9 +1506,15 @@ def extract_main_protein(recipe: Recipe) -> Optional[str]:
 async def record_week_history(
     week_plan: WeekPlan,
     repository: Optional[PlanRepository] = None,
-    max_entries: int = HISTORY_MAX_ENTRIES,
+    config: Optional[dict] = None,
 ) -> None:
-    """One history entry per cooked day, so rotation carries across weeks."""
+    """One history entry per cooked day, so rotation carries across weeks.
+
+    `config` supplies `planning_rules.history_max_entries`; omitted (or
+    missing the key) falls back to DEFAULT_PLANNING_RULES's value, same as
+    every other planning_rule() read.
+    """
+    max_entries = planning_rule(config, "history_max_entries")
     repository = repository or LocalJSONRepository()
     history = await repository.load_history()
     generated_at = week_plan.generated_at
@@ -1488,7 +1600,7 @@ def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Weekly Meal Planner CLI")
     parser.add_argument(
-        "--config", default=DEFAULT_CONFIG_FILE, help="Path to config JSON file"
+        "--config", default=DEFAULT_STORAGE_PATHS.config, help="Path to config JSON file"
     )
     parser.add_argument(
         "--model",
@@ -1528,7 +1640,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--use-cached-plan",
         action="store_true",
         help=(
-            f"Load the week from {WEEK_PLAN_CACHE_FILE} instead of calling "
+            f"Load the week from {DEFAULT_STORAGE_PATHS.week_plan} instead of calling "
             "OpenRouter (for iterating on the shopping list without API calls)."
         ),
     )
@@ -1543,7 +1655,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     future backend expects, and the reason storage calls are awaited here
     rather than bridged individually.
     """
-    config = await repository.load_config()
+    config = await load_config_with_models(repository)
     if args.model:
         config["openrouter_model"] = args.model
     config = apply_training_adjustments(config)
@@ -1555,10 +1667,10 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
         spec = autofill_leftovers(spec, "lunch", "dinner")
 
     if args.use_cached_plan:
-        print(f"Loading cached week plan from {WEEK_PLAN_CACHE_FILE}...", flush=True)
+        print(f"Loading cached week plan from {repository.paths.week_plan}...", flush=True)
         cached = await repository.load_week_plan()
         if cached is None:
-            print(f"No cached week plan found ({WEEK_PLAN_CACHE_FILE}). Generate one first.")
+            print(f"No cached week plan found ({repository.paths.week_plan}). Generate one first.")
             raise SystemExit(1)
         week_plan = WeekPlan.model_validate(cached)
     else:
@@ -1572,7 +1684,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
                 print(f"  - {error}")
             raise SystemExit(1)
 
-        model = config.get("openrouter_model", DEFAULT_MODEL)
+        model = resolve_planner_model(config)
         cook_days = len({slot.day for slot in spec.cook_slots()})
         print(
             f"Generating {len(spec.days)}-day plan ({len(spec.cook_slots())} cooks "
@@ -1593,7 +1705,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
         )
 
         await repository.save_week_plan(week_plan.model_dump())
-        await record_week_history(week_plan, repository)
+        await record_week_history(week_plan, repository, config)
 
     print_week_summary(week_plan)
 
