@@ -21,4 +21,12 @@ find . -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File
       echo -e "\n"
     fi
   done
+
+  # Pydantic models whose fields are optional or nested past the head -35
+  # cutoff above (e.g. week_plan.json's sunday_prep_session) never appear in
+  # the sample previews, so dump their real schema straight from the source
+  # of truth instead of hoping a sample file happens to populate them.
+  echo "=== Model Schema: WeekPlan.sunday_prep_session (planner.SundayPrepSession) ==="
+  python3 -c "import json, planner; print(json.dumps(planner.SundayPrepSession.model_json_schema(), indent=2))"
+  echo -e "\n"
 } > data_schemas.md

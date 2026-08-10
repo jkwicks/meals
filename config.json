@@ -118,6 +118,8 @@
     }
   ],
   "inventory_to_clear": [],
+  "enable_sunday_prep": true,
+  "max_prep_active_mins": 120,
   "dietary_rules": {
     "allowed_nova_groups": [1, 2, 3],
     "banned_ingredients": [

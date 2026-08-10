@@ -9,7 +9,7 @@
     "Sunday"
   ],
   "servings_per_meal": 2,
-  "generated_at": "2026-08-10T15:45:10.229695",
+  "generated_at": "2026-08-10T17:00:07.390809",
   "cook_events": [
     {
       "slot_id": "Monday:breakfast",
@@ -22,68 +22,69 @@
         "Monday:breakfast"
       ],
       "recipe": {
-        "name": "Greek Yoghurt with Walnuts, Pumpkin Seeds and Blueberries",
+        "name": "Greek Yoghurt Bowl with Walnuts, Pumpkin Seeds and Berries",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain unsweetened Greek yoghurt (2% fat)",
-            "quantity_g": 756,
+            "name": "Plain unsweetened Greek yoghurt (0% fat)",
+            "quantity_g": 800.0,
             "nova_group": 1,
-            "calories": 566.2,
-            "protein_g": 75.6,
-            "net_carbs_g": 30.2,
-            "fat_g": 15.2
+            "calories": 472.0,
+            "protein_g": 80.0,
+            "net_carbs_g": 32.0,
+            "fat_g": 1.6
           },
           {
-            "name": "Walnuts, chopped",
-            "quantity_g": 38,
+            "name": "Walnuts",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 247.2,
-            "protein_g": 5.6,
-            "net_carbs_g": 2.6,
-            "fat_g": 24.6
+            "calories": 262.0,
+            "protein_g": 6.0,
+            "net_carbs_g": 3.0,
+            "fat_g": 26.0
           },
           {
             "name": "Pumpkin seeds",
-            "quantity_g": 19,
+            "quantity_g": 30.0,
             "nova_group": 1,
-            "calories": 105.8,
-            "protein_g": 5.6,
-            "net_carbs_g": 1.2,
-            "fat_g": 9.0
+            "calories": 164.0,
+            "protein_g": 9.0,
+            "net_carbs_g": 3.0,
+            "fat_g": 14.0
           },
           {
             "name": "Fresh blueberries",
-            "quantity_g": 76,
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 43.4,
-            "protein_g": 0.6,
-            "net_carbs_g": 9.0,
-            "fat_g": 0.2
+            "calories": 68.0,
+            "protein_g": 0.8,
+            "net_carbs_g": 15.0,
+            "fat_g": 0.4
           },
           {
-            "name": "Whey protein isolate, unflavoured",
-            "quantity_g": 19,
+            "name": "Whey protein isolate, unflavored",
+            "quantity_g": 20.0,
             "nova_group": 2,
-            "calories": 69.8,
-            "protein_g": 15.2,
-            "net_carbs_g": 0.4,
+            "calories": 88.0,
+            "protein_g": 20.0,
+            "net_carbs_g": 0.8,
             "fat_g": 0.2
           },
           {
             "name": "Ground cinnamon",
-            "quantity_g": 3.8,
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 9.4,
+            "calories": 10.0,
             "protein_g": 0.2,
             "net_carbs_g": 1.6,
             "fat_g": 0.2
           }
         ],
         "instructions": [
-          "Spoon the yoghurt into a bowl and stir in the whey protein isolate until smooth.",
-          "Top with chopped walnuts, pumpkin seeds and blueberries.",
-          "Dust with ground cinnamon and serve immediately."
+          "Spoon the yoghurt into a bowl.",
+          "Whisk in the whey protein isolate until smooth.",
+          "Top with walnuts, pumpkin seeds and blueberries.",
+          "Dust with cinnamon and serve immediately."
         ],
         "prep_time_minutes": 5,
         "servings": 2,
@@ -101,57 +102,57 @@
         "Monday:lunch"
       ],
       "recipe": {
-        "name": "Chicken, Chickpea and Feta Salad",
+        "name": "Grilled Chicken and White Bean Salad with Feta",
         "meal_type": "lunch",
         "ingredients": [
           {
-            "name": "Grilled chicken breast, sliced",
-            "quantity_g": 318,
+            "name": "Chicken breast, boneless skinless",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 525.2,
-            "protein_g": 99.0,
+            "calories": 583.6,
+            "protein_g": 109.6,
             "net_carbs_g": 0.0,
-            "fat_g": 11.4
-          },
-          {
-            "name": "Chickpeas, cooked",
-            "quantity_g": 160,
-            "nova_group": 1,
-            "calories": 261.8,
-            "protein_g": 14.2,
-            "net_carbs_g": 31.8,
-            "fat_g": 4.0
+            "fat_g": 12.8
           },
           {
             "name": "Romaine lettuce, chopped",
-            "quantity_g": 142,
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 21.2,
-            "protein_g": 1.8,
-            "net_carbs_g": 2.2,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Cucumber, diced",
-            "quantity_g": 106,
-            "nova_group": 1,
-            "calories": 17.6,
-            "protein_g": 0.8,
-            "net_carbs_g": 3.2,
-            "fat_g": 0.2
+            "calories": 30.0,
+            "protein_g": 2.2,
+            "net_carbs_g": 2.6,
+            "fat_g": 0.6
           },
           {
             "name": "Cherry tomatoes, halved",
-            "quantity_g": 124,
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 23.0,
-            "protein_g": 1.0,
-            "net_carbs_g": 3.8,
+            "calories": 24.8,
+            "protein_g": 1.2,
+            "net_carbs_g": 4.2,
             "fat_g": 0.4
           },
           {
+            "name": "Cucumber, sliced",
+            "quantity_g": 100.0,
+            "nova_group": 1,
+            "calories": 19.4,
+            "protein_g": 0.8,
+            "net_carbs_g": 3.4,
+            "fat_g": 0.2
+          },
+          {
+            "name": "Cannellini beans, cooked",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 191.0,
+            "protein_g": 12.4,
+            "net_carbs_g": 25.6,
+            "fat_g": 0.8
+          },
+          {
             "name": "Feta cheese, crumbled",
-            "quantity_g": 54,
+            "quantity_g": 60.0,
             "nova_group": 1,
             "calories": 139.8,
             "protein_g": 7.6,
@@ -159,17 +160,8 @@
             "fat_g": 11.4
           },
           {
-            "name": "Red onion, thinly sliced",
-            "quantity_g": 36,
-            "nova_group": 1,
-            "calories": 14.2,
-            "protein_g": 0.4,
-            "net_carbs_g": 2.8,
-            "fat_g": 0.0
-          },
-          {
             "name": "Extra virgin olive oil",
-            "quantity_g": 26,
+            "quantity_g": 30.0,
             "nova_group": 1,
             "calories": 235.2,
             "protein_g": 0.0,
@@ -177,31 +169,41 @@
             "fat_g": 26.6
           },
           {
-            "name": "Lemon juice, fresh",
-            "quantity_g": 26,
+            "name": "Red wine vinegar",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 3.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Red onion, thinly sliced",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 7.0,
-            "protein_g": 0.2,
-            "net_carbs_g": 2.0,
+            "calories": 14.2,
+            "protein_g": 0.4,
+            "net_carbs_g": 3.0,
             "fat_g": 0.0
           },
           {
             "name": "Dried oregano",
-            "quantity_g": 1.8,
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 5.4,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.2
+            "calories": 8.8,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.2,
+            "fat_g": 0.4
           }
         ],
         "instructions": [
-          "Toss romaine, cucumber, cherry tomatoes, red onion and chickpeas in a large bowl.",
-          "Whisk olive oil, lemon juice and oregano for the dressing.",
-          "Pour dressing over the salad and toss to coat.",
-          "Top with sliced grilled chicken and crumbled feta before serving."
+          "Season chicken breast with salt and pepper, then grill or pan-sear over medium-high heat 6-7 minutes per side until cooked through.",
+          "Let chicken rest 5 minutes, then slice.",
+          "In a large bowl, combine lettuce, tomatoes, cucumber, cannellini beans and red onion.",
+          "Whisk olive oil, red wine vinegar and oregano together and toss with the salad.",
+          "Top salad with sliced chicken and crumbled feta, then serve."
         ],
-        "prep_time_minutes": 15,
+        "prep_time_minutes": 25,
         "servings": 2,
         "prep_notes": null
       }
@@ -218,136 +220,118 @@
         "Tuesday:lunch"
       ],
       "recipe": {
-        "name": "Grilled Carne Asada Tacos with Charred Elote and Frijoles",
+        "name": "Mexican Grilled Skirt Steak Tacos with Charred Corn and Peppers",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Beef flank steak, trimmed",
-            "quantity_g": 604,
+            "name": "Beef skirt steak",
+            "quantity_g": 600.0,
             "nova_group": 1,
-            "calories": 1085.2,
-            "protein_g": 163.2,
+            "calories": 1267.6,
+            "protein_g": 162.0,
             "net_carbs_g": 0.0,
-            "fat_g": 45.2
+            "fat_g": 65.2
           },
           {
-            "name": "Lime juice, fresh",
-            "quantity_g": 72,
+            "name": "Corn tortillas",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 17.6,
+            "calories": 714.8,
+            "protein_g": 18.4,
+            "net_carbs_g": 128.0,
+            "fat_g": 8.8
+          },
+          {
+            "name": "White onion, sliced",
+            "quantity_g": 250.0,
+            "nova_group": 1,
+            "calories": 88.4,
+            "protein_g": 2.4,
+            "net_carbs_g": 18.0,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Poblano pepper, sliced",
+            "quantity_g": 250.0,
+            "nova_group": 1,
+            "calories": 66.4,
+            "protein_g": 2.8,
+            "net_carbs_g": 10.4,
+            "fat_g": 0.8
+          },
+          {
+            "name": "Fresh lime juice",
+            "quantity_g": 60.0,
+            "nova_group": 1,
+            "calories": 14.8,
             "protein_g": 0.4,
-            "net_carbs_g": 5.6,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Garlic, minced",
-            "quantity_g": 21,
-            "nova_group": 1,
-            "calories": 32.0,
-            "protein_g": 1.6,
-            "net_carbs_g": 6.4,
+            "net_carbs_g": 4.4,
             "fat_g": 0.0
           },
           {
             "name": "Fresh cilantro, chopped",
-            "quantity_g": 28,
+            "quantity_g": 40.0,
             "nova_group": 1,
             "calories": 7.2,
             "protein_g": 0.8,
-            "net_carbs_g": 0.4,
+            "net_carbs_g": 0.8,
             "fat_g": 0.0
           },
           {
-            "name": "Ground cumin",
-            "quantity_g": 7.2,
+            "name": "Avocado, sliced",
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 28.4,
+            "calories": 294.8,
+            "protein_g": 3.6,
+            "net_carbs_g": 6.4,
+            "fat_g": 26.8
+          },
+          {
+            "name": "Ground cumin",
+            "quantity_g": 12.0,
+            "nova_group": 1,
+            "calories": 33.2,
             "protein_g": 1.6,
-            "net_carbs_g": 2.4,
+            "net_carbs_g": 3.6,
+            "fat_g": 2.0
+          },
+          {
+            "name": "Chili powder",
+            "quantity_g": 12.0,
+            "nova_group": 1,
+            "calories": 33.2,
+            "protein_g": 1.6,
+            "net_carbs_g": 3.6,
             "fat_g": 1.6
           },
           {
-            "name": "Corn tortillas, small",
-            "quantity_g": 320,
+            "name": "Garlic, minced",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 691.6,
-            "protein_g": 17.6,
-            "net_carbs_g": 127.6,
-            "fat_g": 8.8
-          },
-          {
-            "name": "Corn kernels, grilled",
-            "quantity_g": 284,
-            "nova_group": 1,
-            "calories": 244.8,
-            "protein_g": 8.8,
-            "net_carbs_g": 42.4,
-            "fat_g": 3.6
-          },
-          {
-            "name": "Black beans, cooked",
-            "quantity_g": 212,
-            "nova_group": 1,
-            "calories": 226.8,
-            "protein_g": 14.8,
-            "net_carbs_g": 30.0,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Cotija cheese, crumbled",
-            "quantity_g": 52,
-            "nova_group": 1,
-            "calories": 180.8,
-            "protein_g": 10.8,
-            "net_carbs_g": 1.6,
-            "fat_g": 14.0
-          },
-          {
-            "name": "White onion, diced",
-            "quantity_g": 72,
-            "nova_group": 1,
-            "calories": 28.4,
-            "protein_g": 0.8,
+            "calories": 33.2,
+            "protein_g": 1.6,
             "net_carbs_g": 5.6,
             "fat_g": 0.0
           },
           {
-            "name": "Extra virgin olive oil",
-            "quantity_g": 28,
+            "name": "Avocado oil",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 251.6,
+            "calories": 261.6,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 28.4
-          },
-          {
-            "name": "Red chili powder",
-            "quantity_g": 7.2,
-            "nova_group": 1,
-            "calories": 21.2,
-            "protein_g": 1.2,
-            "net_carbs_g": 3.2,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Sea salt",
-            "quantity_g": 7.2,
-            "nova_group": 1,
-            "calories": 0.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 0.0
+            "fat_g": 29.6
           }
         ],
         "instructions": [
-          "Marinate flank steak with lime juice, garlic, cumin, chili powder and half the cilantro for 20 minutes.",
-          "Grill steak over high heat 3-4 minutes per side until charred and medium-rare; rest, then slice thinly against the grain.",
-          "Toss grilled corn kernels with a little olive oil and salt; warm black beans with diced onion.",
-          "Char corn tortillas directly over the grill flame until lightly blistered.",
-          "Fill tortillas with sliced steak, top with cotija, remaining cilantro and white onion.",
-          "Serve tacos alongside the grilled corn and black beans."
+          "Rub skirt steak with garlic, cumin, chili powder, salt and half the lime juice; let sit 10 minutes at room temperature.",
+          "Heat a grill pan or skillet over high heat with half the avocado oil; sear steak 3-4 minutes per side for medium-rare, then rest and slice thinly against the grain.",
+          "In the same pan with remaining oil, char the poblano and onion slices for 5-6 minutes until softened and lightly blackened at edges.",
+          "Warm corn tortillas directly over the flame or in a dry pan until pliable and lightly toasted.",
+          "Assemble tacos with sliced steak, charred peppers and onions, avocado slices and cilantro.",
+          "Finish with remaining lime juice and serve immediately."
         ],
-        "prep_time_minutes": 30,
+        "prep_time_minutes": 25,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -363,60 +347,61 @@
         "Tuesday:breakfast"
       ],
       "recipe": {
-        "name": "Peppered Mackerel with Lemon and Dill",
+        "name": "Peppered Mackerel with Lemon and Cucumber",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "smoked mackerel fillet",
-            "quantity_g": 164,
+            "name": "Smoked mackerel fillet",
+            "quantity_g": 200.0,
             "nova_group": 3,
-            "calories": 355.2,
-            "protein_g": 45.6,
+            "calories": 390.0,
+            "protein_g": 56.0,
             "net_carbs_g": 0.0,
-            "fat_g": 21.8
+            "fat_g": 18.0
           },
           {
-            "name": "fresh dill",
-            "quantity_g": 5.4,
+            "name": "Cucumber",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 1.8,
+            "calories": 26.0,
+            "protein_g": 1.0,
+            "net_carbs_g": 3.0,
+            "fat_g": 0.2
+          },
+          {
+            "name": "Lemon juice",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 4.0,
+            "protein_g": 0.0,
+            "net_carbs_g": 1.0,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Fresh dill",
+            "quantity_g": 6.0,
+            "nova_group": 1,
+            "calories": 2.0,
             "protein_g": 0.2,
-            "net_carbs_g": 0.0,
+            "net_carbs_g": 0.2,
             "fat_g": 0.0
           },
           {
-            "name": "lemon juice",
-            "quantity_g": 18,
+            "name": "Black pepper",
+            "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 3.6,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "extra virgin olive oil",
-            "quantity_g": 5.4,
-            "nova_group": 1,
-            "calories": 49.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 5.4
-          },
-          {
-            "name": "black pepper",
-            "quantity_g": 1.8,
-            "nova_group": 1,
-            "calories": 3.6,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "calories": 4.0,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.4,
             "fat_g": 0.0
           }
         ],
         "instructions": [
           "Flake the smoked mackerel fillet onto a plate, removing any bones.",
-          "Drizzle with lemon juice and olive oil.",
-          "Sprinkle with fresh chopped dill and cracked black pepper.",
-          "Serve immediately at room temperature."
+          "Slice the cucumber thinly and arrange alongside the fish.",
+          "Squeeze lemon juice over the mackerel and cucumber.",
+          "Sprinkle with fresh dill and black pepper.",
+          "Serve immediately."
         ],
         "prep_time_minutes": 5,
         "servings": 2,
@@ -435,136 +420,128 @@
         "Wednesday:lunch"
       ],
       "recipe": {
-        "name": "Tandoori-Style Roast Chicken Leg with Roasted Cauliflower and Spinach",
+        "name": "Tandoori-Style Roast Chicken Thighs with Spiced Cauliflower and Spinach",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "chicken leg, bone-in, skin-on",
-            "quantity_g": 516,
+            "name": "Chicken thighs, boneless skinless",
+            "quantity_g": 600.0,
             "nova_group": 1,
-            "calories": 673.2,
-            "protein_g": 94.4,
-            "net_carbs_g": 0.0,
-            "fat_g": 34.4
-          },
-          {
-            "name": "plain full-fat yogurt",
-            "quantity_g": 84,
-            "nova_group": 1,
-            "calories": 57.2,
-            "protein_g": 3.6,
-            "net_carbs_g": 2.8,
-            "fat_g": 3.6
-          },
-          {
-            "name": "cauliflower florets",
-            "quantity_g": 344,
-            "nova_group": 1,
-            "calories": 86.0,
-            "protein_g": 6.8,
-            "net_carbs_g": 7.2,
-            "fat_g": 0.4
-          },
-          {
-            "name": "baby spinach",
-            "quantity_g": 172,
-            "nova_group": 1,
-            "calories": 40.0,
-            "protein_g": 4.8,
-            "net_carbs_g": 1.6,
-            "fat_g": 0.4
-          },
-          {
-            "name": "ghee",
-            "quantity_g": 23,
-            "nova_group": 2,
-            "calories": 200.4,
-            "protein_g": 0.0,
+            "calories": 698.4,
+            "protein_g": 119.6,
             "net_carbs_g": 0.0,
             "fat_g": 22.8
           },
           {
-            "name": "garlic, minced",
-            "quantity_g": 14,
+            "name": "Plain yogurt",
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 20.0,
+            "calories": 58.4,
+            "protein_g": 4.8,
+            "net_carbs_g": 4.0,
+            "fat_g": 3.2
+          },
+          {
+            "name": "Cauliflower florets",
+            "quantity_g": 300.0,
+            "nova_group": 1,
+            "calories": 80.8,
+            "protein_g": 6.4,
+            "net_carbs_g": 6.4,
+            "fat_g": 0.8
+          },
+          {
+            "name": "Baby spinach",
+            "quantity_g": 200.0,
+            "nova_group": 1,
+            "calories": 45.2,
+            "protein_g": 5.6,
+            "net_carbs_g": 1.2,
+            "fat_g": 0.8
+          },
+          {
+            "name": "Ghee",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 174.8,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 19.6
+          },
+          {
+            "name": "Garlic",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 19.6,
             "protein_g": 0.8,
-            "net_carbs_g": 2.8,
+            "net_carbs_g": 3.2,
             "fat_g": 0.0
           },
           {
-            "name": "ginger, minced",
-            "quantity_g": 14,
+            "name": "Ginger",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 11.6,
+            "calories": 9.6,
             "protein_g": 0.4,
             "net_carbs_g": 1.6,
             "fat_g": 0.0
           },
           {
-            "name": "ground cumin",
-            "quantity_g": 5.6,
+            "name": "Ground cumin",
+            "quantity_g": 8.0,
             "nova_group": 1,
-            "calories": 20.0,
+            "calories": 22.8,
             "protein_g": 0.8,
-            "net_carbs_g": 2.0,
+            "net_carbs_g": 1.2,
             "fat_g": 1.2
           },
           {
-            "name": "ground coriander",
-            "quantity_g": 5.6,
+            "name": "Ground coriander",
+            "quantity_g": 8.0,
             "nova_group": 1,
-            "calories": 17.2,
-            "protein_g": 0.4,
-            "net_carbs_g": 2.0,
+            "calories": 19.6,
+            "protein_g": 0.8,
+            "net_carbs_g": 1.6,
             "fat_g": 0.8
           },
           {
-            "name": "smoked paprika",
-            "quantity_g": 5.6,
+            "name": "Smoked paprika",
+            "quantity_g": 8.0,
             "nova_group": 1,
-            "calories": 17.2,
+            "calories": 16.0,
             "protein_g": 0.8,
             "net_carbs_g": 2.4,
             "fat_g": 0.8
           },
           {
-            "name": "turmeric",
-            "quantity_g": 2.8,
+            "name": "Turmeric",
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 8.4,
+            "calories": 9.6,
             "protein_g": 0.4,
             "net_carbs_g": 1.2,
             "fat_g": 0.4
           },
           {
-            "name": "lemon juice",
-            "quantity_g": 23,
+            "name": "Lemon juice",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 5.6,
+            "calories": 3.2,
             "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "salt",
-            "quantity_g": 5.6,
-            "nova_group": 1,
-            "calories": 0.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "net_carbs_g": 0.8,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "In a bowl, mix yogurt, garlic, ginger, cumin, coriander, smoked paprika, turmeric, lemon juice and salt to form a tandoori marinade.",
-          "Coat the chicken leg thoroughly with the marinade and let sit at least 30 minutes (or overnight in the fridge).",
-          "Preheat oven to 220\u00b0C. Place marinated chicken leg on a roasting tray and roast for 30-35 minutes until golden and cooked through, turning once.",
-          "Toss cauliflower florets with half the ghee and a pinch of salt; roast alongside the chicken for the last 20 minutes, until charred at the edges.",
-          "In the final few minutes, wilt the baby spinach in a pan with the remaining ghee until just softened.",
-          "Plate the roasted chicken leg with cauliflower and spinach, spooning over any pan juices."
+          "Preheat oven to 220\u00b0C (fan) with a roasting tray inside.",
+          "Mix yogurt, garlic, ginger, cumin, coriander, smoked paprika, turmeric and lemon juice into a tandoori-style marinade.",
+          "Coat chicken thighs thoroughly in the marinade.",
+          "Toss cauliflower florets with half the ghee and place on the hot tray with the marinated chicken thighs.",
+          "Roast for 20 minutes, turning once, until chicken is cooked through and cauliflower is charred at the edges.",
+          "In the last 3 minutes, wilt spinach in a hot pan with remaining ghee.",
+          "Plate the roasted chicken with cauliflower and spinach and serve hot."
         ],
-        "prep_time_minutes": 45,
+        "prep_time_minutes": 25,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -580,109 +557,109 @@
         "Wednesday:breakfast"
       ],
       "recipe": {
-        "name": "Smoky White Bean & Turkey Bacon Bake with Egg",
+        "name": "Smoky White Bean and Turkey Bacon Baked Beans",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "white beans, cooked",
-            "quantity_g": 304,
+            "name": "White beans, cooked",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 321.2,
-            "protein_g": 22.0,
-            "net_carbs_g": 40.6,
-            "fat_g": 1.6
+            "calories": 261.6,
+            "protein_g": 18.0,
+            "net_carbs_g": 33.0,
+            "fat_g": 1.4
           },
           {
-            "name": "turkey bacon",
-            "quantity_g": 68,
+            "name": "Turkey bacon",
+            "quantity_g": 100.0,
             "nova_group": 3,
-            "calories": 152.2,
-            "protein_g": 17.0,
-            "net_carbs_g": 1.6,
-            "fat_g": 8.4
+            "calories": 124.0,
+            "protein_g": 12.4,
+            "net_carbs_g": 1.4,
+            "fat_g": 8.2
           },
           {
-            "name": "egg",
-            "quantity_g": 84,
+            "name": "Canned crushed tomatoes",
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 126.8,
-            "protein_g": 10.2,
-            "net_carbs_g": 0.0,
-            "fat_g": 8.4
+            "calories": 16.6,
+            "protein_g": 0.8,
+            "net_carbs_g": 2.8,
+            "fat_g": 0.2
           },
           {
-            "name": "tomato passata",
-            "quantity_g": 102,
-            "nova_group": 2,
-            "calories": 33.8,
-            "protein_g": 1.6,
-            "net_carbs_g": 5.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "onion, diced",
-            "quantity_g": 50,
+            "name": "Onion, diced",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 20.2,
-            "protein_g": 0.0,
+            "calories": 16.6,
+            "protein_g": 0.4,
             "net_carbs_g": 3.4,
             "fat_g": 0.0
           },
           {
-            "name": "olive oil",
-            "quantity_g": 8.4,
+            "name": "Garlic, minced",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 9.6,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Smoked paprika",
+            "quantity_g": 2.0,
+            "nova_group": 1,
+            "calories": 6.8,
+            "protein_g": 0.2,
+            "net_carbs_g": 1.0,
+            "fat_g": 0.2
+          },
+          {
+            "name": "Dijon mustard",
+            "quantity_g": 10.0,
             "nova_group": 2,
-            "calories": 74.4,
+            "calories": 9.6,
+            "protein_g": 0.6,
+            "net_carbs_g": 0.6,
+            "fat_g": 0.6
+          },
+          {
+            "name": "Olive oil",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 97.8,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 8.4
+            "fat_g": 11.0
           },
           {
-            "name": "smoked paprika",
-            "quantity_g": 3.4,
+            "name": "Egg, fried",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 10.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 1.6,
-            "fat_g": 0.0
+            "calories": 213.4,
+            "protein_g": 17.4,
+            "net_carbs_g": 1.0,
+            "fat_g": 15.2
           },
           {
-            "name": "garlic, minced",
-            "quantity_g": 8.4,
+            "name": "Parsley, chopped",
+            "quantity_g": 6.0,
             "nova_group": 1,
-            "calories": 11.8,
-            "protein_g": 0.0,
-            "net_carbs_g": 1.6,
-            "fat_g": 0.0
-          },
-          {
-            "name": "black pepper",
-            "quantity_g": 1.6,
-            "nova_group": 1,
-            "calories": 5.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "parsley, chopped",
-            "quantity_g": 8.4,
-            "nova_group": 1,
-            "calories": 3.4,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "calories": 2.8,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.2,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Heat olive oil in a small skillet, saut\u00e9 onion and garlic until soft.",
-          "Add smoked paprika and tomato passata, simmer 3 minutes.",
-          "Stir in white beans, season with black pepper, and heat through.",
-          "Push beans to one side, crack egg into the pan, cover and cook until white is set.",
-          "In a separate pan, crisp the turkey bacon until browned.",
-          "Plate the beans and egg, top with crumbled turkey bacon and parsley."
+          "Heat olive oil in a skillet over medium heat and cook diced onion and garlic until softened.",
+          "Add chopped turkey bacon and cook until slightly crisp.",
+          "Stir in crushed tomatoes, smoked paprika, and Dijon mustard; simmer 3 minutes.",
+          "Add white beans and simmer gently for 10 minutes, mashing a few beans to thicken the sauce.",
+          "In a separate small pan, fry the egg to desired doneness.",
+          "Spoon the baked beans into a bowl, top with the fried egg and chopped parsley, and serve hot."
         ],
-        "prep_time_minutes": 15,
+        "prep_time_minutes": 20,
         "servings": 2,
         "prep_notes": null
       }
@@ -699,127 +676,145 @@
         "Thursday:lunch"
       ],
       "recipe": {
-        "name": "Thai Massaman-Style Braised Beef Cheek with Potatoes",
+        "name": "Thai Braised Pork Belly with Star Anise and Kaffir Lime",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "beef cheek, trimmed and cubed",
-            "quantity_g": 500,
+            "name": "Pork belly, cubed",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 875.2,
-            "protein_g": 125.2,
+            "calories": 1509.6,
+            "protein_g": 68.8,
             "net_carbs_g": 0.0,
-            "fat_g": 40.8
+            "fat_g": 137.2
           },
           {
-            "name": "massaman curry paste",
-            "quantity_g": 80,
+            "name": "Coconut aminos",
+            "quantity_g": 60.0,
             "nova_group": 2,
-            "calories": 109.2,
-            "protein_g": 3.2,
-            "net_carbs_g": 12.4,
-            "fat_g": 3.2
-          },
-          {
-            "name": "coconut milk",
-            "quantity_g": 252,
-            "nova_group": 1,
-            "calories": 468.8,
-            "protein_g": 6.4,
-            "net_carbs_g": 9.2,
-            "fat_g": 46.8
-          },
-          {
-            "name": "potato, cubed",
-            "quantity_g": 312,
-            "nova_group": 1,
-            "calories": 240.8,
-            "protein_g": 6.4,
-            "net_carbs_g": 46.8,
+            "calories": 57.2,
+            "protein_g": 2.8,
+            "net_carbs_g": 8.4,
             "fat_g": 0.0
           },
           {
-            "name": "shallot",
-            "quantity_g": 92,
-            "nova_group": 1,
-            "calories": 68.8,
-            "protein_g": 3.2,
-            "net_carbs_g": 12.4,
-            "fat_g": 0.0
-          },
-          {
-            "name": "fish sauce",
-            "quantity_g": 25,
+            "name": "Fish sauce",
+            "quantity_g": 40.0,
             "nova_group": 2,
-            "calories": 18.8,
-            "protein_g": 3.2,
-            "net_carbs_g": 0.0,
+            "calories": 22.8,
+            "protein_g": 3.6,
+            "net_carbs_g": 1.6,
             "fat_g": 0.0
           },
           {
-            "name": "tamarind paste",
-            "quantity_g": 31,
+            "name": "Palm sugar",
+            "quantity_g": 20.0,
             "nova_group": 2,
-            "calories": 46.8,
+            "calories": 88.8,
             "protein_g": 0.0,
-            "net_carbs_g": 9.2,
+            "net_carbs_g": 22.8,
             "fat_g": 0.0
           },
           {
-            "name": "palm sugar",
-            "quantity_g": 19,
-            "nova_group": 2,
-            "calories": 68.8,
-            "protein_g": 0.0,
-            "net_carbs_g": 18.8,
+            "name": "Garlic, smashed",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 42.8,
+            "protein_g": 1.6,
+            "net_carbs_g": 5.6,
             "fat_g": 0.0
           },
           {
-            "name": "roasted peanuts",
-            "quantity_g": 38,
+            "name": "Shallot, sliced",
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 218.8,
-            "protein_g": 9.2,
-            "net_carbs_g": 6.4,
-            "fat_g": 18.8
-          },
-          {
-            "name": "bay leaves",
-            "quantity_g": 3.2,
-            "nova_group": 1,
-            "calories": 3.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "calories": 51.6,
+            "protein_g": 1.6,
+            "net_carbs_g": 10.0,
             "fat_g": 0.0
           },
           {
-            "name": "cinnamon stick",
-            "quantity_g": 3.2,
+            "name": "Star anise",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 3.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "calories": 17.2,
+            "protein_g": 0.4,
+            "net_carbs_g": 2.8,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Kaffir lime leaves",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 8.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.6,
             "fat_g": 0.0
           },
           {
-            "name": "coriander leaves, chopped",
-            "quantity_g": 16,
+            "name": "Galangal, sliced",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 3.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
+            "calories": 17.2,
+            "protein_g": 0.4,
+            "net_carbs_g": 3.6,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Chicken stock, low sodium",
+            "quantity_g": 400.0,
+            "nova_group": 1,
+            "calories": 42.8,
+            "protein_g": 5.6,
+            "net_carbs_g": 1.6,
+            "fat_g": 1.6
+          },
+          {
+            "name": "Firm tofu, cubed",
+            "quantity_g": 300.0,
+            "nova_group": 1,
+            "calories": 217.2,
+            "protein_g": 22.8,
+            "net_carbs_g": 5.6,
+            "fat_g": 13.6
+          },
+          {
+            "name": "Bok choy",
+            "quantity_g": 300.0,
+            "nova_group": 1,
+            "calories": 37.2,
+            "protein_g": 4.4,
+            "net_carbs_g": 2.8,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Thai chili, sliced",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 8.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.6,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Cilantro, chopped",
+            "quantity_g": 16.0,
+            "nova_group": 1,
+            "calories": 2.8,
+            "protein_g": 0.4,
+            "net_carbs_g": 0.4,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Sear beef cheek cubes in a dry pot until browned on all sides, then remove.",
-          "In the same pot, fry massaman curry paste with a splash of coconut milk until fragrant.",
-          "Return beef to the pot, add remaining coconut milk, shallot, bay leaves and cinnamon stick.",
-          "Add fish sauce, tamarind paste and palm sugar, stir to combine.",
-          "Bring to a gentle simmer, cover, and braise on low heat for 2 hours until beef is tender.",
-          "Add potato cubes in the last 30 minutes of braising, simmering until soft.",
-          "Rest the braise off heat for 15 minutes to let flavors meld before serving.",
-          "Garnish with crushed roasted peanuts and fresh coriander leaves."
+          "In a heavy pot, sear pork belly cubes over medium-high heat until browned on all sides.",
+          "Add garlic, shallot, galangal, and star anise; stir-fry 2 minutes until fragrant.",
+          "Stir in fish sauce, coconut aminos, and palm sugar, coating the pork evenly.",
+          "Pour in chicken stock and add kaffir lime leaves; bring to a simmer.",
+          "Cover and braise on low heat for 20 minutes, stirring occasionally, until pork is tender and sauce thickens.",
+          "Add tofu cubes and bok choy in the last 5 minutes of cooking, simmering until greens wilt.",
+          "Let the braise rest off heat for a few minutes to deepen flavor before serving.",
+          "Garnish with sliced Thai chili and chopped cilantro, then serve hot."
         ],
         "prep_time_minutes": 30,
         "servings": 4,
@@ -837,100 +832,110 @@
         "Thursday:breakfast"
       ],
       "recipe": {
-        "name": "Spinach and Feta Egg White Scramble with Whole Egg",
+        "name": "High-Protein Egg White Scramble with Spinach and Cottage Cheese",
         "meal_type": "breakfast",
         "ingredients": [
           {
             "name": "Egg white",
-            "quantity_g": 244,
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 126.8,
-            "protein_g": 26.0,
-            "net_carbs_g": 1.6,
-            "fat_g": 0.0
+            "calories": 141.2,
+            "protein_g": 29.8,
+            "net_carbs_g": 2.0,
+            "fat_g": 0.4
           },
           {
             "name": "Whole egg",
-            "quantity_g": 82,
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 126.8,
-            "protein_g": 9.8,
+            "calories": 130.4,
+            "protein_g": 11.4,
             "net_carbs_g": 0.8,
-            "fat_g": 9.0
+            "fat_g": 8.6
+          },
+          {
+            "name": "Low-fat cottage cheese",
+            "quantity_g": 200.0,
+            "nova_group": 2,
+            "calories": 148.4,
+            "protein_g": 20.0,
+            "net_carbs_g": 6.2,
+            "fat_g": 4.2
           },
           {
             "name": "Baby spinach",
-            "quantity_g": 130,
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 29.2,
-            "protein_g": 3.6,
+            "calories": 25.4,
+            "protein_g": 3.0,
             "net_carbs_g": 1.0,
             "fat_g": 0.4
           },
           {
-            "name": "Feta cheese",
-            "quantity_g": 48,
-            "nova_group": 3,
-            "calories": 128.4,
-            "protein_g": 7.0,
-            "net_carbs_g": 2.0,
-            "fat_g": 10.4
-          },
-          {
             "name": "Cherry tomatoes",
-            "quantity_g": 98,
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 17.8,
-            "protein_g": 0.8,
-            "net_carbs_g": 3.2,
+            "calories": 20.0,
+            "protein_g": 1.0,
+            "net_carbs_g": 3.4,
             "fat_g": 0.2
           },
           {
-            "name": "Olive oil",
-            "quantity_g": 13,
+            "name": "Red onion",
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 115.4,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 13.0
-          },
-          {
-            "name": "Garlic clove",
-            "quantity_g": 6.4,
-            "nova_group": 1,
-            "calories": 9.8,
-            "protein_g": 0.4,
-            "net_carbs_g": 1.6,
+            "calories": 21.8,
+            "protein_g": 0.6,
+            "net_carbs_g": 4.4,
             "fat_g": 0.0
           },
           {
-            "name": "Black pepper",
-            "quantity_g": 1.6,
+            "name": "Extra virgin olive oil",
+            "quantity_g": 10.0,
+            "nova_group": 2,
+            "calories": 63.4,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 7.2
+          },
+          {
+            "name": "Chives",
+            "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 3.2,
-            "protein_g": 0.2,
+            "calories": 3.6,
+            "protein_g": 0.4,
             "net_carbs_g": 0.4,
             "fat_g": 0.0
           },
           {
             "name": "Salt",
-            "quantity_g": 1.6,
+            "quantity_g": 2.0,
             "nova_group": 1,
             "calories": 0.0,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
             "fat_g": 0.0
+          },
+          {
+            "name": "Black pepper",
+            "quantity_g": 2.0,
+            "nova_group": 1,
+            "calories": 3.6,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.6,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Heat olive oil in a nonstick skillet over medium heat and saut\u00e9 minced garlic for 30 seconds.",
-          "Add cherry tomatoes and cook for 2 minutes until softened.",
-          "Add spinach and wilt for 1-2 minutes.",
-          "Whisk egg white and whole egg together, season with salt and pepper, and pour into the skillet.",
-          "Cook gently, stirring occasionally, until eggs are just set.",
-          "Crumble feta over the top, fold in gently, and serve immediately."
+          "Finely dice the red onion and halve the cherry tomatoes.",
+          "Heat olive oil in a nonstick skillet over medium heat and saut\u00e9 onion for 2 minutes until softened.",
+          "Add spinach and cherry tomatoes, cook for 2 minutes until spinach wilts.",
+          "Whisk egg whites and whole egg together with salt and pepper, pour into the skillet.",
+          "Gently scramble the eggs over medium-low heat until just set, about 3-4 minutes.",
+          "Fold in cottage cheese and cook for another minute until warmed through.",
+          "Garnish with chopped chives and serve immediately."
         ],
-        "prep_time_minutes": 12,
+        "prep_time_minutes": 15,
         "servings": 2,
         "prep_notes": null
       }
@@ -947,128 +952,137 @@
         "Friday:lunch"
       ],
       "recipe": {
-        "name": "Japanese Chicken and Vegetable Curry with Steamed Rice",
+        "name": "Japanese Chicken Katsu-Style Curry with Steamed Rice",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Chicken breast, diced",
-            "quantity_g": 420,
+            "name": "Chicken tenderloin",
+            "quantity_g": 600.0,
             "nova_group": 1,
-            "calories": 464.0,
-            "protein_g": 96.8,
+            "calories": 575.6,
+            "protein_g": 119.2,
             "net_carbs_g": 0.0,
-            "fat_g": 10.0
+            "fat_g": 10.4
           },
           {
-            "name": "Carrot, sliced",
-            "quantity_g": 168,
+            "name": "Yellow onion",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 70.4,
+            "calories": 69.6,
             "protein_g": 1.6,
-            "net_carbs_g": 13.2,
-            "fat_g": 0.4
+            "net_carbs_g": 13.6,
+            "fat_g": 0.0
           },
           {
-            "name": "Onion, sliced",
-            "quantity_g": 168,
+            "name": "Carrot",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 67.6,
+            "calories": 58.0,
             "protein_g": 1.6,
             "net_carbs_g": 11.2,
             "fat_g": 0.4
           },
           {
-            "name": "Potato, small dice",
-            "quantity_g": 140,
+            "name": "Curry powder",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 109.6,
-            "protein_g": 2.8,
-            "net_carbs_g": 22.4,
-            "fat_g": 0.4
+            "calories": 52.4,
+            "protein_g": 2.4,
+            "net_carbs_g": 4.4,
+            "fat_g": 2.4
           },
           {
-            "name": "Curry roux paste (flour, curry powder, butter blend)",
-            "quantity_g": 56,
-            "nova_group": 3,
-            "calories": 281.2,
-            "protein_g": 2.8,
-            "net_carbs_g": 22.4,
-            "fat_g": 19.6
-          },
-          {
-            "name": "Chicken stock",
-            "quantity_g": 420,
-            "nova_group": 1,
-            "calories": 25.2,
-            "protein_g": 4.4,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.8
+            "name": "Chicken stock, low sodium",
+            "quantity_g": 600.0,
+            "nova_group": 2,
+            "calories": 46.4,
+            "protein_g": 6.0,
+            "net_carbs_g": 2.8,
+            "fat_g": 1.2
           },
           {
             "name": "Soy sauce",
-            "quantity_g": 22,
+            "quantity_g": 20.0,
             "nova_group": 2,
-            "calories": 14.0,
-            "protein_g": 2.0,
-            "net_carbs_g": 1.2,
+            "calories": 20.4,
+            "protein_g": 2.8,
+            "net_carbs_g": 1.6,
             "fat_g": 0.0
           },
           {
-            "name": "Garlic, minced",
-            "quantity_g": 14,
+            "name": "Mirin",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 66.8,
+            "protein_g": 0.0,
+            "net_carbs_g": 13.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Garlic",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 19.6,
+            "calories": 20.4,
             "protein_g": 0.8,
-            "net_carbs_g": 3.2,
+            "net_carbs_g": 2.8,
             "fat_g": 0.0
           },
           {
-            "name": "Ginger, minced",
-            "quantity_g": 14,
+            "name": "Fresh ginger",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 11.2,
+            "calories": 11.6,
             "protein_g": 0.4,
             "net_carbs_g": 2.0,
             "fat_g": 0.0
           },
           {
-            "name": "Sesame oil",
-            "quantity_g": 14,
+            "name": "Arrowroot starch",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 123.6,
+            "calories": 61.2,
             "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 14.0
+            "net_carbs_g": 14.4,
+            "fat_g": 0.0
           },
           {
             "name": "Cooked white rice",
-            "quantity_g": 280,
+            "quantity_g": 350.0,
             "nova_group": 1,
-            "calories": 365.6,
-            "protein_g": 6.8,
-            "net_carbs_g": 78.8,
+            "calories": 491.2,
+            "protein_g": 9.2,
+            "net_carbs_g": 106.0,
             "fat_g": 0.8
           },
           {
-            "name": "Scallion, sliced",
-            "quantity_g": 22,
+            "name": "Toasted sesame oil",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 78.4,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 8.8
+          },
+          {
+            "name": "Scallion",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 8.4,
+            "calories": 8.8,
             "protein_g": 0.4,
             "net_carbs_g": 1.2,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Heat sesame oil in a heavy pot over medium heat and saut\u00e9 onion, garlic, and ginger until fragrant and softened.",
-          "Add chicken pieces and sear until lightly browned on all sides.",
-          "Add carrot and potato, then pour in chicken stock and bring to a simmer.",
-          "Cover and cook for 12-15 minutes until vegetables are tender.",
-          "Reduce heat, break curry roux paste into the pot, and stir until fully dissolved and sauce thickens.",
-          "Stir in soy sauce and simmer uncovered for 3-4 minutes to meld flavors.",
+          "Cut chicken tenderloin into bite-sized pieces and slice onion and carrot thinly.",
+          "Heat sesame oil in a saucepan over medium heat, saut\u00e9 onion, garlic and ginger until fragrant, about 2 minutes.",
+          "Add chicken pieces and sear for 2-3 minutes until lightly browned.",
+          "Add carrot, chicken stock, soy sauce and mirin, bring to a simmer.",
+          "Stir in curry powder and simmer uncovered for 10-12 minutes until chicken is cooked through and carrots are tender.",
+          "Mix arrowroot starch with a splash of cold water to form a slurry, stir into the curry and cook 2 minutes until thickened.",
           "Serve the curry over steamed white rice and garnish with sliced scallion."
         ],
-        "prep_time_minutes": 30,
+        "prep_time_minutes": 25,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -1084,77 +1098,68 @@
         "Friday:breakfast"
       ],
       "recipe": {
-        "name": "Vanilla Almond Protein Shake",
+        "name": "Vanilla Almond Butter Protein Shake",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Whey protein isolate powder, unsweetened",
-            "quantity_g": 78,
+            "name": "Whey protein isolate powder, unflavored",
+            "quantity_g": 80.0,
             "nova_group": 2,
-            "calories": 287.6,
-            "protein_g": 62.0,
-            "net_carbs_g": 4.4,
-            "fat_g": 3.4
+            "calories": 304.4,
+            "protein_g": 65.6,
+            "net_carbs_g": 2.4,
+            "fat_g": 2.4
           },
           {
-            "name": "Full-fat coconut milk, canned",
-            "quantity_g": 222,
-            "nova_group": 1,
-            "calories": 420.4,
-            "protein_g": 4.4,
-            "net_carbs_g": 5.6,
-            "fat_g": 42.0
+            "name": "Unsweetened almond milk",
+            "quantity_g": 600.0,
+            "nova_group": 2,
+            "calories": 58.6,
+            "protein_g": 2.4,
+            "net_carbs_g": 2.4,
+            "fat_g": 4.6
           },
           {
             "name": "Almond butter, unsweetened",
-            "quantity_g": 34,
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 199.2,
-            "protein_g": 7.4,
-            "net_carbs_g": 3.4,
-            "fat_g": 17.8
+            "calories": 398.0,
+            "protein_g": 14.0,
+            "net_carbs_g": 2.4,
+            "fat_g": 35.2
+          },
+          {
+            "name": "Heavy cream",
+            "quantity_g": 40.0,
+            "nova_group": 1,
+            "calories": 159.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 17.0
           },
           {
             "name": "Ice cubes",
-            "quantity_g": 222,
+            "quantity_g": 200.0,
             "nova_group": 1,
             "calories": 0.0,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Water",
-            "quantity_g": 178,
-            "nova_group": 1,
-            "calories": 0.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Vanilla extract",
-            "quantity_g": 6.6,
-            "nova_group": 2,
-            "calories": 13.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 1.2,
             "fat_g": 0.0
           },
           {
             "name": "Ground cinnamon",
-            "quantity_g": 2.2,
+            "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 4.4,
+            "calories": 4.6,
             "protein_g": 0.0,
-            "net_carbs_g": 0.6,
-            "fat_g": 0.2
+            "net_carbs_g": 0.0,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Add coconut milk, water, almond butter, protein powder, vanilla extract and cinnamon to a blender.",
-          "Add ice cubes and blend on high for 45-60 seconds until smooth and frothy.",
-          "Pour into a large glass and drink immediately."
+          "Add almond milk, protein powder, almond butter, heavy cream, ice, and cinnamon to a blender.",
+          "Blend on high for 45-60 seconds until smooth and frothy.",
+          "Pour into a glass and drink immediately."
         ],
         "prep_time_minutes": 5,
         "servings": 2,
@@ -1173,93 +1178,93 @@
         "Saturday:lunch"
       ],
       "recipe": {
-        "name": "Greek One-Pan Lemon Feta Shrimp with Zucchini and Olives",
+        "name": "Greek One-Pan Lemon Sardine and Feta Bake",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Raw shrimp, peeled and deveined",
-            "quantity_g": 908,
+            "name": "Fresh sardines, cleaned and butterflied",
+            "quantity_g": 800.0,
             "nova_group": 1,
-            "calories": 872.8,
-            "protein_g": 188.4,
-            "net_carbs_g": 3.2,
-            "fat_g": 9.6
+            "calories": 1214.4,
+            "protein_g": 129.2,
+            "net_carbs_g": 0.0,
+            "fat_g": 75.6
           },
           {
-            "name": "Zucchini, sliced into half-moons",
-            "quantity_g": 488,
+            "name": "Feta cheese",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 81.2,
-            "protein_g": 6.0,
+            "calories": 416.4,
+            "protein_g": 22.0,
+            "net_carbs_g": 3.2,
+            "fat_g": 34.8
+          },
+          {
+            "name": "Zucchini, sliced",
+            "quantity_g": 350.0,
+            "nova_group": 1,
+            "calories": 63.2,
+            "protein_g": 4.4,
             "net_carbs_g": 8.0,
             "fat_g": 0.8
           },
           {
             "name": "Cherry tomatoes, halved",
-            "quantity_g": 260,
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 45.6,
-            "protein_g": 2.4,
-            "net_carbs_g": 6.4,
-            "fat_g": 0.8
-          },
-          {
-            "name": "Feta cheese, crumbled",
-            "quantity_g": 196,
-            "nova_group": 3,
-            "calories": 512.8,
-            "protein_g": 27.6,
-            "net_carbs_g": 5.2,
-            "fat_g": 41.6
+            "calories": 34.8,
+            "protein_g": 1.6,
+            "net_carbs_g": 6.0,
+            "fat_g": 0.4
           },
           {
             "name": "Extra virgin olive oil",
-            "quantity_g": 96,
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 860.0,
+            "calories": 697.2,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 97.2
+            "fat_g": 78.8
           },
           {
             "name": "Kalamata olives, pitted",
-            "quantity_g": 96,
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 133.2,
+            "calories": 104.0,
             "protein_g": 0.8,
-            "net_carbs_g": 1.2,
-            "fat_g": 12.8
-          },
-          {
-            "name": "Garlic, minced",
-            "quantity_g": 29,
-            "nova_group": 1,
-            "calories": 42.0,
-            "protein_g": 2.0,
-            "net_carbs_g": 6.4,
-            "fat_g": 0.0
+            "net_carbs_g": 1.6,
+            "fat_g": 10.0
           },
           {
             "name": "Lemon juice, fresh",
-            "quantity_g": 64,
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 12.8,
-            "protein_g": 0.4,
+            "calories": 9.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 2.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Garlic cloves, minced",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 28.4,
+            "protein_g": 1.2,
             "net_carbs_g": 4.0,
             "fat_g": 0.0
           },
           {
             "name": "Dried oregano",
-            "quantity_g": 6.4,
+            "quantity_g": 8.0,
             "nova_group": 1,
-            "calories": 16.4,
+            "calories": 15.6,
             "protein_g": 0.8,
             "net_carbs_g": 1.6,
             "fat_g": 0.4
           },
           {
-            "name": "Fresh dill, chopped",
-            "quantity_g": 16,
+            "name": "Fresh parsley, chopped",
+            "quantity_g": 16.0,
             "nova_group": 1,
             "calories": 6.4,
             "protein_g": 0.8,
@@ -1267,34 +1272,25 @@
             "fat_g": 0.0
           },
           {
-            "name": "Sea salt",
-            "quantity_g": 6.4,
+            "name": "Salt",
+            "quantity_g": 8.0,
             "nova_group": 1,
             "calories": 0.0,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
             "fat_g": 0.0
-          },
-          {
-            "name": "Black pepper, ground",
-            "quantity_g": 3.2,
-            "nova_group": 1,
-            "calories": 6.4,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Preheat oven to 220\u00b0C (fan 200\u00b0C).",
-          "On a large sheet pan, toss zucchini and cherry tomatoes with half the olive oil, garlic, oregano, salt and pepper.",
-          "Roast for 10 minutes until vegetables begin to soften.",
-          "Remove pan, push vegetables to the sides, and add shrimp in a single layer in the center. Drizzle shrimp with remaining olive oil and lemon juice.",
-          "Scatter kalamata olives and crumbled feta over the entire tray.",
-          "Return to oven and roast for a further 8-10 minutes until shrimp are pink and just cooked through.",
-          "Remove from oven, sprinkle with fresh dill, and serve immediately straight from the pan."
+          "Preheat oven to 220\u00b0C (425\u00b0F) and line a baking tray.",
+          "Toss zucchini and cherry tomatoes with half the olive oil, minced garlic, oregano, and salt; spread on the tray.",
+          "Roast vegetables for 8 minutes to soften slightly.",
+          "Push vegetables to one side, arrange butterflied sardines skin-down on the tray, and drizzle remaining olive oil and lemon juice over the fish.",
+          "Scatter crumbled feta and olives over the sardines and vegetables.",
+          "Bake for another 10-12 minutes until sardines are cooked through and feta is lightly golden.",
+          "Garnish with fresh parsley before serving."
         ],
-        "prep_time_minutes": 15,
+        "prep_time_minutes": 25,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -1310,61 +1306,62 @@
         "Saturday:breakfast"
       ],
       "recipe": {
-        "name": "Greek Yoghurt Bowl with Walnuts, Pumpkin Seeds and Blueberries",
+        "name": "Greek Yoghurt with Toasted Walnuts, Pumpkin Seeds and Raspberries",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain unsweetened Greek yoghurt (2% fat)",
-            "quantity_g": 440,
+            "name": "Plain unsweetened Greek yoghurt (full-fat)",
+            "quantity_g": 600.0,
             "nova_group": 1,
-            "calories": 300.0,
-            "protein_g": 40.0,
-            "net_carbs_g": 16.0,
-            "fat_g": 8.0
+            "calories": 415.6,
+            "protein_g": 51.0,
+            "net_carbs_g": 18.8,
+            "fat_g": 18.8
           },
           {
             "name": "Walnuts, chopped",
-            "quantity_g": 30,
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 196.0,
-            "protein_g": 4.6,
-            "net_carbs_g": 2.0,
-            "fat_g": 19.6
+            "calories": 147.4,
+            "protein_g": 3.4,
+            "net_carbs_g": 1.8,
+            "fat_g": 14.4
           },
           {
             "name": "Pumpkin seeds",
-            "quantity_g": 20,
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 110.0,
-            "protein_g": 6.0,
-            "net_carbs_g": 1.0,
-            "fat_g": 9.0
+            "calories": 83.2,
+            "protein_g": 4.6,
+            "net_carbs_g": 1.2,
+            "fat_g": 6.8
           },
           {
-            "name": "Fresh blueberries",
-            "quantity_g": 100,
+            "name": "Fresh raspberries",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 58.0,
-            "protein_g": 0.8,
-            "net_carbs_g": 13.0,
-            "fat_g": 0.4
+            "calories": 60.4,
+            "protein_g": 1.4,
+            "net_carbs_g": 8.2,
+            "fat_g": 0.8
           },
           {
-            "name": "Chia seeds",
-            "quantity_g": 16,
+            "name": "Ground cinnamon",
+            "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 46.0,
-            "protein_g": 1.6,
-            "net_carbs_g": 2.0,
-            "fat_g": 3.0
+            "calories": 3.8,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.8,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
+          "Toast the walnuts and pumpkin seeds in a dry pan over medium heat for 2-3 minutes until fragrant, stirring frequently.",
           "Spoon the yoghurt into a bowl.",
-          "Top with chopped walnuts, pumpkin seeds and chia seeds.",
-          "Scatter fresh blueberries over the top and serve immediately."
+          "Top with the raspberries, toasted walnuts and pumpkin seeds.",
+          "Dust with cinnamon and serve immediately."
         ],
-        "prep_time_minutes": 5,
+        "prep_time_minutes": 10,
         "servings": 2,
         "prep_notes": null
       }
@@ -1381,136 +1378,139 @@
         "Sunday:lunch"
       ],
       "recipe": {
-        "name": "Korean Beef Bulgogi-Style Stir Fry with Vegetables",
+        "name": "Korean Beef Bulgogi-Style Stir Fry with Napa Cabbage and Mushrooms",
         "meal_type": "dinner",
         "ingredients": [
           {
             "name": "Beef sirloin, thinly sliced",
-            "quantity_g": 404,
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 810.8,
-            "protein_g": 87.2,
+            "calories": 830.4,
+            "protein_g": 120.8,
             "net_carbs_g": 0.0,
-            "fat_g": 50.0
+            "fat_g": 35.6
           },
           {
-            "name": "Soy sauce",
-            "quantity_g": 38,
-            "nova_group": 2,
-            "calories": 22.0,
-            "protein_g": 3.2,
-            "net_carbs_g": 2.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Garlic, minced",
-            "quantity_g": 19,
+            "name": "Napa cabbage, sliced",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 28.0,
-            "protein_g": 1.2,
-            "net_carbs_g": 4.8,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fresh ginger, grated",
-            "quantity_g": 12,
-            "nova_group": 1,
-            "calories": 9.2,
-            "protein_g": 0.4,
-            "net_carbs_g": 2.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Toasted sesame oil",
-            "quantity_g": 25,
-            "nova_group": 2,
-            "calories": 221.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 24.8
-          },
-          {
-            "name": "Pear, grated (for marinade)",
-            "quantity_g": 64,
-            "nova_group": 1,
-            "calories": 37.6,
-            "protein_g": 0.4,
-            "net_carbs_g": 9.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Green cabbage, shredded",
-            "quantity_g": 312,
-            "nova_group": 1,
-            "calories": 78.0,
+            "calories": 48.4,
             "protein_g": 4.0,
-            "net_carbs_g": 10.8,
-            "fat_g": 0.4
+            "net_carbs_g": 5.6,
+            "fat_g": 0.8
+          },
+          {
+            "name": "Shiitake mushrooms, sliced",
+            "quantity_g": 200.0,
+            "nova_group": 1,
+            "calories": 70.8,
+            "protein_g": 5.2,
+            "net_carbs_g": 8.0,
+            "fat_g": 0.8
           },
           {
             "name": "Carrot, julienned",
-            "quantity_g": 124,
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 50.0,
+            "calories": 51.6,
             "protein_g": 1.2,
-            "net_carbs_g": 9.2,
+            "net_carbs_g": 10.0,
             "fat_g": 0.4
           },
           {
             "name": "Spring onion, sliced",
-            "quantity_g": 64,
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 18.8,
-            "protein_g": 1.2,
+            "calories": 19.2,
+            "protein_g": 0.8,
             "net_carbs_g": 2.4,
             "fat_g": 0.4
           },
           {
-            "name": "Shiitake mushrooms, sliced",
-            "quantity_g": 156,
+            "name": "Garlic, minced",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 53.2,
-            "protein_g": 4.0,
-            "net_carbs_g": 4.8,
-            "fat_g": 0.4
+            "calories": 38.8,
+            "protein_g": 1.6,
+            "net_carbs_g": 6.4,
+            "fat_g": 0.0
           },
           {
-            "name": "Cooked white rice",
-            "quantity_g": 404,
+            "name": "Fresh ginger, grated",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 526.8,
-            "protein_g": 9.6,
-            "net_carbs_g": 115.2,
-            "fat_g": 0.8
+            "calories": 12.8,
+            "protein_g": 0.4,
+            "net_carbs_g": 2.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Soy sauce",
+            "quantity_g": 40.0,
+            "nova_group": 2,
+            "calories": 28.8,
+            "protein_g": 4.0,
+            "net_carbs_g": 2.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Toasted sesame oil",
+            "quantity_g": 40.0,
+            "nova_group": 2,
+            "calories": 283.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 32.0
+          },
+          {
+            "name": "Honey",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 77.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 20.4,
+            "fat_g": 0.0
           },
           {
             "name": "Gochujang (Korean chili paste)",
-            "quantity_g": 31,
+            "quantity_g": 40.0,
             "nova_group": 2,
-            "calories": 62.4,
-            "protein_g": 1.6,
-            "net_carbs_g": 10.8,
+            "calories": 58.0,
+            "protein_g": 1.2,
+            "net_carbs_g": 11.2,
             "fat_g": 0.8
           },
           {
             "name": "Sesame seeds, toasted",
-            "quantity_g": 12,
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 71.6,
-            "protein_g": 2.0,
-            "net_carbs_g": 0.8,
-            "fat_g": 6.4
+            "calories": 93.2,
+            "protein_g": 2.8,
+            "net_carbs_g": 1.6,
+            "fat_g": 8.4
+          },
+          {
+            "name": "Cooked white rice",
+            "quantity_g": 300.0,
+            "nova_group": 1,
+            "calories": 376.4,
+            "protein_g": 7.6,
+            "net_carbs_g": 81.6,
+            "fat_g": 0.8
           }
         ],
         "instructions": [
-          "Combine soy sauce, garlic, ginger, grated pear and half the sesame oil; marinate the beef slices for 15 minutes.",
-          "Heat a wok over high heat with remaining sesame oil until smoking.",
-          "Stir-fry the marinated beef in batches for 1-2 minutes until just seared; remove and set aside.",
-          "Add cabbage, carrot and shiitake mushrooms to the wok and stir-fry for 3-4 minutes until crisp-tender.",
-          "Return beef to the wok, add gochujang and spring onion, and toss everything together for 1 minute.",
-          "Serve hot over cooked rice, sprinkled with toasted sesame seeds."
+          "Combine soy sauce, honey, gochujang, half the garlic and half the ginger in a bowl. Marinate the sliced beef in this mixture for 15 minutes.",
+          "Cook the rice separately if not using pre-cooked rice; set aside.",
+          "Heat sesame oil in a wok or large skillet over high heat until shimmering.",
+          "Add the marinated beef and stir-fry for 2 minutes until just browned, then remove and set aside.",
+          "Add remaining garlic and ginger to the wok, stir-fry 30 seconds, then add carrot and mushrooms, stir-fry 2 minutes.",
+          "Add napa cabbage and stir-fry another 2 minutes until just wilted.",
+          "Return beef to the wok, toss everything together for 1 minute to combine and heat through.",
+          "Stir in spring onion and remove from heat.",
+          "Serve over the cooked rice, sprinkled with toasted sesame seeds."
         ],
-        "prep_time_minutes": 25,
+        "prep_time_minutes": 30,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -1526,72 +1526,82 @@
         "Sunday:breakfast"
       ],
       "recipe": {
-        "name": "Mackerel with Soft Scrambled Eggs and Chives",
+        "name": "Smoked Mackerel with Soft Scrambled Eggs and Chives",
         "meal_type": "breakfast",
         "ingredients": [
           {
             "name": "Smoked mackerel fillet",
-            "quantity_g": 178,
+            "quantity_g": 200.0,
             "nova_group": 3,
-            "calories": 447.2,
-            "protein_g": 35.8,
+            "calories": 403.2,
+            "protein_g": 33.0,
             "net_carbs_g": 0.0,
-            "fat_g": 32.2
+            "fat_g": 29.4
           },
           {
             "name": "Eggs",
-            "quantity_g": 178,
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 255.8,
-            "protein_g": 22.2,
+            "calories": 262.0,
+            "protein_g": 23.0,
             "net_carbs_g": 1.2,
-            "fat_g": 17.8
+            "fat_g": 17.4
           },
           {
             "name": "Butter",
-            "quantity_g": 14,
+            "quantity_g": 20.0,
             "nova_group": 2,
-            "calories": 103.8,
+            "calories": 132.0,
             "protein_g": 0.2,
             "net_carbs_g": 0.0,
-            "fat_g": 11.6
+            "fat_g": 14.8
+          },
+          {
+            "name": "Cherry tomatoes",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 25.6,
+            "protein_g": 1.2,
+            "net_carbs_g": 4.4,
+            "fat_g": 0.4
           },
           {
             "name": "Fresh chives",
-            "quantity_g": 9.0,
+            "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 1.8,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
+            "calories": 3.6,
+            "protein_g": 0.4,
+            "net_carbs_g": 0.4,
             "fat_g": 0.0
           },
           {
-            "name": "Cucumber",
-            "quantity_g": 144,
+            "name": "Black pepper",
+            "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 23.2,
-            "protein_g": 0.8,
-            "net_carbs_g": 3.6,
-            "fat_g": 0.2
+            "calories": 5.4,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.8,
+            "fat_g": 0.0
           },
           {
-            "name": "Black pepper",
-            "quantity_g": 1.8,
+            "name": "Lemon juice",
+            "quantity_g": 20.0,
             "nova_group": 1,
             "calories": 3.6,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.4,
+            "protein_g": 0.0,
+            "net_carbs_g": 1.0,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Warm the smoked mackerel fillet gently, either in a low oven or a dry pan, until heated through.",
-          "Melt butter in a nonstick pan over low heat, add beaten eggs and stir slowly for soft, creamy curds.",
-          "Season eggs with black pepper and fold in chopped chives just before removing from heat.",
-          "Slice cucumber and plate alongside the eggs and mackerel.",
-          "Serve immediately while warm."
+          "Halve the cherry tomatoes and sear them in a dry pan for 2-3 minutes until slightly blistered; set aside.",
+          "Melt butter in a nonstick pan over low heat.",
+          "Whisk eggs lightly and pour into the pan, stirring constantly over low heat until softly set and creamy, about 3-4 minutes.",
+          "Warm the smoked mackerel gently in the oven or a dry pan for 2-3 minutes.",
+          "Plate the scrambled eggs with the mackerel and blistered tomatoes.",
+          "Squeeze lemon juice over the mackerel, sprinkle with chives and black pepper, and serve."
         ],
-        "prep_time_minutes": 12,
+        "prep_time_minutes": 15,
         "servings": 2,
         "prep_notes": null
       }
@@ -1607,102 +1617,93 @@
         "Sunday:dinner"
       ],
       "recipe": {
-        "name": "Grilled Lamb Chops with Zhoug, Charred Peppers and Tahini Sauce",
+        "name": "Middle Eastern Grilled Lamb Chops with Charred Zucchini and Tahini Sauce",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Lamb loin chops, trimmed",
-            "quantity_g": 370,
+            "name": "Lamb loin chops",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 705.8,
-            "protein_g": 74.0,
+            "calories": 748.4,
+            "protein_g": 73.0,
             "net_carbs_g": 0.0,
-            "fat_g": 45.4
-          },
-          {
-            "name": "Red bell pepper",
-            "quantity_g": 168,
-            "nova_group": 1,
-            "calories": 52.0,
-            "protein_g": 1.6,
-            "net_carbs_g": 7.0,
-            "fat_g": 0.6
+            "fat_g": 51.2
           },
           {
             "name": "Zucchini",
-            "quantity_g": 168,
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 28.6,
-            "protein_g": 2.0,
-            "net_carbs_g": 3.6,
+            "calories": 47.4,
+            "protein_g": 3.2,
+            "net_carbs_g": 6.6,
             "fat_g": 0.6
           },
           {
-            "name": "Tahini",
-            "quantity_g": 34,
-            "nova_group": 2,
-            "calories": 201.6,
-            "protein_g": 5.8,
-            "net_carbs_g": 3.6,
+            "name": "Olive oil",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 160.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
             "fat_g": 18.2
           },
           {
-            "name": "Lemon juice",
-            "quantity_g": 17,
-            "nova_group": 1,
-            "calories": 3.4,
-            "protein_g": 0.0,
-            "net_carbs_g": 1.0,
-            "fat_g": 0.0
+            "name": "Tahini",
+            "quantity_g": 30.0,
+            "nova_group": 2,
+            "calories": 162.4,
+            "protein_g": 4.8,
+            "net_carbs_g": 2.4,
+            "fat_g": 14.6
           },
           {
             "name": "Garlic",
-            "quantity_g": 8.4,
+            "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 11.8,
-            "protein_g": 0.6,
+            "calories": 16.4,
+            "protein_g": 0.8,
+            "net_carbs_g": 2.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Lemon juice",
+            "quantity_g": 30.0,
+            "nova_group": 1,
+            "calories": 5.4,
+            "protein_g": 0.0,
             "net_carbs_g": 1.6,
             "fat_g": 0.0
           },
           {
-            "name": "Fresh parsley",
-            "quantity_g": 8.4,
-            "nova_group": 1,
-            "calories": 3.4,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fresh cilantro",
-            "quantity_g": 8.4,
-            "nova_group": 1,
-            "calories": 1.6,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Olive oil",
-            "quantity_g": 17,
-            "nova_group": 1,
-            "calories": 147.8,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 16.8
-          },
-          {
             "name": "Ground cumin",
-            "quantity_g": 3.4,
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 13.4,
-            "protein_g": 0.6,
+            "calories": 14.6,
+            "protein_g": 0.8,
+            "net_carbs_g": 1.2,
+            "fat_g": 1.0
+          },
+          {
+            "name": "Ground sumac",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 7.4,
+            "protein_g": 0.2,
             "net_carbs_g": 1.0,
-            "fat_g": 0.8
+            "fat_g": 0.2
+          },
+          {
+            "name": "Fresh parsley",
+            "quantity_g": 18.0,
+            "nova_group": 1,
+            "calories": 7.4,
+            "protein_g": 0.6,
+            "net_carbs_g": 0.4,
+            "fat_g": 0.0
           },
           {
             "name": "Salt",
-            "quantity_g": 3.4,
+            "quantity_g": 4.0,
             "nova_group": 1,
             "calories": 0.0,
             "protein_g": 0.0,
@@ -1711,14 +1712,14 @@
           }
         ],
         "instructions": [
-          "Pat lamb chops dry, rub with salt, cumin and a little olive oil, and let sit at room temperature for 15 minutes.",
-          "Blend parsley, cilantro, garlic, a pinch of salt, and a splash of olive oil into a rough zhoug-style green sauce.",
-          "Whisk tahini with lemon juice and a little water until smooth and pourable to make the tahini sauce.",
-          "Heat a grill or heavy skillet over high heat, sear lamb chops 3-4 minutes per side until charred outside and pink inside, then rest.",
-          "Toss bell pepper and zucchini slices with remaining olive oil, grill or char in the same pan until softened with grill marks.",
-          "Plate lamb chops with charred vegetables, drizzle tahini sauce over vegetables and spoon zhoug over the lamb."
+          "Pat lamb chops dry and rub with half the garlic, cumin, sumac, salt, and 5g olive oil. Let marinate 20-30 minutes at room temperature.",
+          "Slice zucchini lengthwise into thick planks, toss with remaining olive oil and a pinch of salt.",
+          "Heat a grill or grill pan over high heat; sear lamb chops 3-4 minutes per side for medium, then rest 5 minutes.",
+          "Grill zucchini planks alongside for 3-4 minutes per side until charred and tender.",
+          "Whisk tahini with remaining garlic, lemon juice, and a splash of water until smooth and pourable to make the sauce.",
+          "Plate the lamb chops with charred zucchini, drizzle tahini sauce over both, and garnish with chopped parsley."
         ],
-        "prep_time_minutes": 25,
+        "prep_time_minutes": 40,
         "servings": 2,
         "prep_notes": null
       }
