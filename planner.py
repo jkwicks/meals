@@ -50,16 +50,6 @@ load_dotenv()
 
 DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
 
-# Fallbacks used only when models.json omits a key (or doesn't exist at all —
-# a fresh install, or `LocalJSONRepository.load_models_config()` tolerating a
-# missing file). models.json is the source of truth once it exists; these
-# values are what generation used before that file existed, kept so a missing
-# key degrades to old behaviour instead of a KeyError three calls deep.
-DEFAULT_MODELS_CONFIG = {
-    "default_planner_model": "google/gemma-4-26b-a4b-it:free",
-    "openrouter_base_url": "https://openrouter.ai/api/v1",
-    "request_timeout_seconds": 120.0,
-}
 # Where the local files live is repository.py's business now; this default
 # instance exists only so the CLI's --help text and pre-repository log
 # messages have a filename to print before a LocalJSONRepository is
@@ -85,10 +75,9 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
 
-# Fallbacks for config.json's "planning_rules" object — same tolerance
-# pattern as DEFAULT_MODELS_CONFIG above: an omitted key (or a config.json
-# predating this section) resolves to the number that used to be a bare
-# module constant.
+# Fallbacks for config.json's "planning_rules" object: an omitted key (or a
+# config.json predating this section) resolves to the number that used to be
+# a bare module constant.
 DEFAULT_PLANNING_RULES = {
     # 28 entries = 4 weeks of daily history, so recipe-name/style/protein
     # rotation has a full 4-week non-repeat window rather than 3.
@@ -986,18 +975,31 @@ def api_key_error() -> Optional[str]:
     return None
 
 
+def _require_models_config(models_config: dict, *keys: str) -> None:
+    """models.json is the only source for these values now — no in-code
+    fallback. An empty or incomplete models.json must fail loudly here,
+    not drift silently onto an outdated hardcoded model or endpoint."""
+    missing = [key for key in keys if not models_config.get(key)]
+    if missing:
+        raise ValueError(
+            f"models.json is missing required key(s): {', '.join(missing)}. "
+            "Set them in models.json — there is no built-in fallback."
+        )
+
+
 def build_client(models_config: Optional[dict] = None) -> instructor.Instructor:
     """`models_config` is the loaded `models.json` (or a dict-alike with the
     same keys) — pass `config.get("models")` from a caller that already
-    merged it in, or `None` to get pre-models.json behaviour."""
+    merged it in."""
     models_config = models_config or {}
     error = api_key_error()
     if error:
         raise RuntimeError(error)
+    _require_models_config(models_config, "openrouter_base_url", "request_timeout_seconds")
     openai_client = OpenAI(
-        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
+        base_url=models_config.get("openrouter_base_url"),
         api_key=os.environ["OPENROUTER_API_KEY"],
-        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
+        timeout=models_config.get("request_timeout_seconds"),
     )
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
 
@@ -1015,10 +1017,11 @@ def build_async_client(models_config: Optional[dict] = None) -> instructor.Instr
     error = api_key_error()
     if error:
         raise RuntimeError(error)
+    _require_models_config(models_config, "openrouter_base_url", "request_timeout_seconds")
     openai_client = AsyncOpenAI(
-        base_url=models_config.get("openrouter_base_url", DEFAULT_MODELS_CONFIG["openrouter_base_url"]),
+        base_url=models_config.get("openrouter_base_url"),
         api_key=os.environ["OPENROUTER_API_KEY"],
-        timeout=models_config.get("request_timeout_seconds", DEFAULT_MODELS_CONFIG["request_timeout_seconds"]),
+        timeout=models_config.get("request_timeout_seconds"),
     )
     # MD_JSON, not JSON/TOOLS — same reason as build_client: Recipe nests
     # Ingredient, and several free OpenRouter providers 422 on the $defs/$ref
@@ -1030,11 +1033,18 @@ def resolve_planner_model(config: dict) -> str:
     """The model a weekly-generation call should use: config.json's explicit
     `openrouter_model` override wins (the CLI's `--model` flag and the
     NiceGUI drawer's model select both write this), else models.json's
-    `default_planner_model`, else the last-resort literal in
-    DEFAULT_MODELS_CONFIG (pre-models.json behaviour)."""
-    return config.get("openrouter_model") or (config.get("models") or {}).get(
-        "default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]
-    )
+    `default_planner_model`. There is no further fallback — an empty
+    models.json and no override must fail loudly, not silently plan against
+    an outdated hardcoded model."""
+    models_config = config.get("models") or {}
+    model = config.get("openrouter_model") or models_config.get("default_planner_model")
+    if not model:
+        raise ValueError(
+            "No planner model configured: config.json has no 'openrouter_model' "
+            "override and models.json has no 'default_planner_model'. Set one "
+            "in models.json."
+        )
+    return model
 
 
 def resolve_recipe_parser_model(config: dict) -> str:
@@ -1048,11 +1058,13 @@ def resolve_recipe_parser_model(config: dict) -> str:
     of which (usually pricier) model the week is generating with.
     """
     models_config = config.get("models") or {}
-    return (
-        models_config.get("recipe_parser_model")
-        or models_config.get("default_planner_model")
-        or DEFAULT_MODELS_CONFIG["default_planner_model"]
-    )
+    model = models_config.get("recipe_parser_model") or models_config.get("default_planner_model")
+    if not model:
+        raise ValueError(
+            "No recipe parser model configured: models.json has neither "
+            "'recipe_parser_model' nor 'default_planner_model' set."
+        )
+    return model
 
 
 async def load_config_with_models(repository: PlanRepository) -> dict:
