@@ -48,7 +48,7 @@
     "Sunday"
   ],
   "servings_per_meal": 2,
-  "generated_at": "2026-08-11T08:48:35.484539",
+  "generated_at": "2026-08-11T16:18:05.797164",
   "cook_events": [
     {
       "slot_id": "Monday:breakfast",
@@ -61,17 +61,17 @@
         "Monday:breakfast"
       ],
       "recipe": {
-        "name": "Greek Yoghurt Berry Seed Bowl with Protein Boost",
+        "name": "Goat's Milk Yoghurt Bowl with Peach, Walnuts and Seeds",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain Greek yoghurt",
+            "name": "Goat's milk yoghurt",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 156.0,
-            "protein_g": 25.0,
-            "net_carbs_g": 8.8,
-            "fat_g": 1.0
+            "calories": 198.2,
+            "protein_g": 12.2,
+            "net_carbs_g": 13.0,
+            "fat_g": 11.2
 
 
 === Sample Structure: week_plan_next.json ===
@@ -153,39 +153,39 @@
 === Sample Structure: meal_history.json ===
 [
   {
-    "day_of_week": "Monday",
-    "generated_at": "2026-08-10T20:03:21.493208",
-    "cuisine": "mexican",
+    "day_of_week": "Tuesday",
+    "generated_at": "2026-08-11T11:38:49.542740",
+    "cuisine": "indian",
     "styles": {
-      "breakfast": "yoghurt_nuts_seeds",
-      "lunch": "salad",
-      "dinner": "grill"
+      "breakfast": "fish_pate",
+      "dinner": "roast",
+      "snack": "nuts_seeds"
     },
     "main_proteins": [
-      "Chicken breast, skinless",
-      "Flank steak"
+      "Chicken breast, skinless"
     ],
     "recipe_names": [
-      "Greek Yoghurt Bowl with Walnuts, Chia and Vanilla Protein",
-      "Grilled Chicken and Chickpea Power Salad",
-      "Carne Asada with Cilantro-Lime Rice and Charred Peppers"
+      "Sardine & Tuna P\u00e2t\u00e9 on Spelt Toast with Grapefruit",
+      "Indian Tandoori-Style Roast Chicken Breast Strip with Pea Raita",
+      "Toasted Pumpkin Seed and Almond Portion"
     ]
   },
   {
-    "day_of_week": "Tuesday",
-    "generated_at": "2026-08-10T20:03:21.493208",
-    "cuisine": "indian",
+    "day_of_week": "Wednesday",
+    "generated_at": "2026-08-11T11:38:49.542740",
+    "cuisine": "thai",
     "styles": {
-      "breakfast": "fish",
-      "dinner": "roast"
+      "breakfast": "beans_toast",
+      "dinner": "braise",
+      "snack": "yoghurt"
     },
     "main_proteins": [
-      "Chicken thighs, skin-on, boneless"
+      "Tuna steak, fresh"
     ],
     "recipe_names": [
-      "Peppered Mackerel with Lemon-Yoghurt and Cucumber",
-      "Tandoori-Style Roast Chicken Thighs with Roasted Cauliflower and Spinach"
-    ]
+      "White Bean & Shrimp Beans on Spelt Toast",
+      "Thai Braised Tuna and Green Pea Curry",
+      "Grapefruit & Raisin Yoghurt Cup"
 
 
 === Sample Structure: whfoods.json ===
