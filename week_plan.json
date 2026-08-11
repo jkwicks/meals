@@ -9,7 +9,7 @@
     "Sunday"
   ],
   "servings_per_meal": 2,
-  "generated_at": "2026-08-11T13:54:56.801174",
+  "generated_at": "2026-08-11T16:18:05.797164",
   "cook_events": [
     {
       "slot_id": "Monday:breakfast",
@@ -22,96 +22,79 @@
         "Monday:breakfast"
       ],
       "recipe": {
-        "name": "Kiwi Raspberry Yoghurt Bowl with Seed Mix",
+        "name": "Goat's Milk Yoghurt Bowl with Peach, Walnuts and Seeds",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain Greek yoghurt",
+            "name": "Goat's milk yoghurt",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 145.4,
-            "protein_g": 24.6,
-            "net_carbs_g": 8.2,
-            "fat_g": 1.0
+            "calories": 198.2,
+            "protein_g": 12.2,
+            "net_carbs_g": 13.0,
+            "fat_g": 11.2
           },
           {
-            "name": "Kiwifruit, sliced",
+            "name": "Fresh peach, chopped",
             "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 69.0,
+            "calories": 50.4,
             "protein_g": 1.4,
-            "net_carbs_g": 12.4,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Fresh raspberries",
-            "quantity_g": 80.0,
-            "nova_group": 1,
-            "calories": 39.2,
-            "protein_g": 1.0,
-            "net_carbs_g": 4.2,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Grapes, halved",
-            "quantity_g": 80.0,
-            "nova_group": 1,
-            "calories": 52.2,
-            "protein_g": 0.6,
-            "net_carbs_g": 12.6,
+            "net_carbs_g": 11.2,
             "fat_g": 0.2
           },
           {
-            "name": "Flaxseeds, ground",
-            "quantity_g": 10.0,
+            "name": "Fresh blueberries",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 50.4,
-            "protein_g": 1.6,
-            "net_carbs_g": 0.6,
-            "fat_g": 4.0
-          },
-          {
-            "name": "Chia seeds",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 44.8,
-            "protein_g": 1.4,
-            "net_carbs_g": 0.8,
-            "fat_g": 3.0
-          },
-          {
-            "name": "Hemp seeds",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 52.2,
-            "protein_g": 3.0,
-            "net_carbs_g": 0.8,
-            "fat_g": 4.4
+            "calories": 20.6,
+            "protein_g": 0.2,
+            "net_carbs_g": 4.6,
+            "fat_g": 0.2
           },
           {
             "name": "Walnuts, chopped",
             "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 244.2,
+            "calories": 244.8,
             "protein_g": 5.6,
-            "net_carbs_g": 2.6,
-            "fat_g": 24.4
+            "net_carbs_g": 2.8,
+            "fat_g": 24.2
           },
           {
-            "name": "Whey protein powder, unflavoured",
-            "quantity_g": 30.0,
-            "nova_group": 3,
-            "calories": 102.6,
-            "protein_g": 22.4,
-            "net_carbs_g": 1.8,
-            "fat_g": 0.6
+            "name": "Chia seeds",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 35.6,
+            "protein_g": 1.4,
+            "net_carbs_g": 1.0,
+            "fat_g": 2.2
+          },
+          {
+            "name": "Whey protein powder, vanilla",
+            "quantity_g": 60.0,
+            "nova_group": 2,
+            "calories": 211.2,
+            "protein_g": 44.8,
+            "net_carbs_g": 3.8,
+            "fat_g": 1.8
+          },
+          {
+            "name": "Maple syrup",
+            "quantity_g": 10.0,
+            "nova_group": 2,
+            "calories": 39.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 10.0,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Spoon yoghurt into a bowl and stir in the whey protein powder until smooth.",
-          "Top with sliced kiwi, raspberries and grapes.",
-          "Sprinkle flaxseeds, chia seeds, hemp seeds and chopped walnuts over the top.",
-          "Serve immediately."
+          "Spoon goat's milk yoghurt into a bowl.",
+          "Whisk whey protein powder with a splash of water into a thick paste and fold into the yoghurt.",
+          "Top with chopped peach and blueberries.",
+          "Sprinkle over walnuts and chia seeds.",
+          "Drizzle with maple syrup and serve immediately."
         ],
         "prep_time_minutes": 8,
         "servings": 2,
@@ -129,92 +112,101 @@
         "Monday:lunch"
       ],
       "recipe": {
-        "name": "Salmon and Black Bean Salad with Fennel and Mustard Greens",
+        "name": "Chicken and White Bean Salad with Fennel, Peas and Lemon",
         "meal_type": "lunch",
         "ingredients": [
           {
-            "name": "Salmon fillet, skin-on",
+            "name": "Chicken breast, skinless, cooked and sliced",
             "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 585.8,
-            "protein_g": 62.0,
+            "calories": 470.2,
+            "protein_g": 87.2,
             "net_carbs_g": 0.0,
-            "fat_g": 36.6
+            "fat_g": 10.2
           },
           {
-            "name": "Mustard greens, chopped",
+            "name": "White beans (cannellini), cooked",
+            "quantity_g": 200.0,
+            "nova_group": 1,
+            "calories": 267.2,
+            "protein_g": 18.0,
+            "net_carbs_g": 34.2,
+            "fat_g": 1.0
+          },
+          {
+            "name": "Green peas, cooked",
             "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 36.6,
-            "protein_g": 3.6,
-            "net_carbs_g": 2.2,
-            "fat_g": 0.4
+            "calories": 123.2,
+            "protein_g": 8.2,
+            "net_carbs_g": 14.6,
+            "fat_g": 0.6
           },
           {
             "name": "Fennel bulb, thinly sliced",
-            "quantity_g": 150.0,
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 43.2,
-            "protein_g": 1.6,
-            "net_carbs_g": 6.6,
+            "calories": 58.8,
+            "protein_g": 2.2,
+            "net_carbs_g": 8.6,
             "fat_g": 0.4
           },
           {
-            "name": "Black beans, cooked",
+            "name": "Mixed salad greens (arugula, spinach)",
+            "quantity_g": 100.0,
+            "nova_group": 1,
+            "calories": 26.6,
+            "protein_g": 2.6,
+            "net_carbs_g": 1.8,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Cherry tomatoes, halved",
             "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 219.0,
-            "protein_g": 14.8,
-            "net_carbs_g": 25.8,
-            "fat_g": 0.8
-          },
-          {
-            "name": "Kalamata olives, pitted",
-            "quantity_g": 30.0,
-            "nova_group": 1,
-            "calories": 58.0,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.6,
-            "fat_g": 5.6
-          },
-          {
-            "name": "Fresh parsley, chopped",
-            "quantity_g": 16.0,
-            "nova_group": 1,
-            "calories": 6.6,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.4,
+            "calories": 24.6,
+            "protein_g": 1.2,
+            "net_carbs_g": 4.4,
             "fat_g": 0.2
           },
           {
-            "name": "Grapes, halved",
-            "quantity_g": 80.0,
+            "name": "Red onion, thinly sliced",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 58.0,
-            "protein_g": 0.6,
-            "net_carbs_g": 14.2,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Lemon juice",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 5.0,
-            "protein_g": 0.2,
-            "net_carbs_g": 1.4,
+            "calories": 15.2,
+            "protein_g": 0.4,
+            "net_carbs_g": 3.0,
             "fat_g": 0.0
           },
           {
             "name": "Extra virgin olive oil",
-            "quantity_g": 10.0,
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 117.8,
+            "calories": 134.6,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 13.2
+            "fat_g": 15.2
           },
           {
-            "name": "Salt",
+            "name": "Lemon juice, fresh",
+            "quantity_g": 30.0,
+            "nova_group": 1,
+            "calories": 7.6,
+            "protein_g": 0.2,
+            "net_carbs_g": 2.0,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Fresh dill, chopped",
+            "quantity_g": 8.0,
+            "nova_group": 1,
+            "calories": 1.8,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Sea salt",
             "quantity_g": 2.0,
             "nova_group": 1,
             "calories": 0.0,
@@ -223,22 +215,24 @@
             "fat_g": 0.0
           },
           {
-            "name": "Black pepper",
+            "name": "Black pepper, ground",
             "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 3.4,
+            "calories": 3.8,
             "protein_g": 0.2,
             "net_carbs_g": 0.4,
-            "fat_g": 0.0
+            "fat_g": 0.2
           }
         ],
         "instructions": [
-          "Season salmon with salt and pepper, pan-sear skin-side down for 4-5 minutes then flip for 3-4 minutes until cooked through.",
-          "Toss mustard greens, fennel, black beans, olives, parsley and grapes in a large bowl.",
-          "Whisk lemon juice, olive oil, salt and pepper for the dressing and pour over the salad.",
-          "Plate the salad and top with the seared salmon fillet, flaked slightly."
+          "Season chicken breast with salt and pepper, grill or pan-sear over medium-high heat for 5-6 minutes per side until cooked through, then slice.",
+          "Blanch green peas in boiling water for 2 minutes, drain and cool.",
+          "In a large bowl, combine salad greens, fennel, cherry tomatoes, red onion, white beans and peas.",
+          "Whisk together olive oil, lemon juice, dill, salt and pepper for the dressing.",
+          "Toss the salad with dressing and divide onto a plate.",
+          "Top with sliced chicken breast and serve immediately."
         ],
-        "prep_time_minutes": 20,
+        "prep_time_minutes": 25,
         "servings": 2,
         "prep_notes": null
       }
@@ -255,128 +249,101 @@
         "Tuesday:lunch"
       ],
       "recipe": {
-        "name": "Grilled Turkey Tacos with Black Bean-Kidney Bean Rice and Charred Salsa",
+        "name": "Mexican Grilled Beef with Charred Fennel, Mushrooms and Brown Rice",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Turkey breast steak, raw",
+            "name": "Beef (lean organic), sirloin steak",
             "quantity_g": 600.0,
             "nova_group": 1,
-            "calories": 710.8,
-            "protein_g": 154.8,
+            "calories": 1017.6,
+            "protein_g": 156.4,
             "net_carbs_g": 0.0,
-            "fat_g": 6.8
+            "fat_g": 37.2
           },
           {
-            "name": "Corn tortillas",
-            "quantity_g": 300.0,
+            "name": "Brown rice, cooked",
+            "quantity_g": 1000.0,
             "nova_group": 1,
-            "calories": 672.8,
-            "protein_g": 17.2,
-            "net_carbs_g": 128.4,
-            "fat_g": 8.8
+            "calories": 1104.4,
+            "protein_g": 23.6,
+            "net_carbs_g": 230.8,
+            "fat_g": 8.0
           },
           {
-            "name": "White rice, cooked",
+            "name": "Fennel bulb, sliced",
             "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 540.8,
-            "protein_g": 10.0,
-            "net_carbs_g": 116.0,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Black beans, cooked",
-            "quantity_g": 200.0,
-            "nova_group": 1,
-            "calories": 274.0,
-            "protein_g": 18.4,
-            "net_carbs_g": 32.4,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Kidney beans, cooked",
-            "quantity_g": 100.0,
-            "nova_group": 1,
-            "calories": 152.4,
-            "protein_g": 10.4,
-            "net_carbs_g": 17.6,
+            "calories": 127.6,
+            "protein_g": 4.8,
+            "net_carbs_g": 20.8,
             "fat_g": 0.8
           },
           {
-            "name": "Red onion, diced",
-            "quantity_g": 100.0,
+            "name": "Crimini mushrooms, sliced",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 41.6,
-            "protein_g": 1.2,
-            "net_carbs_g": 9.2,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Tomato, diced",
-            "quantity_g": 200.0,
-            "nova_group": 1,
-            "calories": 38.0,
-            "protein_g": 1.6,
+            "calories": 74.0,
+            "protein_g": 7.6,
             "net_carbs_g": 6.4,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Fresh parsley, chopped",
-            "quantity_g": 16.0,
-            "nova_group": 1,
-            "calories": 6.8,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.4,
-            "fat_g": 0.0
+            "fat_g": 1.2
           },
           {
             "name": "Lime juice",
             "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 14.0,
+            "calories": 16.4,
             "protein_g": 0.4,
-            "net_carbs_g": 4.0,
+            "net_carbs_g": 4.8,
             "fat_g": 0.0
-          },
-          {
-            "name": "Olive oil",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 246.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 27.6
-          },
-          {
-            "name": "Cumin, ground",
-            "quantity_g": 8.0,
-            "nova_group": 1,
-            "calories": 27.6,
-            "protein_g": 1.2,
-            "net_carbs_g": 2.4,
-            "fat_g": 1.6
-          },
-          {
-            "name": "Chili powder",
-            "quantity_g": 8.0,
-            "nova_group": 1,
-            "calories": 20.8,
-            "protein_g": 1.2,
-            "net_carbs_g": 2.4,
-            "fat_g": 1.2
           },
           {
             "name": "Garlic, minced",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 31.2,
-            "protein_g": 1.2,
-            "net_carbs_g": 5.2,
+            "calories": 37.2,
+            "protein_g": 1.6,
+            "net_carbs_g": 7.2,
             "fat_g": 0.0
           },
           {
-            "name": "Salt",
+            "name": "Dried ancho chile powder",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 62.0,
+            "protein_g": 2.4,
+            "net_carbs_g": 8.4,
+            "fat_g": 2.4
+          },
+          {
+            "name": "Ground cumin",
+            "quantity_g": 12.0,
+            "nova_group": 1,
+            "calories": 37.2,
+            "protein_g": 1.6,
+            "net_carbs_g": 3.6,
+            "fat_g": 2.0
+          },
+          {
+            "name": "Fresh cilantro, chopped",
+            "quantity_g": 30.0,
+            "nova_group": 1,
+            "calories": 8.4,
+            "protein_g": 0.8,
+            "net_carbs_g": 0.4,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Olive oil",
+            "quantity_g": 40.0,
+            "nova_group": 1,
+            "calories": 292.4,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 32.8
+          },
+          {
+            "name": "Sea salt",
             "quantity_g": 8.0,
             "nova_group": 1,
             "calories": 0.0,
@@ -386,12 +353,11 @@
           }
         ],
         "instructions": [
-          "Rub turkey steak with cumin, chili powder, garlic, salt and a little olive oil; let sit 5 minutes.",
-          "Grill or pan-sear turkey over medium-high heat 5-6 minutes per side until cooked through, then slice thinly.",
-          "Warm black beans and kidney beans with a splash of water and pinch of cumin; combine with cooked rice.",
-          "Char tomato and red onion briefly in a hot dry pan, then mix with lime juice and parsley for a fresh salsa.",
-          "Warm tortillas on a grill or dry skillet for 30 seconds per side.",
-          "Fill tortillas with sliced turkey and salsa, serve alongside the bean rice."
+          "Rub beef sirloin with cumin, ancho chile powder, garlic and salt; let sit 10 minutes.",
+          "Heat a grill pan or skillet over high heat, sear beef 3-4 minutes per side to medium-rare, rest and slice against the grain.",
+          "Toss fennel slices and mushrooms with olive oil, grill/char 5-6 minutes until softened and lightly blackened at edges.",
+          "Warm brown rice and squeeze lime juice over rice and vegetables.",
+          "Plate rice, top with charred fennel and mushrooms, fan sliced beef over the top, scatter cilantro."
         ],
         "prep_time_minutes": 25,
         "servings": 4,
@@ -409,52 +375,43 @@
         "Monday:snack"
       ],
       "recipe": {
-        "name": "Peppermint and Parsley Seasoned Boiled Eggs",
+        "name": "Fennel-Dill Boiled Eggs with Green Peas",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Eggs, boiled",
-            "quantity_g": 200.0,
+            "name": "Eggs",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 328.4,
-            "protein_g": 27.4,
-            "net_carbs_g": 2.0,
-            "fat_g": 23.0
+            "calories": 208.4,
+            "protein_g": 17.4,
+            "net_carbs_g": 1.4,
+            "fat_g": 14.8
           },
           {
-            "name": "Fresh parsley, chopped",
-            "quantity_g": 14.0,
+            "name": "Green peas",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 5.2,
-            "protein_g": 0.6,
-            "net_carbs_g": 0.4,
-            "fat_g": 0.2
-          },
-          {
-            "name": "Fresh peppermint, chopped",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 1.8,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fresh raspberries",
-            "quantity_g": 80.0,
-            "nova_group": 1,
-            "calories": 37.0,
-            "protein_g": 0.8,
-            "net_carbs_g": 4.0,
+            "calories": 109.0,
+            "protein_g": 6.8,
+            "net_carbs_g": 12.2,
             "fat_g": 0.6
           },
           {
-            "name": "Lemon zest",
-            "quantity_g": 10.0,
+            "name": "Fennel bulb, sliced",
+            "quantity_g": 80.0,
             "nova_group": 1,
-            "calories": 1.8,
+            "calories": 22.8,
+            "protein_g": 1.0,
+            "net_carbs_g": 2.6,
+            "fat_g": 0.2
+          },
+          {
+            "name": "Maple syrup",
+            "quantity_g": 10.0,
+            "nova_group": 2,
+            "calories": 35.0,
             "protein_g": 0.0,
-            "net_carbs_g": 0.4,
+            "net_carbs_g": 9.4,
             "fat_g": 0.0
           },
           {
@@ -470,18 +427,19 @@
             "name": "Black pepper",
             "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 3.6,
+            "calories": 2.6,
             "protein_g": 0.2,
-            "net_carbs_g": 0.6,
+            "net_carbs_g": 0.4,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Peel and halve the boiled eggs.",
-          "Finely chop parsley and peppermint and sprinkle over the eggs with lemon zest, salt and pepper.",
-          "Serve with fresh raspberries on the side."
+          "Boil eggs for 9-10 minutes, cool in cold water, peel and halve.",
+          "Steam green peas for 3 minutes until tender.",
+          "Toss sliced fennel with a drizzle of maple syrup.",
+          "Arrange eggs with peas and fennel, season with salt and pepper."
         ],
-        "prep_time_minutes": 10,
+        "prep_time_minutes": 15,
         "servings": 2,
         "prep_notes": null
       }
@@ -497,90 +455,81 @@
         "Tuesday:breakfast"
       ],
       "recipe": {
-        "name": "Sardine & Mackerel P\u00e2t\u00e9 on Whole-Grain Toast with Fennel",
+        "name": "Sardine and Leek P\u00e2t\u00e9 on Whole-Grain Toast",
         "meal_type": "breakfast",
         "ingredients": [
           {
             "name": "Tinned sardines in olive oil, drained",
-            "quantity_g": 100.0,
+            "quantity_g": 200.0,
             "nova_group": 3,
-            "calories": 254.2,
-            "protein_g": 31.2,
+            "calories": 384.6,
+            "protein_g": 43.8,
             "net_carbs_g": 0.0,
-            "fat_g": 14.2
+            "fat_g": 21.8
           },
           {
-            "name": "Tinned mackerel in olive oil, drained",
+            "name": "Leek, finely sliced and saut\u00e9ed",
             "quantity_g": 80.0,
-            "nova_group": 3,
-            "calories": 163.4,
-            "protein_g": 17.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 10.4
-          },
-          {
-            "name": "Cream cheese, full fat",
-            "quantity_g": 30.0,
-            "nova_group": 2,
-            "calories": 94.6,
-            "protein_g": 2.0,
-            "net_carbs_g": 0.8,
-            "fat_g": 9.4
-          },
-          {
-            "name": "Fennel bulb, finely chopped",
-            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 16.8,
-            "protein_g": 0.8,
-            "net_carbs_g": 2.8,
+            "calories": 52.4,
+            "protein_g": 1.4,
+            "net_carbs_g": 9.6,
             "fat_g": 0.2
           },
           {
-            "name": "Parsley, fresh, chopped",
-            "quantity_g": 10.0,
+            "name": "Plain yoghurt",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 3.8,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
+            "calories": 26.2,
+            "protein_g": 2.4,
+            "net_carbs_g": 2.0,
+            "fat_g": 1.4
           },
           {
             "name": "Lemon juice",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 3.8,
+            "calories": 2.2,
             "protein_g": 0.0,
-            "net_carbs_g": 1.0,
+            "net_carbs_g": 0.6,
             "fat_g": 0.0
           },
           {
-            "name": "Whole-grain bread, toasted",
-            "quantity_g": 100.0,
+            "name": "Whole-grain bread",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 259.8,
-            "protein_g": 11.2,
-            "net_carbs_g": 37.2,
-            "fat_g": 3.8
+            "calories": 327.8,
+            "protein_g": 14.2,
+            "net_carbs_g": 52.4,
+            "fat_g": 4.4
+          },
+          {
+            "name": "Fresh dill",
+            "quantity_g": 6.0,
+            "nova_group": 1,
+            "calories": 2.2,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.2,
+            "fat_g": 0.0
           },
           {
             "name": "Black pepper",
             "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 3.8,
+            "calories": 4.4,
             "protein_g": 0.2,
-            "net_carbs_g": 0.4,
+            "net_carbs_g": 0.6,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Mash sardines and mackerel together with a fork in a bowl.",
-          "Mix in cream cheese, chopped fennel, parsley and lemon juice until well combined.",
-          "Season with black pepper.",
+          "Saut\u00e9 sliced leek in a dry non-stick pan until soft, about 5 minutes.",
+          "Mash sardines with yoghurt, lemon juice and cooked leek until a chunky p\u00e2t\u00e9 forms.",
+          "Season with black pepper and stir through fresh dill.",
           "Toast the whole-grain bread slices.",
-          "Spread the p\u00e2t\u00e9 generously over the toast and serve immediately."
+          "Spread the sardine p\u00e2t\u00e9 generously over the toast and serve."
         ],
-        "prep_time_minutes": 12,
+        "prep_time_minutes": 15,
         "servings": 2,
         "prep_notes": null
       }
@@ -597,90 +546,108 @@
         "Wednesday:lunch"
       ],
       "recipe": {
-        "name": "Tandoori Turkey Skewer Bite with Charred Fennel",
+        "name": "Indian Roast Salmon with Brussels Sprouts and Leeks",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Turkey breast, raw, diced",
-            "quantity_g": 200.0,
+            "name": "Salmon fillet, skin-on",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 237.6,
-            "protein_g": 52.0,
+            "calories": 859.2,
+            "protein_g": 90.8,
             "net_carbs_g": 0.0,
-            "fat_g": 2.4
+            "fat_g": 55.2
           },
           {
-            "name": "Plain yoghurt, full fat",
-            "quantity_g": 40.0,
+            "name": "Brussels sprouts, halved",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 28.8,
-            "protein_g": 1.6,
-            "net_carbs_g": 1.6,
-            "fat_g": 1.6
+            "calories": 137.6,
+            "protein_g": 11.2,
+            "net_carbs_g": 13.6,
+            "fat_g": 1.2
           },
           {
-            "name": "Ghee",
+            "name": "Leeks, sliced",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 102.0,
+            "protein_g": 2.4,
+            "net_carbs_g": 19.2,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Plain yoghurt (goat's milk)",
+            "quantity_g": 100.0,
+            "nova_group": 1,
+            "calories": 77.2,
+            "protein_g": 4.4,
+            "net_carbs_g": 5.6,
+            "fat_g": 4.4
+          },
+          {
+            "name": "Garam masala",
             "quantity_g": 20.0,
-            "nova_group": 2,
-            "calories": 168.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 19.2
+            "nova_group": 1,
+            "calories": 24.8,
+            "protein_g": 0.8,
+            "net_carbs_g": 2.8,
+            "fat_g": 0.8
           },
           {
-            "name": "Tandoori spice mix (paprika, cumin, coriander, chili)",
-            "quantity_g": 8.0,
+            "name": "Turmeric powder",
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 24.0,
-            "protein_g": 0.8,
+            "calories": 16.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 2.8,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Ginger, grated",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 11.2,
+            "protein_g": 0.4,
             "net_carbs_g": 2.4,
-            "fat_g": 0.8
+            "fat_g": 0.0
           },
           {
             "name": "Garlic, minced",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 9.6,
-            "protein_g": 0.4,
-            "net_carbs_g": 1.6,
+            "calories": 16.4,
+            "protein_g": 0.8,
+            "net_carbs_g": 3.2,
             "fat_g": 0.0
           },
           {
-            "name": "Fennel bulb, sliced, roasted",
-            "quantity_g": 40.0,
-            "nova_group": 1,
-            "calories": 14.4,
-            "protein_g": 0.8,
-            "net_carbs_g": 2.4,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Fresh ginger, grated",
+            "name": "Olive oil",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 4.8,
+            "calories": 121.2,
             "protein_g": 0.0,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.0
+            "net_carbs_g": 0.0,
+            "fat_g": 13.6
           },
           {
             "name": "Lemon juice",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 2.4,
+            "calories": 5.6,
             "protein_g": 0.0,
-            "net_carbs_g": 0.8,
+            "net_carbs_g": 1.6,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Mix yoghurt, ghee, tandoori spices, garlic, ginger and lemon juice into a marinade.",
-          "Coat turkey pieces in the marinade and let sit 10 minutes.",
-          "Skewer turkey and roast/grill at high heat for 12-15 minutes, turning until charred and cooked through.",
-          "Toss fennel slices in the pan drippings and roast alongside for the last 8 minutes.",
-          "Serve the turkey skewer with the charred fennel."
+          "Preheat oven to 220\u00b0C.",
+          "Mix yoghurt, garam masala, turmeric, ginger and garlic into a marinade; coat salmon and let sit 10 minutes.",
+          "Toss Brussels sprouts and leeks with olive oil and a pinch of salt on a roasting tray.",
+          "Roast vegetables for 10 minutes, then add marinated salmon to the tray and roast a further 10-12 minutes until salmon is cooked through and vegetables are tender.",
+          "Finish with a squeeze of lemon juice before serving."
         ],
-        "prep_time_minutes": 25,
+        "prep_time_minutes": 28,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -696,42 +663,24 @@
         "Tuesday:snack"
       ],
       "recipe": {
-        "name": "Toasted Pumpkin Seed and Walnut Bite",
+        "name": "Toasted Pumpkin Seed Portion",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Pumpkin seeds, toasted",
-            "quantity_g": 10.0,
+            "name": "Pumpkin seeds",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 20.6,
-            "protein_g": 1.0,
-            "net_carbs_g": 0.6,
-            "fat_g": 1.8
-          },
-          {
-            "name": "Walnuts",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 16.8,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.2,
-            "fat_g": 1.6
-          },
-          {
-            "name": "Sunflower seeds",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 15.4,
-            "protein_g": 0.6,
-            "net_carbs_g": 0.2,
-            "fat_g": 1.2
+            "calories": 0.0,
+            "protein_g": 12.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Combine toasted pumpkin seeds, walnuts and sunflower seeds in a small bowl.",
-          "Serve as a small snack portion."
+          "Dry toast pumpkin seeds in a small pan over low heat for 2-3 minutes until fragrant.",
+          "Cool slightly and serve in a small bowl."
         ],
-        "prep_time_minutes": 2,
+        "prep_time_minutes": 5,
         "servings": 2,
         "prep_notes": null
       }
@@ -747,82 +696,81 @@
         "Wednesday:breakfast"
       ],
       "recipe": {
-        "name": "Kidney Bean & Turkey Beans on Toast",
+        "name": "Beef and Green Pea Baked Beans on Toast",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Kidney beans, cooked",
-            "quantity_g": 200.0,
+            "name": "Lean organic beef mince, cooked",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 224.2,
-            "protein_g": 15.4,
-            "net_carbs_g": 26.0,
+            "calories": 168.8,
+            "protein_g": 23.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 8.0
+          },
+          {
+            "name": "Haricot beans in tomato sauce (no added sugar)",
+            "quantity_g": 200.0,
+            "nova_group": 3,
+            "calories": 170.6,
+            "protein_g": 10.6,
+            "net_carbs_g": 24.8,
             "fat_g": 0.8
           },
           {
-            "name": "Turkey breast, cooked, diced",
-            "quantity_g": 100.0,
+            "name": "Green peas, frozen",
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 160.8,
-            "protein_g": 30.2,
-            "net_carbs_g": 0.0,
-            "fat_g": 3.0
+            "calories": 42.6,
+            "protein_g": 2.8,
+            "net_carbs_g": 4.4,
+            "fat_g": 0.2
           },
           {
-            "name": "Tomato passata",
-            "quantity_g": 100.0,
-            "nova_group": 2,
-            "calories": 32.4,
+            "name": "Crimini mushrooms, sliced",
+            "quantity_g": 80.0,
+            "nova_group": 1,
+            "calories": 16.0,
             "protein_g": 1.6,
-            "net_carbs_g": 4.8,
+            "net_carbs_g": 1.2,
             "fat_g": 0.2
           },
           {
             "name": "Whole-grain bread",
-            "quantity_g": 60.0,
-            "nova_group": 3,
-            "calories": 154.2,
-            "protein_g": 6.4,
-            "net_carbs_g": 24.4,
-            "fat_g": 2.0
+            "quantity_g": 80.0,
+            "nova_group": 1,
+            "calories": 222.0,
+            "protein_g": 9.6,
+            "net_carbs_g": 35.6,
+            "fat_g": 3.0
           },
           {
             "name": "Olive oil",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 115.4,
+            "calories": 78.2,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 13.0
+            "fat_g": 8.8
           },
           {
-            "name": "Parsley, fresh, chopped",
-            "quantity_g": 8.0,
+            "name": "Fresh parsley, chopped",
+            "quantity_g": 6.0,
             "nova_group": 1,
-            "calories": 3.2,
-            "protein_g": 0.4,
+            "calories": 1.8,
+            "protein_g": 0.2,
             "net_carbs_g": 0.2,
             "fat_g": 0.0
-          },
-          {
-            "name": "Smoked paprika",
-            "quantity_g": 4.0,
-            "nova_group": 1,
-            "calories": 9.8,
-            "protein_g": 0.4,
-            "net_carbs_g": 1.2,
-            "fat_g": 0.4
           }
         ],
         "instructions": [
-          "Heat olive oil in a small pan and saut\u00e9 paprika briefly.",
-          "Add kidney beans and tomato passata, simmer 8 minutes until thickened.",
-          "Stir in cooked diced turkey and warm through.",
-          "Toast the whole-grain bread slice.",
-          "Spoon the bean and turkey mixture over the toast.",
-          "Scatter fresh parsley on top and serve."
+          "Heat olive oil in a pan and saut\u00e9 crimini mushrooms until golden.",
+          "Add cooked beef mince and green peas, warming through for 2-3 minutes.",
+          "Stir in the beans in tomato sauce and simmer gently for 5 minutes.",
+          "Toast the whole-grain bread.",
+          "Spoon the bean and beef mixture over toast, garnish with parsley and serve."
         ],
-        "prep_time_minutes": 15,
+        "prep_time_minutes": 18,
         "servings": 2,
         "prep_notes": null
       }
@@ -839,62 +787,71 @@
         "Thursday:lunch"
       ],
       "recipe": {
-        "name": "Thai Braised Salmon in Coconut-Green Curry Broth",
+        "name": "Thai Braised Beef and Mushroom in Fennel Broth",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Salmon fillet, skin-on",
+            "name": "Beef (lean organic), chuck, cubed",
             "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 958.8,
-            "protein_g": 101.6,
+            "calories": 809.6,
+            "protein_g": 114.8,
             "net_carbs_g": 0.0,
-            "fat_g": 60.0
+            "fat_g": 32.8
           },
           {
-            "name": "Coconut milk, canned",
+            "name": "Crimini mushrooms, halved",
+            "quantity_g": 250.0,
+            "nova_group": 1,
+            "calories": 52.4,
+            "protein_g": 4.8,
+            "net_carbs_g": 4.4,
+            "fat_g": 0.8
+          },
+          {
+            "name": "Fennel bulb, sliced",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 374.8,
-            "protein_g": 3.6,
-            "net_carbs_g": 5.2,
-            "fat_g": 39.2
+            "calories": 58.8,
+            "protein_g": 2.4,
+            "net_carbs_g": 10.0,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Coconut milk, light",
+            "quantity_g": 200.0,
+            "nova_group": 1,
+            "calories": 134.4,
+            "protein_g": 1.6,
+            "net_carbs_g": 4.8,
+            "fat_g": 12.4
           },
           {
             "name": "Fish sauce",
             "quantity_g": 20.0,
             "nova_group": 2,
-            "calories": 15.2,
+            "calories": 16.4,
             "protein_g": 2.4,
-            "net_carbs_g": 0.8,
+            "net_carbs_g": 1.2,
             "fat_g": 0.0
           },
           {
-            "name": "Green curry paste",
-            "quantity_g": 40.0,
-            "nova_group": 2,
-            "calories": 46.0,
-            "protein_g": 1.2,
-            "net_carbs_g": 4.8,
-            "fat_g": 1.6
+            "name": "Lemongrass, minced",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 16.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 3.2,
+            "fat_g": 0.0
           },
           {
-            "name": "Mustard greens",
-            "quantity_g": 300.0,
+            "name": "Galangal/ginger, sliced",
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 82.8,
-            "protein_g": 8.4,
-            "net_carbs_g": 4.8,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Fennel bulb, sliced",
-            "quantity_g": 250.0,
-            "nova_group": 1,
-            "calories": 80.0,
-            "protein_g": 3.2,
-            "net_carbs_g": 12.4,
-            "fat_g": 0.8
+            "calories": 16.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 3.2,
+            "fat_g": 0.0
           },
           {
             "name": "Kaffir lime leaves",
@@ -906,43 +863,32 @@
             "fat_g": 0.0
           },
           {
-            "name": "Fresh chili, sliced",
+            "name": "Thai chile, sliced",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 6.0,
-            "protein_g": 0.4,
+            "calories": 3.2,
+            "protein_g": 0.0,
             "net_carbs_g": 0.8,
             "fat_g": 0.0
           },
           {
-            "name": "Fresh mint (peppermint)",
+            "name": "Fresh basil leaves",
             "quantity_g": 16.0,
             "nova_group": 1,
-            "calories": 6.0,
+            "calories": 3.2,
             "protein_g": 0.4,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Lime juice",
-            "quantity_g": 40.0,
-            "nova_group": 1,
-            "calories": 9.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 2.8,
+            "net_carbs_g": 0.0,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "In a heavy pot, warm the green curry paste until fragrant, about 1 minute.",
-          "Pour in coconut milk and fish sauce, stir to combine and bring to a gentle simmer.",
-          "Add kaffir lime leaves and fennel slices, cover and braise gently for 10 minutes.",
-          "Nestle the salmon fillet into the broth, cover and braise on low heat for 10-12 minutes until just cooked through.",
-          "Add mustard greens in the last 3 minutes, letting them wilt into the broth.",
-          "Rest the pot off heat for 5 minutes to let flavours deepen.",
-          "Finish with lime juice, fresh chili and mint before serving in a bowl with the broth."
+          "Sear beef cubes in a hot pot until browned on all sides.",
+          "Add lemongrass, galangal, chile and kaffir lime leaves, stir for 1 minute.",
+          "Pour in coconut milk and fish sauce, bring to a simmer, cover and braise 15 minutes.",
+          "Add mushrooms and fennel, continue braising 8-10 minutes until beef is tender and vegetables soft.",
+          "Rest 5 minutes off heat, stir through basil leaves before serving."
         ],
-        "prep_time_minutes": 28,
+        "prep_time_minutes": 30,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -958,62 +904,33 @@
         "Wednesday:snack"
       ],
       "recipe": {
-        "name": "Kiwi Raspberry Yoghurt Cup with Mint",
+        "name": "Goat's Milk Yoghurt with Maple Drizzle",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Greek yoghurt, plain",
+            "name": "Goat's milk yoghurt",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 150.8,
-            "protein_g": 22.2,
-            "net_carbs_g": 8.6,
-            "fat_g": 4.2
+            "calories": 0.0,
+            "protein_g": 50.0,
+            "net_carbs_g": 12.0,
+            "fat_g": 0.0
           },
           {
-            "name": "Kiwifruit, sliced",
-            "quantity_g": 80.0,
-            "nova_group": 1,
-            "calories": 51.4,
-            "protein_g": 1.0,
-            "net_carbs_g": 9.4,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Raspberries, fresh",
-            "quantity_g": 30.0,
-            "nova_group": 1,
-            "calories": 8.6,
-            "protein_g": 0.6,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.2
-          },
-          {
-            "name": "Whey protein powder, unsweetened",
+            "name": "Maple syrup",
             "quantity_g": 10.0,
             "nova_group": 2,
-            "calories": 51.4,
-            "protein_g": 10.2,
-            "net_carbs_g": 0.6,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Fresh mint (peppermint), chopped",
-            "quantity_g": 4.0,
-            "nova_group": 1,
-            "calories": 1.8,
+            "calories": 0.0,
             "protein_g": 0.0,
-            "net_carbs_g": 0.2,
+            "net_carbs_g": 2.0,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Whisk whey protein powder into the Greek yoghurt until smooth.",
-          "Spoon into a bowl or cup.",
-          "Top with sliced kiwifruit and raspberries.",
-          "Garnish with chopped fresh mint and serve immediately."
+          "Spoon yoghurt into a small bowl.",
+          "Drizzle with maple syrup and serve immediately."
         ],
-        "prep_time_minutes": 5,
+        "prep_time_minutes": 3,
         "servings": 2,
         "prep_notes": null
       }
@@ -1029,80 +946,79 @@
         "Thursday:breakfast"
       ],
       "recipe": {
-        "name": "Scrambled Eggs and Smoked Salmon on Toast with Fennel & Parsley",
+        "name": "Scrambled Eggs and Smoked Salmon with Fennel on Toast",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Egg",
+            "name": "Eggs",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 272.0,
-            "protein_g": 24.0,
+            "calories": 268.4,
+            "protein_g": 23.6,
             "net_carbs_g": 1.4,
-            "fat_g": 18.0
+            "fat_g": 17.8
           },
           {
             "name": "Smoked salmon",
             "quantity_g": 100.0,
             "nova_group": 3,
-            "calories": 112.2,
-            "protein_g": 18.6,
+            "calories": 110.8,
+            "protein_g": 18.4,
             "net_carbs_g": 0.0,
-            "fat_g": 4.2
+            "fat_g": 4.4
+          },
+          {
+            "name": "Fennel bulb, thinly sliced",
+            "quantity_g": 100.0,
+            "nova_group": 1,
+            "calories": 28.2,
+            "protein_g": 1.2,
+            "net_carbs_g": 4.4,
+            "fat_g": 0.2
           },
           {
             "name": "Whole-grain bread",
             "quantity_g": 80.0,
-            "nova_group": 3,
-            "calories": 182.6,
-            "protein_g": 8.4,
-            "net_carbs_g": 28.6,
-            "fat_g": 2.4
+            "nova_group": 1,
+            "calories": 212.0,
+            "protein_g": 9.2,
+            "net_carbs_g": 33.8,
+            "fat_g": 2.8
           },
           {
-            "name": "Fennel bulb, sliced",
-            "quantity_g": 80.0,
+            "name": "Goat's milk",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 22.8,
-            "protein_g": 1.0,
-            "net_carbs_g": 3.6,
-            "fat_g": 0.2
+            "calories": 24.4,
+            "protein_g": 1.2,
+            "net_carbs_g": 1.6,
+            "fat_g": 1.6
           },
           {
-            "name": "Parsley, fresh chopped",
-            "quantity_g": 10.0,
+            "name": "Fresh dill",
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 3.8,
-            "protein_g": 0.4,
+            "calories": 1.8,
+            "protein_g": 0.2,
             "net_carbs_g": 0.2,
             "fat_g": 0.0
           },
           {
             "name": "Butter",
             "quantity_g": 10.0,
-            "nova_group": 2,
-            "calories": 68.4,
+            "nova_group": 1,
+            "calories": 54.4,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
-            "fat_g": 7.8
-          },
-          {
-            "name": "Grapes, halved",
-            "quantity_g": 60.0,
-            "nova_group": 1,
-            "calories": 38.0,
-            "protein_g": 0.4,
-            "net_carbs_g": 9.4,
-            "fat_g": 0.2
+            "fat_g": 6.0
           }
         ],
         "instructions": [
-          "Whisk eggs and season lightly with salt and pepper.",
-          "Melt butter in a nonstick pan over medium-low heat and scramble eggs gently until just set.",
-          "Toast the whole-grain bread until golden.",
-          "Thinly slice fennel and saut\u00e9 briefly in the same pan for 1-2 minutes, or serve raw for crunch.",
-          "Top toast with scrambled eggs, flaked smoked salmon, saut\u00e9ed fennel and chopped parsley.",
-          "Serve with fresh halved grapes on the side."
+          "Saut\u00e9 sliced fennel in butter over medium heat until softened, about 6 minutes.",
+          "Whisk eggs with goat's milk and pour into the pan with fennel.",
+          "Scramble gently until just set.",
+          "Toast the whole-grain bread and top with the fennel scramble.",
+          "Lay smoked salmon over the top, sprinkle with dill and serve."
         ],
         "prep_time_minutes": 15,
         "servings": 2,
@@ -1121,110 +1037,100 @@
         "Friday:lunch"
       ],
       "recipe": {
-        "name": "Japanese Turkey and Black Bean Curry with Mustard Greens",
+        "name": "Japanese Calf's Liver and Mushroom Curry with Green Peas",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Turkey breast, diced raw",
+            "name": "Calf's liver, sliced",
             "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 379.2,
-            "protein_g": 82.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 4.0
+            "calories": 568.4,
+            "protein_g": 85.6,
+            "net_carbs_g": 11.2,
+            "fat_g": 14.4
           },
           {
-            "name": "Black beans, cooked",
-            "quantity_g": 150.0,
+            "name": "Crimini mushrooms, sliced",
+            "quantity_g": 250.0,
             "nova_group": 1,
-            "calories": 169.2,
-            "protein_g": 11.2,
-            "net_carbs_g": 21.6,
+            "calories": 50.8,
+            "protein_g": 4.8,
+            "net_carbs_g": 4.4,
             "fat_g": 0.8
           },
           {
-            "name": "Mustard greens, chopped",
+            "name": "Green peas",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 51.2,
-            "protein_g": 5.2,
-            "net_carbs_g": 3.2,
+            "calories": 158.8,
+            "protein_g": 10.4,
+            "net_carbs_g": 19.2,
             "fat_g": 0.8
           },
           {
-            "name": "Onion, finely chopped",
-            "quantity_g": 80.0,
+            "name": "Leeks, sliced",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 30.8,
-            "protein_g": 0.8,
-            "net_carbs_g": 6.4,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Curry powder",
-            "quantity_g": 20.0,
-            "nova_group": 2,
-            "calories": 46.0,
-            "protein_g": 2.0,
-            "net_carbs_g": 5.2,
-            "fat_g": 1.6
-          },
-          {
-            "name": "Soy sauce (shoyu)",
-            "quantity_g": 20.0,
-            "nova_group": 2,
-            "calories": 12.8,
-            "protein_g": 1.6,
-            "net_carbs_g": 1.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Dashi stock (kombu-bonito, low sodium)",
-            "quantity_g": 400.0,
-            "nova_group": 2,
-            "calories": 15.2,
+            "calories": 98.4,
             "protein_g": 2.4,
-            "net_carbs_g": 1.2,
+            "net_carbs_g": 18.4,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Curry powder (Japanese-style)",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 76.0,
+            "protein_g": 3.2,
+            "net_carbs_g": 9.6,
+            "fat_g": 3.2
+          },
+          {
+            "name": "Soy sauce",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 16.0,
+            "protein_g": 2.4,
+            "net_carbs_g": 1.6,
             "fat_g": 0.0
+          },
+          {
+            "name": "Chicken or dashi stock",
+            "quantity_g": 400.0,
+            "nova_group": 1,
+            "calories": 16.0,
+            "protein_g": 1.6,
+            "net_carbs_g": 0.8,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Sesame oil",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 111.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 12.8
           },
           {
             "name": "Garlic, minced",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 18.0,
+            "calories": 19.2,
             "protein_g": 0.8,
             "net_carbs_g": 3.6,
             "fat_g": 0.0
-          },
-          {
-            "name": "Ginger, minced",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 10.4,
-            "protein_g": 0.4,
-            "net_carbs_g": 2.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fennel bulb, thinly sliced",
-            "quantity_g": 100.0,
-            "nova_group": 1,
-            "calories": 30.8,
-            "protein_g": 1.2,
-            "net_carbs_g": 4.8,
-            "fat_g": 0.4
           }
         ],
         "instructions": [
-          "Saut\u00e9 onion, garlic and ginger in a splash of water or dashi over medium heat until fragrant.",
-          "Add diced turkey and cook until lightly browned on all sides.",
-          "Stir in curry powder and cook for 1 minute to toast the spices.",
-          "Pour in dashi stock and soy sauce, bring to a simmer.",
-          "Add black beans and fennel, simmer for 10 minutes until turkey is cooked through.",
-          "Stir in mustard greens and cook for 2 more minutes until just wilted.",
-          "Serve hot as a light Japanese-style curry."
+          "Heat sesame oil in a pan, saut\u00e9 leeks and garlic until fragrant.",
+          "Add mushrooms and cook 3 minutes until softened.",
+          "Push vegetables aside, quickly sear liver slices 1 minute per side (do not overcook).",
+          "Stir in curry powder, stock and soy sauce, simmer 5 minutes.",
+          "Add green peas, cook 2 more minutes until liver is just cooked through and sauce slightly thickened.",
+          "Rest 2 minutes before serving."
         ],
-        "prep_time_minutes": 25,
+        "prep_time_minutes": 22,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -1240,52 +1146,34 @@
         "Thursday:snack"
       ],
       "recipe": {
-        "name": "Kiwi and Raspberry Turkey Bites with Peppermint",
+        "name": "Stone Fruit and Salmon Protein Bites",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Turkey breast, cooked, sliced",
+            "name": "Cooked salmon, flaked",
             "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 71.4,
-            "protein_g": 15.6,
+            "calories": 0.0,
+            "protein_g": 44.0,
             "net_carbs_g": 0.0,
-            "fat_g": 0.8
+            "fat_g": 0.0
           },
           {
-            "name": "Kiwifruit, sliced",
-            "quantity_g": 60.0,
+            "name": "Fresh peach, sliced",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 38.8,
-            "protein_g": 0.6,
-            "net_carbs_g": 6.8,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Raspberries",
-            "quantity_g": 30.0,
-            "nova_group": 1,
-            "calories": 15.6,
-            "protein_g": 0.4,
-            "net_carbs_g": 1.8,
-            "fat_g": 0.2
-          },
-          {
-            "name": "Peppermint leaves, fresh chopped",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 1.6,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
+            "calories": 0.0,
+            "protein_g": 2.0,
+            "net_carbs_g": 30.0,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Arrange sliced turkey, kiwifruit and raspberries on a small plate.",
-          "Scatter chopped fresh peppermint leaves over the top.",
-          "Serve immediately as a refreshing protein-fruit snack."
+          "Flake cooked salmon into small pieces.",
+          "Arrange sliced fresh peach alongside salmon on a plate.",
+          "Serve chilled or at room temperature."
         ],
-        "prep_time_minutes": 5,
+        "prep_time_minutes": 10,
         "servings": 2,
         "prep_notes": null
       }
@@ -1301,22 +1189,22 @@
         "Friday:breakfast"
       ],
       "recipe": {
-        "name": "Raspberry Kiwi Protein Shake",
+        "name": "Cocoa Cherry Protein Shake with Oats and Flax",
         "meal_type": "breakfast",
         "ingredients": [
           {
             "name": "Whey protein powder",
-            "quantity_g": 80.0,
-            "nova_group": 3,
-            "calories": 340.0,
-            "protein_g": 66.0,
-            "net_carbs_g": 8.0,
-            "fat_g": 4.0
+            "quantity_g": 100.0,
+            "nova_group": 2,
+            "calories": 359.6,
+            "protein_g": 76.2,
+            "net_carbs_g": 6.4,
+            "fat_g": 3.2
           },
           {
             "name": "Creatine monohydrate",
             "quantity_g": 10.0,
-            "nova_group": 3,
+            "nova_group": 2,
             "calories": 0.0,
             "protein_g": 0.0,
             "net_carbs_g": 0.0,
@@ -1332,45 +1220,45 @@
             "fat_g": 0.0
           },
           {
-            "name": "Frozen raspberries",
+            "name": "Frozen cherries",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 104.0,
+            "calories": 133.2,
             "protein_g": 2.4,
-            "net_carbs_g": 10.8,
-            "fat_g": 1.2
+            "net_carbs_g": 25.4,
+            "fat_g": 0.4
           },
           {
-            "name": "Kiwifruit",
-            "quantity_g": 150.0,
+            "name": "Rolled oats",
+            "quantity_g": 30.0,
             "nova_group": 1,
-            "calories": 86.0,
-            "protein_g": 1.6,
-            "net_carbs_g": 16.0,
-            "fat_g": 0.8
+            "calories": 122.6,
+            "protein_g": 4.2,
+            "net_carbs_g": 19.0,
+            "fat_g": 2.4
           },
           {
-            "name": "Plain Greek yoghurt",
-            "quantity_g": 150.0,
-            "nova_group": 1,
-            "calories": 124.0,
-            "protein_g": 13.6,
-            "net_carbs_g": 6.0,
-            "fat_g": 6.4
-          },
-          {
-            "name": "Chia seeds",
+            "name": "Cocoa powder, unsweetened",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 48.0,
-            "protein_g": 1.6,
+            "calories": 27.4,
+            "protein_g": 2.4,
             "net_carbs_g": 1.0,
-            "fat_g": 3.0
+            "fat_g": 1.4
+          },
+          {
+            "name": "Flaxseeds, ground",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 57.0,
+            "protein_g": 2.0,
+            "net_carbs_g": 0.2,
+            "fat_g": 4.4
           }
         ],
         "instructions": [
-          "Add water, protein powder and creatine to a blender.",
-          "Add frozen raspberries, peeled kiwifruit, Greek yoghurt and chia seeds.",
+          "Add water, whey protein powder and creatine to a blender.",
+          "Add frozen cherries, oats, cocoa powder and ground flaxseeds.",
           "Blend on high until smooth and creamy.",
           "Pour into a glass and serve immediately."
         ],
@@ -1391,98 +1279,97 @@
         "Saturday:lunch"
       ],
       "recipe": {
-        "name": "Greek Sheet-Pan Salmon with Fennel, Olives and Mustard Greens",
+        "name": "Greek One-Pan Salmon with Fennel, Leeks and Brown Rice",
         "meal_type": "dinner",
         "ingredients": [
           {
             "name": "Salmon fillet, skin-on",
-            "quantity_g": 400.0,
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 898.8,
-            "protein_g": 89.6,
+            "calories": 604.8,
+            "protein_g": 63.2,
             "net_carbs_g": 0.0,
-            "fat_g": 58.8
+            "fat_g": 38.8
           },
           {
-            "name": "Fennel bulb",
-            "quantity_g": 350.0,
+            "name": "Fennel bulb, sliced",
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 104.8,
-            "protein_g": 4.4,
-            "net_carbs_g": 15.6,
-            "fat_g": 0.8
+            "calories": 66.0,
+            "protein_g": 2.8,
+            "net_carbs_g": 10.4,
+            "fat_g": 0.4
           },
           {
-            "name": "Mustard greens",
-            "quantity_g": 300.0,
+            "name": "Leeks, sliced",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 83.2,
-            "protein_g": 8.4,
-            "net_carbs_g": 4.8,
-            "fat_g": 1.2
+            "calories": 82.0,
+            "protein_g": 2.0,
+            "net_carbs_g": 15.2,
+            "fat_g": 0.4
           },
           {
-            "name": "Kalamata olives",
-            "quantity_g": 60.0,
+            "name": "Cherry tomatoes, halved",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 92.8,
-            "protein_g": 0.8,
-            "net_carbs_g": 1.6,
-            "fat_g": 9.2
+            "calories": 29.2,
+            "protein_g": 1.2,
+            "net_carbs_g": 5.2,
+            "fat_g": 0.4
           },
           {
-            "name": "Extra virgin olive oil",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 136.0,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 15.6
-          },
-          {
-            "name": "Lemon juice",
+            "name": "Kalamata olives, pitted",
             "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 9.2,
+            "calories": 58.0,
             "protein_g": 0.4,
-            "net_carbs_g": 2.4,
-            "fat_g": 0.0
+            "net_carbs_g": 1.2,
+            "fat_g": 5.2
           },
           {
-            "name": "Garlic",
-            "quantity_g": 20.0,
+            "name": "Feta cheese",
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 27.6,
-            "protein_g": 1.2,
-            "net_carbs_g": 4.8,
-            "fat_g": 0.0
+            "calories": 140.0,
+            "protein_g": 7.2,
+            "net_carbs_g": 1.2,
+            "fat_g": 11.2
           },
           {
-            "name": "Fresh parsley",
+            "name": "Olive oil",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 9.2,
-            "protein_g": 0.8,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.0
+            "calories": 116.0,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 13.2
           },
           {
             "name": "Dried oregano",
-            "quantity_g": 8.0,
+            "quantity_g": 4.0,
             "nova_group": 1,
-            "calories": 15.6,
-            "protein_g": 0.8,
+            "calories": 13.2,
+            "protein_g": 0.4,
             "net_carbs_g": 1.6,
-            "fat_g": 0.8
+            "fat_g": 0.4
+          },
+          {
+            "name": "Lemon juice",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 5.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 2.0,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Preheat oven to 200\u00b0C.",
-          "Slice fennel bulb and toss on a lined tray with olive oil, garlic, oregano and a pinch of salt.",
-          "Roast fennel for 10 minutes, then push to one side and add salmon fillet skin-side down and olives.",
-          "Roast a further 12-15 minutes until salmon is just cooked through.",
-          "Scatter mustard greens over the tray in the last 3 minutes to wilt slightly.",
-          "Squeeze lemon juice over everything, sprinkle with fresh parsley and serve."
+          "Preheat oven to 210\u00b0C.",
+          "Arrange fennel, leeks and cherry tomatoes on a baking tray, drizzle with half the olive oil, roast 10 minutes.",
+          "Push vegetables aside, place salmon on the tray, drizzle remaining oil, sprinkle oregano.",
+          "Return to oven and roast 10-12 minutes until salmon is cooked through.",
+          "Scatter olives and feta over the tray, squeeze lemon juice, serve directly from the pan."
         ],
         "prep_time_minutes": 25,
         "servings": 4,
@@ -1500,53 +1387,44 @@
         "Friday:snack"
       ],
       "recipe": {
-        "name": "Peppermint & Parsley Boiled Eggs with Fennel Seed",
+        "name": "Leek and Herb Boiled Egg",
         "meal_type": "snack",
         "ingredients": [
           {
             "name": "Eggs",
             "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 179.4,
-            "protein_g": 15.8,
-            "net_carbs_g": 0.8,
-            "fat_g": 12.0
+            "calories": 186.0,
+            "protein_g": 16.0,
+            "net_carbs_g": 1.2,
+            "fat_g": 13.2
           },
           {
-            "name": "Fresh parsley",
-            "quantity_g": 6.0,
-            "nova_group": 1,
-            "calories": 2.6,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fresh peppermint leaves",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 2.6,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Fennel seeds",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 10.0,
-            "protein_g": 0.6,
-            "net_carbs_g": 0.8,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Grapes",
+            "name": "Leeks, finely sliced and saut\u00e9ed",
             "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 35.2,
-            "protein_g": 0.4,
-            "net_carbs_g": 8.6,
+            "calories": 0.0,
+            "protein_g": 1.0,
+            "net_carbs_g": 4.0,
             "fat_g": 0.2
+          },
+          {
+            "name": "Cooked salmon, flaked",
+            "quantity_g": 100.0,
+            "nova_group": 1,
+            "calories": 0.0,
+            "protein_g": 21.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Chives, chopped",
+            "quantity_g": 6.0,
+            "nova_group": 1,
+            "calories": 0.0,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.2,
+            "fat_g": 0.0
           },
           {
             "name": "Sea salt",
@@ -1559,13 +1437,12 @@
           }
         ],
         "instructions": [
-          "Place eggs in a pot of cold water, bring to a boil, then simmer for 8 minutes.",
-          "Cool eggs in cold water, peel and halve.",
-          "Finely chop parsley and peppermint leaves and toast fennel seeds lightly in a dry pan.",
-          "Sprinkle eggs with sea salt, toasted fennel seeds, parsley and peppermint.",
-          "Serve alongside fresh grapes."
+          "Boil egg for 9 minutes, cool, peel and halve.",
+          "Saut\u00e9 finely sliced leeks in a dry non-stick pan until soft, about 5 minutes.",
+          "Top egg halves with saut\u00e9ed leeks, flaked salmon and chopped chives.",
+          "Season with sea salt and serve warm."
         ],
-        "prep_time_minutes": 12,
+        "prep_time_minutes": 15,
         "servings": 2,
         "prep_notes": null
       }
@@ -1581,99 +1458,90 @@
         "Saturday:breakfast"
       ],
       "recipe": {
-        "name": "Kiwi Raspberry Yoghurt Bowl with Whey Boost",
+        "name": "Slow-Poached Peach and Brown Rice Yoghurt Bowl",
         "meal_type": "breakfast",
         "ingredients": [
           {
-            "name": "Plain Greek yoghurt, low-fat",
-            "quantity_g": 200.0,
+            "name": "Greek yoghurt",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 162.0,
-            "protein_g": 24.0,
-            "net_carbs_g": 10.0,
-            "fat_g": 4.8
+            "calories": 164.6,
+            "protein_g": 28.2,
+            "net_carbs_g": 9.6,
+            "fat_g": 1.0
           },
           {
-            "name": "Whey protein powder, unflavoured",
-            "quantity_g": 40.0,
-            "nova_group": 2,
-            "calories": 160.0,
-            "protein_g": 36.0,
-            "net_carbs_g": 2.0,
-            "fat_g": 1.6
+            "name": "Brown rice, cooked",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 175.8,
+            "protein_g": 4.0,
+            "net_carbs_g": 35.2,
+            "fat_g": 1.4
           },
           {
-            "name": "Kiwifruit, peeled, sliced",
-            "quantity_g": 100.0,
+            "name": "Fresh peach, halved and poached",
+            "quantity_g": 150.0,
             "nova_group": 1,
-            "calories": 74.0,
-            "protein_g": 1.4,
-            "net_carbs_g": 16.0,
-            "fat_g": 0.6
-          },
-          {
-            "name": "Fresh raspberries",
-            "quantity_g": 80.0,
-            "nova_group": 1,
-            "calories": 42.0,
-            "protein_g": 1.0,
-            "net_carbs_g": 4.8,
+            "calories": 72.2,
+            "protein_g": 1.8,
+            "net_carbs_g": 15.8,
             "fat_g": 0.4
           },
           {
-            "name": "Grapes, halved",
-            "quantity_g": 80.0,
+            "name": "Fresh strawberries",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 54.0,
-            "protein_g": 0.6,
-            "net_carbs_g": 13.0,
+            "calories": 13.6,
+            "protein_g": 0.2,
+            "net_carbs_g": 2.8,
             "fat_g": 0.2
           },
           {
-            "name": "Chia seeds",
-            "quantity_g": 10.0,
+            "name": "Almonds, chopped",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 48.0,
-            "protein_g": 1.6,
-            "net_carbs_g": 1.0,
-            "fat_g": 3.0
+            "calories": 261.4,
+            "protein_g": 9.6,
+            "net_carbs_g": 4.6,
+            "fat_g": 22.6
           },
           {
             "name": "Hemp seeds",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 56.0,
-            "protein_g": 3.2,
-            "net_carbs_g": 0.8,
-            "fat_g": 4.4
+            "calories": 49.6,
+            "protein_g": 3.0,
+            "net_carbs_g": 0.6,
+            "fat_g": 3.6
           },
           {
-            "name": "Fresh mint (peppermint) leaves, chopped",
-            "quantity_g": 6.0,
-            "nova_group": 1,
-            "calories": 4.0,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.4,
+            "name": "Maple syrup",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 58.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 14.8,
             "fat_g": 0.0
           },
           {
-            "name": "Walnuts, chopped",
-            "quantity_g": 30.0,
+            "name": "Ground cinnamon",
+            "quantity_g": 2.0,
             "nova_group": 1,
-            "calories": 196.0,
-            "protein_g": 4.6,
-            "net_carbs_g": 1.6,
-            "fat_g": 19.2
+            "calories": 4.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.6,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Whisk whey protein powder into the yoghurt until smooth.",
-          "Spoon into a bowl.",
-          "Top with kiwifruit, raspberries and grapes.",
-          "Sprinkle over chia seeds, hemp seeds and chopped walnuts.",
-          "Garnish with fresh chopped mint and serve immediately."
+          "Gently poach halved peach in a small pan with a splash of water and cinnamon for 8-10 minutes until soft.",
+          "Cool poached peach slightly, then set aside.",
+          "Spoon Greek yoghurt into a bowl and layer with cooked brown rice.",
+          "Top with poached peach and fresh strawberries.",
+          "Sprinkle over chopped almonds and hemp seeds, then drizzle with maple syrup."
         ],
-        "prep_time_minutes": 8,
+        "prep_time_minutes": 20,
         "servings": 2,
         "prep_notes": null
       }
@@ -1690,127 +1558,116 @@
         "Sunday:lunch"
       ],
       "recipe": {
-        "name": "Korean Turkey and Black Bean Stir Fry with Mustard Greens",
+        "name": "Korean Beef and Mushroom Stir Fry with Green Peas and Brown Rice",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Turkey breast, diced raw",
-            "quantity_g": 600.0,
+            "name": "Beef (lean organic), sirloin, sliced thin",
+            "quantity_g": 400.0,
             "nova_group": 1,
-            "calories": 632.8,
-            "protein_g": 137.2,
+            "calories": 636.0,
+            "protein_g": 97.6,
             "net_carbs_g": 0.0,
-            "fat_g": 7.2
+            "fat_g": 23.2
           },
           {
-            "name": "Mustard greens, chopped",
-            "quantity_g": 300.0,
-            "nova_group": 1,
-            "calories": 88.0,
-            "protein_g": 8.8,
-            "net_carbs_g": 4.8,
-            "fat_g": 1.2
-          },
-          {
-            "name": "Fennel bulb, thinly sliced",
+            "name": "Crimini mushrooms, sliced",
             "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 58.8,
-            "protein_g": 2.4,
-            "net_carbs_g": 8.0,
+            "calories": 44.0,
+            "protein_g": 4.0,
+            "net_carbs_g": 4.0,
             "fat_g": 0.4
           },
           {
-            "name": "Black beans, cooked",
-            "quantity_g": 200.0,
+            "name": "Green peas",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 254.4,
-            "protein_g": 16.4,
-            "net_carbs_g": 34.4,
-            "fat_g": 0.8
+            "calories": 115.6,
+            "protein_g": 7.6,
+            "net_carbs_g": 13.6,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Brown rice, cooked",
+            "quantity_g": 250.0,
+            "nova_group": 1,
+            "calories": 302.8,
+            "protein_g": 6.4,
+            "net_carbs_g": 63.2,
+            "fat_g": 2.4
+          },
+          {
+            "name": "Soy sauce",
+            "quantity_g": 20.0,
+            "nova_group": 2,
+            "calories": 16.4,
+            "protein_g": 2.8,
+            "net_carbs_g": 1.6,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Maple syrup",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 44.0,
+            "protein_g": 0.0,
+            "net_carbs_g": 11.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Sesame oil",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 121.2,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 13.6
           },
           {
             "name": "Garlic, minced",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 29.2,
+            "calories": 24.8,
             "protein_g": 1.2,
             "net_carbs_g": 4.8,
             "fat_g": 0.0
           },
           {
-            "name": "Fresh ginger, minced",
+            "name": "Ginger, grated",
             "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 13.2,
+            "calories": 11.2,
             "protein_g": 0.4,
             "net_carbs_g": 2.4,
             "fat_g": 0.0
           },
           {
-            "name": "Gochujang paste",
-            "quantity_g": 40.0,
-            "nova_group": 2,
-            "calories": 55.6,
+            "name": "Scallions, sliced",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 8.4,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Sesame seeds",
+            "quantity_g": 20.0,
+            "nova_group": 1,
+            "calories": 46.8,
             "protein_g": 1.2,
-            "net_carbs_g": 10.8,
-            "fat_g": 0.8
-          },
-          {
-            "name": "Soy sauce, low sodium",
-            "quantity_g": 20.0,
-            "nova_group": 2,
-            "calories": 16.4,
-            "protein_g": 2.4,
-            "net_carbs_g": 1.6,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Toasted sesame oil",
-            "quantity_g": 20.0,
-            "nova_group": 2,
-            "calories": 143.6,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 16.4
-          },
-          {
-            "name": "Spring onion, sliced",
-            "quantity_g": 40.0,
-            "nova_group": 1,
-            "calories": 13.2,
-            "protein_g": 0.8,
-            "net_carbs_g": 2.0,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Sesame seeds, toasted",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 55.6,
-            "protein_g": 1.6,
             "net_carbs_g": 0.4,
-            "fat_g": 4.8
-          },
-          {
-            "name": "Fresh parsley, chopped",
-            "quantity_g": 16.0,
-            "nova_group": 1,
-            "calories": 6.4,
-            "protein_g": 0.8,
-            "net_carbs_g": 0.4,
-            "fat_g": 0.0
+            "fat_g": 4.0
           }
         ],
         "instructions": [
-          "Heat sesame oil in a wok over high heat until shimmering.",
-          "Add diced turkey and stir-fry for 4-5 minutes until browned and just cooked through.",
-          "Add garlic, ginger and fennel; stir-fry for 2 minutes until fragrant and slightly softened.",
-          "Add mustard greens and black beans, tossing for 2 minutes until greens wilt.",
-          "Stir in gochujang and soy sauce, coating everything evenly, cook 1 more minute.",
-          "Remove from heat, scatter with spring onion, sesame seeds and parsley before serving."
+          "Heat sesame oil in a wok over high heat, stir fry beef slices 2 minutes until browned, remove and set aside.",
+          "Add garlic, ginger and mushrooms to the wok, stir fry 2-3 minutes.",
+          "Return beef to the wok, add green peas, soy sauce and maple syrup, toss 2 minutes until glossy and heated through.",
+          "Serve over warm brown rice, garnish with scallions and sesame seeds."
         ],
-        "prep_time_minutes": 20,
+        "prep_time_minutes": 25,
         "servings": 4,
         "prep_notes": "Yields 4 portions, eaten across 1 day(s). Portion immediately, refrigerate in airtight containers; reheat thoroughly before serving."
       }
@@ -1826,52 +1683,34 @@
         "Saturday:snack"
       ],
       "recipe": {
-        "name": "Toasted Walnut and Pumpkin Seed Portion with Kidney Beans",
+        "name": "Beef and Pumpkin Seed Snack Plate",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Walnuts",
-            "quantity_g": 10.0,
+            "name": "Lean organic beef, thinly sliced and pan-seared",
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 62.6,
-            "protein_g": 1.4,
-            "net_carbs_g": 0.4,
-            "fat_g": 6.2
+            "calories": 0.0,
+            "protein_g": 64.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 2.0
           },
           {
             "name": "Pumpkin seeds, toasted",
-            "quantity_g": 10.0,
+            "quantity_g": 30.0,
             "nova_group": 1,
-            "calories": 54.2,
-            "protein_g": 2.8,
-            "net_carbs_g": 1.4,
-            "fat_g": 4.6
-          },
-          {
-            "name": "Kidney beans, cooked, cooled",
-            "quantity_g": 100.0,
-            "nova_group": 1,
-            "calories": 107.2,
-            "protein_g": 7.4,
-            "net_carbs_g": 11.4,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Lemon juice",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 1.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.4,
+            "calories": 0.0,
+            "protein_g": 16.0,
+            "net_carbs_g": 4.0,
             "fat_g": 0.0
           },
           {
-            "name": "Fresh parsley, chopped",
-            "quantity_g": 6.0,
+            "name": "Fennel, thinly shaved",
+            "quantity_g": 60.0,
             "nova_group": 1,
-            "calories": 2.4,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
+            "calories": 0.0,
+            "protein_g": 0.8,
+            "net_carbs_g": 4.0,
             "fat_g": 0.0
           },
           {
@@ -1885,10 +1724,12 @@
           }
         ],
         "instructions": [
-          "Toss cooked kidney beans with lemon juice, parsley and a pinch of sea salt.",
-          "Serve alongside toasted walnuts and pumpkin seeds as a mixed snack portion."
+          "Season and pan-sear thin beef slices for 1-2 minutes per side until just cooked, let rest.",
+          "Toast pumpkin seeds in a dry skillet for 2-3 minutes.",
+          "Shave fennel thinly and arrange with beef and pumpkin seeds on a plate.",
+          "Sprinkle with sea salt and serve."
         ],
-        "prep_time_minutes": 5,
+        "prep_time_minutes": 20,
         "servings": 2,
         "prep_notes": null
       }
@@ -1904,81 +1745,81 @@
         "Sunday:breakfast"
       ],
       "recipe": {
-        "name": "Mackerel and Fennel P\u00e2t\u00e9 on Toast with Grapes",
+        "name": "Mackerel and Brussels Sprout P\u00e2t\u00e9 on Whole-Grain Toast",
         "meal_type": "breakfast",
         "ingredients": [
           {
             "name": "Tinned mackerel in olive oil, drained",
-            "quantity_g": 150.0,
+            "quantity_g": 200.0,
             "nova_group": 3,
-            "calories": 339.0,
-            "protein_g": 35.6,
+            "calories": 425.6,
+            "protein_g": 44.6,
             "net_carbs_g": 0.0,
-            "fat_g": 22.0
+            "fat_g": 27.6
           },
           {
-            "name": "Cottage cheese",
-            "quantity_g": 60.0,
-            "nova_group": 2,
-            "calories": 66.2,
-            "protein_g": 8.4,
-            "net_carbs_g": 2.6,
-            "fat_g": 2.8
-          },
-          {
-            "name": "Fennel bulb, finely chopped",
-            "quantity_g": 60.0,
+            "name": "Brussels sprouts, shredded and saut\u00e9ed",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 15.2,
-            "protein_g": 0.6,
-            "net_carbs_g": 2.6,
-            "fat_g": 0.0
+            "calories": 46.8,
+            "protein_g": 3.6,
+            "net_carbs_g": 5.4,
+            "fat_g": 0.4
           },
           {
-            "name": "Parsley, chopped",
-            "quantity_g": 8.0,
+            "name": "Plain yoghurt",
+            "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 3.4,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
+            "calories": 25.6,
+            "protein_g": 2.4,
+            "net_carbs_g": 2.0,
+            "fat_g": 1.2
           },
           {
             "name": "Lemon juice",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 3.4,
+            "calories": 2.2,
             "protein_g": 0.0,
-            "net_carbs_g": 1.0,
+            "net_carbs_g": 0.6,
             "fat_g": 0.0
           },
           {
             "name": "Whole-grain bread",
             "quantity_g": 100.0,
-            "nova_group": 3,
-            "calories": 279.6,
-            "protein_g": 11.8,
-            "net_carbs_g": 44.0,
-            "fat_g": 3.4
+            "nova_group": 1,
+            "calories": 293.6,
+            "protein_g": 12.8,
+            "net_carbs_g": 46.8,
+            "fat_g": 3.8
           },
           {
-            "name": "Grapes",
-            "quantity_g": 150.0,
+            "name": "Fresh chives, chopped",
+            "quantity_g": 6.0,
             "nova_group": 1,
-            "calories": 93.2,
-            "protein_g": 1.0,
-            "net_carbs_g": 22.0,
-            "fat_g": 0.4
+            "calories": 2.2,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.2,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Black pepper",
+            "quantity_g": 2.0,
+            "nova_group": 1,
+            "calories": 4.2,
+            "protein_g": 0.2,
+            "net_carbs_g": 0.6,
+            "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Drain mackerel and mash with a fork in a bowl.",
-          "Mix in cottage cheese, chopped fennel, parsley and lemon juice until a coarse p\u00e2t\u00e9 forms.",
+          "Finely shred Brussels sprouts and saut\u00e9 in a dry pan for 5-6 minutes until tender and lightly caramelized.",
+          "Mash mackerel with yoghurt and lemon juice until a chunky p\u00e2t\u00e9 forms.",
+          "Fold in the saut\u00e9ed Brussels sprouts and season with black pepper.",
           "Toast the whole-grain bread slices.",
-          "Spread p\u00e2t\u00e9 generously over the toast.",
-          "Serve with fresh grapes on the side."
+          "Spread the mackerel p\u00e2t\u00e9 over toast, garnish with chives and serve."
         ],
-        "prep_time_minutes": 12,
+        "prep_time_minutes": 20,
         "servings": 2,
         "prep_notes": null
       }
@@ -1994,145 +1835,117 @@
         "Sunday:dinner"
       ],
       "recipe": {
-        "name": "Grilled Turkey Kofta with Fennel, Olives and Kidney Bean Tabbouleh",
+        "name": "Middle Eastern Grilled Beef Skewers with Charred Fennel, Brussels Sprouts and Date-Maple Glaze",
         "meal_type": "dinner",
         "ingredients": [
           {
-            "name": "Turkey breast, minced",
-            "quantity_g": 300.0,
+            "name": "Beef (lean organic), sirloin, cubed",
+            "quantity_g": 200.0,
             "nova_group": 1,
-            "calories": 346.2,
-            "protein_g": 73.0,
+            "calories": 370.8,
+            "protein_g": 57.0,
             "net_carbs_g": 0.0,
-            "fat_g": 6.4
+            "fat_g": 13.6
           },
           {
-            "name": "Parsley, chopped",
+            "name": "Brussels sprouts, halved",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 63.0,
+            "protein_g": 5.2,
+            "net_carbs_g": 6.0,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Fennel bulb, wedges",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 42.0,
+            "protein_g": 1.6,
+            "net_carbs_g": 6.8,
+            "fat_g": 0.4
+          },
+          {
+            "name": "Dried dates, chopped",
             "quantity_g": 40.0,
             "nova_group": 1,
-            "calories": 14.6,
-            "protein_g": 1.2,
-            "net_carbs_g": 0.8,
+            "calories": 102.0,
+            "protein_g": 0.8,
+            "net_carbs_g": 24.0,
             "fat_g": 0.2
           },
           {
-            "name": "Ground cumin",
-            "quantity_g": 6.0,
-            "nova_group": 1,
-            "calories": 16.4,
-            "protein_g": 0.8,
-            "net_carbs_g": 1.2,
-            "fat_g": 1.0
-          },
-          {
-            "name": "Ground allspice",
+            "name": "Maple syrup",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 9.2,
-            "protein_g": 0.2,
-            "net_carbs_g": 1.8,
+            "calories": 31.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 8.0,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Brown rice, cooked",
+            "quantity_g": 150.0,
+            "nova_group": 1,
+            "calories": 183.2,
+            "protein_g": 3.8,
+            "net_carbs_g": 38.2,
+            "fat_g": 1.4
+          },
+          {
+            "name": "Olive oil",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 106.6,
+            "protein_g": 0.0,
+            "net_carbs_g": 0.0,
+            "fat_g": 12.0
+          },
+          {
+            "name": "Ground sumac",
+            "quantity_g": 10.0,
+            "nova_group": 1,
+            "calories": 12.0,
+            "protein_g": 0.4,
+            "net_carbs_g": 1.6,
             "fat_g": 0.4
+          },
+          {
+            "name": "Ground cumin",
+            "quantity_g": 4.0,
+            "nova_group": 1,
+            "calories": 13.6,
+            "protein_g": 0.6,
+            "net_carbs_g": 1.4,
+            "fat_g": 0.8
           },
           {
             "name": "Garlic, minced",
             "quantity_g": 10.0,
             "nova_group": 1,
-            "calories": 16.4,
-            "protein_g": 0.8,
-            "net_carbs_g": 2.4,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Olive oil",
-            "quantity_g": 20.0,
-            "nova_group": 1,
-            "calories": 160.4,
-            "protein_g": 0.0,
-            "net_carbs_g": 0.0,
-            "fat_g": 18.2
-          },
-          {
-            "name": "Fennel bulb, sliced",
-            "quantity_g": 200.0,
-            "nova_group": 1,
-            "calories": 56.6,
-            "protein_g": 2.2,
-            "net_carbs_g": 9.2,
-            "fat_g": 0.4
-          },
-          {
-            "name": "Kidney beans, cooked",
-            "quantity_g": 150.0,
-            "nova_group": 1,
-            "calories": 196.8,
-            "protein_g": 13.4,
-            "net_carbs_g": 27.4,
-            "fat_g": 0.8
-          },
-          {
-            "name": "Kalamata olives, pitted",
-            "quantity_g": 40.0,
-            "nova_group": 1,
-            "calories": 60.2,
-            "protein_g": 0.4,
-            "net_carbs_g": 0.8,
-            "fat_g": 5.8
-          },
-          {
-            "name": "Cucumber, diced",
-            "quantity_g": 100.0,
-            "nova_group": 1,
-            "calories": 18.2,
-            "protein_g": 0.8,
-            "net_carbs_g": 3.0,
-            "fat_g": 0.2
-          },
-          {
-            "name": "Cherry tomatoes, diced",
-            "quantity_g": 100.0,
-            "nova_group": 1,
-            "calories": 20.0,
-            "protein_g": 1.0,
-            "net_carbs_g": 3.6,
-            "fat_g": 0.2
-          },
-          {
-            "name": "Lemon juice",
-            "quantity_g": 30.0,
-            "nova_group": 1,
-            "calories": 7.2,
-            "protein_g": 0.0,
-            "net_carbs_g": 2.2,
-            "fat_g": 0.0
-          },
-          {
-            "name": "Bulgur wheat, cooked",
-            "quantity_g": 150.0,
-            "nova_group": 1,
-            "calories": 196.8,
-            "protein_g": 6.6,
-            "net_carbs_g": 38.2,
-            "fat_g": 0.8
-          },
-          {
-            "name": "Red onion, finely diced",
-            "quantity_g": 40.0,
-            "nova_group": 1,
-            "calories": 18.2,
+            "calories": 13.6,
             "protein_g": 0.6,
-            "net_carbs_g": 3.4,
+            "net_carbs_g": 2.6,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Fresh parsley, chopped",
+            "quantity_g": 12.0,
+            "nova_group": 1,
+            "calories": 4.6,
+            "protein_g": 0.4,
+            "net_carbs_g": 0.4,
             "fat_g": 0.0
           }
         ],
         "instructions": [
-          "Combine minced turkey with parsley, cumin, allspice and garlic; mix well and shape into 4 elongated kofta.",
-          "Brush kofta with a little olive oil and grill over medium-high heat, turning occasionally, for 10-12 minutes until charred and cooked through.",
-          "Toss sliced fennel with a little olive oil, salt and pepper and grill alongside the kofta for 6-8 minutes until softened and charred.",
-          "In a bowl, combine cooked bulgur, kidney beans, olives, cucumber, tomatoes and red onion.",
-          "Dress the bulgur salad with remaining olive oil and lemon juice, season to taste.",
-          "Plate the kofta with grilled fennel and the kidney bean tabbouleh alongside."
+          "Marinate beef cubes with garlic, sumac, cumin and half the olive oil for 10 minutes; thread onto skewers.",
+          "Simmer chopped dates with maple syrup and a splash of water 5 minutes to make a glaze.",
+          "Toss Brussels sprouts and fennel wedges with remaining olive oil, grill or roast 12-15 minutes until charred and tender.",
+          "Grill beef skewers 6-8 minutes, turning, basting with date-maple glaze in the final 2 minutes.",
+          "Serve skewers over warm brown rice with charred vegetables, scatter parsley on top."
         ],
-        "prep_time_minutes": 35,
+        "prep_time_minutes": 30,
         "servings": 2,
         "prep_notes": null
       }
@@ -2148,61 +1961,62 @@
         "Sunday:snack"
       ],
       "recipe": {
-        "name": "Kiwi Raspberry Yoghurt with Peppermint",
+        "name": "Goat's Milk Yoghurt Bowl with Brown Rice and Maple Peach",
         "meal_type": "snack",
         "ingredients": [
           {
-            "name": "Greek yoghurt, plain",
-            "quantity_g": 200.0,
+            "name": "Goat's milk yoghurt",
+            "quantity_g": 300.0,
             "nova_group": 1,
-            "calories": 171.6,
-            "protein_g": 19.6,
-            "net_carbs_g": 8.4,
-            "fat_g": 7.0
+            "calories": 0.0,
+            "protein_g": 30.0,
+            "net_carbs_g": 18.0,
+            "fat_g": 16.0
           },
           {
-            "name": "Kiwifruit, sliced",
+            "name": "Cooked brown rice",
             "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 75.2,
-            "protein_g": 1.4,
-            "net_carbs_g": 14.4,
-            "fat_g": 0.6
+            "calories": 0.0,
+            "protein_g": 4.0,
+            "net_carbs_g": 30.0,
+            "fat_g": 2.0
           },
           {
-            "name": "Raspberries",
-            "quantity_g": 80.0,
+            "name": "Fresh peach, diced",
+            "quantity_g": 100.0,
             "nova_group": 1,
-            "calories": 37.6,
-            "protein_g": 0.8,
-            "net_carbs_g": 4.2,
-            "fat_g": 0.6
+            "calories": 0.0,
+            "protein_g": 1.4,
+            "net_carbs_g": 12.0,
+            "fat_g": 0.0
+          },
+          {
+            "name": "Maple syrup",
+            "quantity_g": 10.0,
+            "nova_group": 2,
+            "calories": 0.0,
+            "protein_g": 0.0,
+            "net_carbs_g": 4.0,
+            "fat_g": 0.0
           },
           {
             "name": "Walnuts, chopped",
-            "quantity_g": 10.0,
+            "quantity_g": 20.0,
             "nova_group": 1,
-            "calories": 93.0,
-            "protein_g": 2.2,
-            "net_carbs_g": 1.4,
-            "fat_g": 9.2
-          },
-          {
-            "name": "Fresh peppermint leaves, chopped",
-            "quantity_g": 10.0,
-            "nova_group": 1,
-            "calories": 1.8,
-            "protein_g": 0.2,
-            "net_carbs_g": 0.2,
-            "fat_g": 0.0
+            "calories": 0.0,
+            "protein_g": 8.6,
+            "net_carbs_g": 0.0,
+            "fat_g": 10.0
           }
         ],
         "instructions": [
-          "Spoon Greek yoghurt into a serving bowl.",
-          "Top with sliced kiwifruit and raspberries.",
-          "Sprinkle chopped walnuts and fresh peppermint over the top before serving."
+          "Spoon yoghurt into a bowl.",
+          "Top with cooked brown rice and diced fresh peach.",
+          "Sprinkle with chopped walnuts and drizzle with maple syrup.",
+          "Serve immediately."
         ],
-        "prep_time_minutes": 5,
+        "prep_time_minutes": 10,
         "servings": 2,
         "prep_notes": null
       }
@@ -2516,152 +2330,136 @@
   "failures": {},
   "sunday_prep_session": {
     "total_active_minutes": 118,
-    "total_passive_minutes": 95,
+    "total_passive_minutes": 75,
     "aggregated_ingredients": {
-      "garlic, minced": "120g total across tacos, tandoori skewers, Japanese curry, Korean stir fry, Greek sheet-pan salmon (mince/measure all at once)",
-      "ginger, minced/grated": "60g total for tandoori skewers, Japanese curry, Korean stir fry",
-      "fennel bulb, sliced": "940g total sliced for tandoori (roasted), Thai salmon, Japanese curry, Greek sheet-pan salmon, Korean stir fry",
-      "mustard greens, chopped": "1100g total chopped for Thai salmon, Japanese curry, Greek sheet-pan salmon, Korean stir fry",
-      "black beans, cooked": "750g total portioned for tacos, Japanese curry, Korean stir fry",
-      "turkey breast, diced/sliced raw": "1800g total trimmed and diced/sliced for tacos, tandoori skewers, Japanese curry, Korean stir fry",
-      "fresh parsley, chopped": "52g total chopped for tacos, Korean stir fry, Greek sheet-pan salmon",
-      "lime/lemon juice": "juiced citrus for tacos, Thai salmon, Greek sheet-pan salmon, tandoori skewers",
-      "onion, diced/chopped": "180g total diced/chopped for tacos (red onion) and Japanese curry (onion)",
-      "salmon fillet, skin-on": "800g total portioned for Thai braised salmon and Greek sheet-pan salmon"
+      "crimini mushrooms, sliced/halved": "300g + 250g + 250g + 200g sliced/halved (for Mexican beef, Thai braised beef, Japanese liver curry, Korean stir fry)",
+      "fennel bulb, sliced": "400g + 200g + 200g sliced (for Mexican beef, Thai braised beef, Greek salmon)",
+      "leeks, sliced": "150g + 150g + 100g sliced (for Indian salmon, Japanese liver curry, Greek salmon)",
+      "garlic, minced": "20g x5 minced (for Mexican beef, Indian salmon, Japanese liver curry, Korean stir fry, and Thai braised beef aromatics prep)",
+      "ginger, grated": "20g + 20g grated (for Indian salmon, Korean stir fry)",
+      "brown rice, cooked": "1000g + 250g portioned (for Mexican beef, Korean stir fry)",
+      "green peas": "200g + 100g (for Japanese liver curry, Korean stir fry)",
+      "beef, cubed/sliced": "600g + 400g + 400g trimmed and cut (for Mexican grilled beef, Thai braised beef, Korean stir fry)",
+      "lemon/lime juice": "60g lime + 20g lemon + 20g lemon squeezed (for Mexican beef, Indian salmon, Greek salmon)"
     },
     "timeline": [
       {
-        "name": "Start Greek sheet-pan salmon roast",
-        "description": "Preheat oven to 200\u00b0C. Toss sliced fennel with olive oil, garlic, oregano and salt on a lined tray and place in oven to begin roasting; salmon and olives will be added partway through but oven stays running unattended in background while other prep continues.",
-        "active_minutes": 6,
+        "name": "Phase 1: Start Thai Braised Beef (slow braise)",
+        "description": "Sear cubed chuck beef, add lemongrass, galangal, chile, kaffir lime leaves, then coconut milk and fish sauce; bring to simmer and cover to braise unattended while other prep continues. Add mushrooms and fennel partway through per method timing.",
+        "active_minutes": 12,
         "passive_minutes": 25
       },
       {
-        "name": "Marinate tandoori turkey",
-        "description": "Mix yoghurt, ghee, tandoori spice mix, garlic, ginger and lemon juice; coat diced turkey pieces and set aside to marinate while other prep happens.",
+        "name": "Phase 2: Preheat ovens and start Indian Roast Salmon vegetables",
+        "description": "Preheat oven to 220\u00b0C. Toss Brussels sprouts and sliced leeks with olive oil and salt on a roasting tray, place in oven to roast unattended while marinade and other proteins are prepped.",
         "active_minutes": 6,
         "passive_minutes": 10
       },
       {
-        "name": "Batch trim and portion all turkey breast",
-        "description": "Trim and portion raw turkey breast for tacos (steak), tandoori skewers (diced), Japanese curry (diced) and Korean stir fry (diced) in one pass, bagging separately per recipe.",
-        "active_minutes": 14,
+        "name": "Phase 3: Aggregated chopping and slicing",
+        "description": "Chop/slice all shared vegetables in one pass: fennel bulb (for Mexican beef, Thai braised beef, Greek salmon), leeks (Indian salmon, Japanese liver curry, Greek salmon), crimini mushrooms (all four beef/liver dishes), scallions, and mince all garlic and grate ginger needed across recipes.",
+        "active_minutes": 20,
         "passive_minutes": 0
       },
       {
-        "name": "Batch slice fennel bulb",
-        "description": "Slice all fennel needed for tandoori charred fennel, Thai braised salmon, Japanese curry, Greek sheet-pan salmon and Korean stir fry in one aggregated chopping pass.",
+        "name": "Phase 4: Marinate and rub proteins",
+        "description": "Rub sirloin steak with cumin, ancho chile powder, garlic and salt for Mexican beef; mix yoghurt, garam masala, turmeric, ginger and garlic marinade and coat salmon for Indian dish; let both sit while other tasks proceed.",
         "active_minutes": 10,
-        "passive_minutes": 0
+        "passive_minutes": 10
       },
       {
-        "name": "Batch chop mustard greens",
-        "description": "Chop all mustard greens needed for Thai salmon, Japanese curry, Greek sheet-pan salmon and Korean stir fry together.",
-        "active_minutes": 6,
-        "passive_minutes": 0
-      },
-      {
-        "name": "Batch mince garlic and ginger",
-        "description": "Mince all garlic and ginger needed across tacos, tandoori skewers, Japanese curry and Korean stir fry in one aggregated task.",
-        "active_minutes": 6,
-        "passive_minutes": 0
-      },
-      {
-        "name": "Batch dice onion and portion black beans",
-        "description": "Dice red onion (tacos) and onion (Japanese curry); measure out black beans for tacos, Japanese curry and Korean stir fry, and kidney beans for tacos.",
-        "active_minutes": 6,
-        "passive_minutes": 0
-      },
-      {
-        "name": "Finish Greek sheet-pan salmon",
-        "description": "Add salmon skin-side down and olives to the roasting tray, continue roasting; scatter mustard greens in final minutes to wilt, then remove, portion into 4 containers, cool, refrigerate.",
-        "active_minutes": 6,
-        "passive_minutes": 15
-      },
-      {
-        "name": "Cook and skewer tandoori turkey with fennel",
-        "description": "Skewer marinated turkey and roast/grill at high heat; toss reserved sliced fennel in pan drippings and roast alongside for final 8 minutes, then portion into 4 containers and refrigerate.",
-        "active_minutes": 10,
-        "passive_minutes": 15
-      },
-      {
-        "name": "Sear turkey and assemble taco components",
-        "description": "Rub turkey steak with cumin, chili powder, garlic, salt and oil; sear and slice thinly. Warm black beans and kidney beans with rice. Char tomato and onion, mix with lime juice and parsley for salsa. Warm tortillas. Portion tacos with rice into 4 containers, refrigerate.",
-        "active_minutes": 16,
+        "name": "Phase 5: Sear and grill Mexican beef, char vegetables",
+        "description": "Sear seasoned sirloin steak 3-4 minutes per side, rest and slice against grain. Toss fennel and mushroom slices with olive oil and char on grill pan. Portion with warmed brown rice, lime juice and cilantro into containers.",
+        "active_minutes": 15,
         "passive_minutes": 5
       },
       {
-        "name": "Braise Thai coconut-green curry salmon",
-        "description": "Warm curry paste, add coconut milk, fish sauce, kaffir lime leaves and reserved fennel; simmer, then braise salmon fillet in broth, adding mustard greens near the end. Rest, finish with lime, chili and mint, portion into 4 containers, refrigerate.",
-        "active_minutes": 12,
-        "passive_minutes": 20
-      },
-      {
-        "name": "Simmer Japanese turkey and black bean curry",
-        "description": "Saut\u00e9 reserved onion, garlic and ginger, brown diced turkey, toast curry powder, add dashi, soy sauce, black beans and reserved fennel; simmer, then stir in mustard greens to wilt. Portion into 4 containers, refrigerate.",
-        "active_minutes": 14,
+        "name": "Phase 6: Finish Indian Roast Salmon",
+        "description": "Add marinated salmon to roasting tray with vegetables, return to oven to roast unattended 10-12 minutes. Finish with lemon juice, portion into containers.",
+        "active_minutes": 5,
         "passive_minutes": 12
       },
       {
-        "name": "Stir-fry Korean turkey and black bean dish",
-        "description": "Stir-fry diced turkey in sesame oil, add garlic, ginger, reserved fennel, mustard greens and black beans, finish with gochujang and soy sauce; scatter spring onion, sesame seeds and parsley. Portion into 4 containers, refrigerate.",
-        "active_minutes": 14,
-        "passive_minutes": 3
+        "name": "Phase 7: Finish Thai Braised Beef and portion",
+        "description": "Once braise is tender, rest off heat 5 minutes, stir through basil leaves, portion into airtight containers.",
+        "active_minutes": 5,
+        "passive_minutes": 5
       },
       {
-        "name": "Label, date and finalize refrigeration",
-        "description": "All six dishes are fridge-only (each eaten within 4 days), so no freezer step is required. Label each of the 24 portions with dish name and eat-by date, then stack in fridge in airtight containers.",
-        "active_minutes": 8,
+        "name": "Phase 8: Japanese Calf's Liver and Mushroom Curry",
+        "description": "Saut\u00e9 prepped leeks and garlic in sesame oil, add mushrooms, sear liver slices briefly, stir in curry powder, stock and soy sauce, simmer, add green peas. Rest briefly and portion into containers.",
+        "active_minutes": 18,
+        "passive_minutes": 7
+      },
+      {
+        "name": "Phase 9: Greek One-Pan Salmon with Fennel, Leeks and Brown Rice",
+        "description": "Preheat second oven zone or reuse oven at 210\u00b0C. Arrange prepped fennel, leeks and cherry tomatoes on tray, roast, then add salmon and roast further. Scatter olives and feta, finish with lemon juice, portion into containers.",
+        "active_minutes": 10,
+        "passive_minutes": 20
+      },
+      {
+        "name": "Phase 10: Korean Beef and Mushroom Stir Fry",
+        "description": "Stir fry sliced sirloin beef in sesame oil, remove, stir fry garlic, ginger and mushrooms, return beef, add green peas, soy sauce and maple syrup, toss until glossy. Serve over portioned brown rice, garnish with scallions and sesame seeds, pack into containers.",
+        "active_minutes": 12,
+        "passive_minutes": 0
+      },
+      {
+        "name": "Phase 11: Final portioning, labeling and fridge storage",
+        "description": "Portion all six finished dishes into airtight containers, label with dish name and eat-by date, refrigerate immediately. No freezer items required this week as all dishes are consumed within the 4-day fridge-safe window.",
+        "active_minutes": 5,
         "passive_minutes": 0
       }
     ],
     "meals_included": [
-      "Grilled Turkey Tacos with Black Bean-Kidney Bean Rice and Charred Salsa",
-      "Tandoori Turkey Skewer Bite with Charred Fennel",
-      "Thai Braised Salmon in Coconut-Green Curry Broth",
-      "Japanese Turkey and Black Bean Curry with Mustard Greens",
-      "Greek Sheet-Pan Salmon with Fennel, Olives and Mustard Greens",
-      "Korean Turkey and Black Bean Stir Fry with Mustard Greens"
+      "Mexican Grilled Beef with Charred Fennel, Mushrooms and Brown Rice",
+      "Indian Roast Salmon with Brussels Sprouts and Leeks",
+      "Thai Braised Beef and Mushroom in Fennel Broth",
+      "Japanese Calf's Liver and Mushroom Curry with Green Peas",
+      "Greek One-Pan Salmon with Fennel, Leeks and Brown Rice",
+      "Korean Beef and Mushroom Stir Fry with Green Peas and Brown Rice"
     ]
   },
   "unique_plants": [
+    "Almonds",
+    "Basil leaves",
     "Black pepper",
+    "Blueberries",
+    "Brussels sprouts",
+    "Cherries (frozen)",
     "Cherry tomatoes",
     "Chia seeds",
-    "Chili",
-    "Chili powder",
-    "Cucumber",
-    "Cumin",
+    "Chives",
+    "Cilantro",
+    "Crimini mushrooms",
+    "Dill",
+    "Fennel",
     "Fennel bulb",
-    "Fennel seeds",
     "Flaxseeds",
+    "Galangal/ginger",
     "Garlic",
     "Ginger",
-    "Grapes",
+    "Green peas",
+    "Green peas (cooked)",
+    "Green peas (frozen)",
+    "Ground cinnamon",
     "Ground cumin",
+    "Haricot beans in tomato sauce",
     "Hemp seeds",
     "Kaffir lime leaves",
+    "Leek",
     "Lemon juice",
-    "Lemon zest",
     "Lime juice",
-    "Mint",
-    "Mint leaves",
-    "Mustard greens",
-    "Onion",
+    "Mixed salad greens",
     "Oregano (dried)",
     "Parsley",
+    "Peach",
     "Pumpkin seeds",
-    "Raspberries",
-    "Raspberries (frozen)",
     "Red onion",
-    "Salt",
+    "Scallions",
     "Sea salt",
     "Sesame seeds",
-    "Smoked paprika",
-    "Spring onion",
-    "Sunflower seeds",
-    "Tandoori spice mix",
-    "Tomato",
+    "Strawberries",
+    "Turmeric powder",
     "Walnuts"
   ]
 }

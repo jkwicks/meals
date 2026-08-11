@@ -81,7 +81,9 @@ from planner import (
     generate_week_plan,
     import_external_recipe,
     is_sunday_prepped,
+    load_app_config,
     meal_overrides_for,
+    meal_type_order,
     record_week_history,
     regenerate_single_day,
     regenerate_single_meal,
@@ -98,7 +100,6 @@ from shopping import (
     format_shopping_list_keep,
 )
 from week import (
-    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
@@ -110,6 +111,7 @@ from week import (
     link_leftover,
     meal_types,
     next_day_slot_id,
+    parse_slot_id,
     portions_for,
     shopping_windows,
     slot_id,
@@ -492,21 +494,22 @@ class PlannerState:
 
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
-        config = await repository.load_config()
+        # `load_app_config` validates config.json against `AppConfig` here,
+        # once, at startup — the same schema check the CLI gets from
+        # `load_config_with_models`. Every field below is then guaranteed
+        # present with a real value, so this reads them directly instead of
+        # each picking its own `.get(key, DEFAULT)` fallback.
+        config = load_app_config(await repository.load_config())
         models_config = await repository.load_models_config()
         state = cls(
             config=config,
             models_config=models_config,
-            week_start=config.get("week_start_day") or list(config["weekly_schedule"])[0],
-            servings=int(config.get("serving_rules", {}).get("servings_per_meal", 2)),
-            shop_days=list(config.get("shopping", {}).get("shop_days", [])),
+            week_start=config["week_start_day"],
+            servings=config["serving_rules"]["servings_per_meal"],
+            shop_days=list(config["shopping"]["shop_days"]),
             model=resolve_planner_model(dict(config, models=models_config)),
-            pantry=[
-                str(item).strip()
-                for item in config.get("inventory_to_clear") or []
-                if str(item).strip()
-            ],
-            training_schedule=[dict(session) for session in config.get("training_schedule") or []],
+            pantry=[str(item).strip() for item in config["inventory_to_clear"] if str(item).strip()],
+            training_schedule=[dict(session) for session in config["training_schedule"]],
         )
         state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
@@ -944,9 +947,10 @@ class PlannerState:
 
             if event is None:
                 # Two different absences. With a plan loaded, a missing event
-                # means this slot's cook is on a day in WeekPlan.failures —
-                # that is the red "not generated" state, and it must stay
-                # visible so the gap is obvious rather than silently blank.
+                # means this slot's cook (or the cook it points at) is in
+                # WeekPlan.failures — that is the red "not generated" state,
+                # and it must stay visible so the gap is obvious rather than
+                # silently blank.
                 # With no plan at all nothing has failed: the grid is a
                 # *preview* of the shape about to be generated, so the slot
                 # keeps its planned mode and only the recipe is missing.
@@ -968,9 +972,7 @@ class PlannerState:
             # `storage_note` used to write the batch's own storage note.
             prep_badge, prep_origin = "", ""
             if slot.mode == MODE_LEFTOVER and is_sunday_prepped(event, self.week_plan):
-                fridge_safe_days = self.config.get("inventory_rules", {}).get(
-                    "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
-                )
+                fridge_safe_days = self.config["inventory_rules"]["fridge_safe_days"]
                 # Per-slot distance from its cook day, not `span_days`'s
                 # whole-batch span to its *farthest* eater — a Tuesday
                 # portion of a batch that runs to next Sunday is still
@@ -1612,9 +1614,7 @@ async def planner_page() -> None:
                 title_label = ui.label(view.title).classes(
                     "text-[12px] leading-tight font-bold text-slate-100 line-clamp-2"
                 )
-                title_tooltip_chars = state.config.get("ui_settings", {}).get(
-                    "title_tooltip_chars", DEFAULT_UI_SETTINGS["title_tooltip_chars"]
-                )
+                title_tooltip_chars = state.config["ui_settings"]["title_tooltip_chars"]
                 if len(view.title) > title_tooltip_chars:
                     with title_label:
                         ui.tooltip(view.title)
@@ -1922,7 +1922,7 @@ async def planner_page() -> None:
 
     def prep_telemetry_cell() -> None:
         session = state.week_plan.sunday_prep_session if state.week_plan else None
-        max_active = state.config.get("max_prep_active_mins", 120)
+        max_active = state.config["max_prep_active_mins"]
         with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
             with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                 ui.label("PREP").classes(
@@ -1940,9 +1940,7 @@ async def planner_page() -> None:
 
     @ui.refreshable
     def telemetry() -> None:
-        bar_scale_limit = state.config.get("ui_settings", {}).get(
-            "bar_scale_limit", DEFAULT_UI_SETTINGS["bar_scale_limit"]
-        )
+        bar_scale_limit = state.config["ui_settings"]["bar_scale_limit"]
         with ui.element("div").classes("grid grid-cols-8 gap-2 w-full"):
             prep_telemetry_cell()
             for day in state.days:
@@ -2095,10 +2093,17 @@ async def planner_page() -> None:
                     )
                     continue
 
-                # A failed day contributes no recipe and therefore no
+                # A failed meal contributes no recipe and therefore no
                 # ingredients, so say so here: a short list is otherwise
-                # indistinguishable from a cheap week.
-                failed = [day for day in window.days if day in plan.failures]
+                # indistinguishable from a cheap week. `plan.failures` is
+                # keyed by slot_id (day:meal_type), not day, since one bad
+                # meal-type call can fail some of a window's days without
+                # failing all of them.
+                failed = [
+                    slot_label(key)
+                    for key in plan.failures
+                    if parse_slot_id(key)[0] in window.days
+                ]
                 if failed:
                     ui.label(
                         f"{', '.join(failed)} failed to generate — nothing for "
@@ -2293,11 +2298,11 @@ async def planner_page() -> None:
             with ui.element("div").classes(
                 "mt-2 p-2 rounded bg-rose-500/10 border border-rose-900"
             ):
-                ui.label(f"{len(failures)} day(s) failed to generate").classes(
+                ui.label(f"{len(failures)} meal(s) failed to generate").classes(
                     "text-xs text-rose-300 font-semibold"
                 )
-                for day, error in failures.items():
-                    ui.label(f"{day}: {error}").classes("text-[10px] text-rose-200/80")
+                for key, error in failures.items():
+                    ui.label(f"{slot_label(key)}: {error}").classes("text-[10px] text-rose-200/80")
 
     # ---- left drawer: per-day macro targets ------------------------------
 
@@ -2587,19 +2592,21 @@ async def planner_page() -> None:
         # what it actually cooked, and so rotation continues across the week.
         spec = resolve_auto_choices(spec, config, history)
 
-        days = spec.days
+        stages = meal_type_order(config)
         cooking_days = len({slot.day for slot in spec.cook_slots()})
         done = 0
 
-        def on_day(day: str, cooks: int) -> None:
-            """Fired on the loop by generate_week_plan, once per day, before its call."""
+        def on_meal_type(meal_type: str, cooks: int) -> None:
+            """Fired on the loop by generate_week_plan, once per meal type, before its call."""
             nonlocal done
             done += 1
-            progress_bar.value = (done - 1) / len(days)
+            progress_bar.value = (done - 1) / len(stages)
+            plural = meal_type + "es" if meal_type.endswith("ch") else meal_type + "s"
+            label = humanize(plural).capitalize()
             progress_status.text = (
-                f"Generating {day} ({done}/{len(days)}) — {cooks} recipe(s)…"
+                f"Generating {label} ({done}/{len(stages)}) — {cooks} recipe(s)…"
                 if cooks
-                else f"{day} ({done}/{len(days)}) — leftovers only, nothing to cook"
+                else f"{label} ({done}/{len(stages)}) — nothing to cook, all leftovers or skipped"
             )
 
         generate.props("loading")
@@ -2613,7 +2620,7 @@ async def planner_page() -> None:
                 spec,
                 config,
                 history,
-                progress_callback=on_day,
+                progress_callback=on_meal_type,
                 note_callback=progress_log.push,
                 repository=REPOSITORY,
             )
@@ -2644,9 +2651,11 @@ async def planner_page() -> None:
 
         if week_plan.failures:
             ui.notify(
-                f"{len(week_plan.failures)} of {cooking_days} cooking day(s) failed — "
-                "their meals show as NOT GENERATED. "
-                + " · ".join(f"{day}: {error}" for day, error in week_plan.failures.items()),
+                f"{len(week_plan.failures)} meal(s) failed to generate — "
+                "they show as NOT GENERATED. "
+                + " · ".join(
+                    f"{slot_label(key)}: {error}" for key, error in week_plan.failures.items()
+                ),
                 type="warning",
                 multi_line=True,
                 close_button=True,
@@ -2717,9 +2726,14 @@ async def planner_page() -> None:
         state.adopt_plan(plan)
         refresh_all()
 
-        if day in plan.failures:
+        # regenerate_single_day writes one failures entry per cook slot on
+        # `day` (see planner.py) — any of them present means the whole call
+        # failed, since it's still one atomic API call for the day.
+        day_failures = {key: error for key, error in plan.failures.items() if key.startswith(f"{day}:")}
+        if day_failures:
+            error = next(iter(day_failures.values()))
             ui.notify(
-                f"{day} failed to regenerate — {plan.failures[day]}",
+                f"{day} failed to regenerate — {error}",
                 type="warning",
                 multi_line=True,
                 close_button=True,

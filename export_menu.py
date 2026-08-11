@@ -33,11 +33,15 @@ def _slot_entry(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], slot: SlotSp
         return {"meal_type": slot.meal_type, "dish": "Skipped", "macros": None, "note": None}
     recipe = _slot_recipe(by_slot, slot)
     if recipe is None:
+        source_id = slot.id if slot.mode == MODE_COOK else slot.source
         return {
             "meal_type": slot.meal_type,
             "dish": "Not generated",
             "macros": None,
-            "note": week_plan.failures.get(slot.day),
+            # Keyed by slot_id now, not day (see WeekPlan.failures) — a
+            # leftover slot's own day may have generated fine even though its
+            # source cook failed, so the lookup goes through source_id.
+            "note": week_plan.failures.get(source_id),
         }
     note = (
         f"leftover from {slot_label(slot.source, short=True)}"
@@ -366,8 +370,8 @@ def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
     if week_plan.failures:
         story.append(Spacer(1, 10))
         story.append(Paragraph("Not generated", styles["Heading3"]))
-        for day, error in week_plan.failures.items():
-            story.append(Paragraph(escape(f"{day}: {error}"), note_style))
+        for key, error in week_plan.failures.items():
+            story.append(Paragraph(escape(f"{slot_label(key)}: {error}"), note_style))
 
     story.append(PageBreak())
 
