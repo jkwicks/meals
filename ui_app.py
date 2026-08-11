@@ -68,7 +68,6 @@ from pydantic import ValidationError
 
 from export_menu import build_week_menu_pdf
 from planner import (
-    DEFAULT_MODELS_CONFIG,
     MACRO_KEYS,
     TRAINING_INTENSITY_SPLIT,
     CookEvent,
@@ -87,6 +86,7 @@ from planner import (
     regenerate_single_day,
     regenerate_single_meal,
     resolve_auto_choices,
+    resolve_planner_model,
     split_targets,
     weeknight_prep_minutes,
 )
@@ -128,16 +128,6 @@ configure_logging()
 # stays a one-line change here. File names live on REPOSITORY.paths
 # (repository.py's StoragePaths), not as a module constant here.
 REPOSITORY = LocalJSONRepository()
-
-# Fallback for the drawer's model select when models.json is missing or omits
-# "selectable_options" — the list the app offered before that file existed.
-DEFAULT_MODEL_OPTIONS = [
-    "anthropic/claude-sonnet-5",
-    "deepseek/deepseek-v4-flash",
-    "google/gemma-4-26b-a4b-it:free",
-    "google/gemma-4-31b-it:free",
-    "poolside/laguna-s-2.1:free",
-]
 
 # The two cached weeks the app keeps on disk at once (see
 # `repository.LocalJSONRepository._week_plan_path`). "current" is the
@@ -425,7 +415,9 @@ class PlannerState:
     # configured `shop_days` trips; the underlying cook events and quantities
     # are identical either way, only the grouping changes.
     daily_shop_mode: bool = False
-    model: str = DEFAULT_MODELS_CONFIG["default_planner_model"]
+    # Real value is always set by `.load()` via `resolve_planner_model` —
+    # this placeholder only exists because dataclasses require a default.
+    model: str = ""
     focus: Optional[SlotView] = None
     edited: bool = False
     # Food already in the house, to be cooked through. Seeded from config's
@@ -508,8 +500,7 @@ class PlannerState:
             week_start=config.get("week_start_day") or list(config["weekly_schedule"])[0],
             servings=int(config.get("serving_rules", {}).get("servings_per_meal", 2)),
             shop_days=list(config.get("shopping", {}).get("shop_days", [])),
-            model=config.get("openrouter_model")
-            or models_config.get("default_planner_model", DEFAULT_MODELS_CONFIG["default_planner_model"]),
+            model=resolve_planner_model(dict(config, models=models_config)),
             pantry=[
                 str(item).strip()
                 for item in config.get("inventory_to_clear") or []
@@ -2916,7 +2907,16 @@ async def planner_page() -> None:
                     "Analyze & Import", icon="auto_awesome", on_click=on_import
                 ).props("dense no-caps")
 
-    with ui.left_drawer(bordered=True).classes(
+    # `top_corner=True` is NiceGUI's own switch for this — it makes the left
+    # drawer span past the header instead of sitting below it, which in turn
+    # makes Quasar inset the fixed header by the drawer's width the same way
+    # it already insets `.q-page-container`. Without it, the header spans the
+    # full window regardless of the drawer, so telemetry's day columns (in
+    # the header) and canvas's day columns (in the page container, inset by
+    # the drawer) share the same grid-cols-8 math but render at different
+    # x-offsets whenever the drawer is open — which it is by default at
+    # desktop widths.
+    with ui.left_drawer(bordered=True, top_corner=True).classes(
         "bg-slate-900 p-3 gap-3 flex flex-col h-screen overflow-y-auto w-full max-w-xs"
     ).props(":width=320"):
         # Pinned above the accordion (sticky, not just first-in-DOM) so the one
@@ -3022,7 +3022,7 @@ async def planner_page() -> None:
             )
 
             ui.select(
-                state.models_config.get("selectable_options") or DEFAULT_MODEL_OPTIONS,
+                state.models_config.get("selectable_options"),
                 label="Model",
             ).bind_value(state, "model").props("dense outlined").classes("w-full text-xs")
 
