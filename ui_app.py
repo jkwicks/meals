@@ -85,6 +85,7 @@ from planner import (
     meal_overrides_for,
     record_week_history,
     regenerate_single_day,
+    regenerate_single_meal,
     resolve_auto_choices,
     split_targets,
     weeknight_prep_minutes,
@@ -458,6 +459,11 @@ class PlannerState:
     # against overlapping with a whole-week run, without needing a canvas
     # repaint to show it: the clicked button's own `loading` prop covers that.
     regenerating_day: Optional[str] = None
+    # Same purpose as `regenerating_day` but scoped to one meal (one slot_id),
+    # for the per-card "Regenerate meal" refresh icon — guards against a
+    # second regenerate click (this meal, another meal, a whole day, or a
+    # whole-week run) racing this one.
+    regenerating_meal: Optional[str] = None
 
     # The recipe catalog (recipes_master.json) — every recipe ever favorited
     # or imported, record shape {id, content_key, recipe, is_favorite,
@@ -1576,6 +1582,19 @@ async def planner_page() -> None:
                         )
                         with swap_button:
                             ui.tooltip("Swap with a favorite")
+                    if view.mode == MODE_COOK and state.week_plan is not None:
+                        # Offered even without a recipe (STATUS_MISSING, a
+                        # failed day) — a single-meal retry, not the whole
+                        # day `regenerate_day` would redo.
+                        meal_regen_button = ui.button(icon="refresh")
+                        meal_regen_button.props("dense flat round size=xs").classes(
+                            "min-h-0 p-0.5 text-slate-500 hover:text-emerald-300"
+                        )
+                        meal_regen_button.on_click(
+                            lambda v=view, btn=meal_regen_button: regenerate_meal(v, btn)
+                        )
+                        with meal_regen_button:
+                            ui.tooltip("Regenerate this meal — re-cooks just it")
                     with ui.element("div").classes(
                         "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
                         f"{look['badge']}"
@@ -2717,6 +2736,70 @@ async def planner_page() -> None:
             )
         else:
             ui.notify(f"Regenerated {day}", type="positive")
+
+    async def regenerate_meal(view: SlotView, button) -> None:
+        """Re-cook one meal in place, via the small refresh icon on its card.
+
+        Narrower still than `regenerate_day`: one API call for one slot
+        rather than every cook on the day, via `planner.regenerate_single_meal`
+        (siblings on the same day are treated as fixed and their macros
+        subtracted from the day's budget). Unlike `regenerate_single_day`,
+        that function doesn't catch its own exceptions into
+        `WeekPlan.failures` — this is a single targeted retry, not a day walk
+        — so the `try` here is what turns a raised exception into a toast
+        instead of an unhandled error.
+        """
+        if state.generating or state.regenerating_day or state.regenerating_meal:
+            return
+        if view.mode != MODE_COOK or state.week_plan is None:
+            return
+        spec = state.spec
+        day = view.day
+        target_slot_id = view.id
+
+        config = state.planning_config()
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        state.regenerating_meal = target_slot_id
+        button.props("loading disable")
+        try:
+            history = await REPOSITORY.load_history()
+            # Resolves only what's still `auto` on this day, same reasoning
+            # as `regenerate_day` — every other day's already-concrete
+            # style/cuisine is left exactly as it was.
+            resolved_spec = resolve_auto_choices(spec, config, history)
+            plan = await regenerate_single_meal(
+                target_slot_id,
+                resolved_spec,
+                config,
+                state.week_plan,
+                history,
+                repository=REPOSITORY,
+            )
+            await REPOSITORY.save_week_plan(plan.model_dump(), state.week_selection)
+            await record_week_history(plan, REPOSITORY, config, days=[day])
+        except Exception as exc:
+            ui.notify(
+                f"Regenerating {slot_label(target_slot_id)} failed: "
+                f"{type(exc).__name__}: {exc}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            state.regenerating_meal = None
+            button.props(remove="loading disable")
+
+        # Saved before adopted, same ordering as a full generation — the grid
+        # can't show a meal that isn't on disk.
+        state.adopt_plan(plan)
+        refresh_all()
+        ui.notify(f"Regenerated {slot_label(target_slot_id)}", type="positive")
 
     # ---- recipe catalog & import --------------------------------------------
     # `favorites_list` is referenced by handlers defined above this point
