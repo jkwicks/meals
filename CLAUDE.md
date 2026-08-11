@@ -189,27 +189,15 @@ one code path and a cold start previews the planned week rather than rendering
 
 ### Printing and PDF export
 
-Two independent paths, because they solve different problems:
+One path, not two. There used to be a second "Print Menu" button that called
+`window.print()` against a `@media print` stylesheet (`print_css()`) — it
+printed whatever the dashboard happened to render (drawer icons, macro bars,
+dish names with no ingredients), which was a strictly worse document than the
+PDF sitting one button over, and having both meant two things to keep
+formatted well instead of one. `print_css()` and the CSS-only path are gone;
+the header's printer-icon button now triggers the same download as before.
 
-- **"Print Menu"** (header, printer icon) just calls `window.print()`.
-  `print_css()` (added once via the same `ui.add_css()` call as `chain_css`/
-  `card_hover_css`) is a `@media print` block that hides both drawers, every
-  dialog and every clickable control (`.q-drawer`, `.q-dialog`, `.q-btn`,
-  `.q-field`), un-fixes the header (`position: static` — a `position: fixed`
-  element repeats or clips at every page break instead of flowing once), and
-  forces light-on-white text. That last part has to reach every descendant
-  (`.meal-canvas *`, not just `.meal-canvas`): Tailwind's text-colour
-  utilities (`text-slate-100`, `text-emerald-200`, ...) set `color` directly
-  on the element they're applied to, so they never inherit an ancestor's
-  override — an ancestor-only rule left the dark theme's near-white card text
-  illegible on the forced-white page. `.q-page-container` needs its own
-  `padding: 0` too: Quasar reserves space for the (now-hidden) left drawer and
-  the fixed header as *inline* padding set by its own JS, not a stylesheet
-  class, so leaving it in place squeezed the whole canvas into a leftover
-  sliver instead of using the full page width.
-- **"Download PDF Menu"** (shopping drawer, above the per-window "Copy for
-  Keep" buttons) exports the whole week rather than one shopping trip, so it
-  lives once near the top of the drawer rather than repeated per window.
+- **The printer-icon button** (header) downloads `weekly_menu.pdf` —
   `export_menu.build_week_menu_pdf()` does the formatting — it reads
   `WeekPlan.slots`/`WeekPlan.by_slot()` directly, the same source
   `planner.day_slot_macros` does, not `PlannerState`/`SlotView`, so the
@@ -219,7 +207,16 @@ Two independent paths, because they solve different problems:
   Cairo/Pango system libraries this project doesn't otherwise depend on.
   `format_week_menu_markdown()` in the same module is the Markdown
   equivalent, sharing the per-slot walk (`_slot_entry`) so the two formats
-  can't silently disagree about what a slot says.
+  can't silently disagree about what a slot says. Printing this document is
+  then just whatever the browser's own PDF viewer does with a print
+  command — no separate print stylesheet to keep in sync with the app's
+  actual look.
+- **The PDF itself** is a day-by-day summary grid (meal types across the
+  top, days down the rows), an optional Sunday prep checklist, one page per
+  recipe grouped into a section per meal type, and a department-grouped
+  shopping list at the end — restrained dark-ink typography and
+  hairline-ruled ingredient lists, styled after the CSIRO Total Wellbeing
+  Diet's printed meal plans.
 
 ## Architecture
 
@@ -390,8 +387,12 @@ so the day shows up as a visible shortfall rather than crashing.
 
 ### Reasoning must be disabled — this is not optional
 
-Every request sends `extra_body={"reasoning": {"enabled": False}}`, OpenRouter's
-unified switch for a model's hidden reasoning budget. **Do not remove it.**
+Every request sends `extra_body=reasoning_extra_body(model, config)`
+(`planner.py`), which is OpenRouter's unified switch for a model's hidden
+reasoning budget, `{"reasoning": {"enabled": False}}`, **for every model
+except the ones in `models.json`'s `reasoning_required_models`.** Do not
+change the *default* to enabled — see the measurement below for why — but do
+add a model there if it needs the exception (next section).
 
 Measured on `anthropic/claude-sonnet-5` with the identical Sunday prompt:
 
@@ -411,6 +412,22 @@ reasoning budget is pure cost and a pure failure mode.
 
 Note this makes the free-model reasoning gotcha a *general* problem, not a
 free-tier one. A paid frontier model hit it harder than gemma did.
+
+#### Some providers reject the disable switch outright
+
+`google/gemini-3.6-flash` returns a hard `400` on every call, instantly, the
+moment `reasoning` is present at all: `"Reasoning is mandatory for this
+endpoint and cannot be disabled"`. This isn't the intermittent
+zero-content failure above — it's a flat rejection, so `instructor`'s
+`max_retries` just burns three attempts at the same 400 and every slot on
+that model fails within a second. `models.json`'s
+`reasoning_required_models` (a list of model ids) is how `reasoning_extra_body()`
+knows to omit the `reasoning` key entirely for a model like this rather than
+sending `enabled: True` — the reasoning is disabled by default *because* the
+task needs none, and that's equally true whether or not the provider insists
+on doing it anyway. If a newly picked model fails every slot in under a
+second with this exact message, it belongs in that list, not a workaround in
+the prompt.
 
 ### Diagnosing a slow or failed day
 

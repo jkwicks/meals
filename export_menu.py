@@ -1,7 +1,8 @@
 """Formats a generated week into a printable menu — Markdown text and a
-magazine-style PDF (CSIRO-guide inspired: a bold accent-coloured masthead,
-day-by-day grid, a tickable prep checklist, one card per recipe grouped by
-meal type, and a catalog-style shopping list).
+magazine-style PDF (CSIRO Total Wellbeing Diet inspired: restrained dark-ink
+typography, a teal-header day-by-day grid, a tickable prep checklist, a
+single hairline-ruled recipe page per meal grouped by meal type, and a
+catalog-style shopping list).
 
 Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
 `WeekPlan.by_slot()` (cook events), the same source `WeekPlan.day_slot_macros`
@@ -25,7 +26,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    HRFlowable,
     ListFlowable,
     ListItem,
     PageBreak,
@@ -41,7 +41,7 @@ from shopping import ShoppingItem, aggregate_cook_events, format_quantity, forma
 from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, humanize, slot_label
 
 # --------------------------------------------------------------------------
-# Palette + styles (Task 1)
+# Palette + styles
 #
 # Every other paragraph style in this file derives from one of the four
 # base styles below rather than `getSampleStyleSheet()` directly, so the
@@ -49,7 +49,6 @@ from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, humanize, slot_l
 # per section.
 # --------------------------------------------------------------------------
 
-ACCENT = colors.HexColor("#0f766e")
 ACCENT_DARK = colors.HexColor("#134e4a")
 INK = colors.HexColor("#1f2937")
 MUTED = colors.HexColor("#6b7280")
@@ -62,15 +61,19 @@ CONTENT_WIDTH = letter[0] - 2 * PAGE_MARGIN
 _base = getSampleStyleSheet()
 
 STYLES = {
+    # Large display heading (page 1 title, "Shopping List", checklist title).
+    # Regular weight, not bold — Helvetica has no true light cut, and at this
+    # size a regular weight already reads as an editorial display face rather
+    # than a shouty banner, which is what the CSIRO reference uses throughout.
     "Heading1": ParagraphStyle(
         "MenuHeading1",
         parent=_base["Title"],
-        fontName="Helvetica-Bold",
-        fontSize=26,
-        leading=30,
-        textColor=ACCENT,
+        fontName="Helvetica",
+        fontSize=27,
+        leading=31,
+        textColor=INK,
         alignment=0,
-        spaceAfter=8,
+        spaceAfter=10,
     ),
     "Heading2": ParagraphStyle(
         "MenuHeading2",
@@ -87,7 +90,7 @@ STYLES = {
         parent=_base["BodyText"],
         fontName="Helvetica",
         fontSize=10,
-        leading=14,
+        leading=14.5,
         textColor=INK,
     ),
     "SubText": ParagraphStyle(
@@ -106,37 +109,35 @@ STYLES.update(
             "MenuEyebrow",
             parent=STYLES["SubText"],
             fontName="Helvetica-Bold",
-            textColor=ACCENT,
+            textColor=MUTED,
             spaceAfter=2,
         ),
+        # Recipe title — same restrained, regular-weight treatment as
+        # Heading1 but sized for a page that's mostly ingredients/method
+        # below it, matching the CSIRO reference's plain dark-grey recipe
+        # headings (no colour, no bold).
         "RecipeTitle": ParagraphStyle(
-            "MenuRecipeTitle", parent=STYLES["Heading1"], fontSize=20, leading=24, spaceAfter=4
+            "MenuRecipeTitle", parent=STYLES["Heading1"], fontSize=19, leading=23, spaceAfter=10
+        ),
+        # In-flow section label ("Breakfast Meals") placed once, directly
+        # above the first recipe of that meal type — not a full divider
+        # page. Sized close to a recipe title since it reads as the same
+        # kind of heading, one level up.
+        "CategoryLabel": ParagraphStyle(
+            "MenuCategoryLabel",
+            parent=STYLES["Heading1"],
+            fontSize=22,
+            leading=26,
+            spaceAfter=16,
         ),
         "SectionHeading": ParagraphStyle(
             "MenuSectionHeading",
             parent=STYLES["Heading2"],
-            fontSize=11.5,
+            fontSize=11,
             leading=14,
-            textColor=ACCENT_DARK,
-            spaceBefore=10,
+            textColor=INK,
+            spaceBefore=12,
             spaceAfter=4,
-        ),
-        "CategoryHeader": ParagraphStyle(
-            "MenuCategoryHeader",
-            parent=STYLES["Heading1"],
-            fontSize=34,
-            leading=38,
-            textColor=colors.white,
-            alignment=1,
-            spaceAfter=0,
-        ),
-        "CategorySubtitle": ParagraphStyle(
-            "MenuCategorySubtitle",
-            parent=STYLES["SubText"],
-            alignment=1,
-            textColor=colors.HexColor("#a7f3d0"),
-            fontSize=10.5,
-            spaceBefore=4,
         ),
         "GridHeader": ParagraphStyle(
             "MenuGridHeader",
@@ -169,13 +170,15 @@ STYLES.update(
         "ChecklistNote": ParagraphStyle(
             "MenuChecklistNote", parent=STYLES["SubText"], fontSize=8.5, leading=11, spaceBefore=1
         ),
-        "MacroFooter": ParagraphStyle(
-            "MenuMacroFooter",
+        # The closing "Makes N servings. Each serving provides..." line —
+        # a plain left-aligned sentence, not a boxed/centred footer, so it
+        # reads as prose the way the CSIRO reference's "Makes 1 serve." does.
+        "ServesLine": ParagraphStyle(
+            "MenuServesLine",
             parent=STYLES["BodyText"],
-            fontName="Helvetica-Bold",
             fontSize=9.5,
-            alignment=1,
-            textColor=ACCENT_DARK,
+            leading=13,
+            textColor=MUTED,
         ),
     }
 )
@@ -258,7 +261,7 @@ def format_week_menu_markdown(week_plan: WeekPlan) -> str:
 
 def _grid_meal_types(week_plan: WeekPlan) -> List[str]:
     """Meal types in first-seen slot order — both the summary grid's column
-    order (Task 3) and the recipe section order (Task 4).
+    order and the recipe section order.
 
     Not a fixed constant: a week's slots are the source of truth for which
     meal types actually appear, so a config with a non-default `meal_types`
@@ -285,7 +288,7 @@ def _summary_cell(entry: Optional[dict]) -> Paragraph:
 
 def _summary_table(week_plan: WeekPlan, by_slot: Dict[str, CookEvent]) -> Table:
     """Page 1: a weekly-at-a-glance grid — days down the rows, meal types
-    across the columns (Task 3), so each row reads like one day of a diary
+    across the columns, so each row reads like one day of a diary
     rather than one meal's history across the week.
 
     Deliberately doesn't repeat per-meal macros here — that detail lives on
@@ -336,7 +339,7 @@ def _summary_table(week_plan: WeekPlan, by_slot: Dict[str, CookEvent]) -> Table:
 
 
 def _prep_checklist_page(session: SundayPrepSession) -> list:
-    """Page 2 (Task 2): a tickable checklist for the Sunday batch-prep
+    """Page 2 (when present): a tickable checklist for the Sunday batch-prep
     session, one checkbox per timeline phase, only rendered when a week
     actually has one.
     """
@@ -414,24 +417,52 @@ def _feeds_note(event: CookEvent) -> Optional[str]:
     return "Also feeds: " + ", ".join(slot_label(value) for value in others)
 
 
-def _macro_footer_text(macros: dict) -> str:
+def _serves_line(event: CookEvent) -> str:
+    """Builds the "Makes N servings. Each serving provides..." sentence,
+    with markup already applied — the caller doesn't need to escape it
+    further since every interpolated value is a number or a word this
+    module controls, none of it user-supplied recipe text.
+    """
+    macros = event.recipe.per_serving_macros
+    portions = event.portions
+    lead = f"Makes {portions} serving{'s' if portions != 1 else ''}."
     return (
-        f"Calories: {macros['calories']:.0f}   |   "
-        f"Protein: {macros['protein_g']:.0f}g   |   "
-        f"Carbs: {macros['net_carbs_g']:.0f}g   |   "
-        f"Fat: {macros['fat_g']:.0f}g"
+        f"<b>{lead}</b> Each serving provides {macros['calories']:.0f} kcal, "
+        f"{macros['protein_g']:.0f}g protein, {macros['net_carbs_g']:.0f}g carbs, "
+        f"{macros['fat_g']:.0f}g fat."
     )
 
 
+def _ingredient_table(recipe: Recipe) -> Table:
+    """Ingredients as a hairline-ruled list — one row per ingredient, a thin
+    grey rule under every row but the last — instead of a bulleted list, so
+    a recipe page reads like a printed ledger rather than a slide deck.
+    """
+    rows = [[Paragraph(escape(_ingredient_line(ingredient)), STYLES["BodyText"])] for ingredient in recipe.ingredients]
+    table = Table(rows, colWidths=[CONTENT_WIDTH])
+    style_commands = [
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for row_index in range(len(rows) - 1):
+        style_commands.append(("LINEBELOW", (0, row_index), (-1, row_index), 0.5, RULE))
+    table.setStyle(TableStyle(style_commands))
+    return table
+
+
 def _recipe_page(event: CookEvent) -> list:
-    """One recipe's dedicated page (Task 5): eyebrow meta, title, a
-    two-column ingredients/instructions layout, and a macro footer.
+    """One recipe's dedicated page: eyebrow meta, title, a single-column
+    hairline-ruled ingredient list, numbered method, and a closing
+    "Makes N servings" sentence — no photo (none exist for a generated
+    recipe), so the page stays single-column full-width rather than
+    reserving dead space for an image that isn't there.
     """
     recipe = event.recipe
     flow: list = [
         Paragraph(escape(_recipe_meta_line(event)), STYLES["Eyebrow"]),
         Paragraph(escape(recipe.name), STYLES["RecipeTitle"]),
-        HRFlowable(width="100%", thickness=1.5, color=ACCENT, spaceAfter=8),
     ]
 
     feeds = _feeds_note(event)
@@ -439,54 +470,34 @@ def _recipe_page(event: CookEvent) -> list:
         flow.append(Paragraph(escape(feeds), STYLES["SubText"]))
         flow.append(Spacer(1, 6))
 
-    ingredient_items = [
-        ListItem(Paragraph(escape(_ingredient_line(ingredient)), STYLES["BodyText"]))
-        for ingredient in recipe.ingredients
-    ]
-    instruction_items = [
-        ListItem(Paragraph(escape(step), STYLES["BodyText"])) for step in recipe.instructions
-    ]
+    flow.append(_ingredient_table(recipe))
 
-    left_column = [
-        Paragraph("Ingredients", STYLES["SectionHeading"]),
-        ListFlowable(ingredient_items, bulletType="bullet", leftIndent=12, bulletFontSize=8),
-    ]
-    right_column = [
-        Paragraph("Instructions", STYLES["SectionHeading"]),
-        ListFlowable(instruction_items, bulletType="1", leftIndent=14, bulletFontSize=9),
-    ]
-
-    left_width = CONTENT_WIDTH * 0.36
-    right_width = CONTENT_WIDTH - left_width
-    body = Table([[left_column, right_column]], colWidths=[left_width, right_width])
-    body.setStyle(
-        TableStyle(
+    flow.append(Paragraph("Method", STYLES["SectionHeading"]))
+    flow.append(
+        ListFlowable(
             [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (0, 0), 0),
-                ("RIGHTPADDING", (0, 0), (0, 0), 12),
-                ("LEFTPADDING", (1, 0), (1, 0), 12),
-                ("RIGHTPADDING", (1, 0), (1, 0), 0),
-                ("LINEBEFORE", (1, 0), (1, 0), 0.5, RULE),
-            ]
+                ListItem(Paragraph(escape(step), STYLES["BodyText"]), spaceBefore=5)
+                for step in recipe.instructions
+            ],
+            bulletType="1",
+            leftIndent=16,
+            bulletFontSize=9.5,
         )
     )
-    flow.append(body)
 
     if recipe.prep_notes:
-        flow.append(Spacer(1, 10))
+        flow.append(Spacer(1, 8))
         flow.append(Paragraph(escape(recipe.prep_notes), STYLES["SubText"]))
 
-    flow.append(Spacer(1, 14))
-    flow.append(HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=6))
-    flow.append(Paragraph(escape(_macro_footer_text(recipe.per_serving_macros)), STYLES["MacroFooter"]))
+    flow.append(Spacer(1, 12))
+    flow.append(Paragraph(_serves_line(event), STYLES["ServesLine"]))
     flow.append(PageBreak())
     return flow
 
 
 def _recipes_by_category(week_plan: WeekPlan) -> List[tuple]:
-    """Cook events grouped by meal type (Task 4), in `_grid_meal_types`
-    order, each bucket keeping the week-order the events already arrive in.
+    """Cook events grouped by meal type, in `_grid_meal_types` order, each
+    bucket keeping the week-order the events already arrive in.
     """
     order = _grid_meal_types(week_plan)
     buckets: Dict[str, List[CookEvent]] = {meal_type: [] for meal_type in order}
@@ -495,39 +506,10 @@ def _recipes_by_category(week_plan: WeekPlan) -> List[tuple]:
     return [(meal_type, buckets[meal_type]) for meal_type in order if buckets.get(meal_type)]
 
 
-def _category_header_page(meal_type: str, recipe_count: int) -> list:
-    """A full-bleed divider page: a massive category name on an accent band,
-    inserted before that meal type's run of recipe pages (Task 4)."""
-    band = Table(
-        [
-            [Paragraph(escape(f"{meal_type.title()} Recipes"), STYLES["CategoryHeader"])],
-            [
-                Paragraph(
-                    escape(f"{recipe_count} recipe{'s' if recipe_count != 1 else ''} this week"),
-                    STYLES["CategorySubtitle"],
-                )
-            ],
-        ],
-        colWidths=[CONTENT_WIDTH],
-    )
-    band.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), ACCENT),
-                ("TOPPADDING", (0, 0), (-1, 0), 46),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-                ("TOPPADDING", (0, 1), (-1, 1), 0),
-                ("BOTTOMPADDING", (0, 1), (-1, 1), 46),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ]
-        )
-    )
-    return [Spacer(1, 70 * mm), band, PageBreak()]
-
-
-def _department_item_table(items: List[ShoppingItem], columns: int = 3) -> Table:
-    """One department's items tiled into a fixed number of columns so the
-    page reads like a grocery-catalog list rather than one long column."""
+def _department_item_table(items: List[ShoppingItem], columns: int = 2) -> Table:
+    """One department's items tiled into a fixed number of columns, each row
+    hairline-ruled the same way a recipe's ingredient list is — one visual
+    language for "things to check off" everywhere in the document."""
     cells = []
     for item in items:
         text = f"[ ]  {escape(item.name)} — {escape(format_quantity(item.name, item.total_amount_g))}"
@@ -541,22 +523,21 @@ def _department_item_table(items: List[ShoppingItem], columns: int = 3) -> Table
 
     col_width = CONTENT_WIDTH / columns
     table = Table(rows, colWidths=[col_width] * columns)
-    table.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
+    style_commands = [
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]
+    for row_index in range(len(rows) - 1):
+        style_commands.append(("LINEBELOW", (0, row_index), (-1, row_index), 0.5, RULE))
+    table.setStyle(TableStyle(style_commands))
     return table
 
 
 def _shopping_list_pages(week_plan: WeekPlan) -> list:
-    """Task 6: the whole week's shopping, grouped by department in a
+    """The whole week's shopping, grouped by department in a
     catalog-style grid, followed by a plain-text page built from the same
     `format_shopping_list_text` the CLI and shopping-drawer copy buttons
     use — so the wording can't drift between the styled table and the copy
@@ -615,7 +596,6 @@ def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(MUTED)
         canvas.drawRightString(doc.pagesize[0] - PAGE_MARGIN, 10 * mm, f"Page {doc.page}")
-        canvas.setFillColor(ACCENT)
         canvas.drawString(PAGE_MARGIN, 10 * mm, "Weekly Menu")
         canvas.restoreState()
 
@@ -642,11 +622,19 @@ def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
     if week_plan.sunday_prep_session:
         story.extend(_prep_checklist_page(week_plan.sunday_prep_session))
 
-    # --- One page per recipe actually being cooked, grouped by meal type ---
+    # --- One page per recipe actually being cooked, grouped by meal type.
+    # The category label ("Breakfast Meals") sits once, directly above the
+    # first recipe of that meal type, rather than on its own divider page —
+    # each recipe already ends in a PageBreak, so the category still starts
+    # on a fresh page without spending a whole page on just its name. ---
     for meal_type, events in _recipes_by_category(week_plan):
-        story.extend(_category_header_page(meal_type, len(events)))
-        for event in events:
-            story.extend(_recipe_page(event))
+        for index, event in enumerate(events):
+            recipe_flow = _recipe_page(event)
+            if index == 0:
+                recipe_flow = [
+                    Paragraph(escape(f"{meal_type.title()} Meals"), STYLES["CategoryLabel"])
+                ] + recipe_flow
+            story.extend(recipe_flow)
 
     # --- Shopping list, grouped by department ---
     if week_plan.cook_events:

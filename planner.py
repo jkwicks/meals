@@ -488,6 +488,28 @@ def is_free_model(model: str) -> bool:
     return model.endswith(":free")
 
 
+def reasoning_extra_body(model: str, config: dict) -> dict:
+    """OpenRouter's `extra_body` for turning a model's hidden reasoning off.
+
+    Disabled by default — see CLAUDE.md "Reasoning must be disabled": the
+    identical prompt shape measured 303s and, on repeated runs, zero content
+    (finish_reason "length") with it left on. Some providers go further and
+    reject the request outright whenever the key is present at all (a hard
+    400 "Reasoning is mandatory for this endpoint and cannot be disabled",
+    not a retryable validation failure — `google/gemini-3.6-flash` did this
+    on every call of a real run, failing the whole week in under a second).
+    `models.json`'s `reasoning_required_models` lists ids like that; for them
+    the key is omitted entirely rather than sent as `enabled: True` — the
+    reason this task disables reasoning in the first place (no deliberation
+    needed, the macro arithmetic is already done in Python) doesn't change
+    just because the model insists on doing it anyway.
+    """
+    models_config = config.get("models") or {}
+    if model in (models_config.get("reasoning_required_models") or []):
+        return {}
+    return {"reasoning": {"enabled": False}}
+
+
 def meal_type_week_max_tokens(model: str, num_recipes: int) -> int:
     """Token budget for a MealTypeWeekRecipes call, scaled to how many
     recipes it's actually asking for in this one request.
@@ -1455,10 +1477,7 @@ async def import_external_recipe(
             response_model=Recipe,
             max_retries=3,
             max_tokens=max_tokens,
-            # Non-optional — see CLAUDE.md "Reasoning must be disabled": the
-            # identical prompt shape measured 303s and, on two real runs, zero
-            # content, with this switch left on.
-            extra_body={"reasoning": {"enabled": False}},
+            extra_body=reasoning_extra_body(model, config),
             context={"config": config},
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -1803,16 +1822,7 @@ def generate_day(
         response_model=DayRecipes,
         max_retries=3,
         max_tokens=max_tokens,
-        # OpenRouter's unified switch for turning a model's hidden reasoning
-        # off. Measured on anthropic/claude-sonnet-5 with this exact prompt:
-        # reasoning on gave 303s and a run that consumed all 32000 tokens on
-        # 6981 reasoning tokens and returned *zero* content (finish_reason
-        # "length"); reasoning off gave 16-19s, ~2200 completion tokens and
-        # finish_reason "stop" on 3/3 attempts. This task needs no deliberation
-        # — the macro arithmetic is already done in Python — so the reasoning
-        # budget is pure cost and a pure failure mode. Harmless for models that
-        # have no reasoning mode.
-        extra_body={"reasoning": {"enabled": False}},
+        extra_body=reasoning_extra_body(model, config),
         # The validator compares against the sum of the per-recipe budgets, not
         # `remaining`: a meal eaten twice in one day contributes its macros
         # twice, so the recipes legitimately total less than the day does.
@@ -2016,9 +2026,7 @@ def generate_meal_type_week(
         response_model=MealTypeWeekRecipes,
         max_retries=3,
         max_tokens=max_tokens,
-        # See CLAUDE.md "Reasoning must be disabled" — same failure mode
-        # applies to every instructor call on this client, not just generate_day.
-        extra_body={"reasoning": {"enabled": False}},
+        extra_body=reasoning_extra_body(model, config),
         context={
             "config": config,
             "day_budgets": day_budgets,
@@ -2188,9 +2196,7 @@ def generate_sunday_prep_session(
         response_model=SundayPrepSession,
         max_retries=3,
         max_tokens=max_tokens,
-        # See CLAUDE.md "Reasoning must be disabled" — same failure mode
-        # applies to every instructor call on this client, not just generate_day.
-        extra_body={"reasoning": {"enabled": False}},
+        extra_body=reasoning_extra_body(model, config),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

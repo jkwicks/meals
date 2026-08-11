@@ -61,6 +61,18 @@ swap it:
   prefer a paid model (`anthropic/claude-sonnet-5`) when portion accuracy
   matters. `--use-cached-plan` re-renders `week_plan.json` with no API calls,
   which is the right way to iterate on shopping-list or display changes.
+- **Some providers reject the disable switch outright rather than misbehaving
+  with it on.** `google/gemini-3.6-flash` returned a hard `400` —
+  `"Reasoning is mandatory for this endpoint and cannot be disabled"` — on
+  every single call, instantly, failing an entire week in under a second
+  (not the slow/intermittent failure above; `max_retries` doesn't help
+  because the same 400 comes back every attempt). If a newly picked model
+  fails this way, add its id to `models.json`'s `reasoning_required_models`
+  rather than trying to work around it — `reasoning_extra_body()` in
+  `planner.py` then omits the `reasoning` key for that model instead of
+  sending `enabled: False`. Don't flip the *default* to enabled for
+  everyone else; this is a per-model exception, not a change to the rule.
 
-Note: reasoning must stay disabled on every request regardless of which model
-you pick — see the "Reasoning must be disabled" section in `CLAUDE.md`.
+Note: reasoning must stay disabled by default on every request regardless of
+which model you pick — see the "Reasoning must be disabled" section in
+`CLAUDE.md`, including the per-model exception list just above.
