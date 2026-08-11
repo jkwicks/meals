@@ -376,6 +376,27 @@ def aggregate_recipes(
     return ShoppingList(categories=categories)
 
 
+PLANT_DEPARTMENTS = {"Produce", "Herbs & Spices", "Nuts, Seeds & Spreads"}
+
+
+def collect_unique_plants(cook_events: Sequence["CookEvent"]) -> List[str]:
+    """Unique plant-based ingredients across a week's cook events.
+
+    Diversity, not shopping quantity: an ingredient counts once no matter how
+    many recipes use it, keyed by the same `normalize_name()` used to combine
+    shopping-list lines so "Spinach" and "Baby spinach, washed" aren't counted
+    twice.
+    """
+    plants: Dict[str, str] = {}
+    for event in cook_events:
+        for ingredient in event.recipe.ingredients:
+            if categorize_department(ingredient.name) not in PLANT_DEPARTMENTS:
+                continue
+            key = normalize_name(ingredient.name)
+            plants.setdefault(key, display_name(ingredient.name))
+    return sorted(plants.values())
+
+
 def aggregate_cook_events(
     cook_events: Sequence["CookEvent"], window_days: Optional[Sequence[str]] = None
 ) -> ShoppingList:

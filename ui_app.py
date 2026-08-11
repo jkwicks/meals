@@ -1719,6 +1719,18 @@ async def planner_page() -> None:
                         "batch-prep timeline here."
                     ).classes("text-[9px] text-slate-600 mt-1")
                 return
+            # What this session is for, before how — a shopper glancing at the
+            # column should see which dishes it batches without opening any
+            # of the phase timeline below.
+            if session.meals_included:
+                with ui.element("div").classes(f"rounded-md p-2 {PREP_COLUMN_ACCENT}"):
+                    ui.label("Batching for").classes(
+                        "text-[9px] uppercase tracking-wide text-indigo-400 mb-1"
+                    )
+                    for meal in session.meals_included:
+                        ui.label(f"• {meal}").classes(
+                            "text-[10px] text-indigo-200 leading-tight"
+                        )
             for phase in session.timeline:
                 with ui.expansion(
                     phase.name,
@@ -1864,14 +1876,33 @@ async def planner_page() -> None:
             state.days, state.week_plan.generated_at if state.week_plan else None
         )
         fmt = "%b %-d, %Y"
-        with ui.element("div").classes(
-            "flex flex-row items-center gap-1.5 px-2 py-1 mb-1 rounded border "
-            "border-slate-800 bg-slate-800/40 w-fit"
-        ):
-            ui.label("📅").classes("text-xs")
-            ui.label(f"Week of {start.strftime(fmt)} – {end.strftime(fmt)}").classes(
-                "text-[11px] font-medium text-slate-300 tracking-wide"
-            )
+        with ui.element("div").classes("flex flex-row items-center gap-2 mb-1"):
+            with ui.element("div").classes(
+                "flex flex-row items-center gap-1.5 px-2 py-1 rounded border "
+                "border-slate-800 bg-slate-800/40 w-fit"
+            ):
+                ui.label("📅").classes("text-xs")
+                ui.label(f"Week of {start.strftime(fmt)} – {end.strftime(fmt)}").classes(
+                    "text-[11px] font-medium text-slate-300 tracking-wide"
+                )
+            # Unique plant-department ingredients (Produce, Herbs & Spices,
+            # Nuts/Seeds & Spreads) across the week's cook events — see
+            # `shopping.collect_unique_plants`. Absent until a week is
+            # generated, same as every other week_plan-derived reading here.
+            plant_count = len(state.week_plan.unique_plants) if state.week_plan else 0
+            with ui.element("div").classes(
+                "flex flex-row items-center gap-1.5 px-2 py-1 rounded border "
+                "border-emerald-800/60 bg-emerald-900/20 w-fit"
+            ):
+                ui.label("🌱").classes("text-xs")
+                ui.label(f"Plant Diversity: {plant_count}").classes(
+                    "text-[11px] font-medium text-emerald-300 tracking-wide"
+                )
+                with ui.tooltip():
+                    ui.label(
+                        "Unique produce, herbs/spices, nuts/seeds & spreads across "
+                        "this week's cooked recipes."
+                    )
 
     # ---- header: macro telemetry -----------------------------------------
     # `prep_telemetry_cell` replaces the usual kcal/protein bars in the prep

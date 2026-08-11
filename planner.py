@@ -21,6 +21,7 @@ from repository import (
 from shopping import (
     aggregate_cook_events,
     categorize_department,
+    collect_unique_plants,
     format_shopping_list_markdown,
     format_shopping_list_text,
     round_ingredient_quantity,
@@ -1889,6 +1890,7 @@ async def generate_week_plan(
         targets=targets,
         failures=failures,
         sunday_prep_session=sunday_prep_session,
+        unique_plants=collect_unique_plants(ordered_events),
     )
 
 
@@ -1976,6 +1978,7 @@ async def regenerate_single_day(
             "targets": targets,
             "failures": failures,
             "sunday_prep_session": sunday_prep_session,
+            "unique_plants": collect_unique_plants(ordered_events),
         }
     )
 
@@ -2119,6 +2122,7 @@ async def regenerate_single_meal(
             "slots": spec.slots,
             "targets": targets,
             "sunday_prep_session": sunday_prep_session,
+            "unique_plants": collect_unique_plants(ordered_events),
         }
     )
 
