@@ -1,7 +1,7 @@
 """Formats a generated week into a printable menu — Markdown text and a PDF.
 
 Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
-`WeekPlan.by_slot()` (cook events), the same source `planner.day_slot_macros`
+`WeekPlan.by_slot()` (cook events), the same source `WeekPlan.day_slot_macros`
 reads — not `PlannerState`/`SlotView`, so this module has no UI dependency
 and works the same from the NiceGUI drawer today or a future CLI flag.
 
@@ -13,7 +13,7 @@ project's venv with a plain `pip install`).
 from typing import Dict, List, Optional
 from xml.sax.saxutils import escape
 
-from planner import CookEvent, Recipe, WeekPlan, day_slot_macros
+from planner import CookEvent, Recipe, WeekPlan
 from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, humanize, slot_label
 
 def _slot_recipe(by_slot: Dict[str, CookEvent], slot: SlotSpec) -> Optional[Recipe]:
@@ -84,7 +84,7 @@ def format_week_menu_markdown(week_plan: WeekPlan) -> str:
             if entry["macros"]:
                 text += f" · {_macro_text(entry['macros'])}"
             lines.append(f"- {text}")
-        totals = day_slot_macros(week_plan, day)
+        totals = week_plan.day_slot_macros(day)
         lines.append(f"- **Day total** — {_macro_text(totals)}")
         lines.append("")
 
@@ -168,7 +168,7 @@ def _summary_table(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], styles):
 
     totals_row = [Paragraph("Daily Total", label_style)]
     for day in week_plan.days:
-        totals_row.append(Paragraph(escape(_macro_text(day_slot_macros(week_plan, day))), totals_style))
+        totals_row.append(Paragraph(escape(_macro_text(week_plan.day_slot_macros(day))), totals_style))
     rows.append(totals_row)
 
     content_width = 180 * mm

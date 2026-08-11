@@ -77,7 +77,6 @@ from planner import (
     apply_training_adjustments,
     calculate_daily_targets,
     configure_logging,
-    day_slot_macros,
     generate_week_plan,
     import_external_recipe,
     is_sunday_prepped,
@@ -878,7 +877,7 @@ class PlannerState:
     def totals_for(self, day: str) -> dict:
         if not self.week_plan:
             return {key: 0.0 for key in MACRO_KEYS}
-        return day_slot_macros(self.week_plan, day)
+        return self.week_plan.day_slot_macros(day)
 
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""
