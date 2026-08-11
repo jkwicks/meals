@@ -33,13 +33,22 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, List, Optional, TypeVar
 
-DEFAULT_CONFIG_FILE = "config.json"
-DEFAULT_HISTORY_FILE = "meal_history.json"
-DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
-DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
-DEFAULT_MODELS_FILE = "models.json"
-DEFAULT_WHFOODS_FILE = "whfoods.json"
-DEFAULT_SHOPPING_LIST_FILE = "shopping_list.md"
+# Anchored on this file, never on the working directory. The code lives in
+# `src/` and the data in `data/`, so a relative "data/config.json" would only
+# resolve when the process happened to start in the project root — which is
+# exactly what `./scripts/server.sh` does *not* guarantee, and what a bare
+# `cd src && python planner.py` breaks. Two `dirname`s up from
+# `src/repository.py` is the project root by construction.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+
+DEFAULT_CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+DEFAULT_HISTORY_FILE = os.path.join(DATA_DIR, "meal_history.json")
+DEFAULT_WEEK_PLAN_FILE = os.path.join(DATA_DIR, "week_plan.json")
+DEFAULT_RECIPE_CATALOG_FILE = os.path.join(DATA_DIR, "recipes_master.json")
+DEFAULT_MODELS_FILE = os.path.join(DATA_DIR, "models.json")
+DEFAULT_WHFOODS_FILE = os.path.join(DATA_DIR, "whfoods.json")
+DEFAULT_SHOPPING_LIST_FILE = os.path.join(DATA_DIR, "shopping_list.md")
 
 T = TypeVar("T")
 
@@ -235,7 +244,8 @@ class PlanRepository(abc.ABC):
 
 
 class LocalJSONRepository(PlanRepository):
-    """The current on-disk layout: four JSON files next to the code.
+    """The current on-disk layout: JSON files in the project's `data/`
+    directory, one level up from this module's `src/`.
 
     Paths are constructor arguments rather than module constants so tests (and
     a second week in another directory) don't have to chdir. Writes go to a
@@ -324,10 +334,19 @@ class LocalJSONRepository(PlanRepository):
         already on disk needs no migration and no data movement the first
         time this runs. Every other identifier — `"next"`, or a week-start
         date — gets its own `week_plan_<identifier>.json` alongside it.
+
+        "Alongside" means *in the same directory as* `self.paths.week_plan`,
+        derived rather than spelled out. A literal `f"week_plan_{id}.json"`
+        was silently relative to the working directory: `"current"` would
+        load from `data/` while `"next"` wrote to wherever the process
+        started, so the two weeks lived in different folders.
         """
         if week_identifier == "current":
             return self.paths.week_plan
-        return f"week_plan_{week_identifier}.json"
+        return os.path.join(
+            os.path.dirname(self.paths.week_plan),
+            f"week_plan_{week_identifier}.json",
+        )
 
     # -- blocking helpers, only ever called in a worker thread --------------
 

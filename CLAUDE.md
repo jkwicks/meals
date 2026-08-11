@@ -14,18 +14,36 @@ but pinning `urllib3<2` skips the check and the warning entirely.
 
 Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there).
 
+## Layout
+
+Three directories, flat inside each — `src/` (the six Python modules), `data/`
+(config, models and every generated file), `scripts/` (the shell entry points).
+Root holds only README.md, CLAUDE.md, .env, .gitignore and requirements.txt.
+
+It is **not** a package: no `__init__.py`, no `setup.py`, and the modules
+import each other as flat siblings (`from week import ...`), which keeps
+working because `python src/planner.py` puts `src/` on `sys.path[0]`. Don't
+convert these to relative imports.
+
+Data paths are anchored on `__file__` in `repository.py` (`PROJECT_ROOT`,
+`DATA_DIR`), never relative to the working directory — `./scripts/server.sh`
+runs the app from the root while a bare `python planner.py` runs it from
+`src/`, and a cwd-relative `data/…` would resolve in only one of those. The
+shell scripts each `cd` to the project root for the same reason. Anything new
+that needs a data file should join `DATA_DIR`, not spell out a relative path.
+
 ## Run
 
-Run from the venv: `source venv/bin/activate`, then `python planner.py --help`
-for flags.
+Run from the venv: `source venv/bin/activate`, then
+`python src/planner.py --help` for flags.
 
-For the web UI use `./server.sh start` — it handles venv activation, nohup, the
-PID file and the log:
+For the web UI use `./scripts/server.sh start` — it handles venv activation,
+nohup, the PID file and the log:
 
-    ./server.sh start              # NiceGUI (ui_app.py) on :8080
-    ./server.sh status
-    ./server.sh stop
-    MEALS_PORT=9000 ./server.sh start
+    ./scripts/server.sh start              # NiceGUI (src/ui_app.py) on :8080
+    ./scripts/server.sh status
+    ./scripts/server.sh stop
+    MEALS_PORT=9000 ./scripts/server.sh start
 
 ### Web UI
 
@@ -33,14 +51,14 @@ NiceGUI (`ui_app.py`) is the only web UI. The Streamlit app (`app.py`) was
 deleted once the migration landed; if you need its rendering or grid-editing
 code as a reference, it is in git history at `git show e237872:app.py`.
 
-A week can be generated from either front end — `python planner.py` or the
+A week can be generated from either front end — `python src/planner.py` or the
 NiceGUI drawer's "Generate Current Week" — and both go through the same
 `generate_week_plan`, write the same `week_plan.json` and append the same
 history. The CLI is still the one that prints shopping lists.
 
 ### NiceGUI front end
 
-`ui_app.py` (`./server.sh start`, serves on :8080) is the high-density desktop
+`ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density desktop
 UI: left drawer for global controls, a header of 7 per-day macro bars, and a
 7-column x 4-card canvas. Both grids are `grid-cols-8` — an indigo Sunday-prep
 column sits at index 0, ahead of the seven days — so a day's telemetry stays
@@ -464,7 +482,7 @@ the prompt.
 ### Diagnosing a slow or failed call
 
 `configure_logging()` (called from both `planner.main()` and `ui_app.py` at
-import time) writes per-call generation timing to `meals.log`: request start,
+import time) writes per-call generation timing to `data/meals.log`: request start,
 elapsed seconds, `finish_reason`, `completion_tokens`, and `reasoning_tokens`
 for every `generate_day()` call, plus a line for any day that fails. This is
 the same data the manual diagnostic below asks you to check by hand —

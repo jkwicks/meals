@@ -81,18 +81,32 @@ that 3.9's `typing` can't evaluate natively) and `urllib3<2` (silences a
 harmless `NotOpenSSLWarning` — macOS system Python links against Apple's old
 LibreSSL, not real OpenSSL; HTTPS still works either way).
 
+### Project layout
+
+Source, data and scripts are separated; run everything from the project root:
+
+```
+src/      planner.py, ui_app.py, week.py, repository.py, shopping.py, export_menu.py
+data/     config.json, models.json + all generated state (week plans, history, logs)
+scripts/  server.sh, release.sh, prepare.sh, upload.sh, claude-queue.sh
+```
+
+Data paths are anchored to the project root inside `repository.py`, not to the
+working directory, so `python src/planner.py` finds `data/config.json` from
+anywhere. The shell scripts `cd` to the root themselves for the same reason.
+
 ### Start the server
 
 ```bash
-./server.sh start              # NiceGUI desktop canvas on http://localhost:8080
-./server.sh status
-./server.sh stop
-./server.sh restart
-MEALS_PORT=9000 ./server.sh start
+./scripts/server.sh start      # NiceGUI desktop canvas on http://localhost:8080
+./scripts/server.sh status
+./scripts/server.sh stop
+./scripts/server.sh restart
+MEALS_PORT=9000 ./scripts/server.sh start
 ```
 
-`server.sh` handles venv activation, backgrounding (`nohup`), the PID file
-(`.nicegui.pid`) and the log (`nicegui.log`). Open
+`scripts/server.sh` handles venv activation, backgrounding (`nohup`), the PID
+file (`data/.nicegui.pid`) and the log (`data/nicegui.log`). Open
 [http://localhost:8080](http://localhost:8080) for the high-density desktop
 canvas: a left drawer of global controls, a header of seven per-day macro
 telemetry bars, and a 7-column x 4-row grid of meal cards below it.
@@ -263,7 +277,7 @@ Two export paths, for two different use cases:
   one-line-per-item list to the clipboard, formatted so pasting into Google
   Keep turns each line into its own checkbox.
 - **`--save-shopping-list`** (CLI flag) writes every window to
-  `shopping_list.md` as Markdown, in addition to printing them to the
+  `data/shopping_list.md` as Markdown, in addition to printing them to the
   terminal.
 
 ### Recipe Catalog — favorites, imports and swaps
@@ -349,7 +363,7 @@ shopping. Each item names the surface to look at and what "working" means.
       Add a training session, generate the week, and check the pinned meal's
       recipe brief/macros reflect the extra carbs, and that a meal scheduled
       within two hours before the workout came back lower-fibre/lower-fat
-      than a typical meal of that type. (`meals.log` and the day's recipe
+      than a typical meal of that type. (`data/meals.log` and the day's recipe
       notes are the source of truth here — the model can still miss a
       constraint on a bad response, which is what the portion/macro retry
       logic exists to catch.)
@@ -358,16 +372,16 @@ shopping. Each item names the surface to look at and what "working" means.
 
 ## 5. CLI vs. UI Commands
 
-| Action | CLI (`planner.py`) | UI (`ui_app.py`) |
+| Action | CLI (`src/planner.py`) | UI (`src/ui_app.py`) |
 |---|---|---|
-| Generate a week | `python planner.py` | Drawer → **Generate Current Week** |
+| Generate a week | `python src/planner.py` | Drawer → **Generate Current Week** |
 | Use a different config file | `--config PATH` | — (always `config.json`) |
 | Override the model for one run | `--model NAME` | Drawer model selector |
 | Set the week's start day | `--week-start DAY` | Fixed by `week_start_day` in config |
 | Set household size | `--servings N` | Drawer servings field |
 | Set shopping trip days | `--shop-days Sunday,Wednesday` | `config.json` (`shopping.shop_days`) |
 | Make every lunch a leftover of the prior dinner | `--leftover-lunches` | Per-dinner **"Link to next lunch"** button |
-| Export shopping lists as Markdown | `--save-shopping-list` → `shopping_list.md` | — |
+| Export shopping lists as Markdown | `--save-shopping-list` → `data/shopping_list.md` | — |
 | Export a shopping trip for Google Keep | — | Per-trip **"Copy for Keep"** button |
 | Re-use the last generated plan without an API call | `--use-cached-plan` | Grid always shows the last saved `week_plan.json` until you generate again |
 | Regenerate a single day or meal | — | Refresh icon on a day header / on a card |
@@ -379,10 +393,10 @@ shopping. Each item names the surface to look at and what "working" means.
 | Add a training/workout session | `config.json` `training_schedule` | Drawer → **Training Schedule** |
 | Prioritize using up pantry items | `config.json` `inventory_to_clear` | Drawer → **Pantry Clear** |
 | Print shopping lists to the terminal | Always, after generation | — (use the shopping drawer) |
-| Monitor per-call generation timing/failures | `meals.log` | Progress dialog (live) + warning toast on completion |
+| Monitor per-call generation timing/failures | `data/meals.log` | Progress dialog (live) + warning toast on completion |
 
 CLI-only and UI-only differences are structural, not accidental: the CLI is
-the batch/scriptable path and is the only one that writes `shopping_list.md`
+the batch/scriptable path and is the only one that writes `data/shopping_list.md`
 or prints to the terminal; the UI is the only one with live, pre-generation
 previews (telemetry, chaining, training) because those need a browser to
 interact with before committing to a 5–20 minute run. Both write the same
@@ -435,23 +449,23 @@ anywhere in the schema.
 
 | File | |
 |---|---|
-| `planner.py` | Targets, training adjustments, prompts, model calls, portion fitting, CLI |
-| `week.py` | All deterministic planning — the week is fully resolved before a token is generated |
-| `ui_app.py` | NiceGUI web UI |
-| `shopping.py` | Ingredient aggregation, normalisation, Keep/Markdown formatting |
-| `export_menu.py` | Week → printable PDF menu (`reportlab`) and its Markdown equivalent |
-| `repository.py` | The storage boundary — nothing else reads or writes a stored file |
-| `config.json` | Everything in the configuration reference above |
-| `models.json` | Model selection, endpoint and timeouts (see Section 2) |
-| `recipes_master.json` | Recipe catalog — every recipe ever favorited or imported |
-| `whfoods.json` | Nutrient-dense whole foods; ~12 are sampled per run to nudge generation |
-| `week_plan.json` | The current generated week (regenerable) |
+| `src/planner.py` | Targets, training adjustments, prompts, model calls, portion fitting, CLI |
+| `src/week.py` | All deterministic planning — the week is fully resolved before a token is generated |
+| `src/ui_app.py` | NiceGUI web UI |
+| `src/shopping.py` | Ingredient aggregation, normalisation, Keep/Markdown formatting |
+| `src/export_menu.py` | Week → printable PDF menu (`reportlab`) and its Markdown equivalent |
+| `src/repository.py` | The storage boundary — nothing else reads or writes a stored file |
+| `data/config.json` | Everything in the configuration reference above |
+| `data/models.json` | Model selection, endpoint and timeouts (see Section 2) |
+| `data/recipes_master.json` | Recipe catalog — every recipe ever favorited or imported |
+| `data/whfoods.json` | Nutrient-dense whole foods; ~12 are sampled per run to nudge generation |
+| `data/week_plan.json` | The current generated week (regenerable) |
 | `week_plan_next.json` | The "Next Week" slot — the app keeps two cached weeks at once |
-| `meal_history.json` | Style/cuisine rotation history (**not** regenerable) |
-| `meals.log` | Per-call generation timing, finish reason, token counts |
+| `data/meal_history.json` | Style/cuisine rotation history (**not** regenerable) |
+| `data/meals.log` | Per-call generation timing, finish reason, token counts |
 
 Bundles for pasting into an AI assistant — `python_codebase.md`,
-`project_context.md`, `data_schemas.md` — are **generated** by `./prepare.sh`.
+`project_context.md`, `data_schemas.md` — are **generated** by `./scripts/prepare.sh`.
 Edit `CLAUDE.md` and re-run it; never edit the bundles directly.
 
 `CLAUDE.md` is the deep architecture document — the *why* behind each design
@@ -466,7 +480,7 @@ the portion trim can absorb: swap models (see the `openrouter-model-choice`
 skill) rather than widening `planning_rules.portion_trim_limits` — widening it
 would let through portions absurd enough to be unusable.
 
-**A call took minutes or came back empty** — check `meals.log`. A
+**A call took minutes or came back empty** — check `data/meals.log`. A
 `reasoning_tokens` count well above 0, or `finish_reason: length`, is the
 reasoning-blowup signature, not a hung request. Every request disables
 reasoning explicitly; if this shows up, something re-enabled it.

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 
+# Regenerates the AI-assistant bundles in the project root. Run as
+# ./scripts/upload.sh. This script lives in scripts/; everything below is
+# relative to the project root, so resolve there first.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 # 1. Clean up old bundle files
 rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
 
 # 2. Bundle core Python application source files
 # (Includes app logic, repository layers, export logic, and dev tools)
 {
-  for py_file in ui_app.py planner.py shopping.py week.py repository.py export_menu.py dev/model-list.py; do
+  for py_file in src/ui_app.py src/planner.py src/shopping.py src/week.py src/repository.py src/export_menu.py dev/model-list.py; do
     if [ -f "$py_file" ]; then
       echo "=== File: $py_file ==="
       cat "$py_file"
@@ -22,7 +27,7 @@ rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
   [ -f requirements.txt ] && echo "=== File: requirements.txt ===" && cat requirements.txt && echo -e "\n"
   
   # Include active workspace scripts
-  for script in prepare.sh server.sh claude-queue.sh release.sh; do
+  for script in scripts/prepare.sh scripts/server.sh scripts/claude-queue.sh scripts/release.sh; do
     if [ -f "$script" ]; then
       echo "=== File: $script ==="
       cat "$script"
@@ -38,7 +43,7 @@ rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
 
 # 4. Generate structural schema previews for JSON and CSV configuration/data sources
 {
-  for data_file in config.json week_plan.json week_plan_next.json meal_plan.json meal_history.json whfoods.json recipes_master.json favorites.json models.json openrouter_top_50.csv; do
+  for data_file in data/config.json data/week_plan.json data/week_plan_next.json data/meal_history.json data/whfoods.json data/recipes_master.json data/models.json data/openrouter_top_50.csv; do
     if [ -f "$data_file" ]; then
       echo "=== Sample Structure: $data_file ==="
       head -n 35 "$data_file"
