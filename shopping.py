@@ -340,9 +340,9 @@ def aggregate_recipes(
 
     for recipe, offset in zip(recipes, offsets):
         for ingredient in recipe.ingredients:
-            if normalize_name(ingredient.name) in NON_SHOPPING_INGREDIENTS:
-                continue
             key = normalize_name(ingredient.name)
+            if key in NON_SHOPPING_INGREDIENTS:
+                continue
             if key not in aggregated:
                 aggregated[key] = {
                     "name": display_name(ingredient.name),

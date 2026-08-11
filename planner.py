@@ -86,12 +86,59 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
 
+def short_error(exc: Exception) -> str:
+    """An exception as one loggable/notifiable line.
+
+    Every failure path in this app has to survive being put in a toast, a
+    `WeekPlan.failures` value and a log line, and instructor's validation
+    errors are multi-paragraph — first line only, truncated. One helper so all
+    eight call sites truncate identically; they had each spelled this out.
+    """
+    return f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+
+
+def log_completion(label: str, completion, started: float) -> None:
+    """Record one model call's timing and token usage to `meals.log`.
+
+    `reasoning_tokens` is the load-bearing field, not `elapsed`: a reasoning
+    blowup and a merely slow provider both look like a long wait, and only the
+    token counts tell them apart (see "Reasoning must be disabled"). Pulled out
+    of the four call sites that each rebuilt this `getattr` chain — a
+    diagnostic that reports different fields depending on which call produced
+    it is worse than no diagnostic.
+    """
+    usage = getattr(completion, "usage", None)
+    logger.info(
+        "%s: got response in %.1fs (finish_reason=%s, completion_tokens=%s, reasoning_tokens=%s)",
+        label,
+        time.monotonic() - started,
+        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
+        getattr(usage, "completion_tokens", None),
+        getattr(
+            getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None
+        ),
+    )
+
+
 FREE_MODEL_MAX_TOKENS = 8000
 PAID_MODEL_MAX_TOKENS = 16000
 
 MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
 
 WEEKEND_DAYS = {"Saturday", "Sunday"}
+
+# Active prep-time ceilings, in minutes. Both the Pydantic validators and the
+# prompt text read these: the model has to be *told* the same limit it is then
+# judged against, or it gets rejected for breaking a rule it was never given.
+# The weekend figure was previously only ever stated in the prompt, so a
+# weekend recipe at 200 minutes passed validation while violating its own brief.
+WEEKNIGHT_PREP_LIMIT_MINUTES = 30
+WEEKEND_PREP_LIMIT_MINUTES = 180
+
+
+def prep_limit_for(day: str) -> int:
+    """The active prep ceiling that applies on `day`."""
+    return WEEKEND_PREP_LIMIT_MINUTES if day in WEEKEND_DAYS else WEEKNIGHT_PREP_LIMIT_MINUTES
 
 # Stops the model from hitting a high protein budget by linearly scaling a
 # single low-density ingredient (6 eggs, 500g yoghurt) instead of composing a
@@ -150,6 +197,157 @@ DINNER_VARIETY_RULE = (
     "do not repeat poultry, beef, or any single main protein as the primary "
     "protein in more than two dinners across the week.\n"
 )
+
+# --------------------------------------------------------------------------
+# Prompt rules shared by both generation axes
+#
+# `generate_day` (one day, several meal types) and `generate_meal_type_week`
+# (one meal type, several days) send almost the same rule list. They used to
+# spell it out twice, and the copies drifted: the meal-type prompt silently
+# lost LONG_OVEN_COOK_RULE, which left `long_oven_cook` at its schema default
+# of False on every recipe the weekly path produced — and since
+# `generate_sunday_prep_session` filters candidates on exactly that field, the
+# entire Sunday prep feature quietly did nothing. The rules now live here, and
+# only the genuinely axis-dependent prose is passed in.
+# --------------------------------------------------------------------------
+
+# Sets the field `generate_sunday_prep_session` selects its candidates by. A
+# call that omits this rule can never contribute to a prep session.
+LONG_OVEN_COOK_RULE = (
+    "- Set long_oven_cook to true only if this dish is a genuinely long "
+    "(60+ minutes), mostly hands-off oven roast/bake or slow-cooker/braise "
+    "— false for anything needing active stovetop attention, a quick "
+    "recipe, or a no-cook dish, even one you're making in bulk.\n"
+)
+
+# The three rules that differ by axis: whether "respect the style", "vary the
+# ingredients" and "hit your budget" are scoped across one day's meal types or
+# across one meal type's days.
+DAY_STYLE_RULE = (
+    "- Respect each meal's requested style and cuisine exactly. Where a "
+    "cuisine is given it applies to that meal only — the other meals must "
+    "draw on different culinary traditions so the day isn't one cuisine "
+    "end to end.\n"
+)
+DAY_VARIETY_RULE = (
+    "- Prioritize nutrient-dense whole foods: vary the vegetables, herbs/"
+    "spices and protein sources across the day and minimize ingredient "
+    "overlap between meals, the way a registered dietitian would design a "
+    "menu — not just whatever hits the numbers with the fewest ingredients.\n"
+)
+DAY_BUDGET_RULE = (
+    "- Each meal below carries its OWN macro budget. Hit that meal's "
+    "budget — not a typical portion size for that meal, and not a whole "
+    "day's worth. The budgets are already calculated and already add up "
+    "correctly; do not recompute or redistribute them.\n"
+)
+
+WEEK_STYLE_RULE = (
+    "- Respect each day's requested style and cuisine exactly. Different "
+    "days should draw on different culinary traditions and styles so the "
+    "week isn't the same dish repeated under different names.\n"
+)
+WEEK_VARIETY_RULE = (
+    "- Prioritize nutrient-dense whole foods: vary the vegetables, herbs/"
+    "spices and protein sources across the days and minimize ingredient "
+    "overlap between them, the way a registered dietitian would design a "
+    "week's menu — not just whatever hits the numbers with the fewest "
+    "ingredients.\n"
+)
+WEEK_BUDGET_RULE = (
+    "- Each day below carries its OWN macro budget, already reduced for "
+    "whatever that day already has fixed from other meal types this run. "
+    "Hit that day's budget for this one meal — not a typical portion size "
+    "for it — and do not recompute or redistribute the numbers.\n"
+)
+# Only the meal-type call returns a day-keyed object, so only it needs to say
+# so. `MealTypeWeekRecipes.recipes` is a Dict[str, Recipe] for this reason —
+# a missing day becomes a structural mismatch instructor can retry on.
+WEEK_RESPONSE_SHAPE_RULE = (
+    "- Respond with a JSON object whose keys are exactly the day names "
+    "listed below and whose values are that day's recipe — do not add, "
+    "omit, or rename a day.\n"
+)
+
+
+def build_avoid_rules(
+    avoid_proteins: Optional[List[str]] = None,
+    avoid_recipe_names: Optional[List[str]] = None,
+) -> str:
+    """The two "don't repeat what you just made" rules, or "" for an empty list.
+
+    Both generation calls send these identically. An empty list emits nothing
+    rather than an empty rule, so a cold start with no history produces a
+    prompt with no dangling "avoid: ." line in it.
+    """
+    rules = ""
+    if avoid_proteins:
+        rules += (
+            "- Avoid making any of these the primary protein again — they were used "
+            f"recently: {', '.join(avoid_proteins)}.\n"
+        )
+    if avoid_recipe_names:
+        rules += (
+            "- Do NOT generate any of these exact dishes again under the same or "
+            "a trivially reworded name — they already appear in recent history "
+            f"and must not repeat: {', '.join(avoid_recipe_names)}.\n"
+        )
+    return rules
+
+
+def build_generation_rules(
+    config: dict,
+    *,
+    style_rule: str,
+    variety_rule: str,
+    budget_rule: str,
+    extras: str = "",
+    response_shape_rule: str = "",
+) -> str:
+    """The `Rules:` block sent by both generation calls, assembled once.
+
+    Ordering is deliberate and shared: hard constraints (units, NOVA groups,
+    banned ingredients) first, because they are the ones a validator will
+    reject on; then composition guidance; then `extras` — the per-call blocks
+    (dinner variety, avoid lists, pantry, fixed leftovers, batch cooking) that
+    only sometimes apply; then the budget, which the model should read last and
+    closest to the per-slot briefs in the user prompt.
+
+    `config` supplies only `dietary_rules`; everything else is a caller
+    decision, so this stays a pure string builder with no I/O and no model
+    knowledge.
+    """
+    dietary_rules = config["dietary_rules"]
+    return (
+        "Rules:\n"
+        "- Use metric units only (grams) for all ingredient quantities.\n"
+        "- Every ingredient's nova_group must be one of: "
+        f"{dietary_rules['allowed_nova_groups']} (1=unprocessed/minimally "
+        "processed, 2=processed culinary ingredients, 3=processed foods). "
+        "Never use Group 4 ultra-processed ingredients.\n"
+        "- Never use any of these banned ingredients: "
+        f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
+        f"{style_rule}"
+        f"{variety_rule}"
+        "- Keep single dairy/staple portions realistic (e.g., max 200-250g "
+        "yoghurt or cottage cheese per serving).\n"
+        "- Combine multiple complementary protein sources (e.g., yoghurt + "
+        "protein powder, or eggs + lean meat) rather than scaling up a single "
+        "low-density ingredient to meet high protein targets.\n"
+        f"{PORTION_DENSITY_GUARD}"
+        f"{extras}"
+        f"{budget_rule}"
+        "- All budgets are PER SERVING (one portion for one person). Report "
+        "every ingredient's quantity_g and its calories/protein_g/net_carbs_g/"
+        "fat_g for a SINGLE serving too. Do not multiply by the number of "
+        "people or by any batch size — Python scales the recipe afterwards.\n"
+        "- Leave servings and prep_notes at their schema defaults — Python "
+        "fills those in.\n"
+        f"{LONG_OVEN_COOK_RULE}"
+        f"{response_shape_rule}"
+        "- Do not show your work, explain your reasoning, or narrate your "
+        "process. Respond with the structured data only."
+    )
 
 # --------------------------------------------------------------------------
 # AppConfig: config.json's schema, strictly validated at load time
@@ -540,6 +738,20 @@ def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float
 
 
 def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
+    """One day's whole-day macro target, with fat derived rather than read.
+
+    The entry point for the rule this whole app is built on: Python computes
+    every number the model is later *told*, so the model only ever fills in
+    food. `fat_g` is deliberately recomputed from calories/protein/carbs via
+    `derive_fat_g` even when `weekly_schedule` states one — so a config whose
+    four numbers don't balance can't hand the model an impossible budget, and
+    so a low `net_carbs_g` day automatically becomes a high-fat day with no
+    separate keto flag.
+
+    Raises on an unknown day rather than defaulting: a typo'd weekday in
+    config.json must fail here, before any API call, not silently plan a week
+    against zeros.
+    """
     weekly_schedule = config["weekly_schedule"]
     if day_of_week not in weekly_schedule:
         raise ValueError(
@@ -740,6 +952,19 @@ class Ingredient(BaseModel):
     @field_validator("nova_group")
     @classmethod
     def enforce_allowed_nova_group(cls, v: int, info: ValidationInfo) -> int:
+        """Reject ultra-processed ingredients at parse time, against live config.
+
+        `info.context["config"]` is how the *current* dietary rules reach a
+        Pydantic validator: it's handed to instructor's
+        `client.chat.completions.create(context=...)`, so this reads
+        config.json rather than a baked-in list. The fallback covers callers
+        with no context — a bare `Recipe.model_validate` of a saved favorite,
+        for instance — which must stay loadable rather than blow up.
+
+        Raising here is load-bearing, not defensive: instructor catches it and
+        hands the model back its own rejected output to retry, which is what
+        makes the dietary rules self-correcting rather than merely checked.
+        """
         allowed = DEFAULT_ALLOWED_NOVA_GROUPS
         if info.context and "config" in info.context:
             allowed = info.context["config"]["dietary_rules"]["allowed_nova_groups"]
@@ -753,6 +978,15 @@ class Ingredient(BaseModel):
     @field_validator("name")
     @classmethod
     def reject_banned_ingredients(cls, v: str, info: ValidationInfo) -> str:
+        """Substring blocklist over ingredient names, from live config.
+
+        Same `info.context` mechanism as `enforce_allowed_nova_group` above.
+        Matching is deliberately substring, not whole-word: the list holds
+        things like "seed oils" and "hydrogenated oil", and a model writes them
+        into longer names ("partially hydrogenated soybean oil") far more often
+        than it writes them bare. False positives are the accepted cost — the
+        rejection message names the matched term, so a bad entry is obvious.
+        """
         banned = []
         if info.context and "config" in info.context:
             banned = info.context["config"]["dietary_rules"]["banned_ingredients"]
@@ -815,12 +1049,25 @@ class Recipe(BaseModel):
 
     @field_validator("prep_time_minutes")
     @classmethod
-    def enforce_weeknight_prep_limit(cls, v: int, info: ValidationInfo) -> int:
+    def enforce_prep_limit(cls, v: int, info: ValidationInfo) -> int:
+        """Cap active prep time at the ceiling for the day being generated.
+
+        Only fires on the `DayRecipes` path, which is one call for one day and
+        can therefore put that day in `info.context["day"]`. The
+        `MealTypeWeekRecipes` path spans up to 7 days in a single call, so no
+        single `day` is meaningful there — it runs its own model_validator over
+        `self.recipes`' day keys instead. Both read `prep_limit_for`, which is
+        also what `build_slot_brief` states in the prompt: the model is told the
+        exact rule it is then judged against.
+
+        Raising is load-bearing, not defensive — instructor catches it and hands
+        the model its own output back to retry.
+        """
         day = info.context.get("day") if info.context else None
-        if day and day not in WEEKEND_DAYS and v > 30:
+        if day and v > prep_limit_for(day):
             raise ValueError(
-                f"prep_time_minutes {v} exceeds the 30-minute weeknight limit for {day}; "
-                "simplify the recipe to a quick weeknight meal."
+                f"prep_time_minutes {v} exceeds the {prep_limit_for(day)}-minute limit "
+                f"for {day}; simplify the recipe to fit."
             )
         return v
 
@@ -958,18 +1205,19 @@ class MealTypeWeekRecipes(BaseModel):
     recipes: Dict[str, Recipe]
 
     @model_validator(mode="after")
-    def enforce_weeknight_prep_limit(self) -> "MealTypeWeekRecipes":
-        """Recipe.enforce_weeknight_prep_limit reads a single `day` out of
-        instructor's context — that fits DayRecipes' one-call-one-day shape
-        but not this one, where a single call spans up to 7 days each needing
-        their own weekday check. Done here instead, over self.recipes' own
-        day keys, rather than threading a per-item context through Pydantic.
+    def enforce_prep_limit(self) -> "MealTypeWeekRecipes":
+        """Recipe.enforce_prep_limit reads a single `day` out of instructor's
+        context — that fits DayRecipes' one-call-one-day shape but not this
+        one, where a single call spans up to 7 days each needing their own
+        check. Done here instead, over self.recipes' own day keys, rather than
+        threading a per-item context through Pydantic. Same `prep_limit_for`
+        either way, so the two paths cannot disagree.
         """
         for day, recipe in self.recipes.items():
-            if day not in WEEKEND_DAYS and recipe.prep_time_minutes > 30:
+            if recipe.prep_time_minutes > prep_limit_for(day):
                 raise ValueError(
                     f"{day}: prep_time_minutes {recipe.prep_time_minutes} exceeds the "
-                    "30-minute weeknight limit; simplify the recipe to a quick weeknight meal."
+                    f"{prep_limit_for(day)}-minute limit; simplify the recipe to fit."
                 )
         return self
 
@@ -1044,12 +1292,16 @@ class SundayPrepSession(BaseModel):
     week's cook events (e.g. "dice all onions" once instead of per cook day),
     done ahead of time rather than repeated on each cook day.
 
-    `total_active_minutes` is capped at 120 to match config's
-    `max_prep_active_mins` default — hands-on prep time, not the passive
-    minutes spent simmering/roasting/chilling while unattended.
+    `total_active_minutes` is hands-on prep time, not the passive minutes
+    spent simmering/roasting/chilling while unattended. It is validated
+    against config's `max_prep_active_mins` via instructor's `context=` (see
+    `enforce_active_minutes_cap`) rather than a fixed `le=` bound: the bound
+    used to be hardcoded at 120 *and* the config value clamped to 120 at the
+    call site, so raising `max_prep_active_mins` to 150 appeared to work and
+    silently did nothing.
     """
 
-    total_active_minutes: int = Field(..., le=120)
+    total_active_minutes: int
     total_passive_minutes: int = 0
     aggregated_ingredients: Dict[str, str] = Field(default_factory=dict)
     timeline: List[PrepPhase] = Field(default_factory=list)
@@ -1057,6 +1309,25 @@ class SundayPrepSession(BaseModel):
         default_factory=list,
         description="Names of the dishes this prep session covers",
     )
+
+    @model_validator(mode="after")
+    def enforce_active_minutes_cap(self, info: ValidationInfo) -> "SundayPrepSession":
+        """Reject a session that overruns the configured hands-on budget.
+
+        Reads the cap out of instructor's `context=` so config.json is the
+        single authority, the same way `Ingredient`'s validators read live
+        dietary rules. Absent context (a bare `model_validate` of a saved
+        plan) skips the check — an already-stored session must stay loadable
+        even if the config has since been tightened.
+        """
+        cap = (info.context or {}).get("max_prep_active_mins")
+        if cap is not None and self.total_active_minutes > cap:
+            raise ValueError(
+                f"total_active_minutes {self.total_active_minutes} exceeds the "
+                f"{cap}-minute hands-on budget; move unattended oven/slow-cooker "
+                "time into passive_minutes or drop a dish from this session."
+            )
+        return self
 
 
 class WeekPlan(BaseModel):
@@ -1189,34 +1460,6 @@ def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
     if is_sunday_prepped(event, week_plan):
         return SUNDAY_PREP_REHEAT_MINUTES
     return event.recipe.prep_time_minutes
-
-
-def scale_recipe(
-    recipe: Recipe, portions: int, keeps_for_days: int, config: Optional[dict] = None
-) -> Recipe:
-    """Deprecated: use `recipe.scale_to_servings(portions, keeps_for_days, config)`."""
-    return recipe.scale_to_servings(portions, keeps_for_days, config)
-
-
-def rescale_cook_event(
-    event: CookEvent,
-    portions: int,
-    keeps_for_days: int,
-    eaten_by: List[str],
-    config: Optional[dict] = None,
-) -> CookEvent:
-    """Deprecated: use `event.recipe.scale_to_servings(...)` and rebuild the event.
-
-    Kept only as a thin wrapper for callers not yet migrated; new call sites
-    should scale the recipe directly (see `PlannerState.apply_spec`).
-    """
-    if event.portions <= 0:
-        return event
-
-    recipe = event.recipe.scale_to_servings(portions, keeps_for_days, config)
-    return event.model_copy(
-        update={"portions": portions, "eaten_by": list(eaten_by), "recipe": recipe}
-    )
 
 
 def sum_serving_macros(events: Iterable[CookEvent]) -> dict:
@@ -1486,21 +1729,13 @@ async def import_external_recipe(
         )
     except Exception as exc:
         logger.warning(
-            "import_external_recipe: failed after %.1fs — %s: %s",
+            "import_external_recipe: failed after %.1fs — %s",
             time.monotonic() - started,
-            type(exc).__name__,
-            str(exc).split("\n")[0][:300],
+            short_error(exc),
         )
         raise
 
-    elapsed = time.monotonic() - started
-    usage = getattr(completion, "usage", None)
-    logger.info(
-        "import_external_recipe: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
-        elapsed,
-        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
-        getattr(usage, "completion_tokens", None),
-    )
+    log_completion("import_external_recipe", completion, started)
     return recipe
 
 
@@ -1639,7 +1874,26 @@ async def select_nudge_foods(
 def build_slot_brief(
     slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict, pinned: bool = False
 ) -> str:
-    """One line per meal the model has to invent: style, cuisine, macro budget."""
+    """One prompt line describing a single meal the model has to invent.
+
+    The narrow waist of prompt construction: both generation axes
+    (`generate_day` across a day's meal types, `generate_meal_type_week` across
+    a meal type's days) render every slot through here, so a meal is described
+    identically whichever call produces it.
+
+    Assembled as ` | `-joined parts rather than prose because the model reads a
+    list of independent constraints, and a missing one (no cuisine, no training
+    note) should drop out cleanly instead of leaving a dangling clause. Order
+    matters: identity (style/cuisine) first, then the numbers, then the
+    bracketed modifiers that qualify them — `[fixed budget…]`, `[eaten Nx
+    today…]` and the training note all explain why the budget reads the way it
+    does, so they have to follow it.
+
+    The budget is always ONE SERVING. `times_eaten_today` tells the model the
+    day's arithmetic already accounts for the repeat, so it doesn't helpfully
+    double the portion itself — Python scales the batch afterwards
+    (`build_cook_event`).
+    """
     parts = [f"- {slot.meal_type.upper()}"]
     style_description = styles_for(config, slot.meal_type).get(slot.style or "")
     if slot.style:
@@ -1667,9 +1921,15 @@ def build_slot_brief(
     if training_note:
         parts.append(training_note)
     if slot.day in WEEKEND_DAYS:
-        parts.append("[Weekend meal: multi-step or slow-cooked recipes up to 180 minutes allowed.]")
+        parts.append(
+            f"[Weekend meal: multi-step or slow-cooked recipes up to "
+            f"{WEEKEND_PREP_LIMIT_MINUTES} minutes allowed.]"
+        )
     else:
-        parts.append("[Max prep/cook time: 30 minutes. Focus on quick weeknight meals.]")
+        parts.append(
+            f"[Max prep/cook time: {WEEKNIGHT_PREP_LIMIT_MINUTES} minutes. "
+            "Focus on quick weeknight meals.]"
+        )
     return " | ".join(parts)
 
 
@@ -1693,23 +1953,9 @@ def generate_day(
     remaining gap rather than a full day it would then overshoot.
     """
     client = build_client(config.get("models"))
-    dietary_rules = config["dietary_rules"]
 
     remaining = {key: max(0.0, targets[key] - carried.get(key, 0.0)) for key in MACRO_KEYS}
 
-    avoid_protein_instruction = (
-        "- Avoid making any of these the primary protein again — they were used "
-        f"recently: {', '.join(avoid_proteins)}.\n"
-        if avoid_proteins
-        else ""
-    )
-    avoid_recipe_name_instruction = (
-        "- Do NOT generate any of these exact dishes again under the same or "
-        "a trivially reworded name — they already appear in recent history "
-        f"and must not repeat: {', '.join(avoid_recipe_names)}.\n"
-        if avoid_recipe_names
-        else ""
-    )
     leftovers_instruction = (
         "- The following meals on this day are ALREADY FIXED (leftovers of an "
         "earlier cook). Do NOT generate them; their macros are already "
@@ -1747,49 +1993,18 @@ def generate_day(
         f"{servings_per_meal} people. Generate exactly {len(cook_slots)} recipe(s) "
         f"for {day} — one for each meal listed by the user, matching its meal_type "
         "exactly. Recipes must be realistic, varied and non-repetitive.\n\n"
-        "Rules:\n"
-        "- Use metric units only (grams) for all ingredient quantities.\n"
-        "- Every ingredient's nova_group must be one of: "
-        f"{dietary_rules['allowed_nova_groups']} (1=unprocessed/minimally "
-        "processed, 2=processed culinary ingredients, 3=processed foods). "
-        "Never use Group 4 ultra-processed ingredients.\n"
-        "- Never use any of these banned ingredients: "
-        f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
-        "- Respect each meal's requested style and cuisine exactly. Where a "
-        "cuisine is given it applies to that meal only — the other meals must "
-        "draw on different culinary traditions so the day isn't one cuisine "
-        "end to end.\n"
-        "- Prioritize nutrient-dense whole foods: vary the vegetables, herbs/"
-        "spices and protein sources across the day and minimize ingredient "
-        "overlap between meals, the way a registered dietitian would design a "
-        "menu — not just whatever hits the numbers with the fewest ingredients.\n"
-        "- Keep single dairy/staple portions realistic (e.g., max 200–250g "
-        "yoghurt or cottage cheese per serving).\n"
-        "- Combine multiple complementary protein sources (e.g., yoghurt + "
-        "protein powder, or eggs + lean meat) rather than scaling up a single "
-        "low-density ingredient to meet high protein targets.\n"
-        f"{PORTION_DENSITY_GUARD}"
-        f"{avoid_protein_instruction}"
-        f"{avoid_recipe_name_instruction}"
-        f"{inventory_instruction(config)}"
-        f"{leftovers_instruction}"
-        f"{batch_instruction}"
-        "- Each meal below carries its OWN macro budget. Hit that meal's "
-        "budget — not a typical portion size for that meal, and not a whole "
-        "day's worth. The budgets are already calculated and already add up "
-        "correctly; do not recompute or redistribute them.\n"
-        "- All budgets are PER SERVING (one portion for one person). Report "
-        "every ingredient's quantity_g and its calories/protein_g/net_carbs_g/"
-        "fat_g for a SINGLE serving too. Do not multiply by the number of "
-        "people or by any batch size — Python scales the recipe afterwards.\n"
-        "- Leave servings and prep_notes at their schema defaults — Python "
-        "fills those in.\n"
-        "- Set long_oven_cook to true only if this dish is a genuinely long "
-        "(60+ minutes), mostly hands-off oven roast/bake or slow-cooker/braise "
-        "— false for anything needing active stovetop attention, a quick "
-        "recipe, or a no-cook dish, even one you're making in bulk.\n"
-        "- Do not show your work, explain your reasoning, or narrate your "
-        "process. Respond with the structured data only."
+        + build_generation_rules(
+            config,
+            style_rule=DAY_STYLE_RULE,
+            variety_rule=DAY_VARIETY_RULE,
+            budget_rule=DAY_BUDGET_RULE,
+            extras=(
+                build_avoid_rules(avoid_proteins, avoid_recipe_names)
+                + inventory_instruction(config)
+                + leftovers_instruction
+                + batch_instruction
+            ),
+        )
     )
 
     scope_note = (
@@ -1839,19 +2054,7 @@ def generate_day(
         ],
     )
 
-    elapsed = time.monotonic() - started
-    usage = getattr(completion, "usage", None)
-    reasoning_tokens = getattr(
-        getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None
-    )
-    logger.info(
-        "%s: got response in %.1fs (finish_reason=%s, completion_tokens=%s, reasoning_tokens=%s)",
-        day,
-        elapsed,
-        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
-        getattr(usage, "completion_tokens", None),
-        reasoning_tokens,
-    )
+    log_completion(day, completion, started)
 
     # One slot per (day, meal_type) by construction, so meal_type is a safe key.
     by_meal_type = {recipe.meal_type.strip().lower(): recipe for recipe in response.recipes}
@@ -1900,23 +2103,9 @@ def generate_meal_type_week(
     never asked to invent something Python is about to discard.
     """
     client = build_client(config.get("models"))
-    dietary_rules = config["dietary_rules"]
     days = list(cook_slots_by_day.keys())
     pinned_days = pinned_days or []
 
-    avoid_protein_instruction = (
-        "- Avoid making any of these the primary protein again — they were used "
-        f"recently: {', '.join(avoid_proteins)}.\n"
-        if avoid_proteins
-        else ""
-    )
-    avoid_recipe_name_instruction = (
-        "- Do NOT generate any of these exact dishes again under the same or "
-        "a trivially reworded name — they already appear in recent history "
-        f"and must not repeat: {', '.join(avoid_recipe_names)}.\n"
-        if avoid_recipe_names
-        else ""
-    )
     dinner_variety_instruction = DINNER_VARIETY_RULE if meal_type == "dinner" else ""
 
     all_carried_descriptions = [
@@ -1963,49 +2152,20 @@ def generate_meal_type_week(
         f"{meal_type} recipe(s) for the week below — one per day listed, each "
         "matching that day's own budget. Recipes must be realistic, varied and "
         "non-repetitive across the days.\n\n"
-        "Rules:\n"
-        "- Use metric units only (grams) for all ingredient quantities.\n"
-        "- Every ingredient's nova_group must be one of: "
-        f"{dietary_rules['allowed_nova_groups']} (1=unprocessed/minimally "
-        "processed, 2=processed culinary ingredients, 3=processed foods). "
-        "Never use Group 4 ultra-processed ingredients.\n"
-        "- Never use any of these banned ingredients: "
-        f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
-        "- Respect each day's requested style and cuisine exactly. Different "
-        "days should draw on different culinary traditions and styles so the "
-        "week isn't the same dish repeated under different names.\n"
-        "- Prioritize nutrient-dense whole foods: vary the vegetables, herbs/"
-        "spices and protein sources across the days and minimize ingredient "
-        "overlap between them, the way a registered dietitian would design a "
-        "week's menu — not just whatever hits the numbers with the fewest "
-        "ingredients.\n"
-        "- Keep single dairy/staple portions realistic (e.g., max 200-250g "
-        "yoghurt or cottage cheese per serving).\n"
-        "- Combine multiple complementary protein sources (e.g., yoghurt + "
-        "protein powder, or eggs + lean meat) rather than scaling up a single "
-        "low-density ingredient to meet high protein targets.\n"
-        f"{PORTION_DENSITY_GUARD}"
-        f"{dinner_variety_instruction}"
-        f"{avoid_protein_instruction}"
-        f"{avoid_recipe_name_instruction}"
-        f"{inventory_instruction(config)}"
-        f"{leftovers_instruction}"
-        f"{batch_instruction}"
-        "- Each day below carries its OWN macro budget, already reduced for "
-        "whatever that day already has fixed from other meal types this run. "
-        "Hit that day's budget for this one meal — not a typical portion size "
-        "for it — and do not recompute or redistribute the numbers.\n"
-        "- All budgets are PER SERVING (one portion for one person). Report "
-        "every ingredient's quantity_g and its calories/protein_g/net_carbs_g/"
-        "fat_g for a SINGLE serving too. Do not multiply by the number of "
-        "people or by any batch size — Python scales the recipe afterwards.\n"
-        "- Leave servings and prep_notes at their schema defaults — Python "
-        "fills those in.\n"
-        "- Respond with a JSON object whose keys are exactly the day names "
-        "listed below and whose values are that day's recipe — do not add, "
-        "omit, or rename a day.\n"
-        "- Do not show your work, explain your reasoning, or narrate your "
-        "process. Respond with the structured data only."
+        + build_generation_rules(
+            config,
+            style_rule=WEEK_STYLE_RULE,
+            variety_rule=WEEK_VARIETY_RULE,
+            budget_rule=WEEK_BUDGET_RULE,
+            extras=(
+                dinner_variety_instruction
+                + build_avoid_rules(avoid_proteins, avoid_recipe_names)
+                + inventory_instruction(config)
+                + leftovers_instruction
+                + batch_instruction
+            ),
+            response_shape_rule=WEEK_RESPONSE_SHAPE_RULE,
+        )
     )
 
     user_prompt = (
@@ -2037,19 +2197,7 @@ def generate_meal_type_week(
         ],
     )
 
-    elapsed = time.monotonic() - started
-    usage = getattr(completion, "usage", None)
-    reasoning_tokens = getattr(
-        getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None
-    )
-    logger.info(
-        "%s: got response in %.1fs (finish_reason=%s, completion_tokens=%s, reasoning_tokens=%s)",
-        meal_type,
-        elapsed,
-        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
-        getattr(usage, "completion_tokens", None),
-        reasoning_tokens,
-    )
+    log_completion(meal_type, completion, started)
 
     missing = [day for day in days if day not in response.recipes]
     if missing:
@@ -2119,10 +2267,9 @@ def generate_sunday_prep_session(
     it never invents food, so unlike `generate_day` there is no macro budget
     to validate against. The only hard constraint is
     `SundayPrepSession.total_active_minutes <= 120`, enforced by the schema
-    itself; `config`'s `max_prep_active_mins` is the *target* handed to the
-    model in the prompt and is clamped to that same 120 ceiling, since a
-    config asking for more than the schema allows would fail validation on
-    every single call.
+    itself; `config`'s `max_prep_active_mins` is both the target handed to the
+    model in the prompt and the bound `SundayPrepSession` validates against,
+    threaded through instructor's `context=` so the two can never disagree.
     """
     if not config["enable_sunday_prep"]:
         return None
@@ -2133,7 +2280,7 @@ def generate_sunday_prep_session(
     if not candidates:
         return None
 
-    max_active = min(config["max_prep_active_mins"], 120)
+    max_active = config["max_prep_active_mins"]
     fridge_safe_days = config["inventory_rules"]["fridge_safe_days"]
     candidate_briefs = "\n".join(build_sunday_prep_brief(event, spec) for event in candidates)
 
@@ -2197,19 +2344,15 @@ def generate_sunday_prep_session(
         max_retries=3,
         max_tokens=max_tokens,
         extra_body=reasoning_extra_body(model, config),
+        # The cap the schema validates against — same number the prompt states
+        # above, so a rejection is always for a rule the model was given.
+        context={"config": config, "max_prep_active_mins": max_active},
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     )
-    elapsed = time.monotonic() - started
-    usage = getattr(completion, "usage", None)
-    logger.info(
-        "sunday_prep: got response in %.1fs (finish_reason=%s, completion_tokens=%s)",
-        elapsed,
-        getattr(completion.choices[0], "finish_reason", None) if completion.choices else None,
-        getattr(usage, "completion_tokens", None),
-    )
+    log_completion("sunday_prep", completion, started)
     return session
 
 
@@ -2233,6 +2376,50 @@ def on_calling_loop(callback):
         loop.call_soon_threadsafe(lambda: callback(*args, **kwargs))
 
     return forward
+
+
+def build_cook_event(
+    slot: SlotSpec,
+    recipe: Recipe,
+    spec: WeekSpec,
+    portions: Dict[str, int],
+    claims: Dict[str, List[str]],
+    config: Optional[dict] = None,
+) -> CookEvent:
+    """Scale one model-generated recipe into the batch its slot owes, as a CookEvent.
+
+    The model always returns ONE serving (every prompt says so); this is where
+    that becomes the real batch. Both are derived, never entered: `portions`
+    comes from `week.portions_for` (slots claiming this cook x household size)
+    and the storage window is the gap to the last slot that eats it, which is
+    what decides whether the note says "refrigerate" or "freeze the rest".
+
+    `claims` is passed in rather than recomputed via `week.span_days` because
+    every caller already has the whole-week `eaten_on` scan hoisted — calling
+    span_days here would redo it once per cook event.
+
+    Shared by all three generation paths (`_generate_day_events`,
+    `_generate_meal_type_events`, `regenerate_single_meal`), which had three
+    copies of this arithmetic. A recipe scaled by one rule and portioned by
+    another is precisely the disagreement derived portions exist to prevent.
+    """
+    claim_ids = claims.get(slot.id, [slot.id])
+    last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+    scaled = recipe.scale_to_servings(
+        portions[slot.id],
+        keeps_for_days=last_day_index - spec.day_index(slot.day),
+        config=config,
+    )
+    return CookEvent(
+        slot_id=slot.id,
+        day=slot.day,
+        meal_type=slot.meal_type,
+        portions=portions[slot.id],
+        style=slot.style,
+        cuisine=slot.cuisine,
+        eaten_by=claim_ids,
+        recipe=scaled,
+    )
 
 
 async def _generate_day_events(
@@ -2283,27 +2470,12 @@ async def _generate_day_events(
         progress_note=thread_safe_note,
     )
 
-    events: Dict[str, CookEvent] = {}
-    for slot in cook_slots:
-        recipe = recipes[slot.meal_type]
-        claim_ids = claims.get(slot.id, [slot.id])
-        last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
-        recipe = recipe.scale_to_servings(
-            portions[slot.id],
-            keeps_for_days=last_day_index - spec.day_index(day),
-            config=config,
+    return {
+        slot.id: build_cook_event(
+            slot, recipes[slot.meal_type], spec, portions, claims, config
         )
-        events[slot.id] = CookEvent(
-            slot_id=slot.id,
-            day=day,
-            meal_type=slot.meal_type,
-            portions=portions[slot.id],
-            style=slot.style,
-            cuisine=slot.cuisine,
-            eaten_by=claim_ids,
-            recipe=recipe,
-        )
-    return events
+        for slot in cook_slots
+    }
 
 
 async def _generate_meal_type_events(
@@ -2359,27 +2531,10 @@ async def _generate_meal_type_events(
         progress_note=thread_safe_note,
     )
 
-    events: Dict[str, CookEvent] = {}
-    for day, slot in cook_slots_by_day.items():
-        recipe = recipes[day]
-        claim_ids = claims.get(slot.id, [slot.id])
-        last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
-        recipe = recipe.scale_to_servings(
-            portions[slot.id],
-            keeps_for_days=last_day_index - spec.day_index(day),
-            config=config,
-        )
-        events[slot.id] = CookEvent(
-            slot_id=slot.id,
-            day=day,
-            meal_type=meal_type,
-            portions=portions[slot.id],
-            style=slot.style,
-            cuisine=slot.cuisine,
-            eaten_by=claim_ids,
-            recipe=recipe,
-        )
-    return events
+    return {
+        slot.id: build_cook_event(slot, recipes[day], spec, portions, claims, config)
+        for day, slot in cook_slots_by_day.items()
+    }
 
 
 async def generate_week_plan(
@@ -2513,7 +2668,7 @@ async def generate_week_plan(
                 # three. Every day this stage would have cooked is recorded
                 # and skipped; those slots render as "not generated" and
                 # their ingredients never reach a shopping list.
-                message = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+                message = short_error(exc)
                 for day in cook_days:
                     failures[slot_id(day, meal_type)] = message
                 logger.warning(
@@ -2579,7 +2734,7 @@ async def generate_week_plan(
                 f"min across {len(sunday_prep_session.timeline)} phase(s)"
             )
     except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        message = short_error(exc)
         logger.warning("sunday_prep: generation failed — %s", message)
         if note_callback:
             note_callback(f"Sunday prep session generation failed — {message}")
@@ -2653,7 +2808,7 @@ async def regenerate_single_day(
             avoid_proteins, avoid_recipe_names, note_callback,
         )
     except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}".split("\n")[0][:300]
+        message = short_error(exc)
         for slot in cook_slots_today:
             failures[slot.id] = message
         logger.warning("%s: regeneration failed — %s", day, message)
@@ -2798,22 +2953,8 @@ async def regenerate_single_meal(
         progress_note=thread_safe_note,
     )
 
-    claim_ids = claims.get(slot_id, [slot_id])
-    last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
-    recipe = recipes[slot.meal_type].scale_to_servings(
-        portions[slot_id],
-        keeps_for_days=last_day_index - spec.day_index(day),
-        config=config,
-    )
-    new_event = CookEvent(
-        slot_id=slot_id,
-        day=day,
-        meal_type=slot.meal_type,
-        portions=portions[slot_id],
-        style=slot.style,
-        cuisine=slot.cuisine,
-        eaten_by=claim_ids,
-        recipe=recipe,
+    new_event = build_cook_event(
+        slot, recipes[slot.meal_type], spec, portions, claims, config
     )
     by_slot[slot_id] = new_event
     ordered_events = [by_slot[s.id] for s in spec.cook_slots() if s.id in by_slot]
@@ -2829,12 +2970,24 @@ async def regenerate_single_meal(
         if was_candidate or now_candidate:
             sunday_prep_session = None
 
+    # This slot just cooked successfully, so any failure recorded against it by
+    # an earlier run is stale — same clearing `regenerate_single_day` does for
+    # every slot it re-cooks. Without it the card turns green while
+    # `WeekPlan.failures` still names the meal, and the drawer's failure list
+    # and the shopping drawer's "nothing for those meals is on this list" note
+    # both keep reporting a meal that now exists. The per-card regenerate
+    # button is offered *on* NOT GENERATED cards, so this is the common path,
+    # not an edge case.
+    failures = dict(week_plan.failures)
+    failures.pop(slot_id, None)
+
     return week_plan.model_copy(
         update={
             "generated_at": datetime.now().isoformat(),
             "cook_events": ordered_events,
             "slots": spec.slots,
             "targets": targets,
+            "failures": failures,
             "sunday_prep_session": sunday_prep_session,
             "unique_plants": collect_unique_plants(ordered_events),
         }
@@ -3067,8 +3220,16 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
             flush=True,
         )
 
-        def report(day: str, cooks: int) -> None:
-            print(f"  {day}: {cooks} recipe(s)..." if cooks else f"  {day}: leftovers only", flush=True)
+        # Named for what generate_week_plan actually passes: a meal type, not
+        # a day. It used to say `day`, which printed "breakfast: leftovers
+        # only" once generation moved to the meal-type axis.
+        def report(meal_type: str, cooks: int) -> None:
+            print(
+                f"  {meal_type}: {cooks} recipe(s)..."
+                if cooks
+                else f"  {meal_type}: nothing to cook this week",
+                flush=True,
+            )
 
         week_plan = await generate_week_plan(
             spec,
@@ -3107,9 +3268,8 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
                     shopping_list, cook_events=events, title=window.label
                 )
             )
-        with open("shopping_list.md", "w") as f:
-            f.write("\n\n".join(sections))
-        print("\nSaved shopping lists to shopping_list.md", flush=True)
+        await repository.save_shopping_list("\n\n".join(sections))
+        print(f"\nSaved shopping lists to {repository.paths.shopping_list}", flush=True)
 
 
 def main() -> None:

@@ -39,6 +39,7 @@ DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
 DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
 DEFAULT_MODELS_FILE = "models.json"
 DEFAULT_WHFOODS_FILE = "whfoods.json"
+DEFAULT_SHOPPING_LIST_FILE = "shopping_list.md"
 
 T = TypeVar("T")
 
@@ -66,6 +67,10 @@ class StoragePaths:
     recipe_catalog: str = DEFAULT_RECIPE_CATALOG_FILE
     models: str = DEFAULT_MODELS_FILE
     whfoods: str = DEFAULT_WHFOODS_FILE
+    # Not JSON state like the rest — an export the CLI's --save-shopping-list
+    # writes for a human to read. It lives here anyway because the whole point
+    # of this module is that no file path is spelled out anywhere else.
+    shopping_list: str = DEFAULT_SHOPPING_LIST_FILE
 
 
 def recipe_content_key(recipe: dict) -> str:
@@ -162,6 +167,17 @@ class PlanRepository(abc.ABC):
         half of `load_week_plan` and the CLI's `--use-cached-plan` flag reads
         what this writes — leaving it out would have left a bare `json.dump`
         behind in planner.py, which is the thing this module exists to remove.
+        """
+
+    @abc.abstractmethod
+    async def save_shopping_list(self, markdown: str) -> None:
+        """Write the CLI's rendered shopping list (`--save-shopping-list`).
+
+        The last thing in the app that still used a bare `open()` outside this
+        module, which quietly made the "nothing else touches a file" boundary
+        untrue. A backend implementation would put this somewhere a phone can
+        reach rather than next to the code, which is exactly the kind of change
+        this interface exists to absorb.
         """
 
     @abc.abstractmethod
@@ -277,6 +293,9 @@ class LocalJSONRepository(PlanRepository):
             self._write_json, self._week_plan_path(week_identifier), week_plan
         )
 
+    async def save_shopping_list(self, markdown: str) -> None:
+        await asyncio.to_thread(self._write_text, self.paths.shopping_list, markdown)
+
     async def load_recipe_catalog(self) -> List[dict]:
         return await asyncio.to_thread(self._read_json, self.paths.recipe_catalog) or []
 
@@ -391,9 +410,19 @@ class LocalJSONRepository(PlanRepository):
 
     @staticmethod
     def _write_json(path: str, payload: Any) -> None:
+        LocalJSONRepository._write_text(path, json.dumps(payload, indent=2))
+
+    @staticmethod
+    def _write_text(path: str, text: str) -> None:
+        """Atomic write: temp file then rename.
+
+        A crash mid-write would otherwise leave truncated content where
+        meal_history.json used to be, and history is not reproducible once
+        lost. Shared by every write here so no caller can opt out of it.
+        """
         temporary = f"{path}.tmp"
         with open(temporary, "w") as f:
-            json.dump(payload, f, indent=2)
+            f.write(text)
         os.replace(temporary, path)
 
 

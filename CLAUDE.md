@@ -34,7 +34,7 @@ deleted once the migration landed; if you need its rendering or grid-editing
 code as a reference, it is in git history at `git show e237872:app.py`.
 
 A week can be generated from either front end — `python planner.py` or the
-NiceGUI drawer's "Generate week" — and both go through the same
+NiceGUI drawer's "Generate Current Week" — and both go through the same
 `generate_week_plan`, write the same `week_plan.json` and append the same
 history. The CLI is still the one that prints shopping lists.
 
@@ -42,8 +42,9 @@ history. The CLI is still the one that prints shopping lists.
 
 `ui_app.py` (`./server.sh start`, serves on :8080) is the high-density desktop
 UI: left drawer for global controls, a header of 7 per-day macro bars, and a
-7-column x 4-card canvas, both grids `grid-cols-7` so a day's telemetry sits
-above its meals. Cook/leftover/skip/not-generated are four distinct card
+7-column x 4-card canvas. Both grids are `grid-cols-8` — an indigo Sunday-prep
+column sits at index 0, ahead of the seven days — so a day's telemetry stays
+directly above its meals. Cook/leftover/skip/not-generated are four distinct card
 treatments (`STATUS_STYLES`).
 
 **Generating is the only thing here that writes to disk.** `run_generation`
@@ -64,16 +65,16 @@ Things worth knowing about the generation path specifically:
   exists (see `_shape()`); without that, the control would silently do nothing
   on every run after the first.
 - **The API key is checked up front** (`planner.api_key_error`). Left to the
-  per-day handler it would become seven identical failures after a long wait,
-  because "a failed day must not fail the week" is exactly the wrong policy for
-  a misconfiguration that will fail every day.
+  per-stage handler it would become one identical failure per meal type after a
+  long wait, because "a failed meal must not fail the week" is exactly the
+  wrong policy for a misconfiguration that will fail every call.
 - The progress modal is built once per page and *opened* per run, so the
   `progress_callback`/`note_callback` handlers just assign to elements that
   already exist. Notes go to a `ui.log` rather than a status label because
-  portion trims and failed days both arrive mid-run and a label would
+  portion trims and failed meal types both arrive mid-run and a label would
   overwrite the one you were reading.
 - Only a whole-run exception reaches the `except` (no config, storage
-  unwritable); per-day failures arrive in `WeekPlan.failures` and become a
+  unwritable); per-meal-type failures arrive in `WeekPlan.failures` and become a
   warning toast plus the red NOT GENERATED cards. Nothing is adopted on the
   exception path, so a failed run leaves the week on screen untouched.
 - `PlannerState.generating` guards re-entry. The loop stays free during a run
@@ -95,10 +96,11 @@ where every future grid edit should land too:
 - `apply_spec` writes the new slots back into `week_plan` as well as `_spec`,
   because `day_slot_macros` walks the *plan's* slots — otherwise the linked
   lunch's macros would never reach the telemetry header.
-- It also rescales the affected cook events (`planner.rescale_cook_event`).
-  Portions being derived means a card reading "4 portions" over ingredients
-  weighed for 2 is exactly the disagreement the derived-portions rule exists
-  to prevent, and the fix is linear arithmetic, not a regeneration call.
+- It also rescales the affected cook events, via
+  `Recipe.scale_to_servings()` directly on each event's recipe. Portions being
+  derived means a card reading "4 portions" over ingredients weighed for 2 is
+  exactly the disagreement the derived-portions rule exists to prevent, and the
+  fix is linear arithmetic, not a regeneration call.
 - `week.leftover_link_error` gates the click. It re-checks what
   `validate_week` enforces, but returns *one sentence about the two meals
   clicked* — a whole-week error list can't say which entry the click caused.
@@ -117,8 +119,8 @@ a busy week reuses a hue.
 
 ### Drawer inputs to the next run: targets and pantry
 
-The left drawer's "Daily macro targets & overrides" and "Inventory to clear"
-sections edit `PlannerState`, never config.json, and are merged into a config
+The left drawer's "Daily Targets" and "Pantry Clear" sections (plus "Training
+Schedule") edit `PlannerState`, never config.json, and are merged into a config
 by `PlannerState.planning_config()` — one object carrying the model, the
 overrides and the pantry, because `generate_week_plan`, `validate_week`,
 `split_targets` and `inventory_instruction` all read plain config and would
@@ -207,7 +209,9 @@ the header's printer-icon button now triggers the same download as before.
   Cairo/Pango system libraries this project doesn't otherwise depend on.
   `format_week_menu_markdown()` in the same module is the Markdown
   equivalent, sharing the per-slot walk (`_slot_entry`) so the two formats
-  can't silently disagree about what a slot says. Printing this document is
+  can't silently disagree about what a slot says. It has no button today —
+  it is kept as the text-pipeline counterpart (diffing two weeks, pasting a
+  menu into a note) and is the reason `_slot_entry` is factored out at all. Printing this document is
   then just whatever the browser's own PDF viewer does with a print
   command — no separate print stylesheet to keep in sync with the app's
   actual look.
@@ -234,15 +238,25 @@ at an earlier cook slot), or `skip`. Every other feature falls out of this:
   Sunday batch eaten on Wednesday belongs entirely to the Sunday trip;
   grouping by eating day would split one recipe's ingredients across two
   shopping lists.
-- **Generation cost** scales with cook days, not calendar days: one API call
-  per day that has cooking to do, and a day of pure leftovers is free.
+- **Generation cost** scales with the meal types actually cooked: one API call
+  per *meal type*, covering every day it's cooked, and a meal type that is
+  leftover or skipped all week is free. See `generate_week_plan` — generation
+  runs along the meal-type axis, not the day axis.
 
 Days are walked in week order (`WeekSpec.days`, rotated by `week_start_day`)
 so a leftover's source recipe always exists before its macros are needed —
-which is why `validate_week` rejects a leftover pointing at a later day.
+which is why `validate_week` rejects a leftover pointing at a later day. The
+meal-type *order* (`MEAL_TYPE_PRIORITY`) carries the same guarantee across
+types: dinner is generated before lunch so the one cross-type leftover
+`week.leftover_meal_type_error` permits always has its source already cooked.
 
-- `config.json` — external configuration; `DEFAULT_MODEL` in `planner.py` is
-  the fallback when `openrouter_model` is unset or the API key is missing.
+- `config.json` — external configuration, validated once at load through
+  `AppConfig` (`extra="forbid"`, so an unknown or typo'd key fails at startup).
+  Model selection lives in `models.json`, not here: `openrouter_model` is an
+  optional per-run override and `models.json`'s `default_planner_model` is what
+  it falls back to. There is **no in-code model default** — both unset raises
+  (`resolve_planner_model`), deliberately, so the app can never silently plan
+  against a stale hardcoded model.
 - `repository.py` — the storage boundary (see below).
 - `week.py` — all the deterministic, API-free planning. The entire week —
   styles, cuisines, portions, windows — is resolved here before a single token
@@ -299,15 +313,17 @@ Consequences worth knowing:
   `asyncio.run` and progress callbacks stay on the calling thread. NiceGUI is
   the opposite case and must `await` the repository directly — see the front
   end section above.
-- **`generate_day()` is still a synchronous call, dispatched to a thread.** It
-  blocks on instructor's sync client for 30s–3min, so `generate_week_plan()`
-  hands each day to `asyncio.to_thread` — that is what makes the `await` a real
-  yield. Awaiting it inline held the loop for the whole run: invisible in the
+- **The generation calls are still synchronous, dispatched to threads.** Both
+  `generate_meal_type_week()` (the weekly path) and `generate_day()` (the
+  day/meal retry paths) block on instructor's sync client for 30s–3min, so
+  `generate_week_plan()` hands each meal type to `asyncio.to_thread` — that is
+  what makes the `await` a real yield. Awaiting it inline held the loop for the whole run: invisible in the
   CLI, fatal in NiceGUI, where it froze every connected browser and the
   progress updates it was meant to be showing couldn't be delivered until the
-  run they described had finished. Days stay strictly sequential (one thread at
-  a time, in week order) because a later day's prompt is built from earlier
-  days' recipes — this is about not blocking the loop, not about going faster.
+  run they described had finished. Meal types stay strictly sequential (one
+  thread at a time, in `meal_type_order`) because each stage's per-day budget is
+  computed from every earlier stage's *actual* output — this is about not
+  blocking the loop, not about going faster.
 - **Callbacks come back to the loop.** `on_calling_loop()` wraps
   `note_callback` so a worker thread's call is re-scheduled with
   `call_soon_threadsafe` — NiceGUI elements queue their updates against the
@@ -347,12 +363,13 @@ regardless of the stated target. Three layers correct this, in order:
    must not cost a day of generation.
 2. **`fit_recipe_to_budget()`** linearly rescales the response so its calories
    land on budget. Every macro is linear in quantity, so one factor resizes
-   the portion without changing the dish. Clamped to `PORTION_TRIM_LIMITS`
-   (0.6–1.6) so a trim can never produce an absurd portion.
+   the portion without changing the dish. Clamped to
+   `planning_rules.portion_trim_limits` in config.json (0.6–1.6) so a trim can
+   never produce an absurd portion.
 3. **`DayRecipes.reject_untrimmable_macro_miss()`** — a `model_validator` that
    rejects only what layer 2 *can't* rescue, i.e. a response needing a factor
-   outside `PORTION_TRIM_LIMITS`, so `instructor` hands the model its own
-   numbers back and retries. Same mechanism that already enforces NOVA groups
+   outside `planning_rules.portion_trim_limits`, so `instructor` hands the
+   model its own numbers back and retries. Same mechanism that already enforces NOVA groups
    and banned ingredients.
 
 **The threshold in 3 is derived from 2 on purpose — don't replace it with a
@@ -372,18 +389,33 @@ protein is chronically low, change the model, not the trim limits.
 Adjustments are surfaced, never silent: `note_callback` collects them and the
 UI lists them under "Portion adjustments".
 
-### A failed day must not fail the week
+### A failed meal must not fail the week
 
-`generate_week_plan()` catches per-day exceptions into `WeekPlan.failures`
-(day -> error) and carries on. Seven sequential calls on a free route is seven
-chances to hit an unfixable provider failure — an empty completion (`choices`
-is `None`, which crashes inside `instructor`'s own response parser), a
-rate-limit, a model that can't hit the budget — and losing six good days to
-the seventh is the worst possible outcome after a 20-minute run. Failed days'
-slots render as "not generated" and their ingredients never reach a shopping
-list; the CLI prints them and the UI shows a warning telling you to
+`generate_week_plan()` catches per-*meal-type* exceptions into
+`WeekPlan.failures` — keyed by **slot_id** (`"Monday:dinner"`), not by day —
+and carries on to the next meal type. Sequential calls on a free route are
+sequential chances to hit an unfixable provider failure: an empty completion
+(`choices` is `None`, which crashes inside `instructor`'s own response
+parser), a rate-limit, a model that can't hit the budget. Losing three good
+meal types to a bad fourth is the worst possible outcome after a 20-minute run.
+
+Note the trade the meal-type axis accepts: one bad call now costs up to seven
+recipes rather than the single day's worth a per-day call could lose. That is
+paid for by week-wide protein variety and real budget cascading, and softened
+by the two narrower retries below.
+
+Failed slots render as "not generated" and their ingredients never reach a
+shopping list; the CLI prints them and the UI shows a warning telling you to
 re-generate. Orphaned leftovers pointing at a failed cook contribute 0 macros,
 so the day shows up as a visible shortfall rather than crashing.
+
+**Both narrower retries must clear what they fix.** `regenerate_single_day`
+pops every cook slot on the day out of `failures`; `regenerate_single_meal`
+pops its one slot. Forgetting this doesn't show up on the card (which reads
+`cook_events`, so it turns green) — it shows up in the drawer's failure list
+and the shopping drawer's "nothing for those meals is on this list" note,
+which keep naming a meal that now exists. The per-card regenerate button is
+offered *on* NOT GENERATED cards, so that is the common path, not an edge case.
 
 ### Reasoning must be disabled — this is not optional
 
@@ -429,10 +461,10 @@ on doing it anyway. If a newly picked model fails every slot in under a
 second with this exact message, it belongs in that list, not a workaround in
 the prompt.
 
-### Diagnosing a slow or failed day
+### Diagnosing a slow or failed call
 
 `configure_logging()` (called from both `planner.main()` and `ui_app.py` at
-import time) writes per-day generation timing to `meals.log`: request start,
+import time) writes per-call generation timing to `meals.log`: request start,
 elapsed seconds, `finish_reason`, `completion_tokens`, and `reasoning_tokens`
 for every `generate_day()` call, plus a line for any day that fails. This is
 the same data the manual diagnostic below asks you to check by hand —
@@ -444,7 +476,7 @@ signature of the reasoning-blowup failure mode, not a hung request.
 Swapping the generation model has real gotchas (reasoning-token blowups,
 free-tier churn, latency variance vs. the client timeout). They live in the
 `openrouter-model-choice` skill — invoke it before changing
-`openrouter_model` or `DEFAULT_MODEL`.
+`openrouter_model`, or `models.json`'s `default_planner_model`.
 
 ### Shopping lists
 
@@ -498,8 +530,8 @@ would need real quantities per item, which this list doesn't carry.
   bug. If the message is about kcal totals it's
   `DayRecipes.reject_untrimmable_macro_miss` and the model is off by more than
   the portion trim can absorb; swap models rather than widening
-  `PORTION_TRIM_LIMITS` (widening it would let through portions absurd enough
-  to be unusable). Note this now fails only that day, not the run.
+  `planning_rules.portion_trim_limits` (widening it would let through portions
+  absurd enough to be unusable). Note this now fails only that day, not the run.
 - `meal_history.json` entries written before the weekly rewrite have no
   `styles` key. `history_styles()` tolerates that (those days simply don't
   seed style rotation), so old history files don't need migrating.

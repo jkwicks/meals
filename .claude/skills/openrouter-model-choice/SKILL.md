@@ -5,9 +5,14 @@ description: How to pick, sanity-check, and swap the OpenRouter model used for m
 
 # Picking a free OpenRouter model — known gotcha
 
-The current `DEFAULT_MODEL`/`openrouter_model` (`google/gemma-4-26b-a4b-it:free`)
-was chosen after several free models failed in ways worth knowing about if you
-swap it:
+The model comes from `models.json`'s `default_planner_model`, optionally
+overridden per run by `config.json`'s `openrouter_model` (the CLI's `--model`
+flag and the drawer's model select both write that). There is **no in-code
+default** — `resolve_planner_model` raises if neither is set, deliberately, so
+the app can never quietly plan against a stale hardcoded model.
+
+The free models below were each tried and failed in ways worth knowing about
+before you swap to one:
 
 - **Reasoning models can hang or blow the token budget on this task.**
   Several free models (`openai/gpt-oss-20b:free`, `nvidia/nemotron-3-nano-30b-a3b:free`,

@@ -1,15 +1,9 @@
 {
   "default_planner_model": "anthropic/claude-sonnet-5",
-  "quick_swap_model": "google/gemini-3.6-flash",
-  "vision_model": "google/gemini-3.6-flash",
   "recipe_parser_model": "google/gemini-3.6-flash",
   "openrouter_base_url": "https://openrouter.ai/api/v1",
   "request_timeout_seconds": 120.0,
   "reasoning_required_models": ["google/gemini-3.6-flash"],
-  "max_tokens": {
-    "weekly_planner": 16000,
-    "quick_swap": 4000
-  },
   "selectable_options": [
     "anthropic/claude-sonnet-5",
     "google/gemini-3.6-flash",

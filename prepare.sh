@@ -14,7 +14,7 @@ find . -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File
 
 # 4. Generate structural schema previews for JSON configuration and state files (first 35 lines each)
 {
-  for json_file in config.json week_plan.json meal_plan.json meal_history.json; do
+  for json_file in config.json models.json week_plan.json meal_history.json; do
     if [ -f "$json_file" ]; then
       echo "=== Sample Structure: $json_file ==="
       head -n 35 "$json_file"

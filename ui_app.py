@@ -77,6 +77,7 @@ from planner import (
     apply_training_adjustments,
     calculate_daily_targets,
     configure_logging,
+    day_multiplicity,
     generate_week_plan,
     import_external_recipe,
     is_sunday_prepped,
@@ -88,6 +89,7 @@ from planner import (
     regenerate_single_meal,
     resolve_auto_choices,
     resolve_planner_model,
+    short_error,
     split_targets,
     weeknight_prep_minutes,
 )
@@ -319,6 +321,19 @@ PIPELINE_STAGES = [
 ]
 
 
+def pluralize(word: str) -> str:
+    """Plural of a meal-type name, for the progress dialog's stage heading.
+
+    Display only, and only for meal types — `meal_type_order` lets config
+    define its own, so this can't assume the four built-ins. The sibilant rule
+    is what "breakfasts" and "lunches" need between them; anything else takes a
+    bare -s, which is right for every meal name in English worth the extra code.
+    """
+    if word.endswith(("ch", "sh", "s", "x", "z")):
+        return word + "es"
+    return word + "s"
+
+
 def pipeline_value(state: "PlannerState", day: str, key: str) -> Optional[str]:
     """What a connected pipeline stage has for `day`, or None if unset.
 
@@ -440,7 +455,7 @@ class PlannerState:
     # as `focus` is for the recipe detail dialog: one dialog reused for all
     # seven days, refreshable off this key rather than seven pre-built dialogs.
     pipeline_day: Optional[str] = None
-    # A run holds this client for 30s-3min per cooking day. The loop stays free
+    # A run holds this client for 30s-3min per meal type. The loop stays free
     # (planner dispatches each call to a thread), so the browser is still live
     # and perfectly able to click Generate again — this is the flag that says
     # no. Per-client, like everything else here: two tabs generating at once
@@ -630,8 +645,12 @@ class PlannerState:
                 update={
                     "portions": target,
                     "eaten_by": list(claims.get(event.slot_id, [event.slot_id])),
+                    # `self.config` threaded through so the storage note uses the
+                    # configured `inventory_rules.fridge_safe_days`. Omitting it
+                    # silently fell back to week.DEFAULT_INVENTORY_RULES, so an
+                    # edited config would disagree with the note on the card.
                     "recipe": event.recipe.scale_to_servings(
-                        target, span_days(spec, event.slot_id)
+                        target, span_days(spec, event.slot_id), self.config
                     ),
                 }
             )
@@ -741,6 +760,7 @@ class PlannerState:
         scaled = recipe.scale_to_servings(
             event.portions,
             keeps_for_days=span_days(spec, source_id),
+            config=self.config,
         )
         new_event = event.model_copy(update={"recipe": scaled})
         self.week_plan = self.week_plan.model_copy(
@@ -1137,8 +1157,12 @@ def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
     if not cook_slots:
         return None
 
-    claims = eaten_on(spec)
-    multiplicity = {slot.id: len(claims.get(slot.id, [slot.id])) for slot in cook_slots}
+    # `planner.day_multiplicity`, not a local count off `eaten_on`: the latter
+    # counts every slot claiming a cook across the WHOLE WEEK, so a dinner
+    # feeding tomorrow's lunch scored 2 here and 1 in generation. That inflated
+    # `split_targets`'s total weight and understated every budget on the day by
+    # ~30%. Sharing generation's own function is what keeps this honest.
+    multiplicity = day_multiplicity(spec, view.day)
 
     events = state.week_plan.by_slot() if state.week_plan else {}
     carried = {key: 0.0 for key in MACRO_KEYS}
@@ -1263,6 +1287,12 @@ async def planner_page() -> None:
     # whole page has finished building — same forward-reference pattern
     # `on_link_next_lunch` already uses for `refresh_all` below.
 
+    # These three read `state.recipe_catalog` (the in-memory copy loaded at
+    # startup) rather than awaiting the repository, deliberately: `canvas()`
+    # calls `is_favorited` once per cooked card on every repaint, and turning
+    # that into a disk read per card would make a repaint O(cards) file opens.
+    # Every handler that mutates the catalog refreshes this list from disk, so
+    # it stays in sync — do not "fix" these into async repository calls.
     def catalog_entry_for(recipe: dict) -> Optional[dict]:
         key = recipe_content_key(recipe)
         return next(
@@ -2458,7 +2488,7 @@ async def planner_page() -> None:
         )
 
     # ---- generation -------------------------------------------------------
-    # The run is long (30s-3min per cooking day) and its progress is the only
+    # The run is long (30s-3min per meal type) and its progress is the only
     # thing on screen worth looking at while it happens, so it gets a modal
     # rather than a toast. Built once per page: opening it is a state change,
     # not a construction, so the day-by-day updates below can just assign to
@@ -2476,7 +2506,7 @@ async def planner_page() -> None:
                 "rounded color=primary"
             )
             ui.label(
-                "One API call per cooking day, 30s–3 min each. This window stays "
+                "One API call per meal type, 30s–3 min each. This window stays "
                 "until the whole week is done."
             ).classes("text-[10px] text-slate-500")
             # Portion trims and failed days both arrive as notes, mid-run. A log
@@ -2548,8 +2578,7 @@ async def planner_page() -> None:
             nonlocal done
             done += 1
             progress_bar.value = (done - 1) / len(stages)
-            plural = meal_type + "es" if meal_type.endswith("ch") else meal_type + "s"
-            label = humanize(plural).capitalize()
+            label = humanize(pluralize(meal_type)).capitalize()
             progress_status.text = (
                 f"Generating {label} ({done}/{len(stages)}) — {cooks} recipe(s)…"
                 if cooks
@@ -2557,7 +2586,10 @@ async def planner_page() -> None:
             )
 
         generate.props("loading")
-        progress_status.text = f"Starting {cooking_days} cooking day(s) on {state.model}…"
+        progress_status.text = (
+            f"Starting {len(stages)} meal type(s) across {cooking_days} cooking day(s) "
+            f"on {state.model}…"
+        )
         progress_bar.value = 0.0
         progress_log.clear()
         progress_dialog.open()
@@ -2583,7 +2615,7 @@ async def planner_page() -> None:
             # (no config, storage unwritable), so nothing is adopted and the
             # week on screen is left exactly as it was.
             ui.notify(
-                f"Generation failed: {type(exc).__name__}: {exc}",
+                f"Generation failed: {short_error(exc)}",
                 type="negative",
                 multi_line=True,
                 close_button=True,
@@ -2657,7 +2689,7 @@ async def planner_page() -> None:
             await record_week_history(plan, REPOSITORY, config, days=[day])
         except Exception as exc:
             ui.notify(
-                f"Regenerating {day} failed: {type(exc).__name__}: {exc}",
+                f"Regenerating {day} failed: {short_error(exc)}",
                 type="negative",
                 multi_line=True,
                 close_button=True,
@@ -2735,8 +2767,7 @@ async def planner_page() -> None:
             await record_week_history(plan, REPOSITORY, config, days=[day])
         except Exception as exc:
             ui.notify(
-                f"Regenerating {slot_label(target_slot_id)} failed: "
-                f"{type(exc).__name__}: {exc}",
+                f"Regenerating {slot_label(target_slot_id)} failed: {short_error(exc)}",
                 type="negative",
                 multi_line=True,
                 close_button=True,
@@ -2820,7 +2851,7 @@ async def planner_page() -> None:
             )
         except Exception as exc:
             ui.notify(
-                f"Import failed: {type(exc).__name__}: {exc}",
+                f"Import failed: {short_error(exc)}",
                 type="negative",
                 multi_line=True,
                 close_button=True,
@@ -2902,8 +2933,8 @@ async def planner_page() -> None:
             with generate:
                 ui.tooltip(
                     "Generates every meal set to cook in this grid — one API call per "
-                    "cooking day. Overwrites the selected week's cached plan and "
-                    "appends to history."
+                    "meal type, covering each day it's cooked. Overwrites the selected "
+                    "week's cached plan and appends to history."
                 )
 
             def on_shuffle_styles() -> None:

@@ -107,21 +107,6 @@ def styles_for(config: dict, meal_type: str) -> Dict[str, str]:
     return config["meal_styles"].get(meal_type, {})
 
 
-def all_style_keys(config: dict) -> List[str]:
-    """Union of every meal type's styles, for the grid's single Style column.
-
-    st.data_editor's dropdown options are per-column, not per-row, so the
-    column offers every style and validate_week() rejects ones that don't
-    belong to the row's meal type.
-    """
-    keys: List[str] = []
-    for meal_type in meal_types(config):
-        for key in styles_for(config, meal_type):
-            if key not in keys:
-                keys.append(key)
-    return keys
-
-
 def slot_id(day: str, meal_type: str) -> str:
     return f"{day}:{meal_type}"
 
@@ -437,43 +422,6 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
     return errors
 
 
-def week_warnings(spec: WeekSpec, config: Optional[dict] = None) -> List[str]:
-    """Non-blocking notes — things that are legal but probably not intended."""
-    fridge_safe_days = (
-        config["inventory_rules"]["fridge_safe_days"]
-        if config
-        else DEFAULT_INVENTORY_RULES["fridge_safe_days"]
-    )
-    warnings: List[str] = []
-    counts = claim_counts(spec)
-    by_id = spec.by_id()
-
-    for cook_id, claims in counts.items():
-        slot = by_id[cook_id]
-        if claims >= 5:
-            warnings.append(
-                f"{slot.day} {slot.meal_type} feeds {claims} meals — that's a lot of "
-                "repeats of one recipe, and it has to keep for "
-                f"{span_days(spec, cook_id)} days."
-            )
-        span = span_days(spec, cook_id)
-        if span >= fridge_safe_days:
-            warnings.append(
-                f"{slot.day} {slot.meal_type} is eaten up to {span} days after cooking — "
-                "at or past safe fridge storage, so plan to freeze the later portions."
-            )
-
-    skipped = [slot for slot in spec.slots if slot.mode == MODE_SKIP]
-    by_day: Dict[str, int] = {}
-    for slot in skipped:
-        by_day[slot.day] = by_day.get(slot.day, 0) + 1
-    for day, count in by_day.items():
-        if count >= 3:
-            warnings.append(f"{day} has {count} skipped meals — its macro targets will be hard to hit.")
-
-    return warnings
-
-
 def span_days(spec: WeekSpec, cook_id: str) -> int:
     """Days between cooking and the last meal that eats it.
 
@@ -531,10 +479,3 @@ def shopping_windows(days: List[str], shop_days: List[str]) -> List[ShoppingWind
             )
         )
     return windows
-
-
-def window_for_day(windows: List[ShoppingWindow], day: str) -> Optional[ShoppingWindow]:
-    for window in windows:
-        if day in window.days:
-            return window
-    return None
