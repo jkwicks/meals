@@ -5,7 +5,7 @@ import os
 import random
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import instructor
 from dotenv import load_dotenv
@@ -1061,6 +1061,19 @@ class WeekPlan(BaseModel):
         day_set = set(days)
         return [event for event in self.cook_events if event.day in day_set]
 
+    def day_slot_macros(self, day: str) -> dict:
+        """What one person actually eats on `day`, summed across their slots."""
+        by_slot = self.by_slot()
+        events = []
+        for slot in self.slots:
+            if slot.day != day or slot.mode == MODE_SKIP:
+                continue
+            source_id = slot.id if slot.mode == MODE_COOK else slot.source
+            event = by_slot.get(source_id)
+            if event is not None:
+                events.append(event)
+        return sum_serving_macros(events)
+
 
 # --------------------------------------------------------------------------
 # Macro math (always Python, never the model)
@@ -1184,17 +1197,16 @@ def rescale_cook_event(
     )
 
 
-def day_slot_macros(week_plan: WeekPlan, day: str) -> dict:
-    """What one person actually eats on `day`, summed across their slots."""
-    by_slot = week_plan.by_slot()
+def sum_serving_macros(events: Iterable[CookEvent]) -> dict:
+    """Per-serving macros of `events`, summed key by key.
+
+    The one place that walks `MACRO_KEYS` to total up `CookEvent`s — every
+    caller differs only in *which* events it hands in (a day's slots, just
+    the leftovers, every other slot but one), so that selection logic stays
+    with the caller and only the summation is shared.
+    """
     totals = {key: 0.0 for key in MACRO_KEYS}
-    for slot in week_plan.slots:
-        if slot.day != day or slot.mode == MODE_SKIP:
-            continue
-        source_id = slot.id if slot.mode == MODE_COOK else slot.source
-        event = by_slot.get(source_id)
-        if event is None:
-            continue
+    for event in events:
         serving = event.recipe.per_serving_macros
         for key in MACRO_KEYS:
             totals[key] += serving[key]
@@ -1219,24 +1231,25 @@ def carried_macros(
 ) -> Tuple[dict, List[str]]:
     """Macros already locked in for `day` by leftovers cooked on earlier days,
     plus human-readable descriptions of those meals for the prompt."""
-    totals = {key: 0.0 for key in MACRO_KEYS}
-    descriptions = []
+    carried = []
     for slot in spec.slots:
         if slot.day != day or slot.mode != MODE_LEFTOVER or not slot.source:
             continue
         event = events.get(slot.source)
         if event is None:
             continue
+        carried.append((slot, event))
+
+    descriptions = []
+    for slot, event in carried:
         serving = event.recipe.per_serving_macros
-        for key in MACRO_KEYS:
-            totals[key] += serving[key]
         descriptions.append(
             f"{slot.meal_type}: leftovers of \"{event.recipe.name}\" "
             f"(cooked {event.day}) — {serving['calories']:.0f} kcal, "
             f"{serving['protein_g']:.0f}g protein, {serving['net_carbs_g']:.0f}g net carbs, "
             f"{serving['fat_g']:.0f}g fat"
         )
-    return totals, descriptions
+    return sum_serving_macros(event for _, event in carried), descriptions
 
 
 # --------------------------------------------------------------------------
@@ -2717,12 +2730,11 @@ async def regenerate_single_meal(
     by_slot = dict(week_plan.by_slot())
     multiplicity = day_multiplicity(spec, day)
 
-    other_totals = {key: 0.0 for key in MACRO_KEYS}
-    other_descriptions: List[str] = []
-    for other in spec.slots:
-        if other.day != day or other.id == slot_id or other.mode == MODE_SKIP:
+    other: List[Tuple[SlotSpec, CookEvent]] = []
+    for other_slot in spec.slots:
+        if other_slot.day != day or other_slot.id == slot_id or other_slot.mode == MODE_SKIP:
             continue
-        source_id = other.id if other.mode == MODE_COOK else other.source
+        source_id = other_slot.id if other_slot.mode == MODE_COOK else other_slot.source
         if source_id == slot_id:
             # A same-day leftover of THIS meal's own batch — its share is
             # already covered by dividing this meal's budget by multiplicity
@@ -2731,16 +2743,19 @@ async def regenerate_single_meal(
         event = by_slot.get(source_id)
         if event is None:
             continue
+        other.append((other_slot, event))
+
+    other_totals = sum_serving_macros(event for _, event in other)
+    other_descriptions: List[str] = []
+    for other_slot, event in other:
         serving = event.recipe.per_serving_macros
-        for key in MACRO_KEYS:
-            other_totals[key] += serving[key]
         origin = (
             f'leftovers of "{event.recipe.name}" (cooked {event.day})'
-            if other.mode == MODE_LEFTOVER
+            if other_slot.mode == MODE_LEFTOVER
             else f'"{event.recipe.name}" (already generated)'
         )
         other_descriptions.append(
-            f"{other.meal_type}: {origin} — {serving['calories']:.0f} kcal, "
+            f"{other_slot.meal_type}: {origin} — {serving['calories']:.0f} kcal, "
             f"{serving['protein_g']:.0f}g protein, {serving['net_carbs_g']:.0f}g net carbs, "
             f"{serving['fat_g']:.0f}g fat"
         )
@@ -2898,7 +2913,7 @@ def print_week_summary(week_plan: WeekPlan) -> None:
         slots_by_day.setdefault(slot.day, []).append(slot)
 
     for day in week_plan.days:
-        totals = day_slot_macros(week_plan, day)
+        totals = week_plan.day_slot_macros(day)
         target = week_plan.targets[day]
         print(f"\n{day}")
         for slot in slots_by_day.get(day, []):
