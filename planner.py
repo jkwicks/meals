@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -39,6 +40,7 @@ from week import (
     parse_slot_id,
     portions_for,
     shopping_windows,
+    slot_label,
     styles_for,
     validate_week,
 )
@@ -1271,6 +1273,33 @@ def inventory_instruction(config: dict) -> str:
     )
 
 
+# How many whfoods.json entries to nudge the model toward per generation run
+# (see `select_nudge_foods`). ~12 is enough to give the model real choice
+# across a week of meals without dominating the prompt or the day's flavour
+# profile.
+NUDGE_FOOD_SAMPLE_SIZE = 12
+
+
+async def select_nudge_foods(
+    repository: Optional[PlanRepository] = None, count: int = NUDGE_FOOD_SAMPLE_SIZE
+) -> List[str]:
+    """A random sample of nutrient-dense whole foods (whfoods.json) to nudge
+    generation toward this run.
+
+    Sampled once per run, not once per day or slot: `build_slot_brief` reads
+    the same list off `config["nudge_foods"]` for every slot, so the
+    directive names one consistent dozen foods across the week's meals
+    instead of a different set per recipe. An empty/missing whfoods.json
+    (older checkout, fresh install) resolves to an empty list, which
+    `build_slot_brief` treats as "say nothing" — the same tolerance
+    `inventory_instruction` extends to an empty pantry list.
+    """
+    foods = await (repository or LocalJSONRepository()).load_whfoods()
+    if not foods:
+        return []
+    return random.sample(foods, min(count, len(foods)))
+
+
 def build_slot_brief(
     slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict, pinned: bool = False
 ) -> str:
@@ -1283,6 +1312,12 @@ def build_slot_brief(
             parts.append(f"({style_description})")
     if slot.cuisine:
         parts.append(f"cuisine: {humanize(slot.cuisine)} — authentic flavours and technique")
+    nudge_foods = config.get("nudge_foods")
+    if nudge_foods:
+        parts.append(
+            "prioritize incorporating these nutrient-dense foods where flavour "
+            f"profiles permit: {', '.join(nudge_foods)}"
+        )
     parts.append(
         f"budget (one serving): {budget['calories']:.0f} kcal, "
         f"{budget['protein_g']:.0f}g protein, {budget['net_carbs_g']:.0f}g net carbs, "
@@ -1775,6 +1810,9 @@ async def generate_week_plan(
     """
     if history is None:
         history = await (repository or LocalJSONRepository()).load_history()
+    nudge_foods = await select_nudge_foods(repository)
+    if nudge_foods:
+        config = dict(config, nudge_foods=nudge_foods)
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -1937,6 +1975,149 @@ async def regenerate_single_day(
             "slots": spec.slots,
             "targets": targets,
             "failures": failures,
+            "sunday_prep_session": sunday_prep_session,
+        }
+    )
+
+
+async def regenerate_single_meal(
+    slot_id: str,
+    spec: WeekSpec,
+    config: dict,
+    week_plan: WeekPlan,
+    history: Optional[List[dict]] = None,
+    note_callback=None,
+    repository: Optional[PlanRepository] = None,
+) -> WeekPlan:
+    """Re-cook just one meal, leaving every other slot's cook event untouched.
+
+    The narrowest-grained regeneration in the app — `regenerate_single_day`
+    still re-splits and re-generates every cook on that day, which is overkill
+    for "just redo Tuesday dinner, the rest of the day is fine." Here every
+    OTHER slot on `day` (leftover or independently cooked) is treated as
+    fixed: its already-locked-in per-serving macros are summed and subtracted
+    from the day's target, and whatever budget is left over goes entirely to
+    this one meal — divided by how many times it's eaten today, the same rule
+    `split_targets` applies to any other flexible slot. One API call, one
+    recipe.
+
+    Unlike `carried_macros` (which only knows about leftovers, because a
+    full-day generation produces every same-day cook together in one call),
+    this also has to treat a sibling COOK slot on the same day as fixed — it
+    already has a recipe in `week_plan` that isn't being touched.
+    """
+    day, _ = parse_slot_id(slot_id)
+    slot = spec.by_id().get(slot_id)
+    if slot is None or slot.mode != MODE_COOK:
+        raise ValueError(f"{slot_label(slot_id)} isn't a cooked meal — nothing to regenerate.")
+
+    if history is None:
+        history = await (repository or LocalJSONRepository()).load_history()
+
+    targets = week_targets(spec, config)
+    day_target = targets[day]
+    portions = portions_for(spec)
+    claims = eaten_on(spec)
+    by_slot = dict(week_plan.by_slot())
+    multiplicity = day_multiplicity(spec, day)
+
+    other_totals = {key: 0.0 for key in MACRO_KEYS}
+    other_descriptions: List[str] = []
+    for other in spec.slots:
+        if other.day != day or other.id == slot_id or other.mode == MODE_SKIP:
+            continue
+        source_id = other.id if other.mode == MODE_COOK else other.source
+        if source_id == slot_id:
+            # A same-day leftover of THIS meal's own batch — its share is
+            # already covered by dividing this meal's budget by multiplicity
+            # below, not a separate fixed amount to subtract.
+            continue
+        event = by_slot.get(source_id)
+        if event is None:
+            continue
+        serving = event.recipe.per_serving_macros
+        for key in MACRO_KEYS:
+            other_totals[key] += serving[key]
+        origin = (
+            f'leftovers of "{event.recipe.name}" (cooked {event.day})'
+            if other.mode == MODE_LEFTOVER
+            else f'"{event.recipe.name}" (already generated)'
+        )
+        other_descriptions.append(
+            f"{other.meal_type}: {origin} — {serving['calories']:.0f} kcal, "
+            f"{serving['protein_g']:.0f}g protein, {serving['net_carbs_g']:.0f}g net carbs, "
+            f"{serving['fat_g']:.0f}g fat"
+        )
+
+    # Seeded from history, same as regenerate_single_day, then extended with
+    # every OTHER slot already locked into this plan — this meal's own
+    # (about to be replaced) protein/name must not suppress itself on retry.
+    avoid_proteins = recent_main_proteins(history, config)
+    avoid_recipe_names = recent_recipe_names(history)
+    for event in week_plan.cook_events:
+        if event.slot_id == slot_id:
+            continue
+        protein = extract_main_protein(event.recipe)
+        if protein and protein not in avoid_proteins:
+            avoid_proteins.append(protein)
+        if event.recipe.name not in avoid_recipe_names:
+            avoid_recipe_names.append(event.recipe.name)
+
+    protein_avoid_window = planning_rule(config, "protein_avoid_window")
+    thread_safe_note = on_calling_loop(note_callback)
+
+    recipes = await asyncio.to_thread(
+        generate_day,
+        day=day,
+        targets=day_target,
+        cook_slots=[slot],
+        config=config,
+        servings_per_meal=spec.servings_per_meal,
+        multiplicity=multiplicity,
+        carried=other_totals,
+        carried_descriptions=other_descriptions,
+        avoid_proteins=avoid_proteins[-protein_avoid_window:],
+        avoid_recipe_names=avoid_recipe_names,
+        progress_note=thread_safe_note,
+    )
+
+    claim_ids = claims.get(slot_id, [slot_id])
+    last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+    recipe = recipes[slot.meal_type].scale_to_servings(
+        portions[slot_id],
+        keeps_for_days=last_day_index - spec.day_index(day),
+        config=config,
+    )
+    new_event = CookEvent(
+        slot_id=slot_id,
+        day=day,
+        meal_type=slot.meal_type,
+        portions=portions[slot_id],
+        style=slot.style,
+        cuisine=slot.cuisine,
+        eaten_by=claim_ids,
+        recipe=recipe,
+    )
+    by_slot[slot_id] = new_event
+    ordered_events = [by_slot[s.id] for s in spec.cook_slots() if s.id in by_slot]
+
+    # Same rule as regenerate_single_day: a saved Sunday prep session names
+    # specific recipes from the OLD plan, and this meal may have joined or
+    # left the batch-prep candidate set — drop rather than risk a stale plan.
+    sunday_prep_session = week_plan.sunday_prep_session
+    if sunday_prep_session is not None:
+        old_event = week_plan.by_slot().get(slot_id)
+        was_candidate = bool(old_event and old_event.recipe.prep_notes)
+        now_candidate = bool(new_event.recipe.prep_notes)
+        if was_candidate or now_candidate:
+            sunday_prep_session = None
+
+    return week_plan.model_copy(
+        update={
+            "generated_at": datetime.now().isoformat(),
+            "cook_events": ordered_events,
+            "slots": spec.slots,
+            "targets": targets,
             "sunday_prep_session": sunday_prep_session,
         }
     )

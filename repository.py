@@ -38,6 +38,7 @@ DEFAULT_HISTORY_FILE = "meal_history.json"
 DEFAULT_WEEK_PLAN_FILE = "week_plan.json"
 DEFAULT_RECIPE_CATALOG_FILE = "recipes_master.json"
 DEFAULT_MODELS_FILE = "models.json"
+DEFAULT_WHFOODS_FILE = "whfoods.json"
 
 T = TypeVar("T")
 
@@ -64,6 +65,7 @@ class StoragePaths:
     week_plan: str = DEFAULT_WEEK_PLAN_FILE
     recipe_catalog: str = DEFAULT_RECIPE_CATALOG_FILE
     models: str = DEFAULT_MODELS_FILE
+    whfoods: str = DEFAULT_WHFOODS_FILE
 
 
 def recipe_content_key(recipe: dict) -> str:
@@ -113,6 +115,17 @@ class PlanRepository(abc.ABC):
         install with no `models.json` yet must plan exactly as it did before
         this file existed, not fail to start. Implementations return `{}`
         when the file is absent.
+        """
+
+    @abc.abstractmethod
+    async def load_whfoods(self) -> List[str]:
+        """Names of the nutrient-dense whole foods in whfoods.json, flattened
+        out of their category grouping.
+
+        Supplemental, like `load_models_config`: a fresh install or an older
+        checkout without whfoods.json must still plan exactly as it did
+        before this file existed, so implementations return `[]` when the
+        file is absent rather than raising.
         """
 
     @abc.abstractmethod
@@ -222,6 +235,7 @@ class LocalJSONRepository(PlanRepository):
         week_plan_path: str = DEFAULT_WEEK_PLAN_FILE,
         recipe_catalog_path: str = DEFAULT_RECIPE_CATALOG_FILE,
         models_path: str = DEFAULT_MODELS_FILE,
+        whfoods_path: str = DEFAULT_WHFOODS_FILE,
     ) -> None:
         self.paths = StoragePaths(
             config=config_path,
@@ -229,6 +243,7 @@ class LocalJSONRepository(PlanRepository):
             week_plan=week_plan_path,
             recipe_catalog=recipe_catalog_path,
             models=models_path,
+            whfoods=whfoods_path,
         )
 
     # -- PlanRepository ----------------------------------------------------
@@ -241,6 +256,10 @@ class LocalJSONRepository(PlanRepository):
 
     async def load_models_config(self) -> dict:
         return await asyncio.to_thread(self._read_json, self.paths.models) or {}
+
+    async def load_whfoods(self) -> List[str]:
+        foods = await asyncio.to_thread(self._read_json, self.paths.whfoods) or []
+        return [food["name"] for food in foods if food.get("name")]
 
     async def load_history(self) -> List[dict]:
         return await asyncio.to_thread(self._read_json, self.paths.history) or []
