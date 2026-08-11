@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./release.sh <patch|minor|major> "Technical release notes" "Plain english release notes"
+# Usage: ./scripts/release.sh <patch|minor|major> "Technical release notes" "Plain english release notes"
+
+# This script lives in scripts/; `git add .` stages the current directory, so
+# without this it would stage only scripts/ and quietly ship a partial release.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 BUMP_TYPE="${1:-patch}"
 TECH_NOTES="${2:-Routine technical updates.}"

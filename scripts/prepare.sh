@@ -1,8 +1,16 @@
+#!/usr/bin/env bash
+# Regenerates the AI-assistant bundles in the project root from the sources
+# they concatenate. Run as ./scripts/prepare.sh.
+
+# This script lives in scripts/; everything below is relative to the project
+# root, so resolve there first.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 # 1. Clean up old bundle files if they exist
 rm -f python_codebase.md project_context.md data_schemas.md
 
 # 2. Bundle all active Python source files into a single annotated Markdown document
-find . -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \; > python_codebase.md
+find src -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \; > python_codebase.md
 
 # 3. Bundle architecture documentation, rules, and skills
 {
@@ -14,7 +22,7 @@ find . -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File
 
 # 4. Generate structural schema previews for JSON configuration and state files (first 35 lines each)
 {
-  for json_file in config.json models.json week_plan.json meal_history.json; do
+  for json_file in data/config.json data/models.json data/week_plan.json data/meal_history.json; do
     if [ -f "$json_file" ]; then
       echo "=== Sample Structure: $json_file ==="
       head -n 35 "$json_file"
@@ -26,7 +34,11 @@ find . -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File
   # cutoff above (e.g. week_plan.json's sunday_prep_session) never appear in
   # the sample previews, so dump their real schema straight from the source
   # of truth instead of hoping a sample file happens to populate them.
+  #
+  # PYTHONPATH=src because planner.py is no longer a sibling of this script;
+  # importing it needs src/ on the path the same way `python src/planner.py`
+  # puts it there automatically.
   echo "=== Model Schema: WeekPlan.sunday_prep_session (planner.SundayPrepSession) ==="
-  python3 -c "import json, planner; print(json.dumps(planner.SundayPrepSession.model_json_schema(), indent=2))"
+  PYTHONPATH=src python3 -c "import json, planner; print(json.dumps(planner.SundayPrepSession.model_json_schema(), indent=2))"
   echo -e "\n"
 } > data_schemas.md

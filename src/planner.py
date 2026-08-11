@@ -21,6 +21,8 @@ from pydantic import (
 )
 
 from repository import (
+    DATA_DIR,
+    PROJECT_ROOT,
     LocalJSONRepository,
     PlanRepository,
     StoragePaths,
@@ -57,7 +59,12 @@ from week import (
     validate_week,
 )
 
-load_dotenv()
+# Explicit path rather than a bare `load_dotenv()`. The no-arg form searches
+# upward from the *calling* file, which still finds the root `.env` from
+# `src/` — but only by walking one directory it isn't told about. Naming the
+# file means the CLI, the UI and a future entry point in any subdirectory all
+# read the same secrets file.
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
 
@@ -66,7 +73,10 @@ DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
 # messages have a filename to print before a LocalJSONRepository is
 # constructed. Once a repository exists, read its own `.paths` instead.
 DEFAULT_STORAGE_PATHS = StoragePaths()
-LOG_FILE = "meals.log"
+# Alongside the generated JSON in `data/`, not in the repo root: it is
+# runtime output like `week_plan.json`, and anchoring it means the log lands
+# in the same place whether the CLI was started from the root or from `src/`.
+LOG_FILE = os.path.join(DATA_DIR, "meals.log")
 
 logger = logging.getLogger("meals")
 

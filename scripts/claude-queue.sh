@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# This script lives in scripts/, but .prompts/ is a project-root directory —
+# resolve there so the queue works regardless of where it was invoked from.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 # Directory containing your ordered markdown prompts
 PROMPT_DIR="./.prompts"
 RETRY_INTERVAL_SECS=600  # 10 minutes (600 seconds)

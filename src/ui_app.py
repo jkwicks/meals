@@ -93,7 +93,7 @@ from planner import (
     split_targets,
     weeknight_prep_minutes,
 )
-from repository import LocalJSONRepository, recipe_content_key
+from repository import PROJECT_ROOT, LocalJSONRepository, recipe_content_key
 from shopping import (
     aggregate_cook_events,
     cook_plan_lines,
@@ -123,7 +123,9 @@ from week import (
     week_days,
 )
 
-load_dotenv()
+# Explicit path — see the matching note in planner.py. NiceGUI's reloader can
+# also start the process from a different directory than the one you typed in.
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 configure_logging()
 
 # One repository for the server, imported once rather than re-executed per
