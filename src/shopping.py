@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -214,6 +214,59 @@ NAME_ALIASES = {
 }
 
 
+# One canonical purchase per pantry staple, matched against an ingredient's
+# normalised words as `(words that must all appear, words that must not, the
+# single line the shopper reads)`.
+#
+# `NAME_ALIASES` above rewrites one *whole* key to another and can only fix
+# variants that already normalise to a single word each. These are the
+# variants that don't: a model writes the same tin three ways in one week —
+# "Sardines (canned)", "sardines in water (tinned)", "tinned sardines" — and
+# the word-sorted key only merges the two that happen to share a word set, so
+# the shopping list said to buy sardines twice. Same for "low fat cottage
+# cheese" against "cottage cheese", and "extra virgin olive oil" against
+# "olive oil". The prompt's PANTRY_CONSOLIDATION_RULE asks the model not to
+# produce these; this is what catches the ones it produces anyway.
+#
+# Longest match wins (most matched words), ties fall to list order — the same
+# specificity-beats-ordering rule `categorize_department` uses, and what keeps
+# "Greek yoghurt" from collapsing into plain "Yoghurt".
+#
+# Deliberately narrow. An entry here *asserts* that every variant is the same
+# purchase, which is exactly the merge `STATE_QUALIFIERS` exists to prevent
+# when it isn't true — hence the exclusion lists ("mustard seeds" is not
+# mustard, "oat milk" is not oats) and hence nothing here whose forms differ
+# in what a gram means. When the canonical name carries a state of its own it
+# wins, which is what merges "(tinned)" into "(canned)"; when it carries none
+# the original's state is kept, so "Oats, cooked" still can't merge with dry.
+CANONICAL_INGREDIENTS = [
+    # (must contain, must not contain, canonical name)
+    (("greek", "yoghurt"), (), "Greek yoghurt"),
+    (("greek", "yogurt"), (), "Greek yoghurt"),
+    (("cottage", "cheese"), (), "Cottage cheese"),
+    (("protein", "powder"), (), "Protein powder"),
+    (("olive", "oil"), (), "Olive oil"),
+    (("flax", "seed"), (), "Flaxseed"),
+    (("chia", "seed"), (), "Chia seeds"),
+    (("hemp", "seed"), (), "Hemp seeds"),
+    (("hemp", "heart"), (), "Hemp seeds"),
+    # Single-word rules below, grouped for readability rather than for
+    # precedence — longest match already wins, so "Greek yoghurt" beats
+    # "yoghurt" wherever either sits in this list.
+    (("sardine",), (), "Sardines (canned)"),
+    (("mackerel",), (), "Mackerel (canned)"),
+    (("tuna",), ("steak", "loin", "fillet"), "Tuna (canned)"),
+    (("yoghurt",), (), "Yoghurt"),
+    (("yogurt",), (), "Yoghurt"),
+    (("flaxseed",), (), "Flaxseed"),
+    # "mustard seeds" is a spice and "mustard powder" is a different jar again
+    # — both are excluded rather than merged into the condiment.
+    (("mustard",), ("seed", "powder"), "Mustard"),
+    (("oat",), ("milk", "flour", "cake"), "Oats"),
+    (("creatine",), (), "Creatine"),
+]
+
+
 def singularize(word: str) -> str:
     """Crude plural stripper, used only to build combining keys.
 
@@ -241,6 +294,81 @@ def states_in(name: str) -> List[str]:
     return sorted(words & STATE_QUALIFIERS)
 
 
+# States that describe the same shelf. "Tinned" and "canned" are one word in
+# two dialects, and a canonical name that says one has to accept the other or
+# the merge it exists for never happens. Nothing else belongs here: "frozen"
+# and "dried" really are different purchases of the same food.
+EQUIVALENT_STATES = [{"canned", "tinned"}]
+
+
+def key_words(name: str) -> List[str]:
+    """The ingredient head's words, singularized, minus prep and state words.
+
+    The shared first step of `normalize_name` and `canonical_ingredient`, so a
+    canonical rule is matched against exactly the words the combining key is
+    built from — a rule that matched some other tokenisation would fire on
+    names the key then splits apart anyway.
+    """
+    head = ingredient_head(name).lower()
+    return [
+        singularize(word)
+        for word in re.findall(r"[a-z]+", head)
+        if word not in PREP_QUALIFIERS and word not in STATE_QUALIFIERS
+    ]
+
+
+def canonical_ingredient(name: str) -> Optional[str]:
+    """The single canonical purchase `name` is a variant of, or None.
+
+    Longest match wins, ties to list order (see `CANONICAL_INGREDIENTS`). A
+    canonical name carrying a state of its own — "Sardines (canned)" — only
+    claims names whose own state is absent or equivalent to it, so "tinned
+    sardines" merges in while "frozen sardines" is left as its own line: the
+    point of the state suffix is that a gram of one isn't a gram of the other,
+    and canonicalisation must not be the thing that quietly overrides it.
+    """
+    words = set(key_words(name))
+    if not words:
+        return None
+
+    match_length = 0
+    matched: Optional[str] = None
+    for required, excluded, canonical in CANONICAL_INGREDIENTS:
+        if len(required) <= match_length:
+            continue
+        if not words.issuperset(required) or not words.isdisjoint(excluded):
+            continue
+        canonical_states = set(states_in(canonical))
+        if canonical_states:
+            allowed = set(canonical_states)
+            for group in EQUIVALENT_STATES:
+                if canonical_states & group:
+                    allowed |= group
+            if not set(states_in(name)).issubset(allowed):
+                continue
+        matched, match_length = canonical, len(required)
+    return matched
+
+
+def resolve_ingredient(name: str) -> Tuple[str, List[str]]:
+    """`(the name to key and display on, the state qualifiers that apply)`.
+
+    Where canonicalisation is applied, once, so the combining key and the
+    displayed line can never disagree about which purchase this is — two
+    variants merging into one total under a name that only describes one of
+    them would be worse than not merging at all.
+
+    A canonical name's own states win when it has any (that is what folds
+    "(tinned)" into "(canned)"); otherwise the original's are kept, so
+    canonicalising "Oats" out of "rolled oats" still leaves "Oats, cooked" on
+    its own line.
+    """
+    canonical = canonical_ingredient(name)
+    if canonical:
+        return canonical, states_in(canonical) or states_in(name)
+    return name, states_in(name)
+
+
 def normalize_name(name: str) -> str:
     """Combining key: head minus cut words, word-sorted, plus any state words.
 
@@ -248,21 +376,17 @@ def normalize_name(name: str) -> str:
     fresh" — models phrase the same purchase both ways within one week. The
     state suffix is what keeps "Quinoa, dry" and "Quinoa, cooked" apart.
     """
-    head = ingredient_head(name).lower()
-    words = [
-        singularize(word)
-        for word in re.findall(r"[a-z]+", head)
-        if word not in PREP_QUALIFIERS and word not in STATE_QUALIFIERS
-    ]
-    base = " ".join(sorted(words)) if words else head.strip()
+    base_name, states = resolve_ingredient(name)
+    words = key_words(base_name)
+    base = " ".join(sorted(words)) if words else ingredient_head(base_name).lower().strip()
     base = NAME_ALIASES.get(base, base)
-    states = states_in(name)
     return f"{base} [{' '.join(states)}]" if states else base
 
 
 def display_name(name: str) -> str:
     """What the shopper reads: head minus cut words, state kept in parentheses."""
-    head = ingredient_head(name)
+    base_name, states = resolve_ingredient(name)
+    head = ingredient_head(base_name)
     words = [
         word
         for word in head.split()
@@ -271,9 +395,8 @@ def display_name(name: str) -> str:
     ]
     cleaned = " ".join(words).strip(" -,")
     if not cleaned:
-        cleaned = ingredient_head(name)
+        cleaned = ingredient_head(base_name)
     cleaned = cleaned[0].upper() + cleaned[1:] if cleaned else name
-    states = states_in(name)
     return f"{cleaned} ({', '.join(states)})" if states else cleaned
 
 

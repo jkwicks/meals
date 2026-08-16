@@ -52,6 +52,7 @@ from week import (
     humanize,
     meal_types,
     parse_slot_id,
+    pin_style,
     portions_for,
     shopping_windows,
     slot_id,
@@ -175,6 +176,14 @@ PORTION_DENSITY_GUARD = (
 # actually being cooked, so a day with no snack redistributes its share.
 DEFAULT_MEAL_WEIGHTS = {"breakfast": 0.30, "lunch": 0.30, "dinner": 0.30, "snack": 0.10}
 
+# How a week's cuisines are laid out when config.json doesn't say: two
+# contiguous blocks, four days then three, rather than a different country
+# every night. Overridden by `planning_rules.cuisine_block_pattern`, and
+# scaled to the days actually cooked by `cuisine_block_sizes`. Defined up here
+# rather than beside `pick_cuisine_blocks` because `PlanningRules`' default
+# factory reads it at class-definition time.
+DEFAULT_CUISINE_BLOCK_PATTERN = [4, 3]
+
 # generate_week_plan's generation order: one API call per meal type, across
 # every day it's cooked, rather than one call per day across every meal type.
 # Dinner comes before lunch specifically so the one cross-meal-type leftover
@@ -202,11 +211,69 @@ def meal_type_order(config: dict) -> List[str]:
 # Injected only into the dinner call: generating all 7 dinners in one request
 # gives the model full-week visibility, which a per-day call never had — this
 # is the rule that visibility is for.
+#
+# The consecutive-nights clause is the half that survives cuisine blocking
+# (see `build_cuisine_continuity_rule`). Once four nights share one cuisine,
+# "no more than two of any protein across the week" is no longer enough on its
+# own: the model's easiest way to write four Greek dinners is lamb, lamb,
+# chicken, chicken, which honours the count and still reads as the same meal
+# twice. Variety within a block has to come from the protein rotating night to
+# night, so the rule that blocking makes load-bearing is stated explicitly
+# rather than left implied by the cap.
 DINNER_VARIETY_RULE = (
     "- You are generating all 7 dinners for the week in this one request, so "
     "you can see the whole week at once. Maximize variety in main proteins: "
     "do not repeat poultry, beef, or any single main protein as the primary "
-    "protein in more than two dinners across the week.\n"
+    "protein in more than two dinners across the week, and never use the same "
+    "primary protein on two consecutive nights — not even when consecutive "
+    "nights share a cuisine.\n"
+)
+
+# Injected into the breakfast call when more than one breakfast is a shake.
+# The style description in config.json already lists the base and the pools to
+# draw from; what one slot's brief cannot say is what the *other* shakes did,
+# which is exactly what the whole-week call can. Phrased as "spread the pools
+# evenly" rather than "every ingredient must be unique" because the pools are
+# small (three fruits, three seeds) and a rule that can't be satisfied is one
+# the model resolves by ignoring the constraint entirely.
+SHAKE_ROTATION_RULE = (
+    "- More than one breakfast below is a protein shake. Keep the base "
+    "identical in every one (protein powder, creatine, water) and rotate the "
+    "secondary components so no two shakes this week are the same drink: no "
+    "two may share the same combination of fruit, seeds, nuts and "
+    "flavouring, and the listed options must be spread as evenly as possible "
+    "across the week rather than one favourite repeating. Give each shake its "
+    "own distinct name — a reworded name over identical ingredients is a "
+    "repeat.\n"
+)
+
+# The per-slot half of the same rule, sent by both generation axes (a single
+# regenerated shake gets it too, where the week-level rule above has no other
+# shakes in the call to talk about).
+SHAKE_SLOT_DIRECTIVE = (
+    "[Protein shake: keep the base exactly as the style states (protein "
+    "powder, creatine, water) and vary only the secondary components — pick a "
+    "fruit/seed/nut/spice combination no other shake this week uses.]"
+)
+
+# Standing rule for both axes. Variety (above) is about *foods*; this is about
+# *variants of one staple*, and the two pull in opposite directions unless the
+# prompt says which is which — hence the explicit "this is not the variety
+# rule" clause. Every duplicate it names was observed on a real week's
+# shopping list; `shopping.CANONICAL_INGREDIENTS` cleans up the ones that
+# reach the list anyway, but a staple never duplicated is one nothing has to
+# merge afterwards.
+PANTRY_CONSOLIDATION_RULE = (
+    "- Pantry consolidation & zero waste: minimize redundant ingredient "
+    "varieties across the week. Standardize on a single staple variant — only "
+    "ONE type of cottage cheese, ONE type of canned sardines, ONE type of "
+    "mustard, ONE vinegar, ONE cooking oil, ONE yoghurt — and never introduce "
+    "a minor variation of a base pantry staple already used elsewhere this "
+    "week. Where a meal needs part of a perishable pack (fresh herbs, a tin, "
+    "a bag of spinach), reuse that same item in another meal rather than "
+    "buying a second kind of it. This is about variants of one staple, not "
+    "about the food variety asked for above: keep varying the vegetables, "
+    "proteins and spices — just don't buy three kinds of mustard.\n"
 )
 
 # --------------------------------------------------------------------------
@@ -257,6 +324,20 @@ WEEK_STYLE_RULE = (
     "- Respect each day's requested style and cuisine exactly. Different "
     "days should draw on different culinary traditions and styles so the "
     "week isn't the same dish repeated under different names.\n"
+)
+# WEEK_STYLE_RULE's replacement when the week is laid out in cuisine blocks
+# (`build_cuisine_continuity_rule` returns something). The rule above tells the
+# model consecutive days must differ in tradition, which is the direct
+# opposite of what a 4/3 split asks for — left in place it invites the model
+# to "fix" the repetition by quietly substituting a cuisine, and a day whose
+# cuisine drifts is a day whose shopping list stops sharing anything with its
+# neighbours, which is the entire point of blocking.
+WEEK_CUISINE_BLOCK_STYLE_RULE = (
+    "- Respect each day's requested style and cuisine exactly. The cuisines "
+    "repeat across consecutive days on purpose (see the cuisine blocks "
+    "below): variety inside a block comes from different dishes, proteins, "
+    "vegetables and cooking methods, never from substituting a different "
+    "cuisine. Do not rebalance the week's cuisines.\n"
 )
 WEEK_VARIETY_RULE = (
     "- Prioritize nutrient-dense whole foods: vary the vegetables, herbs/"
@@ -319,9 +400,12 @@ def build_generation_rules(
 
     Ordering is deliberate and shared: hard constraints (units, NOVA groups,
     banned ingredients) first, because they are the ones a validator will
-    reject on; then composition guidance; then `extras` — the per-call blocks
-    (dinner variety, avoid lists, pantry, fixed leftovers, batch cooking) that
-    only sometimes apply; then the budget, which the model should read last and
+    reject on; then composition guidance — style, variety, and the pantry
+    consolidation rule that qualifies variety, in that order, because
+    consolidation only makes sense read as a limit on the sentence before it;
+    then `extras` — the per-call blocks (dinner variety, cuisine blocks, shake
+    rotation, avoid lists, pantry, fixed leftovers, batch cooking) that only
+    sometimes apply; then the budget, which the model should read last and
     closest to the per-slot briefs in the user prompt.
 
     `config` supplies only `dietary_rules`; everything else is a caller
@@ -340,6 +424,7 @@ def build_generation_rules(
         f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
         f"{style_rule}"
         f"{variety_rule}"
+        f"{PANTRY_CONSOLIDATION_RULE}"
         "- Keep single dairy/staple portions realistic (e.g., max 200-250g "
         "yoghurt or cottage cheese per serving).\n"
         "- Combine multiple complementary protein sources (e.g., yoghurt + "
@@ -416,6 +501,13 @@ class PlanningRules(BaseModel):
     # is what turns "144 g/day" into four meals that each actually carry
     # protein. Applied by `split_targets`, and only when the day can afford it.
     min_meal_protein_g: float = 35.0
+    # Contiguous blocks of days sharing one cuisine, as a ratio scaled to the
+    # days actually cooked (see `cuisine_block_sizes`). A single-element
+    # pattern gives the whole week one cuisine; seven 1s restores the old
+    # night-by-night rotation.
+    cuisine_block_pattern: List[int] = Field(
+        default_factory=lambda: list(DEFAULT_CUISINE_BLOCK_PATTERN)
+    )
 
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
@@ -528,6 +620,12 @@ class AppConfig(BaseModel):
     meal_styles: Dict[str, Dict[str, str]] = Field(default_factory=dict)
     meal_weights: Dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_MEAL_WEIGHTS))
     cuisines: List[str] = Field(default_factory=list)
+    # cuisine -> the cuisines that share enough of a pantry to sit next to it
+    # in the week's second block (see `pick_cuisine_blocks`). Optional and
+    # advisory: an unlisted cuisine just falls back to the global LRU pick, so
+    # a config that never fills this in blocks exactly as before, only without
+    # the shared-ingredient bonus.
+    cuisine_affinities: Dict[str, List[str]] = Field(default_factory=dict)
     cuisine_meal_types: List[str] = Field(default_factory=list)
     serving_rules: ServingRules = Field(default_factory=ServingRules)
     shopping: ShoppingConfig = Field(default_factory=ShoppingConfig)
@@ -615,6 +713,19 @@ MEAL_TIME_OF_DAY = {
 # A workout within this many minutes *after* a meal is "fuelled by" that
 # meal, per the spec's "within 2 hours" rule for digestion constraints.
 TRAINING_PRE_WORKOUT_DIGESTION_MINUTES = 120
+
+# A session starting at or before this hour is one breakfast has to be built
+# around rather than merely budgeted for — see `morning_training_days`.
+MORNING_TRAINING_CUTOFF = "11:00"
+# Session type prefixes that qualify, matched with `str.startswith` so a new
+# `gym_strength` or `cardio_bike` is covered without editing this. A `walk`
+# deliberately isn't: it needs no fuelling decision, and forcing a shake on
+# every day with a morning stroll in it would empty the breakfast rotation.
+WORKOUT_BREAKFAST_TYPES = ("gym", "cardio")
+# Must be a key in config.json's `meal_styles.breakfast` — `resolve_auto_choices`
+# checks that before pinning, so a config without this style keeps rotating
+# normally instead of briefing the model on a style it was never given.
+WORKOUT_BREAKFAST_STYLE = "custom_shake"
 
 
 def _clock_minutes(value: str) -> int:
@@ -1140,6 +1251,115 @@ def recent_recipe_names(history: List[dict]) -> List[str]:
     return names
 
 
+def cuisine_block_sizes(num_days: int, pattern: Optional[List[int]] = None) -> List[int]:
+    """`pattern` scaled to however many days of this meal type are cooked.
+
+    The pattern is a *ratio*, not a day count: config.json states 4/3 for a
+    full week of dinners, but a week where three of them are last night's
+    leftovers only has four cooks to lay out. Apportioned largest-remainder so
+    the sizes always sum to `num_days` exactly, and zero-size blocks drop out
+    — below one day per block the week is simply one block, which is the
+    correct answer rather than a degenerate case to guard against.
+    """
+    sizes_pattern = [int(size) for size in (pattern or DEFAULT_CUISINE_BLOCK_PATTERN) if size > 0]
+    if num_days <= 0 or not sizes_pattern:
+        return []
+    total = sum(sizes_pattern)
+    exact = [num_days * size / total for size in sizes_pattern]
+    sizes = [int(value) for value in exact]
+    # Largest fractional part first, ties to the earlier (larger) block, so a
+    # 4/3 pattern over 5 days puts the extra day in the 4-block.
+    order = sorted(range(len(sizes)), key=lambda index: (-(exact[index] - sizes[index]), index))
+    for index in order[: num_days - sum(sizes)]:
+        sizes[index] += 1
+    return [size for size in sizes if size > 0]
+
+
+def pick_cuisine_blocks(
+    num_days: int,
+    cuisines: List[str],
+    recent: List[str],
+    affinities: Optional[Dict[str, List[str]]] = None,
+    pattern: Optional[List[int]] = None,
+) -> List[str]:
+    """One cuisine per cooked day, laid out in contiguous blocks.
+
+    Returns a flat list of length `num_days` — the first block's cuisine
+    repeated for its days, then the second's — so the caller zips it straight
+    against the days in week order.
+
+    A per-slot `next_choice` can only ever produce a different country every
+    night, which is what this replaces: seven cuisines is seven half-used jars
+    of paste, seven bunches of a herb used once, and a shopping list with no
+    overlap anywhere in it. Blocking is the food-waste lever, not a stylistic
+    one.
+
+    The first block is the strict-LRU pick `next_choice` would have made
+    anyway, so rotation across weeks is unchanged. Each later block prefers a
+    cuisine `config.cuisine_affinities` lists as complementary to the one
+    before it (LRU among those), falling back to the global LRU pick when that
+    list is empty or already spent. Complementary is what makes the split pay
+    at the till: thai then vietnamese share fish sauce, lime, coriander and
+    rice noodles, where thai then cajun buys two of everything and finishes
+    neither.
+    """
+    sizes = cuisine_block_sizes(num_days, pattern)
+    if not cuisines or not sizes:
+        return []
+
+    affinities = affinities or {}
+    seen = list(recent)
+    chosen: List[str] = []
+    for index, _ in enumerate(sizes):
+        options: List[str] = []
+        if index and chosen:
+            options = [
+                cuisine
+                for cuisine in affinities.get(chosen[-1], [])
+                if cuisine in cuisines and cuisine not in chosen
+            ]
+        if not options:
+            # `or list(cuisines)` covers a pattern with more blocks than the
+            # config has cuisines — repeating one is better than a block with
+            # no cuisine at all, which would leave those days unthemed.
+            options = [cuisine for cuisine in cuisines if cuisine not in chosen] or list(cuisines)
+        cuisine = next_choice(options, seen)
+        chosen.append(cuisine)
+        seen.append(cuisine)
+
+    return [cuisine for cuisine, size in zip(chosen, sizes) for _ in range(size)]
+
+
+def morning_training_days(config: dict) -> List[str]:
+    """Days carrying a gym or cardio session early enough to train on.
+
+    `resolve_auto_choices` pins these days' breakfast to
+    `WORKOUT_BREAKFAST_STYLE`. A shake is the only breakfast in `meal_styles`
+    that can be drunk in the ten minutes before a session and still be
+    digested by the first set; left to the style rotation, a 06:30 gym slot
+    gets eggs and smoked salmon on toast roughly one week in five, and the
+    rotation has no way to know why that is wrong.
+
+    A walk doesn't count and neither does anything after
+    `MORNING_TRAINING_CUTOFF`. An evening session is already handled, as
+    macros rather than as a menu: `apply_training_adjustments` expands the
+    day's budget, pins the meal after it, and marks the meal before it as
+    pre-workout fuel. Pinning a *style* is only warranted when the session
+    lands before the meal has any time to settle.
+    """
+    cutoff = _clock_minutes(MORNING_TRAINING_CUTOFF)
+    days: List[str] = []
+    for session in config.get("training_schedule") or []:
+        if not str(session.get("type") or "").startswith(WORKOUT_BREAKFAST_TYPES):
+            continue
+        if _clock_minutes(session.get("time") or "00:00") > cutoff:
+            continue
+        day = session.get("day")
+        if day and day not in days:
+            days.append(day)
+    return days
+
+
 def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> WeekSpec:
     """Fill in every `auto` style and cuisine with a concrete choice.
 
@@ -1147,14 +1367,57 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
     previewable: rotation continues from meal_history.json and then keeps
     rotating *within* the week, so seven auto breakfasts don't all resolve to
     whatever happens to be first in the config list.
+
+    Two of the three choices made here are not per-slot picks, and can't be:
+
+    - **A morning session's breakfast** is pinned to a shake before any
+      rotation runs (`morning_training_days` decides which days,
+      `week.pin_style` applies it), so the pinned style then seeds the LRU
+      like any other and the remaining breakfasts rotate around it.
+    - **Cuisines are laid out in blocks across the whole week**
+      (`pick_cuisine_blocks`) rather than picked a slot at a time, because a
+      block spans days and a slot-at-a-time LRU pick structurally cannot
+      produce one. Explicitly chosen cuisines are left alone and seeded into
+      the LRU first, so a hand-picked Wednesday pushes the auto blocks away
+      from it rather than being overwritten by them.
     """
     cuisines = config["cuisines"]
     cuisine_meal_types = config["cuisine_meal_types"]
+    affinities = config.get("cuisine_affinities") or {}
+    block_pattern = planning_rule(config, "cuisine_block_pattern")
+
+    if WORKOUT_BREAKFAST_STYLE in styles_for(config, "breakfast"):
+        spec = pin_style(
+            spec, "breakfast", WORKOUT_BREAKFAST_STYLE, morning_training_days(config)
+        )
 
     recent_cuisines = history_values(history, "cuisine")
     recent_styles = {
         meal_type: history_styles(history, meal_type) for meal_type in meal_types(config)
     }
+
+    # Seeded before the blocks are picked so an explicit choice reads as the
+    # most recent use of that cuisine, which is what makes LRU steer the auto
+    # blocks away from repeating it.
+    recent_cuisines.extend(slot.cuisine for slot in spec.cook_slots() if slot.cuisine)
+
+    block_cuisines: Dict[str, str] = {}
+    for meal_type in cuisine_meal_types:
+        auto_slots = sorted(
+            (
+                slot
+                for slot in spec.cook_slots()
+                if slot.meal_type == meal_type and not slot.cuisine
+            ),
+            key=lambda slot: spec.day_index(slot.day),
+        )
+        assigned = pick_cuisine_blocks(
+            len(auto_slots), cuisines, recent_cuisines, affinities, block_pattern
+        )
+        block_cuisines.update(
+            {slot.id: cuisine for slot, cuisine in zip(auto_slots, assigned)}
+        )
+        recent_cuisines.extend(assigned)
 
     resolved: List[SlotSpec] = []
     for slot in spec.slots:
@@ -1169,13 +1432,11 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
         if style:
             recent_styles.setdefault(slot.meal_type, []).append(style)
 
-        cuisine = slot.cuisine
-        if not cuisine and slot.meal_type in cuisine_meal_types:
-            cuisine = next_choice(cuisines, recent_cuisines)
-        if cuisine:
-            recent_cuisines.append(cuisine)
-
-        resolved.append(slot.model_copy(update={"style": style, "cuisine": cuisine}))
+        resolved.append(
+            slot.model_copy(
+                update={"style": style, "cuisine": slot.cuisine or block_cuisines.get(slot.id)}
+            )
+        )
 
     return spec.model_copy(update={"slots": resolved})
 
@@ -2277,7 +2538,10 @@ def build_slot_brief(
     matters: identity (style/cuisine) first, then the numbers, then the
     bracketed modifiers that qualify them — `[fixed budget…]`, `[eaten Nx
     today…]` and the training note all explain why the budget reads the way it
-    does, so they have to follow it.
+    does, so they have to follow it. `SHAKE_SLOT_DIRECTIVE` is the one
+    bracketed part that comes early, because it qualifies the *style* rather
+    than the budget: it is what the style's own description can't say, namely
+    that the other shakes in this week exist.
 
     The budget is always ONE SERVING. `times_eaten_today` tells the model the
     day's arithmetic already accounts for the repeat, so it doesn't helpfully
@@ -2290,6 +2554,8 @@ def build_slot_brief(
         parts.append(f"style: {humanize(slot.style)}")
         if style_description:
             parts.append(f"({style_description})")
+    if slot.style == WORKOUT_BREAKFAST_STYLE:
+        parts.append(SHAKE_SLOT_DIRECTIVE)
     if slot.cuisine:
         parts.append(f"cuisine: {humanize(slot.cuisine)} — authentic flavours and technique")
     nudge_foods = config.get("nudge_foods")
@@ -2467,6 +2733,47 @@ def generate_day(
     return fitted
 
 
+def build_cuisine_continuity_rule(cook_slots_by_day: Dict[str, SlotSpec]) -> str:
+    """The prompt's account of this meal type's cuisine blocks, or "".
+
+    Read off the already-resolved slots rather than recomputed from the
+    pattern, so a block the user hand-picked in the drawer reads to the model
+    exactly like one `pick_cuisine_blocks` laid out, and a week whose blocks
+    were broken up by an explicit choice describes what it actually is.
+    Relies on `cook_slots_by_day` being in week order, which is how both
+    callers build it (`spec.cook_slots()` follows `spec.slots`).
+
+    Returns "" unless some cuisine actually spans more than one day. Seven
+    different cuisines have no continuity to describe, and announcing "blocks"
+    of one each would leave the prompt asserting a structure the days below it
+    contradict — and would swap out `WEEK_STYLE_RULE` for no reason.
+    """
+    blocks: List[Tuple[str, List[str]]] = []
+    for day, slot in cook_slots_by_day.items():
+        if not slot.cuisine:
+            continue
+        if blocks and blocks[-1][0] == slot.cuisine:
+            blocks[-1][1].append(day)
+        else:
+            blocks.append((slot.cuisine, [day]))
+
+    if not any(len(days) > 1 for _, days in blocks):
+        return ""
+
+    described = "; ".join(
+        f"{humanize(cuisine)} on {', '.join(days)}" for cuisine, days in blocks
+    )
+    return (
+        "- This week is deliberately built from a small number of cuisine "
+        f"blocks rather than a different country every night: {described}. "
+        "Within a block, build on the same core aromatics, sauces and pantry "
+        "staples so one shop covers all of its nights and nothing is opened "
+        "for a single meal — then make those nights differ by main protein, "
+        "vegetables, cooking method and dish format, never by drifting to "
+        "another cuisine.\n"
+    )
+
+
 def generate_meal_type_week(
     meal_type: str,
     cook_slots_by_day: Dict[str, SlotSpec],
@@ -2491,12 +2798,27 @@ def generate_meal_type_week(
     `cook_slots_by_day` only has entries for days this meal type is actually
     cooked — a leftover or skipped day never reaches here, so the model is
     never asked to invent something Python is about to discard.
+
+    Three of the rules it sends exist only because this axis can see the whole
+    week at once: `DINNER_VARIETY_RULE` (protein spread across the nights),
+    `build_cuisine_continuity_rule` (which days share a cuisine, and that they
+    do so on purpose) and `SHAKE_ROTATION_RULE` (the other shakes this week).
+    None of them can be stated by a per-slot brief, and none of them survive
+    the per-day axis, where each call sees one day.
     """
     client = build_client(config.get("models"))
     days = list(cook_slots_by_day.keys())
     pinned_days = pinned_days or []
 
     dinner_variety_instruction = DINNER_VARIETY_RULE if meal_type == "dinner" else ""
+    # Both are whole-week facts a single slot's brief cannot state: which days
+    # share a cuisine, and which other breakfasts are also shakes. This call is
+    # the only place in the app that can see either.
+    cuisine_continuity_instruction = build_cuisine_continuity_rule(cook_slots_by_day)
+    shake_days = [
+        day for day, slot in cook_slots_by_day.items() if slot.style == WORKOUT_BREAKFAST_STYLE
+    ]
+    shake_rotation_instruction = SHAKE_ROTATION_RULE if len(shake_days) > 1 else ""
 
     all_carried_descriptions = [
         f"{day}: {description}"
@@ -2544,11 +2866,17 @@ def generate_meal_type_week(
         "non-repetitive across the days.\n\n"
         + build_generation_rules(
             config,
-            style_rule=WEEK_STYLE_RULE,
+            style_rule=(
+                WEEK_CUISINE_BLOCK_STYLE_RULE
+                if cuisine_continuity_instruction
+                else WEEK_STYLE_RULE
+            ),
             variety_rule=WEEK_VARIETY_RULE,
             budget_rule=WEEK_BUDGET_RULE,
             extras=(
                 dinner_variety_instruction
+                + cuisine_continuity_instruction
+                + shake_rotation_instruction
                 + build_avoid_rules(avoid_proteins, avoid_recipe_names)
                 + inventory_instruction(config)
                 + leftovers_instruction

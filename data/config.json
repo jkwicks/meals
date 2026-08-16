@@ -130,6 +130,20 @@
     "cajun",
     "greek"
   ],
+  "cuisine_affinities": {
+    "mexican": ["cajun", "bbq"],
+    "indian": ["middle_eastern", "thai"],
+    "thai": ["vietnamese", "indian"],
+    "japanese": ["korean", "vietnamese"],
+    "korean": ["japanese", "bbq"],
+    "bbq": ["cajun", "mexican"],
+    "middle_eastern": ["greek", "mediterranean"],
+    "italian": ["mediterranean", "greek"],
+    "mediterranean": ["italian", "greek"],
+    "vietnamese": ["thai", "japanese"],
+    "cajun": ["bbq", "mexican"],
+    "greek": ["mediterranean", "middle_eastern"]
+  },
   "cuisine_meal_types": ["dinner"],
   "serving_rules": {
     "servings_per_meal": 2
@@ -169,7 +183,8 @@
     "protein_lookback_entries": 3,
     "protein_avoid_window": 6,
     "portion_trim_limits": [0.6, 1.6],
-    "portion_trim_deadband": 0.03
+    "portion_trim_deadband": 0.03,
+    "cuisine_block_pattern": [4, 3]
   },
   "inventory_rules": {
     "fridge_safe_days": 4,

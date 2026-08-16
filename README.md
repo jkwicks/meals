@@ -416,7 +416,8 @@ Everything in Sections 3 and 5 that isn't drawer-editable lives in
 | `weekly_schedule.<day>` | Per-day `calories`, `protein_g`, `net_carbs_g`, `meal_overrides` |
 | `week_defaults` | Default mode (`cook`/`leftover`/`skip`) per meal type |
 | `training_schedule` | List of `{day, time, type, duration_minutes, estimated_burn_kcal}` |
-| `meal_styles` / `cuisines` / `cuisine_meal_types` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json` |
+| `meal_styles` / `cuisines` / `cuisine_meal_types` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json`. A gym/cardio session starting before 11:00 pins that day's breakfast to `custom_shake` unless you picked a style yourself |
+| `cuisine_affinities` | `cuisine -> cuisines that share its pantry`, used to pick the week's second cuisine block. Optional — an unlisted cuisine just falls back to the least-recently-used pick |
 | `dietary_rules.allowed_nova_groups` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | Substring blocklist, enforced as schema validation |
 | `openrouter_model` | Model id for generation. Unset (the default) means use `models.json`'s `default_planner_model`; both unset is a hard error, never a silent fallback |
@@ -431,6 +432,7 @@ Everything in Sections 3 and 5 that isn't drawer-editable lives in
 | `planning_rules.protein_lookback_entries` / `protein_avoid_window` | How far back to look for recent main proteins, and how many to name in the prompt |
 | `planning_rules.portion_trim_limits` | Clamp on the post-generation portion rescale, e.g. `[0.6, 1.6]`. Also derives the threshold above which a response is rejected and retried |
 | `planning_rules.portion_trim_deadband` | Trims smaller than this are skipped as noise |
+| `planning_rules.cuisine_block_pattern` | Contiguous blocks of days sharing one cuisine, as a ratio scaled to the days actually cooked. `[4, 3]` gives four nights of one cuisine and three of a complementary second; `[1,1,1,1,1,1,1]` restores a different cuisine every night |
 | `inventory_rules.fridge_safe_days` | Days a cooked batch keeps refrigerated before the storage note says "freeze the rest" |
 | `inventory_rules.perishable_day_gap` | Gap after which a perishable is flagged "buy fresh closer to the day" |
 | `ui_settings.bar_scale_limit` | How far past target a telemetry bar keeps growing before it stops |
