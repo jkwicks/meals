@@ -2,20 +2,22 @@ pydantic
 instructor
 openai
 python-dotenv
-eval_type_backport
-urllib3<2
 nicegui
 reportlab
 
 # Biometric sync (src/integrations/sync_service.py).
+#
+# garminconnect's API differs by line and the interpreter picks which one:
+# 3.9 caps at 0.2.8 (token persistence via `.garth`), 3.10+ resolves 0.3.x
+# (no `.garth`; `login(tokenstore)` persists them itself). GarminSyncService
+# handles both, so this stays unpinned — but that is why, not an oversight.
 garminconnect
 
-# Cronometer has no public API for individual accounts; cronometer-mcp drives
-# the same GWT-RPC protocol the web app uses. It requires Python >= 3.11 and
-# this project runs on the macOS system Python 3.9 (see CLAUDE.md), so the
-# marker is what keeps `pip install -r requirements.txt` from hard-failing
-# here — on 3.9 pip skips the line and sync_service drives the package from a
-# separate interpreter instead. Create that one with:
-#     python3.11 -m venv venv-cronometer
-#     ./venv-cronometer/bin/pip install cronometer-mcp
-cronometer-mcp; python_version >= "3.11"
+# Cronometer publishes no API for individual accounts; cronometer-mcp drives
+# the same GWT-RPC protocol the web app uses, rediscovering its build hashes
+# per login rather than pinning them. Needs Python >= 3.11, which this project
+# now has — before the 3.14 move it sat behind a `python_version` marker and
+# ran from a separate `venv-cronometer/` interpreter. Both are gone; the
+# subprocess bridge in sync_service.py remains only as the fallback path and
+# is not exercised on this interpreter.
+cronometer-mcp

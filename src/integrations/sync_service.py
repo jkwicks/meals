@@ -238,6 +238,14 @@ class GarminSyncService:
         what makes a missing or expired token store a first run rather than a
         crash. A successful credential login dumps fresh tokens, which is what
         keeps the *next* run on the cheap path.
+
+        The dump is conditional because the two garminconnect lines disagree
+        about who does it. 0.2.x exposes the underlying garth client as
+        `.garth` and leaves persistence to the caller; 0.3.x dropped the
+        attribute entirely and `login(tokenstore)` now writes the tokens
+        itself. Calling `.garth` unconditionally is an `AttributeError` on
+        0.3.x — which is not hypothetical, because the version pip resolves
+        is decided by the interpreter: 3.9 caps at 0.2.8, 3.10+ gets 0.3.x.
         """
         if self._client is not None:
             return self._client
@@ -263,8 +271,11 @@ class GarminSyncService:
                     "Set GARMIN_EMAIL and GARMIN_PASSWORD in .env."
                 )
             client.login()
-            os.makedirs(self.token_dir, exist_ok=True)
-            client.garth.dump(self.token_dir)
+            # 0.2.x only: see the docstring. On 0.3.x the login above has
+            # already persisted the tokens and there is no `.garth` to call.
+            if hasattr(client, "garth"):
+                os.makedirs(self.token_dir, exist_ok=True)
+                client.garth.dump(self.token_dir)
 
         self._client = client
         return client
