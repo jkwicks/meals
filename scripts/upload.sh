@@ -1,39 +1,35 @@
 #!/usr/bin/env bash
+set -e
 
-# Regenerates the AI-assistant bundles in the project root. Run as
-# ./scripts/upload.sh. This script lives in scripts/; everything below is
-# relative to the project root, so resolve there first.
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# 1. Clean up previous bundle files
+rm -f python_codebase.md project_context.md data_schemas.md test_suite.md
 
-# 1. Clean up old bundle files
-rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
-
-# 2. Bundle core Python application source files
-# (Includes app logic, repository layers, export logic, and dev tools)
+# 2. Bundle application source code (src/ and dev/)
 {
-  for py_file in src/ui_app.py src/planner.py src/shopping.py src/week.py src/repository.py src/export_menu.py dev/model-list.py; do
-    if [ -f "$py_file" ]; then
-      echo "=== File: $py_file ==="
-      cat "$py_file"
-      echo -e "\n"
-    fi
-  done
+  echo "# Application Source Code"
+  echo ""
+  find src dev -type f -name "*.py" ! -path "*/__pycache__/*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
 } > python_codebase.md
 
-# 3. Bundle architecture documentation, shell scripts, and Claude context configuration
+# 3. Bundle test suite (tests/)
 {
+  echo "# Test Suite & Unit Tests"
+  echo ""
+  find tests -type f -name "*.py" ! -path "*/__pycache__/*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
+} > test_suite.md
+
+# 4. Bundle architecture docs, requirements, shell scripts, and Claude workspace rules
+{
+  echo "# Architecture & System Context"
+  echo ""
   [ -f CLAUDE.md ] && echo "=== File: CLAUDE.md ===" && cat CLAUDE.md && echo -e "\n"
   [ -f README.md ] && echo "=== File: README.md ===" && cat README.md && echo -e "\n"
   [ -f requirements.txt ] && echo "=== File: requirements.txt ===" && cat requirements.txt && echo -e "\n"
-  
-  # Include active workspace scripts
-  for script in scripts/prepare.sh scripts/server.sh scripts/claude-queue.sh scripts/release.sh; do
-    if [ -f "$script" ]; then
-      echo "=== File: $script ==="
-      cat "$script"
-      echo -e "\n"
-    fi
-  done
+
+  # Include operational scripts
+  if [ -d scripts ]; then
+    find scripts -type f -name "*.sh" ! -name "upload.sh" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
+  fi
 
   # Include Claude local rules and skills
   if [ -d .claude ]; then
@@ -41,20 +37,13 @@ rm -f python_codebase.md project_context.md data_schemas.md prompts_history.md
   fi
 } > project_context.md
 
-# 4. Generate structural schema previews for JSON and CSV configuration/data sources
+# 5. Extract structural previews of data schemas (first 35 lines of JSON/CSV files in data/)
 {
-  for data_file in data/config.json data/week_plan.json data/week_plan_next.json data/meal_history.json data/whfoods.json data/recipes_master.json data/models.json data/openrouter_top_50.csv; do
-    if [ -f "$data_file" ]; then
-      echo "=== Sample Structure: $data_file ==="
-      head -n 35 "$data_file"
-      echo -e "\n"
-    fi
-  done
+  echo "# Data Schemas & Reference Structures"
+  echo ""
+  if [ -d data ]; then
+    find data -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) -exec sh -c 'echo "=== Sample Structure: {} ===" && head -n 35 "{}" && echo -e "\n"' \;
+  fi
 } > data_schemas.md
 
-# 5. Bundle prompt engineering history (active, completed, or failed prompts)
-if [ -d .prompts ]; then
-  {
-    find .prompts -type f -name "*.md" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
-  } > prompts_history.md
-fi
+echo "Bundling complete: python_codebase.md, test_suite.md, project_context.md, data_schemas.md"

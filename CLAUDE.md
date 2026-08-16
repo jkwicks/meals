@@ -675,11 +675,10 @@ Six things here are decisions, not detail:
   in-process and there is nothing to configure. Before the 3.14 move it sat
   behind a `python_version >= "3.11"` marker in requirements.txt and ran in a
   separate `venv-cronometer/` interpreter driven over a pipe. That subprocess
-  bridge is still in `CronometerSyncService` (`_rows_via_subprocess`,
-  `MEALS_CRONOMETER_PYTHON`) and is **not exercised on this interpreter** —
-  `fetch_daily_summary` picks the in-process path on 3.11+. Keep it or delete
-  it deliberately; don't assume it's tested by a passing suite, because the
-  test that covers it self-skips above 3.11.
+  bridge (`_rows_via_subprocess`, `MEALS_CRONOMETER_PYTHON`, the
+  `venv-cronometer/` sidecar) has been deleted from `CronometerSyncService`
+  now that every interpreter this project runs on satisfies 3.11+ — there is
+  no longer a version gap for it to bridge.
 
 - **garminconnect's two lines disagree about token persistence**, and pip's
   choice between them follows the interpreter: 3.9 caps at **0.2.8**, which

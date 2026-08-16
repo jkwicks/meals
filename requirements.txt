@@ -17,7 +17,6 @@ garminconnect
 # the same GWT-RPC protocol the web app uses, rediscovering its build hashes
 # per login rather than pinning them. Needs Python >= 3.11, which this project
 # now has — before the 3.14 move it sat behind a `python_version` marker and
-# ran from a separate `venv-cronometer/` interpreter. Both are gone; the
-# subprocess bridge in sync_service.py remains only as the fallback path and
-# is not exercised on this interpreter.
+# ran from a separate `venv-cronometer/` interpreter driven as a subprocess.
+# Both are gone; sync_service.py now imports it in-process unconditionally.
 cronometer-mcp

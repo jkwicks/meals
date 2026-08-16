@@ -43,18 +43,13 @@ that could legitimately turn it into kcal — the separation is enforced by
 these being different methods writing different keys, not by a comment asking
 the next caller nicely.
 
-**Cronometer runs out-of-process.** `cronometer-mcp` requires Python >= 3.11
-and this project is pinned to the macOS system Python 3.9 (see CLAUDE.md's
-`eval_type_backport` and `urllib3<2` notes, both of which exist *because* of
-3.9). Rather than move the whole app to 3.14 for one integration, the client
-runs in its own interpreter and hands back JSON over a pipe. See
-`CronometerSyncService`.
+**Cronometer runs in-process.** `cronometer-mcp` requires Python >= 3.11,
+which this project's Homebrew 3.14 venv satisfies, so `CronometerSyncService`
+just imports and calls it directly — no sidecar interpreter involved.
 """
 
 import argparse
-import json
 import os
-import subprocess
 import sys
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -110,11 +105,7 @@ CARDIO_ACTIVITY_KEYS = (
 # the real one; the default matches garminconnect's own documented location.
 GARMIN_TOKEN_DIR = os.path.expanduser(os.environ.get("GARMINTOKENS", "~/.garminconnect"))
 
-# The interpreter that has `cronometer-mcp` installed. Set
-# MEALS_CRONOMETER_PYTHON to point elsewhere; otherwise a `venv-cronometer/`
-# beside the project's own `venv/` is assumed. See `CronometerSyncService`.
 PROJECT_ROOT = os.path.dirname(_SRC_DIR)
-DEFAULT_CRONOMETER_PYTHON = os.path.join(PROJECT_ROOT, "venv-cronometer", "bin", "python")
 
 # Cronometer's daily-summary CSV column headers, mapped to the keys
 # `daily_actuals` rows use. Several spellings per macro because the export has
@@ -426,31 +417,19 @@ class CronometerSyncService:
     what makes it survive a Cronometer web release. It needs a paid tier that
     supports web login.
 
-    **It also needs Python >= 3.11, and this project runs on 3.9** — so it is
-    imported in-process when the interpreter is new enough and otherwise
-    driven as a subprocess of a second interpreter that has it installed
-    (`MEALS_CRONOMETER_PYTHON`, else `venv-cronometer/bin/python`). The
-    subprocess is the expected path today, not a fallback for exotic setups.
-    Both paths return the same parsed CSV rows, so `fetch_daily_summary` has
-    one code path below the fetch.
-
-    The alternative was moving the whole app to 3.14, which would have put
-    `instructor`, `nicegui` and the two version pins CLAUDE.md documents at
-    risk for one integration — a much larger blast radius than one pipe.
+    **It needs Python >= 3.11**, which this project's Homebrew 3.14 venv
+    satisfies, so `cronometer_mcp` is imported in-process — no sidecar
+    interpreter involved.
     """
 
     def __init__(
         self,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        python_executable: Optional[str] = None,
     ):
         _load_env()
         self.username = username or os.environ.get("CRONOMETER_USERNAME", "")
         self.password = password or os.environ.get("CRONOMETER_PASSWORD", "")
-        self.python_executable = python_executable or os.environ.get(
-            "MEALS_CRONOMETER_PYTHON", DEFAULT_CRONOMETER_PYTHON
-        )
 
     def _require_credentials(self) -> None:
         if not self.username or not self.password:
@@ -466,56 +445,6 @@ class CronometerSyncService:
         client = CronometerClient(username=self.username, password=self.password)
         return client.get_daily_summary(start=target, end=target)
 
-    def _rows_via_subprocess(self, day: str) -> List[dict]:
-        """Run the client under `self.python_executable` and read back JSON.
-
-        Credentials go through the environment rather than argv — argv is
-        world-readable in `ps` output for the life of the call.
-        """
-        if not os.path.exists(self.python_executable):
-            raise RuntimeError(
-                "cronometer-mcp needs Python >= 3.11 and this interpreter is "
-                f"{sys.version_info.major}.{sys.version_info.minor}. No sidecar "
-                f"interpreter was found at {self.python_executable}.\n"
-                "Create one with:\n"
-                "    python3.11 -m venv venv-cronometer\n"
-                "    ./venv-cronometer/bin/pip install cronometer-mcp\n"
-                "or point MEALS_CRONOMETER_PYTHON at an interpreter that has it."
-            )
-
-        script = (
-            "import json,sys,os\n"
-            "from datetime import date\n"
-            "from cronometer_mcp import CronometerClient\n"
-            "d = date.fromisoformat(sys.argv[1])\n"
-            "c = CronometerClient(username=os.environ['CRONOMETER_USERNAME'],"
-            " password=os.environ['CRONOMETER_PASSWORD'])\n"
-            "json.dump(c.get_daily_summary(start=d, end=d), sys.stdout)\n"
-        )
-
-        env = dict(os.environ)
-        env["CRONOMETER_USERNAME"] = self.username
-        env["CRONOMETER_PASSWORD"] = self.password
-
-        result = subprocess.run(
-            [self.python_executable, "-c", script, day],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=180,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Cronometer sidecar failed ({result.returncode}): "
-                f"{result.stderr.strip()[:500]}"
-            )
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Cronometer sidecar returned non-JSON: {result.stdout[:300]!r}"
-            ) from exc
-
     def fetch_daily_summary(self, target_date: str) -> dict:
         """What was actually eaten on `target_date`, as a `daily_actuals` row.
 
@@ -526,15 +455,7 @@ class CronometerSyncService:
         """
         day = _iso(target_date)
         self._require_credentials()
-
-        if sys.version_info >= (3, 11):
-            try:
-                rows = self._rows_in_process(day)
-            except ImportError:
-                rows = self._rows_via_subprocess(day)
-        else:
-            rows = self._rows_via_subprocess(day)
-
+        rows = self._rows_in_process(day)
         return _daily_summary_row(rows, day)
 
 
@@ -542,10 +463,10 @@ def _daily_summary_row(rows: List[dict], day: str) -> dict:
     """Fold Cronometer's parsed CSV into one `daily_actuals` entry.
 
     Split out from `fetch_daily_summary` so the mapping — the part with the
-    column-name guesswork in it — is testable without a Cronometer account or
-    a subprocess. The export is one row per day; the row whose date column
-    matches wins, and a single-row export is taken as that day regardless,
-    because a range of one has nothing else it could be.
+    column-name guesswork in it — is testable without a Cronometer account.
+    The export is one row per day; the row whose date column matches wins,
+    and a single-row export is taken as that day regardless, because a range
+    of one has nothing else it could be.
     """
     if not rows:
         return {"date": day}
