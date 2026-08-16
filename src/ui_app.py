@@ -25,7 +25,10 @@ Three regions, mirroring how the week is actually read:
   7-column grid as the canvas below, so a day's bar sits directly above its
   column of meals.
 - **Canvas** — 7 day columns x 4 stacked meal cards, cook vs. leftover
-  distinguished by colour, border and badge.
+  distinguished by colour, border and badge. Lives inside a "Week" tab
+  (`ui.tabs`/`ui.tab_panels`) alongside a currently-empty "Today" tab — see
+  "This file is a page shell" below for why the header isn't split the same
+  way.
 - **Right drawer** — the shopping list, one section per trip, opened from the
   header. It is derived from the plan on every repaint, so it always describes
   the week as the grid currently stands rather than as it was generated.
@@ -288,7 +291,28 @@ async def planner_page() -> None:
     # (see `ui_state.pipeline_value`: only "workout" is wired up).
     refreshables.on("context_pipeline", telemetry.context_pipeline)
 
-    cards.canvas()
+    # ---- tabs ---------------------------------------------------------------
+    # The header (week selector, banner, context pipeline, telemetry) stays
+    # shared chrome above both tabs — it's weekly macro data either view would
+    # want, and splitting it apart is a call for whichever tab actually needs
+    # to make it, not this one. Only the main content area — previously just
+    # a bare `cards.canvas()` call — is tab-scoped.
+    #
+    # "Today" is a stub on purpose: this phase exists to prove the tab shell
+    # doesn't disturb generation, editing, or any existing refresh topic
+    # before a single line of the real daily view is built on top of it.
+    # `value=week_tab` keeps the week grid — everything this app has ever
+    # shown — the default, so a page load looks exactly as it did before
+    # tabs existed.
+    with ui.tabs().classes("w-full") as tabs:
+        week_tab = ui.tab("Week", icon="calendar_view_week")
+        today_tab = ui.tab("Today", icon="today")
+
+    with ui.tab_panels(tabs, value=week_tab).classes("w-full bg-transparent p-0"):
+        with ui.tab_panel(week_tab).classes("p-0"):
+            cards.canvas()
+        with ui.tab_panel(today_tab).classes("p-0"):
+            ui.label("Today view — coming soon.").classes("text-sm text-slate-500 p-4")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
