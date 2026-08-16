@@ -2,17 +2,33 @@
 
 ## Setup
 
-`eval_type_backport` is required on Python < 3.10 — `instructor`'s internals use
-`str | Path`-style union syntax that Python 3.9's typing module can't evaluate
-natively; the backport package patches that in for pydantic.
+**Python 3.14**, from Homebrew (`/opt/homebrew/bin/python3.14`), in `venv/`:
 
-`urllib3<2` avoids a noisy but harmless `NotOpenSSLWarning` on macOS: this
-venv's Python 3.9 is the macOS system Python, which links against Apple's old
-LibreSSL 2.8.3 fork instead of real OpenSSL. `urllib3` v2 checks for OpenSSL
-1.1.1+ and warns when it isn't found — HTTPS calls still work fine either way,
-but pinning `urllib3<2` skips the check and the warning entirely.
+    /opt/homebrew/bin/python3.14 -m venv venv
+    source venv/bin/activate && pip install -r requirements.txt
 
-Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there).
+The project ran on the macOS **system Python 3.9** until the 3.14 move, and
+two requirements existed only to prop that up. Both are now deleted, recorded
+here because their absence is the thing a future reader might otherwise
+"helpfully" restore:
+
+- `eval_type_backport` — `instructor`'s internals use `str | Path` union
+  syntax that 3.9's typing module can't evaluate; the backport patched it in
+  for pydantic. 3.10+ evaluates it natively.
+- `urllib3<2` — the system Python linked Apple's LibreSSL 2.8.3 rather than
+  real OpenSSL, and urllib3 v2 warns (`NotOpenSSLWarning`) when it can't find
+  OpenSSL 1.1.1+. Homebrew's 3.14 links OpenSSL 3.x, so the warning can't
+  occur and urllib3 is unpinned.
+
+`instructor` and `pydantic` resolve to the same versions on 3.14 as they did
+on 3.9, so everything the Architecture section says about `MD_JSON` mode and
+the `context=` kwarg still holds. What *did* move: `nicegui` 3.6 -> 3.16 and
+`garminconnect` 0.2.8 -> 0.3.10 (see "Biometric sync" — the two garminconnect
+lines disagree about token persistence, and the interpreter is what picks
+between them).
+
+Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there), plus
+`GARMIN_*`/`CRONOMETER_*` if you use the biometric sync.
 
 ## Layout
 
@@ -570,26 +586,35 @@ Six things here are decisions, not detail:
   and which the `source` tag alone was enough to fool: a day the scale never
   saw was written as a weigh-in with no weight, and `get_latest_biometrics`
   handed that empty row back as the newest reading.
-- **Cronometer runs out-of-process.** There is no public Cronometer API for
-  individual accounts; `cronometer-mcp` drives the same GWT-RPC protocol the
-  web app uses, and re-discovers the protocol's build hashes per login rather
-  than pinning them, which is what lets it survive a Cronometer web release.
-  It needs **Python >= 3.11** and this project runs on the macOS system Python
-  3.9 — so `requirements.txt` carries it behind a `python_version >= "3.11"`
-  marker (without which `pip install -r requirements.txt` hard-fails on 3.9
-  for everyone) and the service shells out to a sidecar interpreter:
+- **Cronometer is reverse-engineered, and that is the only option.** There is
+  no public Cronometer API for individual accounts; `cronometer-mcp` drives
+  the same GWT-RPC protocol the web app uses, and re-discovers the protocol's
+  build hashes per login rather than pinning them, which is what lets it
+  survive a Cronometer web release. It needs a paid tier that supports web
+  login.
 
-        python3.11 -m venv venv-cronometer
-        ./venv-cronometer/bin/pip install cronometer-mcp
+  It also needs **Python >= 3.11**, which is now simply satisfied — it imports
+  in-process and there is nothing to configure. Before the 3.14 move it sat
+  behind a `python_version >= "3.11"` marker in requirements.txt and ran in a
+  separate `venv-cronometer/` interpreter driven over a pipe. That subprocess
+  bridge is still in `CronometerSyncService` (`_rows_via_subprocess`,
+  `MEALS_CRONOMETER_PYTHON`) and is **not exercised on this interpreter** —
+  `fetch_daily_summary` picks the in-process path on 3.11+. Keep it or delete
+  it deliberately; don't assume it's tested by a passing suite, because the
+  test that covers it self-skips above 3.11.
 
-  `MEALS_CRONOMETER_PYTHON` overrides the location. The alternative was moving
-  the whole app to 3.14, which would have put `instructor`, `nicegui` and both
-  version pins documented at the top of this file at risk for one integration.
-  If the interpreter ever does move to 3.11+, the in-process path takes over
-  with no code change.
+- **garminconnect's two lines disagree about token persistence**, and pip's
+  choice between them follows the interpreter: 3.9 caps at **0.2.8**, which
+  exposes the underlying garth client as `.garth` and leaves the token dump
+  to the caller; 3.10+ resolves **0.3.x**, which removed the attribute and
+  made `login(tokenstore)` persist them itself. `GarminSyncService.client()`
+  guards the dump with `hasattr(client, "garth")` so both work. Calling it
+  unconditionally is an `AttributeError` on the first login under 0.3.x —
+  and only the first, since a cached token skips that branch, which is
+  exactly the kind of bug that surfaces a month later on a new machine.
 
 Credentials come from `.env` (`GARMIN_EMAIL`/`GARMIN_PASSWORD`,
-`CRONOMETER_USERNAME`/`CRONOMETER_PASSWORD`). Garmin auth resumes from garth's
+`CRONOMETER_USERNAME`/`CRONOMETER_PASSWORD`). Garmin auth resumes from the
 cached tokens in `~/.garminconnect` and only falls back to the password when
 that fails — not merely a speed optimisation, since Garmin rate-limits and
 MFA-challenges repeated password logins, so a timer-driven sync that logged in
