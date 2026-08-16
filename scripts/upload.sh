@@ -4,11 +4,11 @@ set -e
 # 1. Clean up previous bundle files
 rm -f python_codebase.md project_context.md data_schemas.md test_suite.md
 
-# 2. Bundle application source code (src/ and dev/)
+# 2. Bundle application source code (src/ and scripts/*.py tooling)
 {
   echo "# Application Source Code"
   echo ""
-  find src dev -type f -name "*.py" ! -path "*/__pycache__/*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
+  find src scripts -type f -name "*.py" ! -path "*/__pycache__/*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
 } > python_codebase.md
 
 # 3. Bundle test suite (tests/)
