@@ -256,10 +256,14 @@ a busy week reuses a hue.
 
 `ui_today.py` is a read-only preview of just today's four cards, sitting
 next to the Week tab. It is deliberately not built on `ui_cards.meal_card`
-— that function's buttons all need `ui_catalog`/`ui_generation` wired in,
-none of which a read-only stub needs, so a smaller card of its own there is
-a real decoupling rather than a "fix later" shortcut. No favorite/swap/
-regenerate buttons, no click-to-detail, yet.
+— that function's action-row buttons all need `ui_catalog`/`ui_generation`
+wired in, none of which a card with no buttons needs, so a smaller card of
+its own there is a real decoupling rather than a "fix later" shortcut. No
+favorite/swap/regenerate buttons yet, but clicking a card *does* open the
+recipe detail dialog — `build_today(ctx, cards)` takes `ui_cards`'s
+`CardHandles` and calls `cards.open_detail(view)` on click, the same one
+dialog every Week-tab card already shares, rather than a second copy of it
+living here.
 
 **Knowing "today" needed a real calendar date, which nothing in this
 codebase stored.** `WeekPlan.days` is a rotation of weekday *names*
