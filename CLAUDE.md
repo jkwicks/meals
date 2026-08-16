@@ -320,6 +320,84 @@ types: dinner is generated before lunch so the one cross-type leftover
     `MD_JSON` mode just asks the model to emit JSON as text, which works with
     far more free-tier providers.
 
+### Targets come from the body, not the file
+
+`weekly_schedule`'s per-day calories and protein are no longer what the week
+is planned against. `hydrate_dynamic_targets()` replaces them with
+`nutrition_engine.calculate_macro_targets()`'s output — BMR from the latest
+weigh-in, TDEE from the activity factor, and a deficit that slides with the
+remaining gap to `target_weight_kg`. It is a **pure function**; `hydrate_config()`
+is the thin `async` wrapper that fetches the weigh-in for it.
+
+It is called at the top of all three generation entry points
+(`generate_week_plan`, `regenerate_single_day`, `regenerate_single_meal`)
+rather than once in the CLI, because NiceGUI builds its config in the
+*synchronous* `PlannerState.planning_config()`, which cannot await storage.
+Hydrating where the repository is already in hand gets both front ends onto
+the same numbers with no UI change. The consequence worth knowing: the
+drawer's telemetry header still previews the **file's** targets, so before a
+run it can disagree with what the run will actually aim at. Closing that gap
+means giving `planning_config()` a weigh-in, which is a `ui_app.py` change.
+
+Four things it deliberately does *not* compute:
+
+- **Each day's `net_carbs_g`** is passed *into* the engine, not replaced, so
+  carb cycling in `weekly_schedule` survives and fat absorbs the difference.
+- **`meal_overrides` written by hand** stay verbatim — a pin is a fixed budget
+  by definition.
+- **The training uplift** is replayed from `training_uplift`, a record
+  `apply_training_adjustments` now leaves behind. Only the *calorie* uplift:
+  the carb share is already inside the `net_carbs_g` figure being passed
+  through (replaying it would double it), and the protein share is dropped
+  because protein is locked. A workout buys back carbs and fat, not protein.
+- **The post-workout pin** *is* recomputed (`training_pin_budget`, now its own
+  function, keyed off `training_pins`) because it is a fixed number derived
+  from targets hydration just replaced. Left alone it claimed 49 g of protein
+  worked out from the file's 164 on a day that now has 144 — enough to push
+  the day's snack under the floor and make `apply_protein_floor` give up on
+  the whole day.
+
+**Protein is locked to the target weight, not today's and not the day's
+activity.** 80 kg x 1.8 is 144 g every day of the week. Tying it to current
+weight would shrink the floor exactly as the diet began to threaten the lean
+mass it exists to protect.
+
+`planning_rules.min_meal_protein_g` (35 g) then makes that per-day figure
+reach each meal: `split_targets` ends with `apply_protein_floor`, which
+**moves grams between meals rather than creating any** — under-floor slots are
+raised, donors give in proportion to their surplus, and calories travel with
+the protein at 4 kcal/g so every budget still reconciles and the day's totals
+are conserved exactly. A weight-only split gives the 0.10-weighted snack ~14 g
+of a 144 g day, which is a snack with no protein source in it. Pinned and
+leftover slots are excluded (a leftover's protein comes from its source
+recipe). When the floor is unaffordable it does **nothing** and logs — raising
+some meals and starving others would be an arbitrary choice about which meal
+gets short-changed, and a day that can't carry `n x 35 g` is a target problem,
+not a split problem.
+
+Everything degrades to the file's numbers, with a warning and a UI note, when
+no weight is available. That is not the fabricated body `nutrition_engine`
+refuses to invent: `weekly_schedule` holds real targets somebody chose.
+**`biometrics.json` ships empty, so this fallback is the normal path until the
+first Garmin sync lands** — a checkout with no weigh-ins plans exactly as it
+did before this section existed.
+
+### Regenerating one meal against what you actually ate
+
+`regenerate_single_meal` checks `daily_actuals` via `logged_intake_for()`. When
+the slot's day *is* today and Cronometer has logged it, the log replaces the
+plan for the meals already behind you: earlier slots (ordered by
+`MEAL_TIME_OF_DAY`) are dropped from the carried total so their planned macros
+aren't double-counted against the log that already contains them, later slots
+keep their reservation, and the model is briefed on the genuine remaining
+deficit rather than the planned one.
+
+`logged_intake_for` returns None — "use the plan" — for any day that isn't
+today (a `SlotSpec` carries only a weekday name, so next Thursday is not the
+Thursday that was logged) and for an all-zero row, which a partial sync can
+write and which would otherwise read as "you have eaten nothing today" and
+hand one meal the entire day's budget.
+
 ### Storage goes through an async repository
 
 Nothing outside `repository.py` opens a file or touches `json` any more.
