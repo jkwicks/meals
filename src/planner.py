@@ -22,7 +22,6 @@ from pydantic import (
 
 from nutrition_engine import calculate_macro_targets
 from repository import (
-    DATA_DIR,
     PROJECT_ROOT,
     LocalJSONRepository,
     PlanRepository,
@@ -75,10 +74,15 @@ DEFAULT_ALLOWED_NOVA_GROUPS = [1, 2, 3]
 # messages have a filename to print before a LocalJSONRepository is
 # constructed. Once a repository exists, read its own `.paths` instead.
 DEFAULT_STORAGE_PATHS = StoragePaths()
-# Alongside the generated JSON in `data/`, not in the repo root: it is
-# runtime output like `week_plan.json`, and anchoring it means the log lands
-# in the same place whether the CLI was started from the root or from `src/`.
-LOG_FILE = os.path.join(DATA_DIR, "meals.log")
+# In `logs/`, not the repo root: it is disposable runtime output, and
+# anchoring it means the log lands in the same place whether the CLI was
+# started from the root or from `src/`.
+LOG_FILE = DEFAULT_STORAGE_PATHS.generation_log
+
+# OpenRouter's endpoint. A constant rather than config: it is the same URL for
+# every model in `models.json`, and a per-install override was a knob nothing
+# ever turned that `_require_models_config` still had to police on every call.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 logger = logging.getLogger("meals")
 
@@ -94,6 +98,10 @@ def configure_logging(log_file: str = LOG_FILE) -> None:
     if logger.handlers:
         return
     logger.setLevel(logging.INFO)
+    # `logs/` is gitignored wholesale, so a fresh clone has the directory only
+    # because of its .gitkeep — and nothing stops someone deleting it. Creating
+    # it here means a missing log directory can never be what stops a run.
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
     handler = logging.FileHandler(log_file)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
@@ -637,10 +645,15 @@ class AppConfig(BaseModel):
     planning_rules: PlanningRules = Field(default_factory=PlanningRules)
     inventory_rules: InventoryRules = Field(default_factory=InventoryRules)
     ui_settings: UISettings = Field(default_factory=UISettings)
-    # The CLI's --model flag and the NiceGUI drawer's model select both
-    # persist their choice here; unset means "use models.json's
-    # default_planner_model" (see resolve_planner_model).
-    openrouter_model: Optional[str] = None
+    # config/schedule.json's location half: where each day is spent, what that
+    # implies for a meal, and the region the week is planned in. Declared here
+    # so the file validates, but nothing reads them yet — see CLAUDE.md's
+    # "Integrations" note on declared vs. observed. Typed loosely on purpose:
+    # a schema for data no code consumes would be a guess, and `extra="forbid"`
+    # means the alternative is a config file the app refuses to load.
+    base_schedule: Dict[str, str] = Field(default_factory=dict)
+    location_rules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    regional: Dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def default_cuisine_meal_types_to_meal_types(self) -> "AppConfig":
@@ -910,14 +923,17 @@ def reasoning_extra_body(model: str, config: dict) -> dict:
     400 "Reasoning is mandatory for this endpoint and cannot be disabled",
     not a retryable validation failure — `google/gemini-3.6-flash` did this
     on every call of a real run, failing the whole week in under a second).
-    `models.json`'s `reasoning_required_models` lists ids like that; for them
-    the key is omitted entirely rather than sent as `enabled: True` — the
-    reason this task disables reasoning in the first place (no deliberation
-    needed, the macro arithmetic is already done in Python) doesn't change
-    just because the model insists on doing it anyway.
+    `models.json` marks such a model `"reasoning_required": true` in its
+    `models` table; for them the key is omitted entirely rather than sent as
+    `enabled: True` — the reason this task disables reasoning in the first
+    place (no deliberation needed, the macro arithmetic is already done in
+    Python) doesn't change just because the model insists on doing it anyway.
+
+    The flag lives on the model's own entry rather than in a second parallel
+    list of ids, because a list beside the selectable ones is free to name a
+    model that is no longer offered, or to miss one that is.
     """
-    models_config = config.get("models") or {}
-    if model in (models_config.get("reasoning_required_models") or []):
+    if model_metadata(config, model).get("reasoning_required"):
         return {}
     return {"reasoning": {"enabled": False}}
 
@@ -2101,13 +2117,31 @@ def api_key_error() -> Optional[str]:
 def _require_models_config(models_config: dict, *keys: str) -> None:
     """models.json is the only source for these values now — no in-code
     fallback. An empty or incomplete models.json must fail loudly here,
-    not drift silently onto an outdated hardcoded model or endpoint."""
+    not drift silently onto an outdated hardcoded model."""
     missing = [key for key in keys if not models_config.get(key)]
     if missing:
         raise ValueError(
             f"models.json is missing required key(s): {', '.join(missing)}. "
             "Set them in models.json — there is no built-in fallback."
         )
+
+
+def model_metadata(config: dict, model: str) -> dict:
+    """What models.json records *about* one model id, as opposed to which
+    model to use.
+
+    Its `models` table doubles as the selectable list (the drawer offers its
+    keys) and as the home for per-model quirks, so an entry with nothing
+    unusual about it is simply `{}`. An id absent from the table — a
+    hand-typed `--model`, say — has no recorded quirks, which is the same
+    answer as an empty entry.
+    """
+    return ((config.get("models") or {}).get("models") or {}).get(model) or {}
+
+
+def selectable_models(models_config: dict) -> List[str]:
+    """The model ids the UI offers, in models.json's own order."""
+    return list((models_config.get("models") or {}).keys())
 
 
 def build_client(models_config: Optional[dict] = None) -> instructor.Instructor:
@@ -2118,9 +2152,9 @@ def build_client(models_config: Optional[dict] = None) -> instructor.Instructor:
     error = api_key_error()
     if error:
         raise RuntimeError(error)
-    _require_models_config(models_config, "openrouter_base_url", "request_timeout_seconds")
+    _require_models_config(models_config, "request_timeout_seconds")
     openai_client = OpenAI(
-        base_url=models_config.get("openrouter_base_url"),
+        base_url=OPENROUTER_BASE_URL,
         api_key=os.environ["OPENROUTER_API_KEY"],
         timeout=models_config.get("request_timeout_seconds"),
     )
@@ -2140,9 +2174,9 @@ def build_async_client(models_config: Optional[dict] = None) -> instructor.Instr
     error = api_key_error()
     if error:
         raise RuntimeError(error)
-    _require_models_config(models_config, "openrouter_base_url", "request_timeout_seconds")
+    _require_models_config(models_config, "request_timeout_seconds")
     openai_client = AsyncOpenAI(
-        base_url=models_config.get("openrouter_base_url"),
+        base_url=OPENROUTER_BASE_URL,
         api_key=os.environ["OPENROUTER_API_KEY"],
         timeout=models_config.get("request_timeout_seconds"),
     )
@@ -2153,19 +2187,27 @@ def build_async_client(models_config: Optional[dict] = None) -> instructor.Instr
 
 
 def resolve_planner_model(config: dict) -> str:
-    """The model a weekly-generation call should use: config.json's explicit
-    `openrouter_model` override wins (the CLI's `--model` flag and the
-    NiceGUI drawer's model select both write this), else models.json's
-    `default_planner_model`. There is no further fallback — an empty
-    models.json and no override must fail loudly, not silently plan against
-    an outdated hardcoded model."""
+    """The model a meal-generation call should use.
+
+    Two things, deliberately not one. `meal_generation_model` in models.json
+    is the standing choice — the model a week is generated with unless
+    somebody says otherwise. `config["openrouter_model"]` is that "otherwise":
+    a per-run selection injected in memory by the CLI's `--model` flag and the
+    NiceGUI drawer's model select, and it is *only* ever in memory. Neither
+    front end writes it to a file, which is why the key was removed from
+    `AppConfig` — as a config-file field it did nothing except shadow the
+    standing choice with a second place to look.
+
+    There is no further fallback: an empty models.json and no selection must
+    fail loudly, not silently plan against an outdated hardcoded model.
+    """
     models_config = config.get("models") or {}
-    model = config["openrouter_model"] or models_config.get("default_planner_model")
+    model = config.get("openrouter_model") or models_config.get("meal_generation_model")
     if not model:
         raise ValueError(
-            "No planner model configured: config.json has no 'openrouter_model' "
-            "override and models.json has no 'default_planner_model'. Set one "
-            "in models.json."
+            "No meal generation model configured: models.json has no "
+            "'meal_generation_model' and no --model/drawer selection was made. "
+            "Set one in models.json."
         )
     return model
 
@@ -2173,19 +2215,21 @@ def resolve_planner_model(config: dict) -> str:
 def resolve_recipe_parser_model(config: dict) -> str:
     """The model `import_external_recipe` should use.
 
-    Deliberately does *not* consult `openrouter_model` — that field is the
-    weekly planner's per-run override (CLI `--model`, the drawer's model
-    select) and has nothing to do with parsing a pasted recipe. models.json's
-    model-selection strategy names this the "Vision AI / Scans & Web Recipe
-    Parser" role precisely so a cheap/fast model can be used here regardless
-    of which (usually pricier) model the week is generating with.
+    Deliberately does *not* consult `openrouter_model` — that is the meal
+    planner's per-run selection (CLI `--model`, the drawer's model select) and
+    has nothing to do with parsing a pasted recipe. This is a second role, not
+    a second opinion about the same one: parsing text into a `Recipe` is cheap
+    and mechanical, so it can run on a fast model regardless of which (usually
+    pricier) model the week is generated with.
     """
     models_config = config.get("models") or {}
-    model = models_config.get("recipe_parser_model") or models_config.get("default_planner_model")
+    model = models_config.get("recipe_parser_model") or models_config.get(
+        "meal_generation_model"
+    )
     if not model:
         raise ValueError(
             "No recipe parser model configured: models.json has neither "
-            "'recipe_parser_model' nor 'default_planner_model' set."
+            "'recipe_parser_model' nor 'meal_generation_model' set."
         )
     return model
 
@@ -3894,7 +3938,9 @@ def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AI Weekly Meal Planner CLI")
     parser.add_argument(
-        "--config", default=DEFAULT_STORAGE_PATHS.config, help="Path to config JSON file"
+        "--config-dir",
+        default=DEFAULT_STORAGE_PATHS.config_dir,
+        help="Directory holding the config JSON files (profile, meals, week, schedule, engine)",
     )
     parser.add_argument(
         "--model",
@@ -4047,7 +4093,7 @@ def main() -> None:
     """
     configure_logging()
     args = parse_args()
-    repository = LocalJSONRepository(config_path=args.config)
+    repository = LocalJSONRepository(config_dir=args.config_dir)
     run_sync(run_cli(args, repository))
 
 

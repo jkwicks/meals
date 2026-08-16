@@ -8,12 +8,16 @@
 set -euo pipefail
 
 # This script lives in scripts/, so the project root is one level up. Every
-# path below is relative to the root, not to the script — `venv/` and `data/`
+# path below is relative to the root, not to the script — `venv/` and `logs/`
 # are siblings of `scripts/`, not children of it.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-PID_FILE="data/.nicegui.pid"
-LOG_FILE="data/nicegui.log"
+# Both in logs/, which is gitignored wholesale — mkdir because a fresh clone
+# only has the directory via its .gitkeep, and the redirect below would fail
+# outright if someone had deleted it.
+mkdir -p logs
+PID_FILE="logs/.nicegui.pid"
+LOG_FILE="logs/nicegui.log"
 PORT="${MEALS_PORT:-8080}"
 DESC="NiceGUI (src/ui_app.py)"
 

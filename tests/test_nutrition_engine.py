@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import nutrition_engine as ne  # noqa: E402  (path setup must precede the import)
 
 
-# The profile the app actually ships in data/config.json, at the top of the
+# The profile the app actually ships in config/profile.json, at the top of the
 # journey: 100 kg heading for 80 kg. Every expected number below is worked out
 # by hand from these, so a change to a constant fails loudly rather than
 # quietly re-baselining itself against the code it is meant to check.

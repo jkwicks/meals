@@ -37,13 +37,20 @@ rm -f python_codebase.md project_context.md data_schemas.md test_suite.md
   fi
 } > project_context.md
 
-# 5. Extract structural previews of data schemas (first 35 lines of JSON/CSV files in data/)
+# 5. Extract config in full, plus structural previews of the generated data
+# (first 35 lines each). config/ is hand-edited and small enough to include
+# whole; data/ and reference/ are generated or bulk corpora, where a preview
+# conveys the shape without the volume.
 {
-  echo "# Data Schemas & Reference Structures"
+  echo "# Config, Data Schemas & Reference Structures"
   echo ""
-  if [ -d data ]; then
-    find data -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) -exec sh -c 'echo "=== Sample Structure: {} ===" && head -n 35 "{}" && echo -e "\n"' \;
+  if [ -d config ]; then
+    find config -maxdepth 1 -type f -name "*.json" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \;
   fi
+  for dir in data reference; do
+    [ -d "$dir" ] || continue
+    find "$dir" -maxdepth 1 -type f \( -name "*.json" -o -name "*.csv" \) -exec sh -c 'echo "=== Sample Structure: {} ===" && head -n 35 "{}" && echo -e "\n"' \;
+  done
 } > data_schemas.md
 
 echo "Bundling complete: python_codebase.md, test_suite.md, project_context.md, data_schemas.md"

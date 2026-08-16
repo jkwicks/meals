@@ -1,0 +1,49 @@
+{
+  "training_schedule": [
+    {
+      "day": "Monday",
+      "time": "18:00",
+      "type": "gym_hypertrophy",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350
+    }
+  ],
+  "base_schedule": {
+    "Monday": "Office",
+    "Tuesday": "WFH",
+    "Wednesday": "WFH",
+    "Thursday": "Office",
+    "Friday": "Office",
+    "Saturday": "Outing",
+    "Sunday": "Home"
+  },
+  "location_rules": {
+    "Office": {
+      "lunch_mode": "leftover",
+      "restrictions": [
+        "portable",
+        "no_reheat",
+        "no_long_prep"
+      ],
+      "max_prep_minutes": 0
+    },
+    "WFH": {
+      "lunch_mode": "cook",
+      "restrictions": [
+        "quick_cook"
+      ],
+      "max_prep_minutes": 15
+    },
+    "Outing": {
+      "lunch_mode": "skip",
+      "dinner_mode": "leftover",
+      "notes": "Dining out or packed nutrition"
+    }
+  },
+  "regional": {
+    "country": "AU",
+    "state": "VIC",
+    "postcode": "3350",
+    "hemisphere": "southern"
+  }
+}

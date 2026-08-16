@@ -32,21 +32,75 @@ Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there), plus
 
 ## Layout
 
-Three directories, flat inside each — `src/` (the six Python modules), `data/`
-(config, models and every generated file), `scripts/` (the shell entry points).
+Six directories, flat inside each — `src/` (the Python modules), `scripts/`
+(the shell entry points), `tests/`, and four for files:
+
+    config/     hand-edited. Change these to change what the app does.
+    reference/  shipped corpora (whfoods.json). Read-only in practice.
+    data/       written by the app. Never hand-edit.
+    logs/       written by the app. Disposable.
+
 Root holds only README.md, CLAUDE.md, .env, .gitignore and requirements.txt.
+
+**The four-way split is by who writes the file, not by what the file is
+about**, because "which file do I edit to change X" is the question a reader
+actually arrives with. The test of whether a file is in the right place is
+`.gitignore`: `data/` and `logs/` are ignored as whole directories, so
+anything needing a per-file exception is a file whose lifecycle disagrees
+with its neighbours. There is exactly one exception today —
+`data/recipes_master.json`, app-written but worth keeping in history — and it
+is called out in `.gitignore` rather than left to be inferred.
 
 It is **not** a package: no `__init__.py`, no `setup.py`, and the modules
 import each other as flat siblings (`from week import ...`), which keeps
 working because `python src/planner.py` puts `src/` on `sys.path[0]`. Don't
 convert these to relative imports.
 
-Data paths are anchored on `__file__` in `repository.py` (`PROJECT_ROOT`,
-`DATA_DIR`), never relative to the working directory — `./scripts/server.sh`
-runs the app from the root while a bare `python planner.py` runs it from
-`src/`, and a cwd-relative `data/…` would resolve in only one of those. The
-shell scripts each `cd` to the project root for the same reason. Anything new
-that needs a data file should join `DATA_DIR`, not spell out a relative path.
+Paths are anchored on `__file__` in `repository.py` (`PROJECT_ROOT`,
+`CONFIG_DIR`, `REFERENCE_DIR`, `DATA_DIR`, `LOGS_DIR`), never relative to the
+working directory — `./scripts/server.sh` runs the app from the root while a
+bare `python planner.py` runs it from `src/`, and a cwd-relative `data/…`
+would resolve in only one of those. The shell scripts each `cd` to the project
+root for the same reason. Anything new that needs a file should go through
+`StoragePaths`, not spell out a relative path.
+
+### config/ is six files, merged back into one dict
+
+`config.json` was one 196-line file holding twenty unrelated top-level keys.
+It is now six, and `LocalJSONRepository.load_config()` merges them into the
+same flat dict `AppConfig` has always validated — so **nothing downstream of
+the repository knows the config arrived in pieces**, and `planner`, `week` and
+`ui_app` still read `config["weekly_schedule"]` exactly as before. Splitting
+the *files* without splitting the *object* is the whole trick; namespacing the
+dict would have touched hundreds of call sites for no gain.
+
+| file | holds |
+|---|---|
+| `profile.json` | the body and the numbers aimed at it — `user_profile`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
+| `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `week_defaults` |
+| `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` |
+| `schedule.json` | where you are and what you're doing — `training_schedule`, plus the location keys (see below) |
+| `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
+| `models.json` | model selection (see "Picking a model") |
+| `integrations.json` | sync tuning (see "Biometric sync") |
+
+`CONFIG_FILES` in `repository.py` is the manifest of which file owns which
+key, and the merge validates against it: a key in the wrong file, a typo'd
+key, or a missing file each fail at load with the **filename** in the message.
+That is strictly better than `AppConfig`'s `extra="forbid"`, which knows a key
+is unwanted but not where it should have gone — and far better than the
+silent-default failure, where the file holding `weekly_schedule` goes unread
+and a week gets planned against nothing.
+
+Adding a field to `AppConfig` therefore means adding it to `CONFIG_FILES` too.
+The merge says so if you forget. That coupling is deliberate: a new key has to
+belong to *some* file, and deciding which one at the moment it is added is the
+entire point.
+
+`tests/test_config_layout.py` holds a snapshot of the merged dict and asserts
+nothing was lost or altered. Regenerate it (`python tests/test_config_layout.py
+--update`) only alongside a deliberate change, so the diff shows exactly which
+keys moved.
 
 ## Run
 
@@ -154,7 +208,7 @@ a busy week reuses a hue.
 ### Drawer inputs to the next run: targets and pantry
 
 The left drawer's "Daily Targets" and "Pantry Clear" sections (plus "Training
-Schedule") edit `PlannerState`, never config.json, and are merged into a config
+Schedule") edit `PlannerState`, never the files in `config/`, and are merged into a config
 by `PlannerState.planning_config()` — one object carrying the model, the
 overrides and the pantry, because `generate_week_plan`, `validate_week`,
 `split_targets` and `inventory_instruction` all read plain config and would
@@ -284,13 +338,15 @@ meal-type *order* (`MEAL_TYPE_PRIORITY`) carries the same guarantee across
 types: dinner is generated before lunch so the one cross-type leftover
 `week.leftover_meal_type_error` permits always has its source already cooked.
 
-- `config.json` — external configuration, validated once at load through
-  `AppConfig` (`extra="forbid"`, so an unknown or typo'd key fails at startup).
-  Model selection lives in `models.json`, not here: `openrouter_model` is an
-  optional per-run override and `models.json`'s `default_planner_model` is what
-  it falls back to. There is **no in-code model default** — both unset raises
-  (`resolve_planner_model`), deliberately, so the app can never silently plan
-  against a stale hardcoded model.
+- `config/` — external configuration, six files merged and validated once at
+  load through `AppConfig` (`extra="forbid"`, so an unknown or typo'd key
+  fails at startup). See "config/ is six files" under Layout.
+  Model selection lives in `config/models.json`: `meal_generation_model` is
+  the standing choice, and `config["openrouter_model"]` is a per-run
+  selection injected **in memory only** by the CLI's `--model` and the
+  drawer's model select. There is **no in-code model default** — both unset
+  raises (`resolve_planner_model`), deliberately, so the app can never
+  silently plan against a stale hardcoded model.
 - `repository.py` — the storage boundary (see below).
 - `week.py` — all the deterministic, API-free planning. The entire week —
   styles, cuisines, portions, windows — is resolved here before a single token
@@ -528,7 +584,7 @@ regardless of the stated target. Three layers correct this, in order:
 2. **`fit_recipe_to_budget()`** linearly rescales the response so its calories
    land on budget. Every macro is linear in quantity, so one factor resizes
    the portion without changing the dish. Clamped to
-   `planning_rules.portion_trim_limits` in config.json (0.6–1.6) so a trim can
+   `planning_rules.portion_trim_limits` in `config/engine.json` (0.6–1.6) so a trim can
    never produce an absurd portion.
 3. **`DayRecipes.reject_untrimmable_macro_miss()`** — a `model_validator` that
    rejects only what layer 2 *can't* rescue, i.e. a response needing a factor
@@ -585,10 +641,10 @@ offered *on* NOT GENERATED cards, so that is the common path, not an edge case.
 
 Every request sends `extra_body=reasoning_extra_body(model, config)`
 (`planner.py`), which is OpenRouter's unified switch for a model's hidden
-reasoning budget, `{"reasoning": {"enabled": False}}`, **for every model
-except the ones in `models.json`'s `reasoning_required_models`.** Do not
-change the *default* to enabled — see the measurement below for why — but do
-add a model there if it needs the exception (next section).
+reasoning budget, `{"reasoning": {"enabled": False}}`, **except for models
+marked `"reasoning_required": true` in `config/models.json`.** Do not change
+the *default* to enabled — see the measurement below for why — but do mark a
+model if it needs the exception (next section).
 
 Measured on `anthropic/claude-sonnet-5` with the identical Sunday prompt:
 
@@ -616,31 +672,57 @@ moment `reasoning` is present at all: `"Reasoning is mandatory for this
 endpoint and cannot be disabled"`. This isn't the intermittent
 zero-content failure above — it's a flat rejection, so `instructor`'s
 `max_retries` just burns three attempts at the same 400 and every slot on
-that model fails within a second. `models.json`'s
-`reasoning_required_models` (a list of model ids) is how `reasoning_extra_body()`
-knows to omit the `reasoning` key entirely for a model like this rather than
-sending `enabled: True` — the reasoning is disabled by default *because* the
-task needs none, and that's equally true whether or not the provider insists
-on doing it anyway. If a newly picked model fails every slot in under a
-second with this exact message, it belongs in that list, not a workaround in
-the prompt.
+that model fails within a second. `"reasoning_required": true` on the
+model's entry in `config/models.json` is how `reasoning_extra_body()` knows to
+omit the `reasoning` key entirely for a model like this rather than sending
+`enabled: True` — the reasoning is disabled by default *because* the task
+needs none, and that's equally true whether or not the provider insists on
+doing it anyway. If a newly picked model fails every slot in under a second
+with this exact message, it needs that flag, not a workaround in the prompt.
+
+The flag lives on the model's own entry rather than in a parallel list of
+ids, because a second list beside the selectable ones is free to name a model
+no longer offered, or to miss one that is.
 
 ### Diagnosing a slow or failed call
 
 `configure_logging()` (called from both `planner.main()` and `ui_app.py` at
-import time) writes per-call generation timing to `data/meals.log`: request start,
+import time) writes per-call generation timing to `logs/meals.log`: request start,
 elapsed seconds, `finish_reason`, `completion_tokens`, and `reasoning_tokens`
 for every `generate_day()` call, plus a line for any day that fails. This is
 the same data the manual diagnostic below asks you to check by hand —
 `reasoning_tokens` far above 0 or `finish_reason: length` in the log is the
 signature of the reasoning-blowup failure mode, not a hung request.
 
-### Picking a free OpenRouter model
+### Picking a model
+
+`config/models.json` names **two roles**, because there are two, and they want
+different models:
+
+- `meal_generation_model` — what a week is generated with (`generate_day`,
+  `generate_meal_type_week`, `generate_sunday_prep_session`).
+- `recipe_parser_model` — what `import_external_recipe` parses pasted recipe
+  text with. Cheap and mechanical, so it runs on a fast model regardless of
+  what the week costs. It deliberately does **not** follow the generation
+  model.
+
+Its `models` table doubles as the drawer's selectable list (the UI offers its
+keys) and as the home for per-model quirks; an entry with nothing unusual
+about it is just `{}`.
+
+`config["openrouter_model"]` is a third thing and is **not a file key**: it is
+the per-run selection injected in memory by `--model` and the drawer's model
+select, and no front end ever writes it to disk. It used to exist as a
+config.json field too, where its only effect was to give the standing choice a
+second place to hide.
+
+There is no `openrouter_base_url` key any more — it was the same URL for every
+model and a knob nobody turned, so it is a constant in `planner.py`.
 
 Swapping the generation model has real gotchas (reasoning-token blowups,
 free-tier churn, latency variance vs. the client timeout). They live in the
 `openrouter-model-choice` skill — invoke it before changing
-`openrouter_model`, or `models.json`'s `default_planner_model`.
+`meal_generation_model` or the `models` table.
 
 ### Shopping lists
 
@@ -717,6 +799,15 @@ Six things here are decisions, not detail:
   inflates the day by a few hundred kcal, which is most of a deficit. Both
   `gross_calories` and `net_calories` are kept on each session, because a
   silently adjusted number can't be reconciled against the watch.
+
+  `config/integrations.json`'s `garmin.exercise_recovery_factor` is the knob,
+  injected into `GarminSyncService` at construction rather than read at the
+  point of use, so the value that discounted a session is the one the service
+  was built with. It is the *only* genuine knob the sync has: credentials live
+  in `.env`, the Garmin token directory is already `GARMINTOKENS`, and the
+  activity-type keys and Cronometer column spellings are protocol detail, not
+  preference. The file is thin on purpose — it is the declared home for the
+  next such setting, so it doesn't land back in a module constant.
 - **Sleep and HRV never reach an energy equation.** `fetch_readiness` returns
   a sleep score and a word; HRV isn't returned at all, being the metric most
   likely to be mistaken for a recovery-cost number. A sleep score is a
@@ -777,7 +868,7 @@ headers for the CSV) because the unit and key mapping *is* the module.
 
 ## Dietary constraints
 
-- `dietary_rules.allowed_nova_groups` in `config.json` restricts ingredients
+- `dietary_rules.allowed_nova_groups` in `config/profile.json` restricts ingredients
   to NOVA groups 1–3 (unprocessed/minimally processed, processed culinary
   ingredients, processed foods). Group 4 (ultra-processed) is always rejected.
 - `dietary_rules.banned_ingredients` is a substring-matched blocklist enforced

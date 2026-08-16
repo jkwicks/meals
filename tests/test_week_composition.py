@@ -30,7 +30,7 @@ from week import MODE_COOK, MODE_LEFTOVER, SlotSpec, WeekSpec, pin_style  # noqa
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-# Small standalone config rather than data/config.json: these tests are about
+# Small standalone config rather than the shipped config/: these tests are about
 # the layout rules, and a cuisine list that shifts with the user's taste would
 # re-baseline the expected blocks underneath them. `test_real_config` below is
 # what keeps the shipped file honest.
@@ -349,7 +349,7 @@ class TestIngredientCanonicalisation(unittest.TestCase):
 
 
 class TestRealConfig(unittest.TestCase):
-    """data/config.json still validates, and still drives the new layout."""
+    """The shipped config/ still validates, and still drives the new layout."""
 
     def config(self) -> dict:
         from repository import LocalJSONRepository, run_sync
