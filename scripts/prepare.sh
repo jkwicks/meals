@@ -22,7 +22,19 @@ find src -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== Fi
 
 # 4. Generate structural schema previews for JSON configuration and state files (first 35 lines each)
 {
-  for json_file in data/config.json data/models.json data/week_plan.json data/meal_history.json; do
+  # config/ in full — it is six small hand-edited files and the whole point of
+  # the split is that each one is readable on its own, so a head -35 that cut
+  # profile.json off mid-week would hide the thing worth bundling. The
+  # generated files in data/ stay truncated: they are large and repetitive,
+  # and 35 lines is enough to convey the shape.
+  for json_file in config/*.json; do
+    [ -f "$json_file" ] || continue
+    echo "=== File: $json_file ==="
+    cat "$json_file"
+    echo -e "\n"
+  done
+
+  for json_file in data/week_plan.json data/meal_history.json; do
     if [ -f "$json_file" ]; then
       echo "=== Sample Structure: $json_file ==="
       head -n 35 "$json_file"

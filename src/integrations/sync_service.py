@@ -214,11 +214,17 @@ class GarminSyncService:
         email: Optional[str] = None,
         password: Optional[str] = None,
         token_dir: str = GARMIN_TOKEN_DIR,
+        recovery_factor: float = EXERCISE_RECOVERY_FACTOR,
     ):
         _load_env()
         self.email = email or os.environ.get("GARMIN_EMAIL", "")
         self.password = password or os.environ.get("GARMIN_PASSWORD", "")
         self.token_dir = os.path.expanduser(token_dir)
+        # Injected rather than read from the module constant at the point of
+        # use, so the value that discounted a session is the one this service
+        # was built with — a config read happening halfway down a fetch would
+        # be a second source of truth for a number the caller already chose.
+        self.recovery_factor = recovery_factor
         self._client = None
 
     def client(self):
@@ -342,7 +348,7 @@ class GarminSyncService:
                     "type": type_key,
                     "duration_min": round(duration_s / 60.0, 1),
                     "gross_calories": round(gross),
-                    "net_calories": round(gross * EXERCISE_RECOVERY_FACTOR),
+                    "net_calories": round(gross * self.recovery_factor),
                     "average_hr": _as_float(activity.get("averageHR")),
                     "source": "garmin",
                 }
@@ -514,7 +520,12 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     nothing consumes exercise calories yet — the discount they carry is what
     this sync is responsible for getting right when something does.
     """
-    service = GarminSyncService()
+    garmin_config = run_sync(repository.load_integrations_config()).get("garmin") or {}
+    service = GarminSyncService(
+        recovery_factor=garmin_config.get(
+            "exercise_recovery_factor", EXERCISE_RECOVERY_FACTOR
+        )
+    )
     weigh_in = service.fetch_body_composition(target_date)
     cardio = service.fetch_cardio_activities(target_date)
     readiness = service.fetch_readiness(target_date)

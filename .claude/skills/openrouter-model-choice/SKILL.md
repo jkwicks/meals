@@ -5,11 +5,16 @@ description: How to pick, sanity-check, and swap the OpenRouter model used for m
 
 # Picking a free OpenRouter model — known gotcha
 
-The model comes from `models.json`'s `default_planner_model`, optionally
-overridden per run by `config.json`'s `openrouter_model` (the CLI's `--model`
-flag and the drawer's model select both write that). There is **no in-code
-default** — `resolve_planner_model` raises if neither is set, deliberately, so
-the app can never quietly plan against a stale hardcoded model.
+The model comes from `config/models.json`'s `meal_generation_model`,
+optionally overridden per run by an in-memory `openrouter_model` selection
+(the CLI's `--model` flag and the drawer's model select both set that; neither
+writes it to a file). There is **no in-code default** —
+`resolve_planner_model` raises if neither is set, deliberately, so the app can
+never quietly plan against a stale hardcoded model.
+
+Note `recipe_parser_model` in the same file is a *different role* — the model
+`import_external_recipe` parses pasted recipe text with. Swapping the
+generation model does not and should not change it.
 
 The free models below were each tried and failed in ways worth knowing about
 before you swap to one:
@@ -72,8 +77,9 @@ before you swap to one:
   every single call, instantly, failing an entire week in under a second
   (not the slow/intermittent failure above; `max_retries` doesn't help
   because the same 400 comes back every attempt). If a newly picked model
-  fails this way, add its id to `models.json`'s `reasoning_required_models`
-  rather than trying to work around it — `reasoning_extra_body()` in
+  fails this way, mark its entry `"reasoning_required": true` in
+  `config/models.json`'s `models` table rather than trying to work around it
+  — `reasoning_extra_body()` in
   `planner.py` then omits the `reasoning` key for that model instead of
   sending `enabled: False`. Don't flip the *default* to enabled for
   everyone else; this is a per-model exception, not a change to the rule.

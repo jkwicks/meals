@@ -86,14 +86,23 @@ LibreSSL, not real OpenSSL; HTTPS still works either way).
 Source, data and scripts are separated; run everything from the project root:
 
 ```
-src/      planner.py, ui_app.py, week.py, repository.py, shopping.py, export_menu.py
-data/     config.json, models.json + all generated state (week plans, history, logs)
-scripts/  server.sh, release.sh, prepare.sh, upload.sh, claude-queue.sh
+src/        planner.py, ui_app.py, week.py, repository.py, shopping.py, export_menu.py
+config/     everything you edit — profile, meals, week, schedule, engine, models, integrations
+reference/  whfoods.json (shipped corpora, read-only)
+data/       everything the app writes — week plans, history, biometrics, recipe catalog
+logs/       meals.log, nicegui.log
+scripts/    server.sh, release.sh, prepare.sh, upload.sh, claude-queue.sh
 ```
 
-Data paths are anchored to the project root inside `repository.py`, not to the
-working directory, so `python src/planner.py` finds `data/config.json` from
-anywhere. The shell scripts `cd` to the root themselves for the same reason.
+The four file directories split by **who writes the file**, so "which file do
+I change?" has one answer: `config/`. Paths are anchored to the project root
+inside `repository.py`, not to the working directory, so `python
+src/planner.py` finds them from anywhere. The shell scripts `cd` to the root
+themselves for the same reason.
+
+`config/` is six files rather than one, merged back into a single object at
+load — see `CLAUDE.md` for the key-to-file map. A key in the wrong file or a
+typo'd key name fails at startup naming the file, not silently.
 
 ### Start the server
 
@@ -106,25 +115,27 @@ MEALS_PORT=9000 ./scripts/server.sh start
 ```
 
 `scripts/server.sh` handles venv activation, backgrounding (`nohup`), the PID
-file (`data/.nicegui.pid`) and the log (`data/nicegui.log`). Open
+file (`logs/.nicegui.pid`) and the log (`logs/nicegui.log`). Open
 [http://localhost:8080](http://localhost:8080) for the high-density desktop
 canvas: a left drawer of global controls, a header of seven per-day macro
 telemetry bars, and a 7-column x 4-row grid of meal cards below it.
 
 A week can also be generated headlessly from the CLI — see Section 5.
 
-### Model configuration (`models.json`)
+### Model configuration (`config/models.json`)
 
-Model choice lives in `models.json`, kept separate from `config.json` so that
-swapping models never touches your macro targets:
+Model choice lives in its own file so that swapping models never touches your
+macro targets:
 
 | Key | Meaning |
 |---|---|
-| `default_planner_model` | Model used for weekly generation, unless `config.json`'s `openrouter_model` overrides it |
-| `recipe_parser_model` | Model used to parse a pasted/imported recipe. Deliberately independent of the planner model, so a cheap fast model can do the parsing regardless of what generates the week |
-| `openrouter_base_url`, `request_timeout_seconds` | Endpoint and client timeout. **No in-code fallback** — a missing value fails loudly at startup rather than drifting onto a stale default |
-| `reasoning_required_models` | Model ids that reject the reasoning-disable switch outright with a hard `400`. For these the `reasoning` key is omitted entirely — see `CLAUDE.md`, "Reasoning must be disabled" |
-| `selectable_options` | What the drawer's model dropdown offers |
+| `meal_generation_model` | Model used to generate a week |
+| `recipe_parser_model` | Model used to parse a pasted/imported recipe. Deliberately independent of the generation model, so a cheap fast model can do the parsing regardless of what generates the week |
+| `request_timeout_seconds` | Client timeout. **No in-code fallback** — a missing value fails loudly at startup rather than drifting onto a stale default |
+| `models` | The model ids the drawer's dropdown offers, each mapped to its quirks. `{}` means "nothing unusual". `{"reasoning_required": true}` marks a model that rejects the reasoning-disable switch with a hard `400`, for which the `reasoning` key is omitted entirely — see `CLAUDE.md`, "Reasoning must be disabled" |
+
+The CLI's `--model` and the drawer's model select override
+`meal_generation_model` **for that run only** — neither writes to the file.
 
 Token budgets are **not** configured here — they're derived in `planner.py`
 from whether the model is a `:free` route and how many recipes a single call is
@@ -147,14 +158,14 @@ never typed — it's computed from what's left
 (`calories - (protein*4 + carbs*4) / 9`), so a low-carb day automatically
 becomes a high-fat day with no separate keto flag. An edited day is marked
 with an amber `•` and amber label wherever its telemetry appears; that
-override wins over whatever the current plan or `config.json` says, because
+override wins over whatever the current plan or `config/profile.json` says, because
 the point of editing a target before a run is seeing how far the current week
 sits from where you're about to aim it. It's reset per-day from the drawer,
 which writes the file's numbers back in and clears the marker. **Overrides
-apply on the next generation** — they never touch `config.json`.
+apply on the next generation** — they never touch the files in `config/`.
 
 A specific meal's budget can be pinned instead of weighted, via
-`weekly_schedule.<day>.meal_overrides` in `config.json`
+`weekly_schedule.<day>.meal_overrides` in `config/profile.json`
 (`{"breakfast": {"calories": 450, "protein_g": 45, "net_carbs_g": 25}}`). A
 pinned meal is assigned that budget verbatim and pushes the *other* meals of
 that day down so the day still totals its target.
@@ -180,7 +191,7 @@ generation call is made:
 A training day shows a green `⚡` marker in the header wherever the
 budget-expanded target is being shown. Like targets and pantry, training
 sessions are drawer-only input — they apply to the next generation and are
-never written to `config.json`.
+never written to any file in `config/`.
 
 ### Pantry Clearing (`inventory_to_clear`)
 
@@ -363,7 +374,7 @@ shopping. Each item names the surface to look at and what "working" means.
       Add a training session, generate the week, and check the pinned meal's
       recipe brief/macros reflect the extra carbs, and that a meal scheduled
       within two hours before the workout came back lower-fibre/lower-fat
-      than a typical meal of that type. (`data/meals.log` and the day's recipe
+      than a typical meal of that type. (`logs/meals.log` and the day's recipe
       notes are the source of truth here — the model can still miss a
       constraint on a bad response, which is what the portion/macro retry
       logic exists to catch.)
@@ -375,11 +386,11 @@ shopping. Each item names the surface to look at and what "working" means.
 | Action | CLI (`src/planner.py`) | UI (`src/ui_app.py`) |
 |---|---|---|
 | Generate a week | `python src/planner.py` | Drawer → **Generate Current Week** |
-| Use a different config file | `--config PATH` | — (always `config.json`) |
+| Use a different config directory | `--config-dir PATH` | — (always `config/`) |
 | Override the model for one run | `--model NAME` | Drawer model selector |
 | Set the week's start day | `--week-start DAY` | Fixed by `week_start_day` in config |
 | Set household size | `--servings N` | Drawer servings field |
-| Set shopping trip days | `--shop-days Sunday,Wednesday` | `config.json` (`shopping.shop_days`) |
+| Set shopping trip days | `--shop-days Sunday,Wednesday` | `config/week.json` (`shopping.shop_days`) |
 | Make every lunch a leftover of the prior dinner | `--leftover-lunches` | Per-dinner **"Link to next lunch"** button |
 | Export shopping lists as Markdown | `--save-shopping-list` → `data/shopping_list.md` | — |
 | Export a shopping trip for Google Keep | — | Per-trip **"Copy for Keep"** button |
@@ -388,12 +399,12 @@ shopping. Each item names the surface to look at and what "working" means.
 | Favorite, import or swap in a recipe | — | Drawer → **Recipe Catalog**; card bookmark and ⇄ icons |
 | Export the week as a PDF menu | — | Header printer icon → `weekly_menu.pdf` |
 | Keep a second week in progress | — | Header **Current / Next Week** selector |
-| Edit a day's macro target for the next run | Edit `config.json` `weekly_schedule` | Drawer → **Daily Targets** |
-| Pin one meal's budget | `config.json` `meal_overrides` | (not yet editable from the drawer) |
-| Add a training/workout session | `config.json` `training_schedule` | Drawer → **Training Schedule** |
-| Prioritize using up pantry items | `config.json` `inventory_to_clear` | Drawer → **Pantry Clear** |
+| Edit a day's macro target for the next run | Edit `config/profile.json` `weekly_schedule` | Drawer → **Daily Targets** |
+| Pin one meal's budget | `config/profile.json` `meal_overrides` | (not yet editable from the drawer) |
+| Add a training/workout session | `config/schedule.json` `training_schedule` | Drawer → **Training Schedule** |
+| Prioritize using up pantry items | `config/week.json` `inventory_to_clear` | Drawer → **Pantry Clear** |
 | Print shopping lists to the terminal | Always, after generation | — (use the shopping drawer) |
-| Monitor per-call generation timing/failures | `data/meals.log` | Progress dialog (live) + warning toast on completion |
+| Monitor per-call generation timing/failures | `logs/meals.log` | Progress dialog (live) + warning toast on completion |
 
 CLI-only and UI-only differences are structural, not accidental: the CLI is
 the batch/scriptable path and is the only one that writes `data/shopping_list.md`
@@ -420,7 +431,7 @@ Everything in Sections 3 and 5 that isn't drawer-editable lives in
 | `cuisine_affinities` | `cuisine -> cuisines that share its pantry`, used to pick the week's second cuisine block. Optional — an unlisted cuisine just falls back to the least-recently-used pick |
 | `dietary_rules.allowed_nova_groups` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | Substring blocklist, enforced as schema validation |
-| `openrouter_model` | Model id for generation. Unset (the default) means use `models.json`'s `default_planner_model`; both unset is a hard error, never a silent fallback |
+| `--model` / drawer select | Model id for this run only, overriding `config/models.json`'s `meal_generation_model`. Not a config-file key — it is never written to disk. Both unset is a hard error, never a silent fallback |
 | `week_start_day` | First day of the planning week |
 | `meal_weights` | How a day's calories split across un-pinned meals |
 | `serving_rules.servings_per_meal` | Household size |
@@ -457,14 +468,19 @@ anywhere in the schema.
 | `src/shopping.py` | Ingredient aggregation, normalisation, Keep/Markdown formatting |
 | `src/export_menu.py` | Week → printable PDF menu (`reportlab`) and its Markdown equivalent |
 | `src/repository.py` | The storage boundary — nothing else reads or writes a stored file |
-| `data/config.json` | Everything in the configuration reference above |
-| `data/models.json` | Model selection, endpoint and timeouts (see Section 2) |
+| `config/profile.json` | Body, per-day targets, meal weights, dietary rules |
+| `config/meals.json` | Meal types, styles, cuisines and affinities |
+| `config/week.json` | Week shape, shopping days, prep and pantry |
+| `config/schedule.json` | Training sessions and location/regional context |
+| `config/engine.json` | Planner tuning and UI settings |
+| `config/models.json` | Model selection and timeout (see Section 2) |
+| `config/integrations.json` | Garmin/Cronometer sync tuning |
+| `reference/whfoods.json` | Nutrient-dense whole foods; ~12 are sampled per run to nudge generation |
 | `data/recipes_master.json` | Recipe catalog — every recipe ever favorited or imported |
-| `data/whfoods.json` | Nutrient-dense whole foods; ~12 are sampled per run to nudge generation |
 | `data/week_plan.json` | The current generated week (regenerable) |
-| `week_plan_next.json` | The "Next Week" slot — the app keeps two cached weeks at once |
+| `data/week_plan_next.json` | The "Next Week" slot — the app keeps two cached weeks at once |
 | `data/meal_history.json` | Style/cuisine rotation history (**not** regenerable) |
-| `data/meals.log` | Per-call generation timing, finish reason, token counts |
+| `logs/meals.log` | Per-call generation timing, finish reason, token counts |
 
 Bundles for pasting into an AI assistant — `python_codebase.md`,
 `project_context.md`, `data_schemas.md` — are **generated** by `./scripts/prepare.sh`.
@@ -482,7 +498,7 @@ the portion trim can absorb: swap models (see the `openrouter-model-choice`
 skill) rather than widening `planning_rules.portion_trim_limits` — widening it
 would let through portions absurd enough to be unusable.
 
-**A call took minutes or came back empty** — check `data/meals.log`. A
+**A call took minutes or came back empty** — check `logs/meals.log`. A
 `reasoning_tokens` count well above 0, or `finish_reason: length`, is the
 reasoning-blowup signature, not a hung request. Every request disables
 reasoning explicitly; if this shows up, something re-enabled it.

@@ -1,0 +1,327 @@
+{
+  "base_schedule": {
+    "Friday": "Office",
+    "Monday": "Office",
+    "Saturday": "Outing",
+    "Sunday": "Home",
+    "Thursday": "Office",
+    "Tuesday": "WFH",
+    "Wednesday": "WFH"
+  },
+  "cuisine_affinities": {
+    "bbq": [
+      "cajun",
+      "mexican"
+    ],
+    "cajun": [
+      "bbq",
+      "mexican"
+    ],
+    "greek": [
+      "mediterranean",
+      "middle_eastern"
+    ],
+    "indian": [
+      "middle_eastern",
+      "thai"
+    ],
+    "italian": [
+      "mediterranean",
+      "greek"
+    ],
+    "japanese": [
+      "korean",
+      "vietnamese"
+    ],
+    "korean": [
+      "japanese",
+      "bbq"
+    ],
+    "mediterranean": [
+      "italian",
+      "greek"
+    ],
+    "mexican": [
+      "cajun",
+      "bbq"
+    ],
+    "middle_eastern": [
+      "greek",
+      "mediterranean"
+    ],
+    "thai": [
+      "vietnamese",
+      "indian"
+    ],
+    "vietnamese": [
+      "thai",
+      "japanese"
+    ]
+  },
+  "cuisine_meal_types": [
+    "dinner"
+  ],
+  "cuisines": [
+    "mexican",
+    "indian",
+    "thai",
+    "japanese",
+    "korean",
+    "bbq",
+    "middle_eastern",
+    "italian",
+    "mediterranean",
+    "vietnamese",
+    "cajun",
+    "greek"
+  ],
+  "dietary_rules": {
+    "allowed_nova_groups": [
+      1,
+      2,
+      3
+    ],
+    "banned_ingredients": [
+      "high fructose corn syrup",
+      "artificial sweeteners",
+      "hydrogenated oil",
+      "MSG",
+      "seed oils",
+      "soy protein isolate",
+      "eggplant",
+      "apricot",
+      "banana",
+      "Almond milk"
+    ]
+  },
+  "enable_sunday_prep": true,
+  "inventory_rules": {
+    "fridge_safe_days": 4,
+    "perishable_day_gap": 3
+  },
+  "inventory_to_clear": [],
+  "location_rules": {
+    "Office": {
+      "lunch_mode": "leftover",
+      "max_prep_minutes": 0,
+      "restrictions": [
+        "portable",
+        "no_reheat",
+        "no_long_prep"
+      ]
+    },
+    "Outing": {
+      "dinner_mode": "leftover",
+      "lunch_mode": "skip",
+      "notes": "Dining out or packed nutrition"
+    },
+    "WFH": {
+      "lunch_mode": "cook",
+      "max_prep_minutes": 15,
+      "restrictions": [
+        "quick_cook"
+      ]
+    }
+  },
+  "max_prep_active_mins": 120,
+  "meal_styles": {
+    "breakfast": {
+      "beans_toast": "Classic baked beans served on toasted whole-grain bread.",
+      "custom_shake": "Protein Shake Template. BASE (REQUIRED): 1.5 scoops protein powder, 5g creatine, 300ml water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g Barley max, 15g Oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
+      "eggs_salmon": "Scrambled eggs and smoked salmon served on toasted whole-grain bread.",
+      "fish_pate": "Tinned sardines or tinned mackerel pate served on toasted whole-grain bread.",
+      "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds, pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
+    },
+    "dinner": {
+      "braise": "a slow-braised pot dish that improves after resting",
+      "curry": "a simmered curry or stew in sauce, served with a side",
+      "grill": "grilled or pan-seared protein with cooked vegetable sides",
+      "one_pan": "a single tray-bake or one-pan meal",
+      "roast": "a roasted joint or whole bird with roasted vegetables",
+      "stir_fry": "a fast high-heat stir fry"
+    },
+    "lunch": {
+      "cold_plate": "a no-cook cold plate: cured/cooked protein, cheese, raw veg, dips",
+      "grain_bowl": "a warm grain or legume bowl with protein and vegetables",
+      "salad": "a substantial cold salad with a protein on top",
+      "soup": "a hearty soup or broth, reheatable",
+      "wrap": "a wrap, flatbread or hand-held roll"
+    },
+    "snack": {
+      "boiled_eggs": "boiled eggs with seasoning",
+      "fruit_and_protein": "fruit paired with a protein source",
+      "nuts_seeds": "a portion of nuts and seeds",
+      "yoghurt": "yoghurt with a simple topping"
+    }
+  },
+  "meal_types": [
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snack"
+  ],
+  "meal_weights": {
+    "breakfast": 0.3,
+    "dinner": 0.3,
+    "lunch": 0.3,
+    "snack": 0.1
+  },
+  "planning_rules": {
+    "cuisine_block_pattern": [
+      4,
+      3
+    ],
+    "history_max_entries": 21,
+    "min_meal_protein_g": 35.0,
+    "portion_trim_deadband": 0.03,
+    "portion_trim_limits": [
+      0.6,
+      1.6
+    ],
+    "protein_avoid_window": 6,
+    "protein_lookback_entries": 3
+  },
+  "regional": {
+    "country": "AU",
+    "hemisphere": "southern",
+    "postcode": "3350",
+    "state": "VIC"
+  },
+  "serving_rules": {
+    "servings_per_meal": 2
+  },
+  "shopping": {
+    "shop_days": [
+      "Sunday",
+      "Wednesday"
+    ]
+  },
+  "training_schedule": [
+    {
+      "day": "Monday",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350,
+      "time": "18:00",
+      "type": "gym_hypertrophy"
+    }
+  ],
+  "ui_settings": {
+    "bar_scale_limit": 1.6,
+    "title_tooltip_chars": 38
+  },
+  "user_profile": {
+    "activity_level": "light_office",
+    "birth_date": "1971-01-10",
+    "gender": "male",
+    "height_cm": 183.0,
+    "protein_multiplier": 1.8,
+    "target_weight_kg": 80.0
+  },
+  "week_defaults": {
+    "breakfast": "cook",
+    "dinner": "cook",
+    "lunch": "cook",
+    "snack": "cook"
+  },
+  "week_start_day": "Monday",
+  "weekly_schedule": {
+    "Friday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    },
+    "Monday": {
+      "calories": 1500.0,
+      "fat_g": 55.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 130.0,
+      "protein_g": 120.0
+    },
+    "Saturday": {
+      "calories": 1200.0,
+      "fat_g": 44.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 85.0,
+      "protein_g": 115.0
+    },
+    "Sunday": {
+      "calories": 1500.0,
+      "fat_g": 55.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 130.0,
+      "protein_g": 120.0
+    },
+    "Thursday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    },
+    "Tuesday": {
+      "calories": 1200.0,
+      "fat_g": 44.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 85.0,
+      "protein_g": 115.0
+    },
+    "Wednesday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    }
+  }
+}

@@ -89,6 +89,7 @@ from planner import (
     regenerate_single_meal,
     resolve_auto_choices,
     resolve_planner_model,
+    selectable_models,
     short_error,
     split_targets,
     weeknight_prep_minutes,
@@ -413,10 +414,10 @@ class PlannerState:
     """
 
     config: dict
-    # models.json, loaded alongside config — the drawer's model select reads
-    # `models_config["selectable_options"]` and `.load()` uses
-    # `models_config["default_planner_model"]` as `model`'s starting value
-    # when config.json has no `openrouter_model` override.
+    # models.json, loaded alongside config — the drawer's model select offers
+    # `selectable_models(models_config)` and `.load()` uses
+    # `models_config["meal_generation_model"]` as `model`'s starting value
+    # until the select changes it for this session.
     models_config: dict = field(default_factory=dict)
     week_plan: Optional[WeekPlan] = None
     # Which cached week is on screen — a key into WEEK_SELECTION_LABELS, and
@@ -3016,7 +3017,7 @@ async def planner_page() -> None:
             )
 
             ui.select(
-                state.models_config.get("selectable_options"),
+                selectable_models(state.models_config),
                 label="Model",
             ).bind_value(state, "model").props("dense outlined").classes("w-full text-xs")
 

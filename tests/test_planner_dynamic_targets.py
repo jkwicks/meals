@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import planner  # noqa: E402  (path setup must precede the import)
 from week import MODE_COOK, MODE_LEFTOVER, SlotSpec  # noqa: E402
 
-# data/config.json's own user_profile. Every expected number below is worked
+# config/profile.json's own user_profile. Every expected number below is worked
 # out by hand from it rather than captured from a run, so a changed constant
 # fails loudly instead of re-baselining itself against the code under test.
 PROFILE = {
