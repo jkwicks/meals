@@ -58,6 +58,7 @@ from week import (
     slot_label,
     styles_for,
     validate_week,
+    week_date_range,
 )
 
 # Explicit path rather than a bare `load_dotenv()`. The no-arg form searches
@@ -1858,6 +1859,19 @@ class WeekPlan(BaseModel):
     days: List[str]
     servings_per_meal: int
     generated_at: str
+    week_start_date: Optional[str] = Field(
+        default=None,
+        description=(
+            "ISO date of days[0] at the moment this plan was first generated "
+            "(week.week_date_range's own anchor, computed once and kept — "
+            "not recomputed on a later regenerate_single_day/meal, since "
+            "those bump generated_at to the regen moment and recomputing "
+            "from that would silently shift the week). None on a plan "
+            "generated before this field existed; callers fall back to "
+            "week.week_date_range(days, generated_at) for those, the same "
+            "tolerance week_banner already extends to a missing week_start_date."
+        ),
+    )
     cook_events: List[CookEvent]
     slots: List[SlotSpec]
     targets: Dict[str, dict]
@@ -3507,10 +3521,14 @@ async def generate_week_plan(
         if note_callback:
             note_callback(f"Sunday prep session generation failed — {message}")
 
+    generated_at = datetime.now().isoformat()
     return WeekPlan(
         days=spec.days,
         servings_per_meal=spec.servings_per_meal,
-        generated_at=datetime.now().isoformat(),
+        generated_at=generated_at,
+        # Anchored on the same `generated_at`, not a fresh `date.today()`
+        # call, so the two can't disagree about which instant "now" was.
+        week_start_date=week_date_range(spec.days, generated_at)[0].isoformat(),
         cook_events=ordered_events,
         slots=spec.slots,
         targets=targets,

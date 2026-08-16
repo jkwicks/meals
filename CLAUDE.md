@@ -130,10 +130,57 @@ history. The CLI is still the one that prints shopping lists.
 
 `ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density desktop
 UI: left drawer for global controls, a header of 7 per-day macro bars, and a
-7-column x 4-card canvas. Both grids are `grid-cols-8` — an indigo Sunday-prep
-column sits at index 0, ahead of the seven days — so a day's telemetry stays
-directly above its meals. Cook/leftover/skip/not-generated are four distinct card
-treatments (`STATUS_STYLES`).
+7-column x 4-card canvas sitting inside a "Week" tab alongside a "Today" tab
+(see "Module layout" and "The Today tab" below). Both grids are `grid-cols-8`
+— an indigo Sunday-prep column sits at index 0, ahead of the seven days — so
+a day's telemetry stays directly above its meals. Cook/leftover/skip/not-generated
+are four distinct card treatments (`STATUS_STYLES`).
+
+#### Module layout
+
+`ui_app.py` used to be the whole UI — every widget a closure inside one
+~3,200-line page function. It is now an ~300-line **page shell**: it builds
+a `UIContext` (`state`, the repository, a `Refreshables` registry), calls
+each concern's `build_*(ctx)` factory, lays out the header (the one region
+with no natural module of its own, since it's shared chrome above both
+tabs), and registers every returned refreshable into one topic map. The
+concerns:
+
+| module | owns |
+|---|---|
+| `ui_theme.py` | presentation constants, CSS, pure render helpers (`STATUS_STYLES`, `telemetry_bar`, `chain_css`, ...) — no `PlannerState` dependency |
+| `ui_state.py` | `PlannerState`, `SlotView` — the view model, unchanged in substance from before the split |
+| `ui_context.py` | `Refreshables` (the topic registry, see below) and `UIContext` |
+| `ui_catalog.py` | favorites helpers shared by `ui_cards` and `ui_drawer` (`is_favorited`, `toggle_favorite`, ...) |
+| `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `reload_from_disk`, plus the progress dialog |
+| `ui_cards.py` | the Week tab's canvas, meal cards, recipe detail and swap-with-favorite dialogs |
+| `ui_telemetry.py` | the header's week banner, context-pipeline strip, and macro bars |
+| `ui_shopping.py` | the shopping slide-over |
+| `ui_drawer.py` | the left drawer's targets/training/pantry/catalog/import sections |
+| `ui_today.py` | the Today tab (see below) |
+
+Each `build_*(ctx)` returns a small dataclass of the refreshable functions
+(and, for `ui_shopping`, the drawer element) other modules or the shell
+need — `ui_cards.build_cards`, for instance, needs `ui_generation`'s
+handles passed in, because a card's regenerate icon calls into it. This is
+why build order matters in `planner_page()`: `ui_generation` before
+`ui_cards`, everything before the refresh-topic registration at the bottom.
+
+**The `Refreshables` registry replaces a hand-maintained `refresh_all()`.**
+A call site says *what changed* — `refreshables.refresh("plan")`,
+`"targets"`, `"catalog"` — instead of naming every widget that currently
+depends on it. Topics are registered once, in `planner_page()`, after every
+module is built. `"plan"` is the broad one (a generation, a reload, a
+leftover link, or a drawer control that reshapes the week all repaint the
+same set); several narrower topics exist because rebuilding a section
+mid-edit would steal an input's focus — see `ui_drawer.day_target_row`'s
+`sync()`, which refreshes `"telemetry"` alone rather than `"targets"` for
+exactly that reason.
+
+No package structure: every module above is still a flat sibling, importable
+via plain `python src/ui_app.py`, per this file's `sys.path[0]` note under
+Layout. Nothing outside `src/ui_*.py` and `ui_app.py` changed shape — the
+repository, planner and week modules are untouched by the split.
 
 **Generating is the only thing here that writes to disk.** `run_generation`
 saves `week_plan.json` and records history *before* adopting the plan into
@@ -204,6 +251,41 @@ card's hover style its partners three columns away without a Python round trip
 per mouseenter, which would be visibly laggy for a hover effect. Chain classes
 are unique per chain, colours cycle, so the outline is what disambiguates when
 a busy week reuses a hue.
+
+### The Today tab
+
+`ui_today.py` is a read-only preview of just today's four cards, sitting
+next to the Week tab. It is deliberately not built on `ui_cards.meal_card`
+— that function's buttons all need `ui_catalog`/`ui_generation` wired in,
+none of which a read-only stub needs, so a smaller card of its own there is
+a real decoupling rather than a "fix later" shortcut. No favorite/swap/
+regenerate buttons, no click-to-detail, yet.
+
+**Knowing "today" needed a real calendar date, which nothing in this
+codebase stored.** `WeekPlan.days` is a rotation of weekday *names*
+(`week.week_days` rotates names, not dates), and `week.week_date_range`
+existed only to *derive* a plausible date range for display — it anchors on
+`generated_at` or on "now", so the same cached plan looks equally plausible
+whether it's five weeks old or generated ten minutes ago. That ambiguity is
+fine for a banner ("Week of Aug 10 – Aug 16") but not for deciding whether
+today's Thursday slot is actually *this* Thursday — confidently rendering
+last week's Thursday would be worse than saying nothing.
+
+`WeekPlan.week_start_date` fixes this: the ISO date `days[0]` fell on at
+generation time, set once in `generate_week_plan` (anchored on the same
+`generated_at` timestamp, not a second `date.today()` call, so the two can't
+disagree) and preserved through `regenerate_single_day`/`regenerate_single_meal`,
+which only `model_copy` the fields they actually change. `week.today_in_week`
+is the check built on top: given a plan's `week_start_date` (or, for a plan
+generated before this field existed, `week_date_range(days, generated_at)`'s
+own anchor — the same pre-migration tolerance `history_styles()` already
+extends to old `meal_history.json` entries), it returns today's weekday name
+only if today's actual calendar date falls inside that week's span, else
+`None`. `PlannerState.today_day()` wraps it against whichever week is
+currently loaded; `ui_today.today_view` renders "no cached week covers
+today" rather than a day's cards when it comes back `None` — check the
+header's week selector, in that case, for whichever cached week (`current`
+or `next`) does cover today.
 
 ### Drawer inputs to the next run: targets and pantry
 

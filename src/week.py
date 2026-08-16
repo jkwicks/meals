@@ -98,6 +98,40 @@ def week_date_range(days: List[str], generated_at: Optional[str] = None) -> Tupl
     return start, start + timedelta(days=6)
 
 
+def today_in_week(
+    week_start_date: Optional[str],
+    days: List[str],
+    generated_at: Optional[str],
+    today: Optional[date] = None,
+) -> Optional[str]:
+    """Today's weekday name, if this week's actual calendar span covers it —
+    else None.
+
+    A loaded `WeekPlan` always has *some* slot for "Thursday", but that tells
+    you nothing about whether it's *this* Thursday: `days` is a rotation of
+    weekday names, not dates, and the same five-week-old cached plan looks
+    identical to this week's at a glance (`week_date_range`'s own docstring).
+    This is the check a "Today" view needs before trusting any of a plan's
+    slots — reject a stale or not-yet-current week outright rather than
+    confidently rendering the wrong Thursday.
+
+    `week_start_date` is `WeekPlan.week_start_date`, set once at generation
+    and preserved through later day/meal regenerations. Falls back to
+    `week_date_range(days, generated_at)`'s own anchor for a plan generated
+    before that field existed — the same pre-migration tolerance
+    `history_styles()` already extends to old `meal_history.json` entries.
+    """
+    today = today or date.today()
+    start = (
+        datetime.fromisoformat(week_start_date).date()
+        if week_start_date
+        else week_date_range(days, generated_at)[0]
+    )
+    if not (start <= today <= start + timedelta(days=6)):
+        return None
+    return today.strftime("%A")
+
+
 def meal_types(config: dict) -> List[str]:
     return config["meal_types"]
 
