@@ -520,6 +520,86 @@ recipe, so they still appear on the shopping list. The list describes what the
 recipes need, not what you have yet to buy — subtracting inventory from it
 would need real quantities per item, which this list doesn't carry.
 
+### Biometric sync — Garmin Connect and Cronometer
+
+`src/integrations/sync_service.py` fills the two lists `biometrics.json`
+holds, with no phone-side app in the loop:
+
+    ./venv/bin/python src/integrations/sync_service.py --sync-garmin
+    ./venv/bin/python src/integrations/sync_service.py --sync-cronometer --date 2026-08-16
+
+`GarminSyncService` writes `weigh_ins`, `CronometerSyncService` writes
+`daily_actuals`, both through `LocalJSONRepository`'s existing upsert-by-date
+methods. Neither invents storage, and the CLI reports each source
+independently — a Garmin outage must not cost a Cronometer sync that would
+have worked, the same policy as "a failed meal must not fail the week".
+
+Six things here are decisions, not detail:
+
+- **It is the only code in `src/` living in a subdirectory**, which breaks the
+  flat-sibling import rule at the top of this file: `python
+  src/integrations/sync_service.py` puts `src/integrations/` on `sys.path[0]`,
+  not `src/`, so `from repository import ...` fails with the real module one
+  directory up. The `sys.path.insert` near the top is what buys the
+  subdirectory back — it is load-bearing, and every editor and linter will
+  resolve the import fine without it.
+- **Macro keys are the repository's, not the upstream's.** Cronometer's column
+  is `Protein (g)` and the obvious key is `protein`, but `daily_actuals` rows
+  are read by `nutrition_engine.calculate_macro_targets`, which indexes
+  `protein_g`/`net_carbs_g`/`fat_g`. A row keyed the CSV's way stores, sorts
+  and displays perfectly and feeds *nothing* — the failure surfaces weeks
+  later as an adaptive loop that never adapts.
+- **Exercise calories are discounted by `EXERCISE_RECOVERY_FACTOR` (0.50).**
+  Garmin reports an activity's gross calories, which include the BMR that hour
+  would have cost anyway — and every TDEE figure the app computes already
+  contains that hour. Adding the gross number double-counts the overlap and
+  inflates the day by a few hundred kcal, which is most of a deficit. Both
+  `gross_calories` and `net_calories` are kept on each session, because a
+  silently adjusted number can't be reconciled against the watch.
+- **Sleep and HRV never reach an energy equation.** `fetch_readiness` returns
+  a sleep score and a word; HRV isn't returned at all, being the metric most
+  likely to be mistaken for a recovery-cost number. A sleep score is a
+  unitless 0–100 index, so no conversion to kcal could be legitimate. The
+  separation is enforced by these being different methods writing different
+  keys, not by a comment.
+- **Absent metrics are omitted, never zeroed.** `save_biometric_entry` merges
+  on `date`, so a scale that reported only weight must not send
+  `body_fat_pct: 0.0` and overwrite a real reading. `_prune` drops the Nones
+  and `has_measurements` decides whether a row is worth storing at all —
+  count the *measured* keys, not `len(entry)`, which an earlier version did
+  and which the `source` tag alone was enough to fool: a day the scale never
+  saw was written as a weigh-in with no weight, and `get_latest_biometrics`
+  handed that empty row back as the newest reading.
+- **Cronometer runs out-of-process.** There is no public Cronometer API for
+  individual accounts; `cronometer-mcp` drives the same GWT-RPC protocol the
+  web app uses, and re-discovers the protocol's build hashes per login rather
+  than pinning them, which is what lets it survive a Cronometer web release.
+  It needs **Python >= 3.11** and this project runs on the macOS system Python
+  3.9 — so `requirements.txt` carries it behind a `python_version >= "3.11"`
+  marker (without which `pip install -r requirements.txt` hard-fails on 3.9
+  for everyone) and the service shells out to a sidecar interpreter:
+
+        python3.11 -m venv venv-cronometer
+        ./venv-cronometer/bin/pip install cronometer-mcp
+
+  `MEALS_CRONOMETER_PYTHON` overrides the location. The alternative was moving
+  the whole app to 3.14, which would have put `instructor`, `nicegui` and both
+  version pins documented at the top of this file at risk for one integration.
+  If the interpreter ever does move to 3.11+, the in-process path takes over
+  with no code change.
+
+Credentials come from `.env` (`GARMIN_EMAIL`/`GARMIN_PASSWORD`,
+`CRONOMETER_USERNAME`/`CRONOMETER_PASSWORD`). Garmin auth resumes from garth's
+cached tokens in `~/.garminconnect` and only falls back to the password when
+that fails — not merely a speed optimisation, since Garmin rate-limits and
+MFA-challenges repeated password logins, so a timer-driven sync that logged in
+fresh every run would start failing after days of working fine.
+
+Tests are `tests/test_sync_service.py`, `unittest` like the rest. Nothing there
+touches the network: both clients are reached through one seam each, and the
+fakes speak the real payload dialect (grams for Garmin mass, `Energy (kcal)`
+headers for the CSV) because the unit and key mapping *is* the module.
+
 ## Metric unit rules
 
 - All ingredient quantities are in **grams** (`quantity_g`). No cups, oz, lbs,
@@ -540,8 +620,8 @@ would need real quantities per item, which this list doesn't carry.
 
 ## Notes for future sessions
 
-- No Garmin integration in this phase — do not add it unless explicitly
-  asked.
+- Garmin and Cronometer sync now exists — see "Biometric sync" above. The
+  long-standing "no Garmin integration in this phase" note is retired.
 - If `planner.py` fails with a Pydantic validation error after 3 retries,
   it's `instructor` surfacing the model's inability to satisfy the schema —
   check the exception message for which field failed before assuming a code

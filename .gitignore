@@ -3,6 +3,10 @@
 
 # python
 venv/
+# Sidecar interpreter for cronometer-mcp, which needs Python >= 3.11 while the
+# app runs on 3.9. Same reasoning as venv/ — a local build, not source — and
+# release.sh does `git add .`, so an unignored one would ship ~40MB per release.
+venv-cronometer/
 __pycache__/
 *.pyc
 
