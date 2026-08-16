@@ -26,9 +26,11 @@ Three regions, mirroring how the week is actually read:
   column of meals.
 - **Canvas** — 7 day columns x 4 stacked meal cards, cook vs. leftover
   distinguished by colour, border and badge. Lives inside a "Week" tab
-  (`ui.tabs`/`ui.tab_panels`) alongside a currently-empty "Today" tab — see
-  "This file is a page shell" below for why the header isn't split the same
-  way.
+  (`ui.tabs`/`ui.tab_panels`) alongside a "Today" tab — a read-only preview
+  of just today's four cards (`ui_today`), which needs `WeekPlan.
+  week_start_date` to know whether the loaded week's dates actually cover
+  today rather than just sharing its weekday names. See "This file is a
+  page shell" below for why the header isn't split the same way.
 - **Right drawer** — the shopping list, one section per trip, opened from the
   header. It is derived from the plan on every repaint, so it always describes
   the week as the grid currently stands rather than as it was generated.
@@ -93,6 +95,7 @@ from ui_generation import build_generation
 from ui_shopping import build_shopping
 from ui_state import PlannerState
 from ui_telemetry import build_telemetry
+from ui_today import build_today
 from ui_theme import WEEK_SELECTION_LABELS, card_hover_css, chain_css
 
 # Explicit path — see the matching note in planner.py. NiceGUI's reloader can
@@ -139,6 +142,7 @@ async def planner_page() -> None:
     cards = build_cards(ctx, generation)
     telemetry = build_telemetry(ctx)
     shopping = build_shopping(ctx)
+    today = build_today(ctx)
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
         with ui.element("div").classes("flex flex-row items-baseline gap-3"):
@@ -274,7 +278,9 @@ async def planner_page() -> None:
         shopping.shopping_panel,
         drawer.targets_editor,
         drawer.training_editor,
+        today.today_view,
     )
+    refreshables.on("today", today.today_view)
     refreshables.on("telemetry", telemetry.telemetry)
     refreshables.on("targets", drawer.targets_editor, telemetry.telemetry)
     refreshables.on("training", drawer.training_editor, telemetry.telemetry, drawer.targets_editor)
@@ -298,12 +304,10 @@ async def planner_page() -> None:
     # to make it, not this one. Only the main content area — previously just
     # a bare `cards.canvas()` call — is tab-scoped.
     #
-    # "Today" is a stub on purpose: this phase exists to prove the tab shell
-    # doesn't disturb generation, editing, or any existing refresh topic
-    # before a single line of the real daily view is built on top of it.
-    # `value=week_tab` keeps the week grid — everything this app has ever
-    # shown — the default, so a page load looks exactly as it did before
-    # tabs existed.
+    # "Today" is read-only on purpose — no favorite/swap/regenerate buttons,
+    # no click-to-detail (see `ui_today`'s module docstring). `value=week_tab`
+    # keeps the week grid — everything this app has ever shown — the
+    # default, so a page load looks exactly as it did before tabs existed.
     with ui.tabs().classes("w-full") as tabs:
         week_tab = ui.tab("Week", icon="calendar_view_week")
         today_tab = ui.tab("Today", icon="today")
@@ -312,7 +316,7 @@ async def planner_page() -> None:
         with ui.tab_panel(week_tab).classes("p-0"):
             cards.canvas()
         with ui.tab_panel(today_tab).classes("p-0"):
-            ui.label("Today view — coming soon.").classes("text-sm text-slate-500 p-4")
+            today.today_view()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

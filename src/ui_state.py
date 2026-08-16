@@ -58,6 +58,7 @@ from week import (
     slot_id,
     slot_label,
     span_days,
+    today_in_week,
     week_days,
 )
 
@@ -278,6 +279,19 @@ class PlannerState:
     @property
     def meal_types(self) -> List[str]:
         return meal_types(self.config)
+
+    def today_day(self) -> Optional[str]:
+        """Today's weekday name, if the loaded week's actual calendar span
+        covers it — see `week.today_in_week`. None when there's no plan yet,
+        or the loaded plan (a stale cache, or a "next" week not yet current)
+        doesn't include today, so a "Today" view knows to say so rather than
+        confidently rendering the wrong Thursday.
+        """
+        if self.week_plan is None:
+            return None
+        return today_in_week(
+            self.week_plan.week_start_date, self.week_plan.days, self.week_plan.generated_at
+        )
 
     def _shape(self) -> tuple:
         """What the spec is derived *from*; a change here invalidates edits.
