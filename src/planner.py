@@ -46,6 +46,7 @@ from week import (
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
+    day_date,
     default_week_spec,
     eaten_on,
     humanize,
@@ -3870,12 +3871,30 @@ async def record_week_history(
         ]
         history.append(
             {
+                # None on a plan generated before week_start_date existed —
+                # there is no plausible-looking anchor worth guessing for a
+                # *past* day, unlike today_in_week's live "does this cover
+                # today" check. day_date needs the real start date or none
+                # at all.
+                "date": (
+                    day_date(week_plan.week_start_date, week_plan.days, day)
+                    if week_plan.week_start_date
+                    else None
+                ),
                 "day_of_week": day,
                 "generated_at": generated_at,
                 "cuisine": next((event.cuisine for event in events if event.cuisine), None),
                 "styles": {event.meal_type: event.style for event in events if event.style},
                 "main_proteins": proteins,
                 "recipe_names": [event.recipe.name for event in events],
+                # The macro budget this day was actually planned against —
+                # week_plan.targets is the same dict state.targets_for reads
+                # live, archived here because it's overwritten on every new
+                # generation and a "planned vs. actual" comparison for a past
+                # day needs it kept somewhere that survives the next run.
+                "targets": (
+                    dict(week_plan.targets[day]) if day in week_plan.targets else None
+                ),
             }
         )
 

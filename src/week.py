@@ -132,6 +132,22 @@ def today_in_week(
     return today.strftime("%A")
 
 
+def day_date(week_start_date: str, days: List[str], day: str) -> str:
+    """The ISO calendar date `day` fell on, given the week's real start date.
+
+    Pure index arithmetic: `days[0]` fell on `week_start_date`, and each
+    following entry in the rotation is one calendar day later. Requires a
+    real `week_start_date` (WeekPlan.week_start_date) — unlike
+    `today_in_week`, there is no `generated_at` fallback here, because
+    dating a *past* history entry needs the date it actually happened on,
+    not a plausible-looking anchor derived from when the plan was
+    generated. Callers with no `week_start_date` (a plan from before that
+    field existed) should record no date at all rather than guess one.
+    """
+    start = datetime.fromisoformat(week_start_date).date()
+    return (start + timedelta(days=days.index(day))).isoformat()
+
+
 def meal_types(config: dict) -> List[str]:
     return config["meal_types"]
 
