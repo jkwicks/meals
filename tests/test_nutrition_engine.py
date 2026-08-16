@@ -13,6 +13,7 @@ import sys
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -31,12 +32,16 @@ PROFILE = {
     "protein_multiplier": 1.8,
     "activity_level": "light_office",
 }
-AGE_55 = date(2026, 8, 16)
 
 
 class TestAgeFromBirthDate(unittest.TestCase):
     def test_age_on_reference_date(self):
-        self.assertEqual(ne.age_from_birth_date("1971-01-10", AGE_55), 55)
+        # Any date on/after the Jan-10 birthday in 2026 gives age 55; picked
+        # arbitrarily rather than reusing the real calendar date, since
+        # `on_date` is passed explicitly and the test asserts nothing about
+        # when it's run.
+        reference_date = date(2026, 1, 15)
+        self.assertEqual(ne.age_from_birth_date("1971-01-10", reference_date), 55)
 
     def test_birthday_not_yet_reached_this_year(self):
         """The day before a birthday must still be the younger age."""
@@ -157,10 +162,32 @@ class TestDeriveFatG(unittest.TestCase):
         self.assertEqual(ne.derive_fat_g(500, 150, 60), 0.0)
 
 
+class _FixedToday(date):
+    """`date` with `.today()` pinned.
+
+    `calculate_macro_targets` resolves age via `age_from_birth_date(birth_date)`
+    with no reference date, so it falls back to the real `date.today()`. Left
+    unpatched, every expected number below that assumes age 55 (BMR, TDEE,
+    ...) is only correct for real-world dates in the 55th year after the
+    profile's 1971-01-10 birth date — this class quietly starts failing the
+    day that year ends, with no code change to explain why. Subclassing
+    (rather than replacing `date` outright) keeps every other use of `date` in
+    `nutrition_engine` — the `date(...)` constructor, `_parse_iso_date` — working
+    unchanged.
+    """
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 8, 16)
+
+
 class TestMacroTargets(unittest.TestCase):
     """The headline case: 55 years old, 100 kg, aiming at 80 kg."""
 
     def setUp(self):
+        patcher = mock.patch("nutrition_engine.date", _FixedToday)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.result = ne.calculate_macro_targets(
             PROFILE, {"date": "2026-08-16", "weight_kg": 100.0}
         )

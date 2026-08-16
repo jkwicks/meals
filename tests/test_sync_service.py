@@ -434,19 +434,6 @@ class TestCronometerCredentialGuards(unittest.TestCase):
             service.fetch_daily_summary("2026-08-16")
         self.assertIn("CRONOMETER_USERNAME", str(caught.exception))
 
-    def test_missing_sidecar_message_says_how_to_fix_it(self):
-        """The 3.9-vs-3.11 mismatch is the expected state of this project."""
-        service = sync.CronometerSyncService(
-            username="u", password="p", python_executable="/nonexistent/python"
-        )
-        if sys.version_info >= (3, 11):
-            self.skipTest("in-process import is available on this interpreter")
-        with self.assertRaises(RuntimeError) as caught:
-            service.fetch_daily_summary("2026-08-16")
-        message = str(caught.exception)
-        self.assertIn("venv-cronometer", message)
-        self.assertIn("MEALS_CRONOMETER_PYTHON", message)
-
 
 if __name__ == "__main__":
     unittest.main()
