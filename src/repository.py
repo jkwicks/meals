@@ -49,8 +49,15 @@ DEFAULT_RECIPE_CATALOG_FILE = os.path.join(DATA_DIR, "recipes_master.json")
 DEFAULT_MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 DEFAULT_WHFOODS_FILE = os.path.join(DATA_DIR, "whfoods.json")
 DEFAULT_SHOPPING_LIST_FILE = os.path.join(DATA_DIR, "shopping_list.md")
+DEFAULT_BIOMETRICS_FILE = os.path.join(DATA_DIR, "biometrics.json")
 
 T = TypeVar("T")
+
+# The two lists biometrics.json holds, and the shape `load_biometrics` promises
+# its callers even when the file is absent or half-written. Both are keyed by
+# an ISO "YYYY-MM-DD" `date`, which is what makes a re-post for a day an update
+# rather than a duplicate row.
+BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals")
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,10 @@ class StoragePaths:
     recipe_catalog: str = DEFAULT_RECIPE_CATALOG_FILE
     models: str = DEFAULT_MODELS_FILE
     whfoods: str = DEFAULT_WHFOODS_FILE
+    # Measured body composition and logged macro actuals — see
+    # `PlanRepository.load_biometrics`. One file rather than two because the
+    # weigh-in and the day it belongs to are always read together.
+    biometrics: str = DEFAULT_BIOMETRICS_FILE
     # Not JSON state like the rest — an export the CLI's --save-shopping-list
     # writes for a human to read. It lives here anyway because the whole point
     # of this module is that no file path is spelled out anywhere else.
@@ -154,6 +165,60 @@ class PlanRepository(abc.ABC):
     async def save_history(self, history: List[dict]) -> None:
         """Replace the stored history with `history` (already trimmed by the
         caller to its max length)."""
+
+    @abc.abstractmethod
+    async def load_biometrics(self) -> dict:
+        """Measured body composition and logged macro actuals, as
+        `{"weigh_ins": [...], "daily_actuals": [...]}`, each list oldest first.
+
+        The measured counterpart to `config.json`'s `user_profile`: the profile
+        says what the body is aiming at, this says where it actually is, and an
+        adaptive target is the difference between them. Both lists are keyed by
+        an ISO `date` — `weigh_ins` records what the scale reported
+        (`weight_kg` plus optional `body_fat_pct`, `muscle_mass_kg`,
+        `water_pct`, `bmi`), `daily_actuals` what was really eaten
+        (`calories`, `protein_g`, `net_carbs_g`, `fat_g`).
+
+        A missing file is an empty result, not an error — the same cold-start
+        tolerance `load_history` extends, and for the same reason: no weigh-ins
+        yet is the normal state of a fresh install, not a failure. Both keys
+        are always present in the returned dict, so callers index them
+        directly.
+        """
+
+    @abc.abstractmethod
+    async def save_biometric_entry(self, entry: dict) -> None:
+        """Record one weigh-in, replacing any existing entry for its `date`.
+
+        Upsert rather than append because a smart scale is perfectly happy to
+        report twice in a morning, and two rows for one day would silently
+        double-count in any trend read over the series. `entry` must carry a
+        `date`; without one it could never be corrected or superseded, so it
+        is rejected rather than stored unaddressable.
+
+        Fields absent from `entry` are left as they were on an existing row,
+        so a hand-typed body-fat correction doesn't blank out the weight the
+        scale already recorded. A key present with `None` is still an
+        overwrite — explicit beats remembered.
+        """
+
+    @abc.abstractmethod
+    async def save_daily_actuals(self, entry: dict) -> None:
+        """Record what was actually eaten on a day, replacing any existing
+        entry for its `date`. Same upsert-by-date and same merge semantics as
+        `save_biometric_entry` — a day logged meal by meal arrives as several
+        calls, and each must refine the day rather than start a second one.
+        """
+
+    @abc.abstractmethod
+    async def get_latest_biometrics(self) -> Optional[dict]:
+        """The most recent weigh-in by `date`, or None if there are none yet.
+
+        Its own method rather than `load_biometrics()["weigh_ins"][-1]` at
+        every call site: "latest" is a question about dates, not list order,
+        and a backend that returns rows in insertion order — or a file someone
+        hand-edited — would make the index answer confidently wrong.
+        """
 
     @abc.abstractmethod
     async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
@@ -262,6 +327,7 @@ class LocalJSONRepository(PlanRepository):
         recipe_catalog_path: str = DEFAULT_RECIPE_CATALOG_FILE,
         models_path: str = DEFAULT_MODELS_FILE,
         whfoods_path: str = DEFAULT_WHFOODS_FILE,
+        biometrics_path: str = DEFAULT_BIOMETRICS_FILE,
     ) -> None:
         self.paths = StoragePaths(
             config=config_path,
@@ -270,6 +336,7 @@ class LocalJSONRepository(PlanRepository):
             recipe_catalog=recipe_catalog_path,
             models=models_path,
             whfoods=whfoods_path,
+            biometrics=biometrics_path,
         )
 
     # -- PlanRepository ----------------------------------------------------
@@ -292,6 +359,21 @@ class LocalJSONRepository(PlanRepository):
 
     async def save_history(self, history: List[dict]) -> None:
         await asyncio.to_thread(self._write_json, self.paths.history, history)
+
+    async def load_biometrics(self) -> dict:
+        return await asyncio.to_thread(self._read_biometrics)
+
+    async def save_biometric_entry(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_dated_entry, "weigh_ins", entry)
+
+    async def save_daily_actuals(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_dated_entry, "daily_actuals", entry)
+
+    async def get_latest_biometrics(self) -> Optional[dict]:
+        weigh_ins = (await self.load_biometrics())["weigh_ins"]
+        if not weigh_ins:
+            return None
+        return max(weigh_ins, key=lambda row: row.get("date") or "")
 
     async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
         return await asyncio.to_thread(
@@ -413,6 +495,43 @@ class LocalJSONRepository(PlanRepository):
         if updated is not None:
             self._write_json(self.paths.recipe_catalog, catalog)
         return updated
+
+    def _read_biometrics(self) -> dict:
+        """biometrics.json, normalised to the shape `load_biometrics` promises.
+
+        Every section is coerced to a list even when the file is missing, was
+        written before that section existed, or has a null where a list
+        belongs — callers index `["weigh_ins"]` unguarded, so this is the one
+        place that can be wrong about it.
+        """
+        stored = self._read_json(self.paths.biometrics) or {}
+        return {
+            section: list(stored.get(section) or []) for section in BIOMETRIC_SECTIONS
+        }
+
+    def _upsert_dated_entry(self, section: str, entry: dict) -> None:
+        """Merge `entry` into `section` on its `date`, then rewrite the file.
+
+        Read-modify-write in a single worker-thread call, like
+        `_toggle_favorite` — the read and the write must not be separated by an
+        `await`, or a concurrent save would be silently dropped by whichever
+        write landed second. The list is kept sorted by date so the file reads
+        chronologically to a human and to a diff; ISO dates sort lexically, so
+        no parsing is needed to do it.
+        """
+        date = entry.get("date")
+        if not date:
+            raise ValueError(f"A {section} entry needs a 'date': got {entry!r}")
+
+        biometrics = self._read_biometrics()
+        rows = biometrics[section]
+        existing = next((row for row in rows if row.get("date") == date), None)
+        if existing is not None:
+            existing.update(entry)
+        else:
+            rows.append(dict(entry))
+        rows.sort(key=lambda row: row.get("date") or "")
+        self._write_json(self.paths.biometrics, biometrics)
 
     def _delete_catalog_recipe(self, recipe_id: str) -> None:
         catalog = self._read_json(self.paths.recipe_catalog) or []

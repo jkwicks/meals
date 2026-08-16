@@ -445,6 +445,37 @@ class UISettings(BaseModel):
     title_tooltip_chars: int = 38
 
 
+class UserProfile(BaseModel):
+    """config.json's "user_profile" object: the person the week is planned for.
+
+    Distinct from `weekly_schedule`, which holds the macro targets *chosen*
+    for each day. This is the standing body-composition context those targets
+    are eventually derived from — age, height and activity level are what an
+    expenditure estimate needs, and `target_weight_kg`/`protein_multiplier`
+    are what turn "where I'm heading" into a protein floor. Nothing reads it
+    yet; it is the input side of the adaptive loop whose measured side is
+    `biometrics.json` (see `PlanRepository.load_biometrics`).
+
+    Every field is optional with a benign default so a config.json predating
+    this section still loads — the same tolerance every other section here
+    extends. Age is deliberately *not* stored: `birth_date` is the fact that
+    stays true, and a stored age silently rots.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # ISO YYYY-MM-DD, matching the date format biometrics.json keys on.
+    birth_date: Optional[str] = None
+    height_cm: Optional[float] = None
+    gender: Optional[str] = None
+    target_weight_kg: Optional[float] = None
+    # Grams of protein per kg of body weight. 1.8 sits in the usual
+    # recomposition range; it is a multiplier rather than a gram figure so it
+    # keeps meaning the same thing as the weight it multiplies changes.
+    protein_multiplier: float = 1.8
+    activity_level: str = "light_office"
+
+
 class DaySchedule(BaseModel):
     """One `weekly_schedule.<day>` entry: the day's whole-day macro target.
 
@@ -479,6 +510,7 @@ class AppConfig(BaseModel):
 
     week_start_day: str = "Monday"
     meal_types: List[str] = Field(default_factory=lambda: list(DEFAULT_MEAL_TYPES))
+    user_profile: UserProfile = Field(default_factory=UserProfile)
     weekly_schedule: Dict[str, DaySchedule]
     week_defaults: Dict[str, str] = Field(default_factory=dict)
     meal_styles: Dict[str, Dict[str, str]] = Field(default_factory=dict)
