@@ -306,6 +306,58 @@ types: dinner is generated before lunch so the one cross-type leftover
     Note it is strict LRU, not "unused in the last N": the latter looks
     equivalent but starves the tail of the list — with 5 breakfast styles and
     N=3 it cycles through the first 4 forever and never picks the 5th.
+
+    Two of the three choices it makes are **not** per-slot picks, and can't be:
+
+    - **Cuisines are laid out in contiguous blocks**, not one per night —
+      `planning_rules.cuisine_block_pattern` (4/3 by default) scaled to the
+      days actually cooked by `cuisine_block_sizes`, then filled by
+      `pick_cuisine_blocks`. Seven cuisines is seven half-used jars of paste
+      and a shopping list with no overlap anywhere in it; four Mexican nights
+      and three Cajun ones share a pantry. The first block is the same strict
+      LRU pick as before, so rotation *across* weeks is unchanged; later
+      blocks prefer a cuisine `config.cuisine_affinities` lists as
+      complementary to the one before (thai -> vietnamese share fish sauce,
+      lime, coriander), falling back to global LRU when that list is empty.
+      A slot-at-a-time LRU pick structurally cannot produce a block, which is
+      why this had to move out of the per-slot loop. Explicit cuisines are
+      left alone and seeded into the LRU *first*, so a hand-picked Wednesday
+      pushes the auto blocks away from itself rather than being overwritten.
+    - **A morning session's breakfast is pinned to a shake** before any
+      rotation runs: `morning_training_days()` (gym/cardio starting at or
+      before `MORNING_TRAINING_CUTOFF`, walks excluded) picks the days,
+      `week.pin_style()` applies `WORKOUT_BREAKFAST_STYLE`. A shake is the
+      only breakfast in `meal_styles` drinkable ten minutes before a session,
+      and the style rotation has no way to know that — left to it, a 06:30 gym
+      slot gets eggs and smoked salmon on toast about one week in five. An
+      *evening* session is deliberately not covered: it is already handled as
+      macros by `apply_training_adjustments` (expanded budget, pinned
+      post-workout meal, pre-workout digestion note), and pinning a *style*
+      is only warranted when the session lands before the meal can settle.
+      Both are pins, not overrides — a style or cuisine the user chose in the
+      drawer always survives, the same precedence a hand-written
+      `meal_overrides` entry gets over a computed one.
+
+    The prompt side of blocking lives in `generate_meal_type_week`, which is
+    the only call that can see the whole week: `build_cuisine_continuity_rule`
+    tells the model which days share a cuisine *on purpose* and to make those
+    nights differ by protein/vegetable/method instead, and it swaps
+    `WEEK_STYLE_RULE` for `WEEK_CUISINE_BLOCK_STYLE_RULE` — the standing rule
+    says consecutive days must differ in tradition, which is the exact
+    opposite of a 4/3 split and invites the model to "fix" the repetition by
+    substituting a cuisine. It emits nothing at all when no cuisine spans more
+    than one day, so a hand-picked week of seven cuisines still reads as
+    before. `DINNER_VARIETY_RULE` gained "never the same primary protein on
+    two consecutive nights" for the same reason: once four nights are Greek,
+    the week-wide "no protein more than twice" cap is satisfied by lamb, lamb,
+    chicken, chicken, which reads as the same meal twice.
+
+    `SHAKE_ROTATION_RULE` (whole-week, sent when more than one breakfast is a
+    shake) and `SHAKE_SLOT_DIRECTIVE` (per slot, so a single regenerated shake
+    gets it too) are the same split: keep the base identical, rotate the
+    secondary components, and spread the pools evenly rather than demanding
+    every ingredient be unique — config lists three fruits and three seeds, and
+    a rule that can't be satisfied is one the model drops entirely.
   - Config is threaded into Pydantic validation via
     `context={"config": config, "day_budget": remaining}` passed to
     `instructor`'s `client.chat.completions.create(...)` — this is how the
@@ -596,6 +648,21 @@ free-tier churn, latency variance vs. the client timeout). They live in the
 names before combining them. Every normalisation rule and the bad line it
 fixes are in `.claude/rules/shopping.md`, which loads automatically when
 working on `shopping.py`.
+
+Duplicate *staples* are attacked from both ends. `PANTRY_CONSOLIDATION_RULE`
+(in `build_generation_rules`, so both generation axes send it) asks the model
+for one variant per staple — one cottage cheese, one mustard, one oil — and
+says explicitly that this is not the food-variety rule two lines above it,
+because the two pull in opposite directions unless the prompt names the
+difference. `shopping.CANONICAL_INGREDIENTS` then catches what the model
+produces anyway: "Sardines (canned)", "sardines in water (tinned)" and
+"tinned sardines" are one purchase, and only the first two normalise to the
+same key on their own. It is deliberately narrow — an entry there *asserts*
+two names are the same thing, which is exactly the merge `STATE_QUALIFIERS`
+exists to prevent when they aren't, so a canonical name carrying a state only
+claims names whose own state is absent or equivalent ("frozen sardines" stays
+its own line) and exclusion lists keep "mustard seeds" out of mustard and "oat
+milk" out of oats.
 
 ### Using up what's already in the house
 

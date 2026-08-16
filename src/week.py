@@ -17,7 +17,7 @@ generated, so the UI can preview exactly what it is about to ask for.
 """
 
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -220,6 +220,35 @@ def autofill_leftovers(spec: WeekSpec, meal_type: str, source_meal_type: str) ->
             updated.append(slot)
             continue
         updated.append(slot.model_copy(update={"mode": MODE_LEFTOVER, "source": candidate}))
+    return spec.model_copy(update={"slots": updated})
+
+
+def pin_style(spec: WeekSpec, meal_type: str, style: str, days: Iterable[str]) -> WeekSpec:
+    """A copy of `spec` with `meal_type`'s cook slots on `days` set to `style`.
+
+    Only slots still on `auto` (no style chosen) are touched. A style the user
+    picked in the drawer is a decision, and a schedule-driven pin must not
+    silently overwrite it — the same precedence `hydrate_dynamic_targets`
+    gives a hand-written `meal_overrides` entry over a computed one. Leftover
+    and skipped slots are skipped for the reason `resolve_auto_choices` skips
+    them too: nothing is cooked there, so there is no style to pick.
+
+    The spec edit lives here with the other spec edits; the rule about *which*
+    days qualify is config interpretation and lives in
+    `planner.morning_training_days`.
+    """
+    targets = set(days)
+    updated = [
+        slot.model_copy(update={"style": style})
+        if (
+            slot.meal_type == meal_type
+            and slot.mode == MODE_COOK
+            and not slot.style
+            and slot.day in targets
+        )
+        else slot
+        for slot in spec.slots
+    ]
     return spec.model_copy(update={"slots": updated})
 
 
