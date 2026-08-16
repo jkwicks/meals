@@ -136,13 +136,15 @@ async def planner_page() -> None:
 
     # Build order matters only where one module's factory needs another's
     # return value: generation before cards (a card's regenerate icon calls
-    # into it), everything before the refresh-topic registration at the
-    # bottom (every topic there names a section some `build_*` returned).
+    # into it), cards before today (a Today card's click opens cards' own
+    # recipe detail dialog), everything before the refresh-topic
+    # registration at the bottom (every topic there names a section some
+    # `build_*` returned).
     generation = build_generation(ctx)
     cards = build_cards(ctx, generation)
     telemetry = build_telemetry(ctx)
     shopping = build_shopping(ctx)
-    today = build_today(ctx)
+    today = build_today(ctx, cards)
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
         with ui.element("div").classes("flex flex-row items-baseline gap-3"):

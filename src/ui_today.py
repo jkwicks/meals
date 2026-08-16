@@ -1,11 +1,13 @@
 """The "Today" tab's initial content: a read-only preview of today's meals.
 
-Deliberately minimal — no favorite/swap/regenerate buttons, no click-to-open
-detail dialog. Not built on `ui_cards.meal_card`: that function's buttons all
-need `ui_catalog`/`ui_generation` wired in, none of which a read-only stub
-needs, so a smaller card of its own here is a real decoupling rather than a
-"fix later" shortcut. A later pass can add interaction once there's a reason
-to share the two.
+Deliberately minimal — no favorite/swap/regenerate buttons yet. Clicking a
+card does open the same recipe detail dialog the Week tab's cards use
+(`cards.open_detail`, from `ui_cards.CardHandles`) — one dialog reused by
+both tabs, same as it's already reused across all 28 Week-tab cards, rather
+than a second copy living here. Not built on `ui_cards.meal_card` itself:
+that function's action-row buttons all need `ui_catalog`/`ui_generation`
+wired in, none of which a card with no buttons needs, so a smaller card of
+its own here is a real decoupling rather than a "fix later" shortcut.
 """
 
 from dataclasses import dataclass
@@ -13,6 +15,7 @@ from typing import Callable, Optional
 
 from nicegui import ui
 
+from ui_cards import CardHandles
 from ui_context import UIContext
 from ui_state import SlotView
 from ui_theme import (
@@ -31,18 +34,23 @@ class TodayHandles:
     today_view: Callable
 
 
-def build_today(ctx: UIContext) -> TodayHandles:
+def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
     state = ctx.state
 
     def today_card(view: Optional[SlotView], meal_type: str) -> None:
         if view is None:
             view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
         look = STATUS_STYLES[view.status]
+        clickable = "cursor-pointer" if view.recipe else ""
 
-        with ui.element("div").classes(
+        card = ui.element("div").classes(
             f"meal-card card-{view.status} rounded p-3 flex flex-col gap-1.5 min-w-0 "
-            f"w-56 {look['card']}"
-        ):
+            f"w-56 {look['card']} {clickable}"
+        )
+        if view.recipe:
+            card.on("click", lambda v=view: cards.open_detail(v))
+
+        with card:
             with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
                 ui.label(meal_type.upper()).classes(
                     "text-[10px] font-semibold tracking-widest text-slate-500"

@@ -37,6 +37,7 @@ class CardHandles:
     recipe_detail: Callable
     swap_matches: Callable
     swap_dialog_body: Callable
+    open_detail: Callable
 
 
 def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
@@ -568,4 +569,5 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         recipe_detail=recipe_detail,
         swap_matches=swap_matches,
         swap_dialog_body=swap_dialog_body,
+        open_detail=open_detail,
     )
