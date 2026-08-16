@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from nutrition_engine import calculate_macro_targets
 from repository import (
     DATA_DIR,
     PROJECT_ROOT,
@@ -407,6 +408,14 @@ class PlanningRules(BaseModel):
     # steak).
     portion_trim_limits: Tuple[float, float] = (0.6, 1.6)
     portion_trim_deadband: float = 0.03
+    # Smallest protein figure worth briefing a cooked meal at. A day's protein
+    # is locked to the target weight (see `hydrate_dynamic_targets`), and a
+    # weight-only split hands the 0.10-weighted snack ~14 g of it — a number
+    # that produces a snack with no protein source in it at all. Muscle protein
+    # synthesis is dose-dependent per *meal* rather than per day, so the floor
+    # is what turns "144 g/day" into four meals that each actually carry
+    # protein. Applied by `split_targets`, and only when the day can afford it.
+    min_meal_protein_g: float = 35.0
 
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
@@ -452,9 +461,12 @@ class UserProfile(BaseModel):
     for each day. This is the standing body-composition context those targets
     are eventually derived from — age, height and activity level are what an
     expenditure estimate needs, and `target_weight_kg`/`protein_multiplier`
-    are what turn "where I'm heading" into a protein floor. Nothing reads it
-    yet; it is the input side of the adaptive loop whose measured side is
-    `biometrics.json` (see `PlanRepository.load_biometrics`).
+    are what turn "where I'm heading" into a protein floor. It is the input
+    side of the adaptive loop whose measured side is `biometrics.json` (see
+    `PlanRepository.load_biometrics`), and `hydrate_dynamic_targets` is what
+    joins the two: given this plus the latest weigh-in, it *replaces* every
+    day's chosen calories and protein with computed ones. Leaving it unfilled
+    is what keeps a week planning off `weekly_schedule` alone.
 
     Every field is optional with a benign default so a config.json predating
     this section still loads — the same tolerance every other section here
@@ -567,11 +579,17 @@ def planning_rule(config: Optional[dict], key: str):
     preview before one's been chosen) — that still resolves to
     `DEFAULT_PLANNING_RULES`. Any config that *has* been loaded went through
     `load_app_config`, so `planning_rules` is guaranteed to carry every key
-    with a real value; no per-key fallback is needed once it exists.
+    with a real value.
+
+    A key missing from a present `planning_rules` also falls back rather than
+    raising, which is what lets a rule added here reach a config dict some
+    test or caller hand-built before it existed — `load_app_config` fills
+    defaults in, but nothing forces a dict through it.
     """
-    if config is None:
+    rules = DEFAULT_PLANNING_RULES if config is None else config["planning_rules"]
+    if key not in rules:
         return DEFAULT_PLANNING_RULES[key]
-    return config["planning_rules"][key]
+    return rules[key]
 
 # Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
 # glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
@@ -611,6 +629,37 @@ def _clock_minutes(value: str) -> int:
         return 0
 
 
+def training_pin_budget(day_targets: dict, meal_type: str, weights: dict) -> dict:
+    """The fixed budget `apply_training_adjustments` pins on a post-workout meal.
+
+    Half the day's carbs — the glycogen the session just spent — plus the
+    meal's usual weighted share of protein and fat. `split_targets` then makes
+    the day's other meals absorb whatever is left, the same as for any pin
+    written by hand into `meal_overrides`.
+
+    Its own function because `hydrate_dynamic_targets` has to compute it a
+    second time: the pin is a fixed number derived from the day's targets, and
+    hydration replaces those targets underneath it. A pin left at its
+    pre-hydration value is a meal claiming a share of a day that no longer
+    exists — on a 144 g protein day it claimed 49 g worked out from the file's
+    164, which was enough to push the day's snack below the protein floor and
+    make `apply_protein_floor` give up on the whole day.
+    """
+    day_fat_g = derive_fat_g(
+        day_targets["calories"], day_targets["protein_g"], day_targets["net_carbs_g"]
+    )
+    weight = weights.get(meal_type, 0.25) or 0.25
+    pinned_protein = round(day_targets["protein_g"] * weight, 1)
+    pinned_carbs = round(day_targets["net_carbs_g"] * 0.5, 1)
+    pinned_fat = round(day_fat_g * weight, 1)
+    return {
+        "calories": round(pinned_protein * 4 + pinned_carbs * 4 + pinned_fat * 9, 1),
+        "protein_g": pinned_protein,
+        "net_carbs_g": pinned_carbs,
+        "fat_g": pinned_fat,
+    }
+
+
 def apply_training_adjustments(config: dict) -> dict:
     """Fold `config["training_schedule"]` into targets before they're calculated.
 
@@ -640,6 +689,16 @@ def apply_training_adjustments(config: dict) -> dict:
     so every downstream reader — `week_targets`, `meal_overrides_for`,
     `build_slot_brief` — sees the same already-adjusted config rather than
     each needing its own patch.
+
+    Step A's per-day arithmetic is also recorded verbatim under
+    `training_uplift`, because `hydrate_dynamic_targets` runs *after* this in
+    both entry points and overwrites the very numbers A added to. Recording the
+    delta is what lets it put the burn back without re-deriving the split from
+    `TRAINING_INTENSITY_SPLIT` a second time, which would leave two copies of
+    these rules to keep in agreement. All three keys are recorded even though
+    hydration replays only `calories` — the record is what A *did*, and which
+    parts of it survive a locked protein target is that function's decision to
+    document, not this one's to pre-empt.
     """
     sessions = [
         session
@@ -651,6 +710,8 @@ def apply_training_adjustments(config: dict) -> dict:
 
     schedule = {day: dict(targets) for day, targets in config["weekly_schedule"].items()}
     notes: Dict[str, Dict[str, str]] = {}
+    uplift: Dict[str, Dict[str, float]] = {}
+    pins: Dict[str, List[str]] = {}
     weights = config["meal_weights"]
     day_meals = [meal_type for meal_type in meal_types(config) if meal_type in MEAL_TIME_OF_DAY]
 
@@ -668,14 +729,17 @@ def apply_training_adjustments(config: dict) -> dict:
             continue
 
         burn = float(session["estimated_burn_kcal"])
+        added = {
+            "calories": burn,
+            "protein_g": burn * split["protein_share"] / 4,
+            "net_carbs_g": burn * split["carb_share"] / 4,
+        }
         day_targets = schedule[day]
-        day_targets["calories"] = day_targets.get("calories", 0) + burn
-        day_targets["protein_g"] = (
-            day_targets.get("protein_g", 0) + burn * split["protein_share"] / 4
-        )
-        day_targets["net_carbs_g"] = (
-            day_targets.get("net_carbs_g", 0) + burn * split["carb_share"] / 4
-        )
+        day_uplift = uplift.setdefault(day, {})
+        for key, amount in added.items():
+            day_targets[key] = day_targets.get(key, 0) + amount
+            # Accumulated, not assigned: two sessions on one day each expand it.
+            day_uplift[key] = day_uplift.get(key, 0.0) + amount
 
         if not day_meals:
             continue
@@ -687,20 +751,13 @@ def apply_training_adjustments(config: dict) -> dict:
         if _clock_minutes(MEAL_TIME_OF_DAY[nearest]) >= workout_minutes:
             overrides = dict(day_targets.get("meal_overrides") or {})
             if nearest not in overrides:
-                day_fat_g = derive_fat_g(
-                    day_targets["calories"], day_targets["protein_g"], day_targets["net_carbs_g"]
-                )
-                weight = weights.get(nearest, 0.25) or 0.25
-                pinned_protein = round(day_targets["protein_g"] * weight, 1)
-                pinned_carbs = round(day_targets["net_carbs_g"] * 0.5, 1)
-                pinned_fat = round(day_fat_g * weight, 1)
-                overrides[nearest] = {
-                    "calories": round(pinned_protein * 4 + pinned_carbs * 4 + pinned_fat * 9, 1),
-                    "protein_g": pinned_protein,
-                    "net_carbs_g": pinned_carbs,
-                    "fat_g": pinned_fat,
-                }
+                overrides[nearest] = training_pin_budget(day_targets, nearest, weights)
                 day_targets["meal_overrides"] = overrides
+                # Recorded so `hydrate_dynamic_targets` can tell this pin (a
+                # number this function derived from targets it is about to
+                # replace) from one written by hand into config.json, which is
+                # a deliberate fixed budget and must survive untouched.
+                pins.setdefault(day, []).append(nearest)
                 notes.setdefault(day, {})[nearest] = (
                     "[POST-WORKOUT MEAL: high glycogen replenishment required — "
                     f"carb-forward to refuel after {humanize(session.get('type'))}]"
@@ -721,6 +778,10 @@ def apply_training_adjustments(config: dict) -> dict:
     adjusted = dict(config, weekly_schedule=schedule)
     if notes:
         adjusted["training_notes"] = notes
+    if uplift:
+        adjusted["training_uplift"] = uplift
+    if pins:
+        adjusted["training_pins"] = pins
     return adjusted
 
 
@@ -819,6 +880,150 @@ def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
 
 def week_targets(spec: WeekSpec, config: dict) -> Dict[str, dict]:
     return {day: calculate_daily_targets(day, config) for day in spec.days}
+
+
+def hydrate_dynamic_targets(
+    config: dict, latest_biometrics: Optional[dict], note_callback=None
+) -> dict:
+    """Recompute every `weekly_schedule` day from the body, not the file.
+
+    `config.json`'s per-day calories and protein are numbers somebody typed
+    once. `nutrition_engine.calculate_macro_targets` derives them instead from
+    `user_profile` plus the most recent weigh-in: BMR (Katch-McArdle when the
+    scale reported body fat, Mifflin-St Jeor otherwise), TDEE from the activity
+    factor, and a deficit that slides with the remaining gap to
+    `target_weight_kg`. Returns a new config — this module never mutates the
+    one it's handed — with each day's `calories`, `protein_g` and `fat_g`
+    replaced and everything else about the day left alone.
+
+    Three things it deliberately preserves rather than computes:
+
+    - **Each day's `net_carbs_g`.** It is passed *into* the engine rather than
+      overwritten, so carb cycling written into `weekly_schedule` survives and
+      only the energy and protein become dynamic. Fat then derives from
+      whatever's left, which is what makes a low-carb day a high-fat one with
+      no keto flag — the same rule `calculate_daily_targets` already applies.
+    - **`meal_overrides`.** A pinned meal is a fixed budget by definition,
+      including the one `apply_training_adjustments` pins post-workout.
+    - **A training day's expanded energy**, replayed from `training_uplift`.
+      `apply_training_adjustments` runs first in both entry points, so without
+      this a workout's burn would be silently overwritten by the un-expanded
+      dynamic figure.
+
+    Only the *calorie* uplift is replayed, and the other two keys are skipped
+    for different reasons:
+
+    - `net_carbs_g` is read out of `weekly_schedule` and passed straight into
+      the engine, which returns it verbatim — so the day's carb figure already
+      carries the workout's carb share. Replaying it would double it.
+    - `protein_g` is not replayed because protein is *locked*, below. A
+      workout's energy buys back carbs (its share is already in the figure
+      above) and fat, not protein.
+
+    **Protein is locked to the target weight, not today's and not the day's
+    activity** — 80 kg x 1.8 is 144 g whether the scale says 100 or 84 and
+    whether or not there's a session that evening, because the point of the
+    protein is to hold the lean mass being carried toward that target. It is
+    therefore the same number every day of the week, where the file had it
+    drifting between 110 and 120 by day and a training day pushed it to 188.
+
+    Falls back to the file's numbers, with a warning, when the engine can't
+    compute — no weigh-in and no `current_weight_kg`, or a Mifflin profile
+    with no `birth_date`. That is not the "substitute a plausible body" the
+    engine refuses to do: `weekly_schedule` holds real targets somebody chose,
+    so falling back plans a deliberately-configured week rather than a
+    fabricated one. `biometrics.json` is empty until the first Garmin sync
+    lands, so this is the normal path on a fresh checkout, not an edge case.
+    """
+    profile = config.get("user_profile") or {}
+    if not any(profile.get(key) for key in ("target_weight_kg", "height_cm", "birth_date")):
+        # An all-defaults UserProfile (every field None) means the section
+        # isn't filled in, not that it's absent — nothing to hydrate from.
+        return config
+
+    uplift = config.get("training_uplift") or {}
+    pins = config.get("training_pins") or {}
+    weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
+    schedule: Dict[str, dict] = {}
+    basis = None
+    try:
+        for day, day_targets in config["weekly_schedule"].items():
+            dynamic = calculate_macro_targets(
+                profile, latest_biometrics, net_carbs_g=day_targets.get("net_carbs_g")
+            )
+            basis = dynamic["basis"]
+            calories = dynamic["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
+            protein_g = dynamic["protein_g"]
+            net_carbs_g = dynamic["net_carbs_g"]
+            hydrated = dict(
+                day_targets,
+                calories=round(calories),
+                protein_g=round(protein_g, 1),
+                net_carbs_g=round(net_carbs_g, 1),
+                fat_g=round(derive_fat_g(calories, protein_g, net_carbs_g), 1),
+            )
+            # The post-workout pin was worked out from the numbers just
+            # replaced, so it has to be worked out again from the new ones —
+            # otherwise it claims a share of a day that no longer exists and
+            # drags the day's remaining meals below the protein floor. Only
+            # pins this run's `apply_training_adjustments` wrote are touched;
+            # a hand-written `meal_overrides` entry is a deliberate fixed
+            # budget and is left exactly as config.json states it.
+            for meal_type in pins.get(day) or []:
+                overrides = dict(hydrated.get("meal_overrides") or {})
+                overrides[meal_type] = training_pin_budget(hydrated, meal_type, weights)
+                hydrated["meal_overrides"] = overrides
+            schedule[day] = hydrated
+    except (ValueError, TypeError) as exc:
+        # One message, not one per day: every day fails identically here,
+        # because they differ only in the carb figure the failure never
+        # reaches. Same reasoning as checking the API key up front.
+        message = short_error(exc)
+        logger.warning("dynamic targets unavailable, using config.json targets — %s", message)
+        if note_callback:
+            note_callback(f"Using config.json targets — {message}")
+        return config
+
+    logger.info(
+        "dynamic targets: %s kcal/day base, %.0fg protein (BMR %.0f by %s, TDEE %.0f, "
+        "deficit %.0f, weight %.1fkg -> %.1fkg)",
+        sorted({entry["calories"] for entry in schedule.values()}),
+        schedule[next(iter(schedule))]["protein_g"],
+        basis["bmr"], basis["bmr_method"], basis["tdee"], basis["deficit_kcal"],
+        basis["current_weight_kg"], basis["target_weight_kg"],
+    )
+    if note_callback:
+        note_callback(
+            f"Targets from biometrics: TDEE {basis['tdee']:.0f} kcal - "
+            f"{basis['deficit_kcal']:.0f} deficit, protein locked at "
+            f"{schedule[next(iter(schedule))]['protein_g']:.0f}g "
+            f"({basis['target_weight_kg']:.0f}kg x {profile.get('protein_multiplier') or 1.8})"
+        )
+    # `dynamic_basis` is diagnostic only — nothing plans off it. It rides on
+    # the config so a log line or a future UI readout can say *why* the week
+    # is aiming where it is, which two runs a fortnight apart will disagree on.
+    return dict(config, weekly_schedule=schedule, dynamic_basis=basis)
+
+
+async def hydrate_config(
+    config: dict, repository: Optional[PlanRepository] = None, note_callback=None
+) -> dict:
+    """`hydrate_dynamic_targets` with the latest weigh-in fetched for it.
+
+    The async half is only the storage read, kept apart so the arithmetic
+    stays a pure function a test can call with a literal weigh-in dict.
+
+    Called at the top of each of the three generation entry points
+    (`generate_week_plan`, `regenerate_single_day`, `regenerate_single_meal`)
+    rather than once in the CLI, because the NiceGUI front end builds its
+    config in `PlannerState.planning_config()` — a synchronous method that
+    cannot await storage. Hydrating where the repository is already in hand
+    means both front ends generate against the same numbers with no UI change,
+    and a regenerated meal aims at the same day target as the run that
+    produced its siblings.
+    """
+    latest = await (repository or LocalJSONRepository()).get_latest_biometrics()
+    return hydrate_dynamic_targets(config, latest, note_callback)
 
 
 def meal_overrides_for(day: str, config: dict) -> Dict[str, dict]:
@@ -1559,6 +1764,59 @@ def carried_macros(
     return sum_serving_macros(event for _, event in carried), descriptions
 
 
+def logged_intake_for(
+    day: str, biometrics: Optional[dict], now: Optional[datetime] = None
+) -> Optional[dict]:
+    """What Cronometer says was actually eaten on `day`, if `day` is today.
+
+    `biometrics.json`'s `daily_actuals` rows are the measured counterpart to a
+    plan's forecast — `{"date": "2026-08-16", "calories": 1120, "protein_g":
+    98, ...}`, written by `CronometerSyncService`. When one exists for today,
+    it beats the plan as a statement of what has been consumed: the plan says
+    what was *meant* to be eaten, and the log says what was.
+
+    Returns None — meaning "nothing measured, use the plan" — in every case
+    where it can't be sure:
+
+    - **`day` is not today.** A weekday name is all a `SlotSpec` carries, so
+      "Thursday" in a week being planned ahead is not the Thursday that was
+      logged. Regenerating a future meal against today's lunch would subtract
+      a meal from a day it was never eaten on.
+    - **No row for today's date**, or a row whose macros are all zero or
+      missing — a partial sync that wrote a dated shell must read as "no data",
+      not as "you have eaten nothing today", which would hand the model the
+      entire day's budget for one meal.
+
+    Absent keys resolve to 0 rather than dropping the row: a log with calories
+    and protein but no fat figure is still a real, useful measurement, and 0 is
+    the honest reading of "no fat recorded" inside a row that recorded
+    something else.
+    """
+    now = now or datetime.now()
+    if day != now.strftime("%A"):
+        return None
+
+    today = now.strftime("%Y-%m-%d")
+    rows = [
+        row
+        for row in ((biometrics or {}).get("daily_actuals") or [])
+        if isinstance(row, dict) and str(row.get("date") or "")[:10] == today
+    ]
+    if not rows:
+        return None
+
+    # Last wins: `_upsert_dated_entry` keeps one row per date, so a second is
+    # only possible in a hand-edited file, where the later line is the edit.
+    row = rows[-1]
+    logged = {}
+    for key in MACRO_KEYS:
+        value = row.get(key)
+        logged[key] = float(value) if isinstance(value, (int, float)) else 0.0
+    if not any(value > 0 for value in logged.values()):
+        return None
+    return logged
+
+
 # --------------------------------------------------------------------------
 # Generation
 # --------------------------------------------------------------------------
@@ -1809,6 +2067,11 @@ def split_targets(
     A meal eaten more than once today contributes its macros that many times,
     so it consumes (or takes a share of) the day proportionally while its own
     recipe budget stays a single serving.
+
+    A third pass then lifts every un-pinned *cooked* slot to
+    `planning_rules.min_meal_protein_g` where the day can afford it — see
+    `apply_protein_floor`. Weight alone gives the 0.10-weighted snack ~14 g of
+    a 144 g day, which is a snack with no protein source in it.
     """
     overrides = overrides or {}
     weights_config = config["meal_weights"]
@@ -1855,7 +2118,92 @@ def split_targets(
             for slot in flexible
         }
     )
-    return budgets
+    return apply_protein_floor(
+        budgets,
+        [slot for slot in flexible if slot.mode == MODE_COOK],
+        multiplicity,
+        planning_rule(config, "min_meal_protein_g"),
+    )
+
+
+def apply_protein_floor(
+    budgets: Dict[str, dict],
+    slots: List[SlotSpec],
+    multiplicity: Dict[str, int],
+    floor_g: float,
+) -> Dict[str, dict]:
+    """Redistribute protein between `slots` so none is briefed below `floor_g`.
+
+    The day's protein total is fixed (locked to the target weight by
+    `hydrate_dynamic_targets`), so this moves grams *between* meals rather than
+    creating any: slots under the floor are raised to it, and the shortfall is
+    taken from the slots above it in proportion to how far above they are. The
+    day's protein sums to exactly what it did before.
+
+    **Calories move with the protein, 4 kcal per gram.** Each slot's budget is
+    internally consistent (`calories ~= 4p + 4c + 9f`) because `split_targets`
+    scales all four macros by the same share, and a `DayRecipes` validator
+    later checks the response against that calorie figure. Shifting protein
+    alone would break the identity on both sides of the transfer; carrying its
+    energy with it leaves carbs and fat untouched, keeps every slot
+    reconcilable, and conserves the day's calories as exactly as its protein.
+
+    **Pinned slots are excluded by the caller**, along with leftovers: an
+    override is a fixed budget by definition, and a leftover's protein comes
+    from the recipe its source already cooked, not from a briefed budget.
+
+    Nothing happens at all when the floor is unreachable — when the slots above
+    it don't between them hold enough surplus to lift the ones below. Raising
+    some meals and not others would be an arbitrary choice about which meal
+    gets short-changed, and a day that genuinely can't carry `n x floor_g` of
+    protein is a target problem, not a split problem. Same policy as the
+    overspent-override branch above: log it, leave the numbers visible.
+    """
+    if floor_g <= 0 or len(slots) < 2:
+        # One slot already holds the whole flexible remainder — there is
+        # nowhere to move grams from, so a shortfall is the day's, not the
+        # split's.
+        return budgets
+
+    # Day-level grams, so a meal eaten twice is weighed by what it actually
+    # costs the day while its own briefed budget stays one serving.
+    times = {slot.id: multiplicity.get(slot.id, 1) for slot in slots}
+    deficit = {
+        slot.id: max(0.0, (floor_g - budgets[slot.id]["protein_g"]) * times[slot.id])
+        for slot in slots
+    }
+    surplus = {
+        slot.id: max(0.0, (budgets[slot.id]["protein_g"] - floor_g) * times[slot.id])
+        for slot in slots
+    }
+    needed = sum(deficit.values())
+    available = sum(surplus.values())
+    if needed <= 0:
+        return budgets
+    if available < needed:
+        logger.warning(
+            "protein floor of %.0fg per meal needs %.0fg more than %s can spare — "
+            "leaving the weighted split alone",
+            floor_g, needed - available, ", ".join(sorted(slot.meal_type for slot in slots)),
+        )
+        return budgets
+
+    adjusted = dict(budgets)
+    for slot in slots:
+        if deficit[slot.id] > 0:
+            moved = deficit[slot.id]
+        elif surplus[slot.id] > 0:
+            moved = -surplus[slot.id] * needed / available
+        else:
+            continue
+        per_serving = moved / times[slot.id]
+        budget = budgets[slot.id]
+        adjusted[slot.id] = dict(
+            budget,
+            protein_g=budget["protein_g"] + per_serving,
+            calories=budget["calories"] + per_serving * 4,
+        )
+    return adjusted
 
 
 def inventory_instruction(config: dict) -> str:
@@ -2623,6 +2971,12 @@ async def generate_week_plan(
     """
     if history is None:
         history = await (repository or LocalJSONRepository()).load_history()
+    # Before `week_targets` and before the first split: every downstream reader
+    # of a macro number — `week_targets`, `split_targets`, `meal_overrides_for`,
+    # `build_slot_brief`, and the `day_budget` the response validator checks
+    # against — reads this one config, so hydrating it here is what makes the
+    # whole run aim at the body rather than at the file.
+    config = await hydrate_config(config, repository, note_callback)
     nudge_foods = await select_nudge_foods(repository)
     if nudge_foods:
         config = dict(config, nudge_foods=nudge_foods)
@@ -2815,6 +3169,9 @@ async def regenerate_single_day(
     """
     if history is None:
         history = await (repository or LocalJSONRepository()).load_history()
+    # Same hydration the full run does, so a re-cooked day aims at the same
+    # target as the days around it rather than reverting to the file's.
+    config = await hydrate_config(config, repository, note_callback)
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -2917,14 +3274,27 @@ async def regenerate_single_meal(
     full-day generation produces every same-day cook together in one call),
     this also has to treat a sibling COOK slot on the same day as fixed — it
     already has a recipe in `week_plan` that isn't being touched.
+
+    **When the day being re-cooked is today and Cronometer has logged it, the
+    log replaces the plan for the meals already behind you.** Regenerating
+    tonight's dinner at 5pm is the one case where the app knows what was really
+    eaten rather than what was meant to be: `logged_intake_for` supplies the
+    measured total, and only the *later* slots keep their planned reservation
+    (ordered by `MEAL_TIME_OF_DAY`, the same table the training rules use).
+    The model is then briefed on the genuine remaining deficit — which is
+    usually not the planned one, because a 2200 kcal day with 1600 already
+    logged leaves a different dinner than the plan assumed.
     """
     day, _ = parse_slot_id(slot_id)
     slot = spec.by_id().get(slot_id)
     if slot is None or slot.mode != MODE_COOK:
         raise ValueError(f"{slot_label(slot_id)} isn't a cooked meal — nothing to regenerate.")
 
+    store = repository or LocalJSONRepository()
     if history is None:
-        history = await (repository or LocalJSONRepository()).load_history()
+        history = await store.load_history()
+    logged = logged_intake_for(day, await store.load_biometrics())
+    config = await hydrate_config(config, store, note_callback)
 
     targets = week_targets(spec, config)
     day_target = targets[day]
@@ -2948,8 +3318,34 @@ async def regenerate_single_meal(
             continue
         other.append((other_slot, event))
 
+    if logged is not None:
+        # The log already contains whatever was eaten earlier today, so those
+        # siblings' *planned* macros must not be subtracted a second time —
+        # double-counting breakfast would shrink dinner by a whole meal. Slots
+        # later in the day are still ahead of you and keep their reservation.
+        this_meal_at = _clock_minutes(MEAL_TIME_OF_DAY.get(slot.meal_type, "12:00"))
+        other = [
+            pair
+            for pair in other
+            if _clock_minutes(MEAL_TIME_OF_DAY.get(pair[0].meal_type, "12:00")) > this_meal_at
+        ]
+
     other_totals = sum_serving_macros(event for _, event in other)
     other_descriptions: List[str] = []
+    if logged is not None:
+        for key in MACRO_KEYS:
+            other_totals[key] += logged[key]
+        other_descriptions.append(
+            f"ALREADY EATEN TODAY (logged from Cronometer, not a recipe to "
+            f"reproduce): {logged['calories']:.0f} kcal, "
+            f"{logged['protein_g']:.0f}g protein, {logged['net_carbs_g']:.0f}g net carbs, "
+            f"{logged['fat_g']:.0f}g fat"
+        )
+        if note_callback:
+            note_callback(
+                f"{slot_label(slot_id)}: {logged['calories']:.0f} kcal already logged today — "
+                "briefing the model on the remaining deficit only"
+            )
     for other_slot, event in other:
         serving = event.recipe.per_serving_macros
         origin = (
