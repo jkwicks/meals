@@ -134,6 +134,31 @@ def _load_env() -> None:
         load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 
+def _from_env(supplied: Optional[str], variable: str) -> str:
+    """`supplied`, or the environment's value when nothing was supplied at all.
+
+    The distinction between `None` and `""` is the whole point, and the
+    obvious `supplied or os.environ.get(variable, "")` erases it: `""` is
+    falsy, so a caller explicitly passing *no credential* silently gets the
+    real one out of `.env` instead.
+
+    That is not a theoretical difference. It is what let
+    `test_missing_credentials_fail_before_any_call` — a test whose entire
+    purpose is to prove the guard fires before any network call — construct a
+    service with `username=""`, receive the developer's live Cronometer
+    credentials, sail past `_require_credentials`, and issue a genuine
+    authenticated request to cronometer.com on every run of the suite. It
+    surfaced as a `429` only once the account had been rate-limited enough to
+    start refusing; until then the test passed for the wrong reason.
+
+    Passing `None` (or omitting the argument) still means "read the
+    environment", which is what every real caller does.
+    """
+    if supplied is not None:
+        return supplied
+    return os.environ.get(variable, "")
+
+
 def _iso(target_date: str) -> str:
     """Validate an ISO `YYYY-MM-DD` string and hand it back.
 
@@ -217,8 +242,10 @@ class GarminSyncService:
         recovery_factor: float = EXERCISE_RECOVERY_FACTOR,
     ):
         _load_env()
-        self.email = email or os.environ.get("GARMIN_EMAIL", "")
-        self.password = password or os.environ.get("GARMIN_PASSWORD", "")
+        # `is None`, not `or` — see `_from_env`. An explicitly empty credential
+        # means "no credential", and must not be quietly refilled from .env.
+        self.email = _from_env(email, "GARMIN_EMAIL")
+        self.password = _from_env(password, "GARMIN_PASSWORD")
         self.token_dir = os.path.expanduser(token_dir)
         # Injected rather than read from the module constant at the point of
         # use, so the value that discounted a session is the one this service
@@ -434,8 +461,9 @@ class CronometerSyncService:
         password: Optional[str] = None,
     ):
         _load_env()
-        self.username = username or os.environ.get("CRONOMETER_USERNAME", "")
-        self.password = password or os.environ.get("CRONOMETER_PASSWORD", "")
+        # See `_from_env`, and `GarminSyncService.__init__` for the same pair.
+        self.username = _from_env(username, "CRONOMETER_USERNAME")
+        self.password = _from_env(password, "CRONOMETER_PASSWORD")
 
     def _require_credentials(self) -> None:
         if not self.username or not self.password:

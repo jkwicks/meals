@@ -10,7 +10,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 rm -f python_codebase.md project_context.md data_schemas.md
 
 # 2. Bundle all active Python source files into a single annotated Markdown document
-find src -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \; > python_codebase.md
+#
+# No -maxdepth: src/integrations/ is a real part of the app (the whole Garmin
+# and Cronometer sync), and a depth limit silently excluded 600+ lines of it
+# while CLAUDE.md went on describing the feature — leaving any assistant
+# reading this bundle told the sync exists and shown no code for it. -prune
+# keeps __pycache__ out now that the walk is recursive.
+find src -name "__pycache__" -prune -o -type f -name "*.py" ! -name ".*" \
+  -exec sh -c 'echo "=== File: {} ===" && cat "{}" && echo -e "\n"' \; > python_codebase.md
 
 # 3. Bundle architecture documentation, rules, and skills
 {
@@ -22,7 +29,7 @@ find src -maxdepth 1 -type f -name "*.py" ! -name ".*" -exec sh -c 'echo "=== Fi
 
 # 4. Generate structural schema previews for JSON configuration and state files (first 35 lines each)
 {
-  # config/ in full — it is six small hand-edited files and the whole point of
+  # config/ in full — they are small hand-edited files and the whole point of
   # the split is that each one is readable on its own, so a head -35 that cut
   # profile.json off mid-week would hide the thing worth bundling. The
   # generated files in data/ stay truncated: they are large and repetitive,

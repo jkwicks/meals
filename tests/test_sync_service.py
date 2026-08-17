@@ -16,9 +16,11 @@ test nothing.
 
 import contextlib
 import json
+import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
@@ -427,12 +429,63 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(row["body_fat_pct"], 27.5)
 
 
-class TestCronometerCredentialGuards(unittest.TestCase):
-    def test_missing_credentials_fail_before_any_call(self):
+class TestCredentialGuards(unittest.TestCase):
+    """An explicitly-empty credential must stay empty.
+
+    These tests all run with a *populated* environment, which is the condition
+    the original version of this file got wrong. `CronometerSyncService(
+    username="")` used to fall through `username or os.environ.get(...)` to
+    the developer's real `.env` credentials, sail past `_require_credentials`
+    and issue a genuine authenticated request to cronometer.com — so the one
+    test asserting "fails before any call" was the only test in the suite that
+    made a network call, and passed only on a machine with no `.env`.
+
+    Patching the environment to hold obviously-fake credentials is what makes
+    the assertion mean something: if the `or` ever comes back, these fail
+    loudly instead of silently going online.
+    """
+
+    def setUp(self):
+        self._patched = unittest.mock.patch.dict(
+            os.environ,
+            {
+                "CRONOMETER_USERNAME": "env-user@example.invalid",
+                "CRONOMETER_PASSWORD": "env-password",
+                "GARMIN_EMAIL": "env-user@example.invalid",
+                "GARMIN_PASSWORD": "env-password",
+            },
+        )
+        self._patched.start()
+        self.addCleanup(self._patched.stop)
+
+    def test_empty_cronometer_credentials_do_not_fall_back_to_the_environment(self):
         service = sync.CronometerSyncService(username="", password="")
+        self.assertEqual(service.username, "")
+        self.assertEqual(service.password, "")
+
         with self.assertRaises(RuntimeError) as caught:
             service.fetch_daily_summary("2026-08-16")
         self.assertIn("CRONOMETER_USERNAME", str(caught.exception))
+
+    def test_empty_garmin_credentials_do_not_fall_back_to_the_environment(self):
+        service = sync.GarminSyncService(email="", password="")
+        self.assertEqual(service.email, "")
+        self.assertEqual(service.password, "")
+
+    def test_omitted_credentials_still_read_the_environment(self):
+        """The other half of the guard: `None` still means "use .env"."""
+        cronometer = sync.CronometerSyncService()
+        self.assertEqual(cronometer.username, "env-user@example.invalid")
+        self.assertEqual(cronometer.password, "env-password")
+
+        garmin = sync.GarminSyncService()
+        self.assertEqual(garmin.email, "env-user@example.invalid")
+        self.assertEqual(garmin.password, "env-password")
+
+    def test_supplied_credentials_win_over_the_environment(self):
+        service = sync.CronometerSyncService(username="explicit", password="explicit-pw")
+        self.assertEqual(service.username, "explicit")
+        self.assertEqual(service.password, "explicit-pw")
 
 
 if __name__ == "__main__":

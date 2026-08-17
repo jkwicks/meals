@@ -119,5 +119,82 @@ class TestRealConfig(unittest.TestCase):
         self.assertEqual(config["dietary_rules"]["active_diet_styles"], [])
 
 
+class TestIngredientRulesReadTheirContext(unittest.TestCase):
+    """`Ingredient`'s two hard rules, and the four shapes of validation
+    context they have to survive.
+
+    Unlike `diet_styles` (soft guidance in the prompt), `allowed_nova_groups`
+    and `banned_ingredients` are enforced as schema validation — instructor
+    catches the raise and hands the model its own output back. Both read live
+    config out of `info.context`, and both must still load a saved favorite
+    validated with no config at all.
+
+    The `{"config": None}` row is the one worth having. The original guard
+    tested `"config" in info.context` and then subscripted it, so that shape
+    passed the check and raised `TypeError` from inside Pydantic — while
+    `reject_untrimmable_macro_miss` read the same context tolerantly. Two
+    conventions for one thing, one of which crashed.
+    """
+
+    RAW = {
+        "name": "Chicken breast", "quantity_g": 100, "nova_group": 1,
+        "calories": 165, "protein_g": 31, "net_carbs_g": 0, "fat_g": 3.6,
+    }
+    CONTEXTS = {
+        "no context at all": None,
+        "an empty context": {},
+        "an explicit None config": {"config": None},
+        "a config with no dietary_rules": {"config": {}},
+    }
+
+    def test_a_clean_ingredient_loads_under_every_context_shape(self):
+        for label, context in self.CONTEXTS.items():
+            with self.subTest(context=label):
+                self.assertIsNotNone(
+                    planner.Ingredient.model_validate(self.RAW, context=context)
+                )
+
+    def test_the_nova_default_still_applies_without_config(self):
+        """Tolerant about *finding* the rule, never about enforcing it —
+        group 4 is rejected whether or not a config was supplied."""
+        for label, context in self.CONTEXTS.items():
+            with self.subTest(context=label):
+                with self.assertRaises(Exception):
+                    planner.Ingredient.model_validate(
+                        dict(self.RAW, nova_group=4), context=context
+                    )
+
+    def test_live_config_overrides_the_default(self):
+        context = {"config": {"dietary_rules": {
+            "allowed_nova_groups": [1], "banned_ingredients": []}}}
+        self.assertIsNotNone(
+            planner.Ingredient.model_validate(self.RAW, context=context)
+        )
+        with self.assertRaises(Exception):
+            planner.Ingredient.model_validate(
+                dict(self.RAW, nova_group=2), context=context
+            )
+
+    def test_a_banned_substring_is_matched_inside_a_longer_name(self):
+        """The list holds "seed oils"; a model writes "refined seed oils
+        blend" far more often than it writes the bare term."""
+        context = {"config": {"dietary_rules": {
+            "allowed_nova_groups": [1, 2, 3], "banned_ingredients": ["seed oils"]}}}
+        with self.assertRaises(Exception) as caught:
+            planner.Ingredient.model_validate(
+                dict(self.RAW, name="Refined seed oils blend"), context=context
+            )
+        self.assertIn("seed oils", str(caught.exception))
+
+    def test_nothing_is_banned_when_no_config_says_so(self):
+        for label, context in self.CONTEXTS.items():
+            with self.subTest(context=label):
+                self.assertIsNotNone(
+                    planner.Ingredient.model_validate(
+                        dict(self.RAW, name="Refined seed oils blend"), context=context
+                    )
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

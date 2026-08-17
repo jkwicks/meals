@@ -343,5 +343,110 @@ class TestLoggedIntakeFor(unittest.TestCase):
         self.assertIsNone(planner.logged_intake_for("Sunday", {}, self.NOW))
 
 
+def biometrics_series(daily_kcal: float, kg_lost_over_window: float = 0.7) -> dict:
+    """14 days of weigh-ins and logs, losing `kg_lost_over_window` in total.
+
+    A linear decline rather than a realistic wobble: `calculate_adaptive_tdee`
+    fits a least-squares slope, and a clean line makes the expected figure
+    something a reader can check by hand — mean intake plus (kg/day x 7700).
+    """
+    days = [f"2026-08-{day:02d}" for day in range(3, 17)]
+    step = kg_lost_over_window / (len(days) - 1)
+    return {
+        "weigh_ins": [
+            {"date": day, "weight_kg": round(98.4 - step * i, 3)}
+            for i, day in enumerate(days)
+        ],
+        "daily_actuals": [
+            {"date": day, "calories": daily_kcal, "protein_g": 150,
+             "net_carbs_g": 120, "fat_g": 80}
+            for day in days
+        ],
+    }
+
+
+class TestAdaptiveTdeeReachesTheTargets(unittest.TestCase):
+    """The loop closing: measured intake and weight trend correcting TDEE.
+
+    Before this, `calculate_adaptive_tdee` was fully built and tested and
+    called by nothing — `daily_actuals` was written to disk by the Cronometer
+    sync, read once by `logged_intake_for` for a single regenerated meal, and
+    never influenced a target. The formula estimate was used even where a
+    direct measurement of this body was available.
+    """
+
+    def test_without_a_series_the_formula_still_wins(self):
+        """Every pre-existing caller omits `biometrics`, and must be unchanged."""
+        hydrated = planner.hydrate_dynamic_targets(config_with(), WEIGH_IN)
+        self.assertEqual(hydrated["dynamic_basis"]["tdee_source"], "formula")
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+
+    def test_a_believable_measurement_replaces_the_formula(self):
+        # ~2500 kcal/day eaten while losing 0.7 kg over 13 days is roughly
+        # 2500 + (0.0538 x 7700) = ~2915, within 25% of the formula's 2627.
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(), WEIGH_IN, None, biometrics_series(2500)
+        )
+        basis = hydrated["dynamic_basis"]
+        self.assertEqual(basis["tdee_source"], "adaptive")
+        self.assertGreater(basis["tdee"], basis["tdee_formula"])
+        self.assertNotEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+
+    def test_an_implausible_measurement_is_rejected_not_blended(self):
+        """Systematic under-logging is the common failure and it depresses the
+        estimate — 900 kcal/day "eaten" would otherwise cut the target."""
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(), WEIGH_IN, None, biometrics_series(600)
+        )
+        basis = hydrated["dynamic_basis"]
+        self.assertEqual(basis["tdee_source"], "formula_adaptive_rejected")
+        self.assertEqual(basis["tdee"], basis["tdee_formula"])
+        # Rejected means the week plans exactly as it would have with no data.
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+
+    def test_too_short_a_series_reads_as_no_measurement(self):
+        """Two weigh-ins a day apart x 7700 is noise amplification, not data."""
+        short = {
+            "weigh_ins": [
+                {"date": "2026-08-15", "weight_kg": 98.4},
+                {"date": "2026-08-16", "weight_kg": 98.1},
+            ],
+            "daily_actuals": [{"date": "2026-08-16", "calories": 2000}],
+        }
+        hydrated = planner.hydrate_dynamic_targets(config_with(), WEIGH_IN, None, short)
+        self.assertEqual(hydrated["dynamic_basis"]["tdee_source"], "formula")
+
+    def test_the_basis_reports_both_numbers(self):
+        """Diagnostic, not planning input: two runs a fortnight apart will
+        disagree, and `basis` is what says why."""
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(), WEIGH_IN, None, biometrics_series(2500)
+        )
+        basis = hydrated["dynamic_basis"]
+        self.assertIsNotNone(basis["tdee_adaptive"])
+        self.assertIsNotNone(basis["tdee_formula"])
+        self.assertEqual(basis["tdee"], basis["tdee_adaptive"])
+
+    def test_protein_stays_locked_whichever_tdee_wins(self):
+        """Energy is what a measurement buys back. Protein is tied to the
+        *target* weight and must not move with it."""
+        for label, series in [("adaptive", biometrics_series(2500)), ("none", None)]:
+            with self.subTest(source=label):
+                hydrated = planner.hydrate_dynamic_targets(
+                    config_with(), WEIGH_IN, None, series
+                )
+                for day in hydrated["weekly_schedule"].values():
+                    self.assertEqual(day["protein_g"], LOCKED_PROTEIN_G)
+
+
+class TestEmptyScheduleIsNotAFailure(unittest.TestCase):
+    def test_an_empty_weekly_schedule_returns_the_config_untouched(self):
+        """The loop never runs, so nothing raises into the fallback — but
+        `basis` stays None and there is no day to read a protein figure off,
+        which the summary log line used to dereference."""
+        config = config_with(weekly_schedule={})
+        self.assertIs(planner.hydrate_dynamic_targets(config, WEIGH_IN), config)
+
+
 if __name__ == "__main__":
     unittest.main()

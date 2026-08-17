@@ -22,7 +22,7 @@ WEEK_SELECTION_LABELS = {"current": "Current Week", "next": "Next Week"}
 
 # A slot's render status is its mode, except that a cook (or the cook a
 # leftover points at) whose day failed to generate has no recipe to show. That
-# is a fourth visual state, not an error: CLAUDE.md's "a failed day must not
+# is a fourth visual state, not an error: CLAUDE.md's "a failed meal must not
 # fail the week" means the rest of the grid still renders around it.
 STATUS_COOK = "cook"
 STATUS_LEFTOVER = "leftover"
