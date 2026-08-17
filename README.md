@@ -459,6 +459,7 @@ where it does.
 | `planning_rules.portion_trim_limits` | `engine.json` | Clamp on the post-generation portion rescale, e.g. `[0.6, 1.6]`. Also derives the threshold above which a response is rejected and retried |
 | `planning_rules.portion_trim_deadband` | `engine.json` | Trims smaller than this are skipped as noise |
 | `planning_rules.min_meal_protein_g` | `engine.json` | Floor each cooked meal is briefed at, by moving grams between meals rather than creating any. Skipped entirely when the day can't afford it |
+| `planning_rules.max_meal_share_multiple` | `engine.json` | How far past its weighted share a meal may be briefed when earlier meals came back under budget. Stops the last meal of the day absorbing the whole shortfall; the day lands visibly under target instead |
 | `planning_rules.cuisine_block_pattern` | `engine.json` | Contiguous blocks of days sharing one cuisine, as a ratio scaled to the days actually cooked. `[4, 3]` gives four nights of one cuisine and three of a complementary second; `[1,1,1,1,1,1,1]` restores a different cuisine every night |
 | `planning_rules.batch_target_servings` | `engine.json` | Servings the bulk-prep / long-cook toggles spread an anchor toward. A ceiling, not a promise |
 | `ui_settings.bar_scale_limit` | `engine.json` | How far past target a telemetry bar keeps growing before it stops |

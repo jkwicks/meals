@@ -150,7 +150,8 @@
       "Almond milk",
       "soy beans",
       "venison",
-      "grapes"
+      "grapes",
+      "cod"
     ]
   },
   "enable_sunday_prep": true,
@@ -232,6 +233,7 @@
       3
     ],
     "history_max_entries": 21,
+    "max_meal_share_multiple": 1.75,
     "min_meal_protein_g": 35.0,
     "portion_trim_deadband": 0.03,
     "portion_trim_limits": [

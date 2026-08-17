@@ -38,6 +38,7 @@ from planner import (  # noqa: E402
     Ingredient,
     MealTypeWeekRecipes,
     Recipe,
+    cap_to_weighted_share,
     fit_recipe_to_budget,
     planning_rule,
 )
@@ -301,6 +302,101 @@ class TestTheLayersAgree(unittest.TestCase):
                 payload, context=ctx(day_budget=budget(800), config=wide)
             )
         )
+
+
+class TestCapToWeightedShare(unittest.TestCase):
+    """The cascade's end effect, and the bound on it.
+
+    `generate_week_plan` subtracts each stage's *actual* output before
+    splitting the remainder across the meal types still pending, so by the
+    final stage one slot inherits every earlier meal's accumulated miss.
+    Calories mostly self-correct (layer 2 lands each recipe on its budget);
+    protein does not, because a single scale factor cannot change a macro
+    ratio. Unbounded, that briefs the 0.10-weighted snack for three meals'
+    protein shortfall — and nothing downstream would reject it, since
+    `reject_untrimmable_macro_miss` only ever checks calories.
+    """
+
+    APRIORI = {"calories": 280.0, "protein_g": 35.0, "net_carbs_g": 18.0, "fat_g": 9.6}
+    MULTIPLE = DEFAULT_PLANNING_RULES["max_meal_share_multiple"]
+
+    def config(self, **rules):
+        return {"planning_rules": dict(DEFAULT_PLANNING_RULES, **rules)}
+
+    def test_a_budget_within_its_share_is_untouched(self):
+        for calories in (100.0, 280.0, 280.0 * self.MULTIPLE):
+            with self.subTest(calories=calories):
+                budget = dict(self.APRIORI, calories=calories)
+                out, capped = cap_to_weighted_share(budget, self.APRIORI, self.config())
+                self.assertFalse(capped)
+                self.assertIs(out, budget)
+
+    def test_a_runaway_budget_is_pulled_back_to_the_ceiling(self):
+        out, capped = cap_to_weighted_share(
+            dict(self.APRIORI, calories=1200.0), self.APRIORI, self.config()
+        )
+        self.assertTrue(capped)
+        self.assertAlmostEqual(out["calories"], 280.0 * self.MULTIPLE, places=6)
+
+    def test_the_cap_never_raises_a_budget(self):
+        """It is a ceiling, not a target — an under-share meal stays small."""
+        out, capped = cap_to_weighted_share(
+            dict(self.APRIORI, calories=90.0), self.APRIORI, self.config()
+        )
+        self.assertFalse(capped)
+        self.assertEqual(out["calories"], 90.0)
+
+    def test_every_macro_scales_by_the_same_factor(self):
+        """Each slot's budget has to stay internally consistent
+        (`calories ~= 4p + 4c + 9f`) for `reject_untrimmable_macro_miss` to
+        check a response against it — capping calories alone would break that
+        on both sides of the comparison."""
+        budget = {"calories": 900.0, "protein_g": 90.0, "net_carbs_g": 60.0}
+        budget["fat_g"] = (900.0 - 90.0 * 4 - 60.0 * 4) / 9
+        out, _ = cap_to_weighted_share(budget, self.APRIORI, self.config())
+        factor = out["calories"] / budget["calories"]
+        for key in ("protein_g", "net_carbs_g", "fat_g"):
+            with self.subTest(macro=key):
+                self.assertAlmostEqual(out[key], budget[key] * factor, places=6)
+        reconstructed = out["protein_g"] * 4 + out["net_carbs_g"] * 4 + out["fat_g"] * 9
+        self.assertAlmostEqual(out["calories"], reconstructed, places=4)
+
+    def test_the_multiple_is_configurable(self):
+        loose = cap_to_weighted_share(
+            dict(self.APRIORI, calories=800.0), self.APRIORI,
+            self.config(max_meal_share_multiple=5.0),
+        )
+        self.assertFalse(loose[1])
+
+        tight = cap_to_weighted_share(
+            dict(self.APRIORI, calories=400.0), self.APRIORI,
+            self.config(max_meal_share_multiple=1.1),
+        )
+        self.assertTrue(tight[1])
+        self.assertAlmostEqual(tight[0]["calories"], 280.0 * 1.1, places=6)
+
+    def test_degenerate_inputs_are_no_ops_rather_than_crashes(self):
+        """A slot with no a-priori entry (a leftover, a meal type absent from
+        the day) has nothing to measure against."""
+        budget = dict(self.APRIORI, calories=900.0)
+        for label, apriori in [
+            ("no entry", None),
+            ("empty entry", {}),
+            ("zero-calorie share", dict(self.APRIORI, calories=0.0)),
+        ]:
+            with self.subTest(apriori=label):
+                out, capped = cap_to_weighted_share(budget, apriori, self.config())
+                self.assertFalse(capped)
+                self.assertEqual(out["calories"], 900.0)
+
+    def test_the_surplus_is_dropped_not_moved(self):
+        """Deliberate: every other meal that day is already cooked, so there
+        is nowhere to put it. The day lands visibly under target — the same
+        answer an orphaned leftover and an unaffordable protein floor get."""
+        out, _ = cap_to_weighted_share(
+            dict(self.APRIORI, calories=1200.0), self.APRIORI, self.config()
+        )
+        self.assertLess(out["calories"], 1200.0)
 
 
 if __name__ == "__main__":
