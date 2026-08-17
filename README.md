@@ -61,10 +61,12 @@ instead of one list for the whole week.
 
 ## 2. Quick Start & Setup
 
-Requires Python 3.9+ and a free [OpenRouter](https://openrouter.ai) API key.
+Requires **Python 3.11+** and a free [OpenRouter](https://openrouter.ai) API
+key. Developed against Homebrew's 3.14 (`/opt/homebrew/bin/python3.14`); 3.11
+is the real floor because `cronometer-mcp` needs it.
 
 ```bash
-python3 -m venv venv
+/opt/homebrew/bin/python3.14 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -75,23 +77,28 @@ Copy your key into `.env` (a placeholder is already there):
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-Two dependency pins matter on Python 3.9 specifically and shouldn't be
-dropped: `eval_type_backport` (`instructor` uses `str | Path` union syntax
-that 3.9's `typing` can't evaluate natively) and `urllib3<2` (silences a
-harmless `NotOpenSSLWarning` — macOS system Python links against Apple's old
-LibreSSL, not real OpenSSL; HTTPS still works either way).
+Add `GARMIN_*` / `CRONOMETER_*` too if you want the biometric sync.
+
+This project used to run on the macOS system Python 3.9 and carried two pins
+to prop that up. Both are **gone**, noted here so they don't get helpfully
+restored: `eval_type_backport` (3.10+ evaluates `instructor`'s `str | Path`
+unions natively) and `urllib3<2` (Homebrew's Python links real OpenSSL 3.x,
+so the `NotOpenSSLWarning` it silenced cannot occur). See `CLAUDE.md`'s Setup
+section.
 
 ### Project layout
 
 Source, data and scripts are separated; run everything from the project root:
 
 ```
-src/        planner.py, ui_app.py, week.py, repository.py, shopping.py, export_menu.py
+src/        planner.py, week.py, repository.py, shopping.py, nutrition_engine.py,
+            export_menu.py, and ui_*.py (the NiceGUI front end, one module per concern)
+src/integrations/  sync_service.py — Garmin and Cronometer
 config/     everything you edit — profile, meals, week, schedule, engine, models, integrations
-reference/  whfoods.json (shipped corpora, read-only)
+reference/  whfoods.json (shipped corpus, sampled to nudge generation)
 data/       everything the app writes — week plans, history, biometrics, recipe catalog
 logs/       meals.log, nicegui.log
-scripts/    server.sh, release.sh, prepare.sh, upload.sh, claude-queue.sh
+scripts/    server.sh, release.sh, prepare.sh, upload.sh, claude-queue.sh, model-list.py
 ```
 
 The four file directories split by **who writes the file**, so "which file do
@@ -100,9 +107,12 @@ inside `repository.py`, not to the working directory, so `python
 src/planner.py` finds them from anywhere. The shell scripts `cd` to the root
 themselves for the same reason.
 
-`config/` is six files rather than one, merged back into a single object at
-load — see `CLAUDE.md` for the key-to-file map. A key in the wrong file or a
-typo'd key name fails at startup naming the file, not silently.
+`config/` is seven files rather than one. Five of them (profile, meals, week,
+schedule, engine) are merged back into a single object at load — see
+`CLAUDE.md` for the key-to-file map — and a key in the wrong file or a typo'd
+key name fails at startup naming the file, not silently. The other two
+(`models.json`, `integrations.json`) are loaded separately and are optional:
+every value in them has an in-code default.
 
 ### Start the server
 
@@ -419,39 +429,48 @@ other.
 
 ## Configuration reference
 
-Everything in Sections 3 and 5 that isn't drawer-editable lives in
-`config.json`:
+Everything in Sections 3 and 5 that isn't drawer-editable lives in `config/`.
+The "File" column is the one to open; see `CLAUDE.md` for why the split falls
+where it does.
 
-| Key | Meaning |
-|---|---|
-| `weekly_schedule.<day>` | Per-day `calories`, `protein_g`, `net_carbs_g`, `meal_overrides` |
-| `week_defaults` | Default mode (`cook`/`leftover`/`skip`) per meal type |
-| `training_schedule` | List of `{day, time, type, duration_minutes, estimated_burn_kcal}` |
-| `meal_styles` / `cuisines` / `cuisine_meal_types` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json`. A gym/cardio session starting before 11:00 pins that day's breakfast to `custom_shake` unless you picked a style yourself |
-| `cuisine_affinities` | `cuisine -> cuisines that share its pantry`, used to pick the week's second cuisine block. Optional — an unlisted cuisine just falls back to the least-recently-used pick |
-| `dietary_rules.allowed_nova_groups` | NOVA processing groups allowed (group 4 is always rejected) |
-| `dietary_rules.banned_ingredients` | Substring blocklist, enforced as schema validation |
-| `--model` / drawer select | Model id for this run only, overriding `config/models.json`'s `meal_generation_model`. Not a config-file key — it is never written to disk. Both unset is a hard error, never a silent fallback |
-| `week_start_day` | First day of the planning week |
-| `meal_weights` | How a day's calories split across un-pinned meals |
-| `serving_rules.servings_per_meal` | Household size |
-| `shopping.shop_days` | Days you shop — defines the shopping windows |
-| `inventory_to_clear` | Free-text priority list (see Section 3) |
-| `enable_sunday_prep` | Turns on the batch-prep session and its canvas column |
-| `max_prep_active_mins` | Hands-on ceiling for that session (passive oven/slow-cooker time is not counted) |
-| `planning_rules.history_max_entries` | How many past days of rotation history to retain |
-| `planning_rules.protein_lookback_entries` / `protein_avoid_window` | How far back to look for recent main proteins, and how many to name in the prompt |
-| `planning_rules.portion_trim_limits` | Clamp on the post-generation portion rescale, e.g. `[0.6, 1.6]`. Also derives the threshold above which a response is rejected and retried |
-| `planning_rules.portion_trim_deadband` | Trims smaller than this are skipped as noise |
-| `planning_rules.cuisine_block_pattern` | Contiguous blocks of days sharing one cuisine, as a ratio scaled to the days actually cooked. `[4, 3]` gives four nights of one cuisine and three of a complementary second; `[1,1,1,1,1,1,1]` restores a different cuisine every night |
-| `inventory_rules.fridge_safe_days` | Days a cooked batch keeps refrigerated before the storage note says "freeze the rest" |
-| `inventory_rules.perishable_day_gap` | Gap after which a perishable is flagged "buy fresh closer to the day" |
-| `ui_settings.bar_scale_limit` | How far past target a telemetry bar keeps growing before it stops |
-| `ui_settings.title_tooltip_chars` | Title length above which a card gets a full-name tooltip |
+| Key | File | Meaning |
+|---|---|---|
+| `user_profile` | `profile.json` | Height, birth date, target weight, activity level, protein multiplier — what the dynamic targets are computed from |
+| `weekly_schedule.<day>` | `profile.json` | Per-day `calories`, `protein_g`, `net_carbs_g`, `meal_overrides`. Calories and protein are recomputed from the body when a weigh-in exists; `net_carbs_g` and `meal_overrides` always survive |
+| `meal_weights` | `profile.json` | How a day's calories split across un-pinned meals |
+| `dietary_rules.allowed_nova_groups` | `profile.json` | NOVA processing groups allowed (group 4 is always rejected) |
+| `dietary_rules.banned_ingredients` | `profile.json` | Substring blocklist, enforced as schema validation |
+| `dietary_rules.active_diet_styles` | `profile.json` | Which `diet_styles` entries are in effect. Soft guidance via the prompt, not a hard constraint; an unknown name fails at startup |
+| `diet_styles` | `meals.json` | The catalog of named eating patterns to choose from — `label` plus `principles` |
+| `week_defaults` | `meals.json` | Default mode (`cook`/`leftover`/`skip`) per meal type |
+| `meal_styles` / `cuisines` / `cuisine_meal_types` | `meals.json` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json`. A gym/cardio session starting before 11:00 pins that day's breakfast to `custom_shake` unless you picked a style yourself |
+| `cuisine_affinities` | `meals.json` | `cuisine -> cuisines that share its pantry`, used to pick the week's second cuisine block. Optional — an unlisted cuisine just falls back to the least-recently-used pick |
+| `week_start_day` | `week.json` | First day of the planning week |
+| `serving_rules.servings_per_meal` | `week.json` | Household size |
+| `shopping.shop_days` | `week.json` | Days you shop — defines the shopping windows |
+| `inventory_to_clear` | `week.json` | Free-text priority list (see Section 3) |
+| `enable_sunday_prep` | `week.json` | Turns on the batch-prep session and its canvas column |
+| `max_prep_active_mins` | `week.json` | Hands-on ceiling for that session (passive oven/slow-cooker time is not counted) |
+| `inventory_rules.fridge_safe_days` | `week.json` | Days a cooked batch keeps refrigerated before the storage note says "freeze the rest" |
+| `inventory_rules.perishable_day_gap` | `week.json` | Gap after which a perishable is flagged "buy fresh closer to the day" |
+| `training_schedule` | `schedule.json` | List of `{day, time, type, duration_minutes, estimated_burn_kcal}` |
+| `planning_rules.history_max_entries` | `engine.json` | How many past days of rotation history to retain |
+| `planning_rules.protein_lookback_entries` / `protein_avoid_window` | `engine.json` | How far back to look for recent main proteins, and how many to name in the prompt |
+| `planning_rules.portion_trim_limits` | `engine.json` | Clamp on the post-generation portion rescale, e.g. `[0.6, 1.6]`. Also derives the threshold above which a response is rejected and retried |
+| `planning_rules.portion_trim_deadband` | `engine.json` | Trims smaller than this are skipped as noise |
+| `planning_rules.min_meal_protein_g` | `engine.json` | Floor each cooked meal is briefed at, by moving grams between meals rather than creating any. Skipped entirely when the day can't afford it |
+| `planning_rules.cuisine_block_pattern` | `engine.json` | Contiguous blocks of days sharing one cuisine, as a ratio scaled to the days actually cooked. `[4, 3]` gives four nights of one cuisine and three of a complementary second; `[1,1,1,1,1,1,1]` restores a different cuisine every night |
+| `planning_rules.batch_target_servings` | `engine.json` | Servings the bulk-prep / long-cook toggles spread an anchor toward. A ceiling, not a promise |
+| `ui_settings.bar_scale_limit` | `engine.json` | How far past target a telemetry bar keeps growing before it stops |
+| `ui_settings.title_tooltip_chars` | `engine.json` | Title length above which a card gets a full-name tooltip |
+| `meal_generation_model` / `recipe_parser_model` | `models.json` | The two model roles. Each must also appear in the same file's `models` table, which is where per-model quirks like `reasoning_required` live — a role naming a model the table doesn't describe fails at load |
+| `garmin.exercise_recovery_factor` | `integrations.json` | Fraction of an activity's gross calories counted as genuinely additional (0.50) |
+| `--model` / drawer select | — | Model id for this run only, overriding `meal_generation_model`. Not a config-file key — it is never written to disk, and unlike the file's roles it is deliberately free-form. Both unset is a hard error, never a silent fallback |
 
-`config.json` is validated against the `AppConfig` Pydantic model at startup
-with `extra="forbid"` — a typo'd or unknown key fails immediately with a clear
-message, before any API call, rather than being silently ignored.
+The five core files are validated against the `AppConfig` Pydantic model at
+startup with `extra="forbid"` — a typo'd or unknown key fails immediately with
+a clear message naming the file, before any API call, rather than being
+silently ignored.
 
 All ingredient quantities are grams, all energy is kcal — no cups, oz or lbs
 anywhere in the schema.

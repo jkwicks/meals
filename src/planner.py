@@ -20,7 +20,11 @@ from pydantic import (
     model_validator,
 )
 
-from nutrition_engine import calculate_macro_targets
+from nutrition_engine import (
+    ADAPTIVE_TDEE_TOLERANCE,
+    calculate_adaptive_tdee,
+    calculate_macro_targets,
+)
 from repository import (
     PROJECT_ROOT,
     LocalJSONRepository,
@@ -170,15 +174,16 @@ PORTION_DENSITY_GUARD = (
     "to hit a protein target: max 2-3 eggs per serving, max 150g yoghurt per "
     "serving, max 2 slices of bread/toast per serving, max 1 standard tin "
     "(90-125g) of sardines or mackerel per serving, max ~200g cooked "
-    "meat/poultry/fish per serving.\n"
+    "meat/poultry/fish per serving, max 45g (about 1.5 scoops) protein "
+    "powder per serving.\n"
     "- If a slot's protein target (e.g. >45g) is higher than one dense "
     "source can naturally provide at a standard portion, do NOT reach it by "
-    "multiplying a single ingredient (never output 6 eggs or 500g yoghurt to "
-    "hit a number). Instead COMBINE multiple dense protein sources at "
-    "realistic portions each, e.g. whey protein powder + Greek yoghurt + "
-    "hemp seeds, or chicken breast + edamame, or eggs + smoked salmon. The "
-    "target is reached by composing several complementary sources, not by "
-    "inflating one.\n"
+    "multiplying a single ingredient (never output 6 eggs, 500g yoghurt, or "
+    "100g+ protein powder to hit a number). Instead COMBINE multiple dense "
+    "protein sources at realistic portions each, e.g. whey protein powder + "
+    "Greek yoghurt + hemp seeds, or chicken breast + edamame, or eggs + "
+    "smoked salmon. The target is reached by composing several complementary "
+    "sources, not by inflating one.\n"
 )
 
 # Share of the day each meal type gets when splitting targets across slots.
@@ -324,9 +329,11 @@ SHAKE_ROTATION_RULE = (
 # regenerated shake gets it too, where the week-level rule above has no other
 # shakes in the call to talk about).
 SHAKE_SLOT_DIRECTIVE = (
-    "[Protein shake: keep the base exactly as the style states (protein "
-    "powder, creatine, water) and vary only the secondary components — pick a "
-    "fruit/seed/nut/spice combination no other shake this week uses.]"
+    "[Protein shake: keep the base exactly at its fixed gram amounts (protein "
+    "powder, creatine, water) — never scale the protein powder up to hit the "
+    "budget; add a Protein Boost ingredient instead. Vary only the secondary "
+    "components — pick a fruit/seed/nut/spice combination no other shake "
+    "this week uses.]"
 )
 
 # Standing rule for both axes. Variety (above) is about *foods*; this is about
@@ -792,8 +799,8 @@ class AppConfig(BaseModel):
     ui_settings: UISettings = Field(default_factory=UISettings)
     # config/schedule.json's location half: where each day is spent, what that
     # implies for a meal, and the region the week is planned in. Declared here
-    # so the file validates, but nothing reads them yet — see CLAUDE.md's
-    # "Integrations" note on declared vs. observed. Typed loosely on purpose:
+    # so the file validates, but nothing reads them yet — see the end of
+    # CLAUDE.md's "config/ is seven files". Typed loosely on purpose:
     # a schema for data no code consumes would be a guess, and `extra="forbid"`
     # means the alternative is a config file the app refuses to load.
     base_schedule: Dict[str, str] = Field(default_factory=dict)
@@ -1173,7 +1180,10 @@ def week_targets(spec: WeekSpec, config: dict) -> Dict[str, dict]:
 
 
 def hydrate_dynamic_targets(
-    config: dict, latest_biometrics: Optional[dict], note_callback=None
+    config: dict,
+    latest_biometrics: Optional[dict],
+    note_callback=None,
+    biometrics: Optional[dict] = None,
 ) -> dict:
     """Recompute every `weekly_schedule` day from the body, not the file.
 
@@ -1185,6 +1195,19 @@ def hydrate_dynamic_targets(
     `target_weight_kg`. Returns a new config — this module never mutates the
     one it's handed — with each day's `calories`, `protein_g` and `fat_g`
     replaced and everything else about the day left alone.
+
+    **TDEE comes from measurement once there is enough of it.** Given the full
+    `biometrics` file (not just the latest weigh-in),
+    `nutrition_engine.calculate_adaptive_tdee` infers expenditure from what was
+    actually logged and what the scale actually did — mean intake plus the
+    least-squares weight trend x 7700 kcal/kg. That measures the one body in
+    question rather than predicting it from a population regression that can
+    sit 300 kcal out on an individual. `reconcile_adaptive_tdee` bounds it
+    against the formula (`ADAPTIVE_TDEE_TOLERANCE`) and keeps the formula when
+    the two disagree wildly, because under-logging depresses the measured
+    figure and a fortnight of water weight can dominate the trend;
+    `basis["tdee_source"]` records which won. Omit `biometrics` — as the pure
+    function's existing callers do — and it is the plain formula, unchanged.
 
     Three things it deliberately preserves rather than computes:
 
@@ -1234,12 +1257,28 @@ def hydrate_dynamic_targets(
     uplift = config.get("training_uplift") or {}
     pins = config.get("training_pins") or {}
     weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
+
+    # Computed once for the week, not per day: it reads the whole weigh-in and
+    # logged-intake series, which every day of this config shares. Returns None
+    # whenever the data can't support an estimate — too few weigh-ins, too
+    # short a span, nothing logged — which is the normal state until a few
+    # weeks of sync have accumulated, and reads through as the plain formula.
+    adaptive_tdee = None
+    if biometrics:
+        adaptive_tdee = calculate_adaptive_tdee(
+            biometrics.get("daily_actuals") or [],
+            biometrics.get("weigh_ins") or [],
+        )
+
     schedule: Dict[str, dict] = {}
     basis = None
     try:
         for day, day_targets in config["weekly_schedule"].items():
             dynamic = calculate_macro_targets(
-                profile, latest_biometrics, net_carbs_g=day_targets.get("net_carbs_g")
+                profile,
+                latest_biometrics,
+                net_carbs_g=day_targets.get("net_carbs_g"),
+                adaptive_tdee=adaptive_tdee,
             )
             basis = dynamic["basis"]
             calories = dynamic["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
@@ -1274,17 +1313,38 @@ def hydrate_dynamic_targets(
             note_callback(f"Using config.json targets — {message}")
         return config
 
+    if not schedule:
+        # An empty `weekly_schedule` never enters the loop, so nothing raises
+        # into the fallback above — but `basis` is still None and there is no
+        # day to read a protein figure off, which the log line below would
+        # dereference. Nothing to hydrate is the file's own state, not a
+        # failure, so hand back what we were given.
+        return config
+
     logger.info(
-        "dynamic targets: %s kcal/day base, %.0fg protein (BMR %.0f by %s, TDEE %.0f, "
-        "deficit %.0f, weight %.1fkg -> %.1fkg)",
+        "dynamic targets: %s kcal/day base, %.0fg protein (BMR %.0f by %s, TDEE %.0f "
+        "from %s, deficit %.0f, weight %.1fkg -> %.1fkg)",
         sorted({entry["calories"] for entry in schedule.values()}),
         schedule[next(iter(schedule))]["protein_g"],
-        basis["bmr"], basis["bmr_method"], basis["tdee"], basis["deficit_kcal"],
-        basis["current_weight_kg"], basis["target_weight_kg"],
+        basis["bmr"], basis["bmr_method"], basis["tdee"], basis["tdee_source"],
+        basis["deficit_kcal"], basis["current_weight_kg"], basis["target_weight_kg"],
     )
+    if basis["tdee_source"] == "formula_adaptive_rejected":
+        logger.warning(
+            "measured TDEE of %.0f kcal is more than %.0f%% from the formula's %.0f — "
+            "ignoring it and planning on the formula. Usually under-logged intake or "
+            "a weigh-in series dominated by water weight.",
+            basis["tdee_adaptive"],
+            ADAPTIVE_TDEE_TOLERANCE * 100,
+            basis["tdee_formula"],
+        )
     if note_callback:
+        source = {
+            "adaptive": "measured from intake + weight trend",
+            "formula_adaptive_rejected": "formula; measured figure looked wrong",
+        }.get(basis["tdee_source"], "formula")
         note_callback(
-            f"Targets from biometrics: TDEE {basis['tdee']:.0f} kcal - "
+            f"Targets from biometrics: TDEE {basis['tdee']:.0f} kcal ({source}) - "
             f"{basis['deficit_kcal']:.0f} deficit, protein locked at "
             f"{schedule[next(iter(schedule))]['protein_g']:.0f}g "
             f"({basis['target_weight_kg']:.0f}kg x {profile.get('protein_multiplier') or 1.8})"
@@ -1312,8 +1372,15 @@ async def hydrate_config(
     and a regenerated meal aims at the same day target as the run that
     produced its siblings.
     """
-    latest = await (repository or LocalJSONRepository()).get_latest_biometrics()
-    return hydrate_dynamic_targets(config, latest, note_callback)
+    store = repository or LocalJSONRepository()
+    # Two reads rather than one, deliberately. "Latest" is a question about
+    # dates, not list order (see `get_latest_biometrics`), and reimplementing
+    # that rule here to save a read of a small JSON file would be a second
+    # place for it to be wrong. `load_biometrics` supplies the *series* the
+    # adaptive estimate needs, which is a different question.
+    latest = await store.get_latest_biometrics()
+    biometrics = await store.load_biometrics()
+    return hydrate_dynamic_targets(config, latest, note_callback, biometrics)
 
 
 def meal_overrides_for(day: str, config: dict) -> Dict[str, dict]:
@@ -1625,6 +1692,30 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
 # --------------------------------------------------------------------------
 
 
+def _dietary_rule(info: ValidationInfo, key: str, default):
+    """One `dietary_rules` entry out of instructor's validation context.
+
+    Both `Ingredient` validators below read live config through
+    `info.context["config"]` rather than a baked-in list, and both have to
+    tolerate a caller that supplied no config at all — a bare
+    `Recipe.model_validate` of a saved favorite must stay loadable rather than
+    blow up.
+
+    Shared because the obvious spelling of that tolerance is subtly wrong.
+    `if info.context and "config" in info.context` tests that the *key* is
+    present and then subscripts it, so a context carrying `{"config": None}`
+    passes the guard and raises `TypeError` from inside Pydantic — while
+    `reject_untrimmable_macro_miss`, two classes down, reads the same context
+    via `planning_rule(context.get("config"))` and tolerates exactly that.
+    Two conventions for one thing, one of which crashes. This is the tolerant
+    one: absent, None, or missing the section all fall through to `default`.
+    """
+    config = (info.context or {}).get("config") or {}
+    rules = config.get("dietary_rules") or {}
+    value = rules.get(key)
+    return default if value is None else value
+
+
 class Ingredient(BaseModel):
     name: str = Field(..., description="Ingredient name")
     quantity_g: float = Field(..., gt=0, description="Quantity in grams")
@@ -1652,9 +1743,7 @@ class Ingredient(BaseModel):
         hands the model back its own rejected output to retry, which is what
         makes the dietary rules self-correcting rather than merely checked.
         """
-        allowed = DEFAULT_ALLOWED_NOVA_GROUPS
-        if info.context and "config" in info.context:
-            allowed = info.context["config"]["dietary_rules"]["allowed_nova_groups"]
+        allowed = _dietary_rule(info, "allowed_nova_groups", DEFAULT_ALLOWED_NOVA_GROUPS)
         if v not in allowed:
             raise ValueError(
                 f"nova_group {v} is not allowed (allowed groups: {allowed}); "
@@ -1674,9 +1763,7 @@ class Ingredient(BaseModel):
         than it writes them bare. False positives are the accepted cost — the
         rejection message names the matched term, so a bad entry is obvious.
         """
-        banned = []
-        if info.context and "config" in info.context:
-            banned = info.context["config"]["dietary_rules"]["banned_ingredients"]
+        banned = _dietary_rule(info, "banned_ingredients", [])
         name_lower = v.lower()
         for banned_item in banned:
             if banned_item.lower() in name_lower:
@@ -2296,7 +2383,7 @@ def api_key_error() -> Optional[str]:
 
     Split out of `build_client` so a caller can ask *before* committing to a
     run. `generate_week_plan` turns a per-day exception into a per-day failure
-    (see "a failed day must not fail the week"), which is exactly wrong for a
+    (see "a failed meal must not fail the week"), which is exactly wrong for a
     missing key: it isn't a flaky provider, it will fail every day identically,
     and the user would wait through seven attempts to be told so seven times.
     """
@@ -2378,6 +2465,37 @@ def build_async_client(models_config: Optional[dict] = None) -> instructor.Instr
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
 
 
+def _require_known_model(models_config: dict, role: str, model: str) -> None:
+    """A model id *named by models.json* must also appear in its `models` table.
+
+    The table is where per-model quirks live, and `reasoning_required` is the
+    one that decides whether a request omits the reasoning switch or sends
+    `enabled: False`. `model_metadata` returns `{}` both for a model with
+    nothing unusual about it and for one the table has never heard of — which
+    is the right answer for a hand-typed `--model` (see `resolve_planner_model`)
+    and exactly the wrong one for a standing choice in the file. There the two
+    readings differ completely: a model needing the exception gets silently
+    treated as ordinary, and every call fails with the hard 400 in CLAUDE.md's
+    "Some providers reject the disable switch outright".
+
+    That is not hypothetical — it is what `recipe_parser_model` pointing at
+    `google/gemini-3.6-flash` while the table described only
+    `google/gemini-3.7-flash` did to recipe import. Raising here moves the
+    failure to load time and names both halves, the same loud-failure policy
+    `_require_models_config` already applies to a missing key.
+    """
+    table = models_config.get("models") or {}
+    if model not in table:
+        known = ", ".join(sorted(table)) or "(the table is empty)"
+        raise ValueError(
+            f"models.json sets {role} to '{model}', which its 'models' table does "
+            f"not describe, so any per-model quirks it needs would be silently "
+            f"dropped. Add an entry for it — `{{}}` if it has nothing unusual, "
+            f'`{{"reasoning_required": true}}` if it rejects the reasoning switch. '
+            f"Known: {known}."
+        )
+
+
 def resolve_planner_model(config: dict) -> str:
     """The model a meal-generation call should use.
 
@@ -2392,15 +2510,27 @@ def resolve_planner_model(config: dict) -> str:
 
     There is no further fallback: an empty models.json and no selection must
     fail loudly, not silently plan against an outdated hardcoded model.
+
+    Only the *standing* choice is checked against the `models` table
+    (`_require_known_model`). A per-run `openrouter_model` is deliberately
+    left free-form: `--model` exists precisely to try an id nobody has
+    recorded anything about yet, and `model_metadata`'s "absent means no
+    recorded quirks" is the documented answer for it. A value written in the
+    file is a different thing — it is the model this app runs on by default,
+    and it should be described where its quirks are kept.
     """
     models_config = config.get("models") or {}
-    model = config.get("openrouter_model") or models_config.get("meal_generation_model")
+    override = config.get("openrouter_model")
+    if override:
+        return override
+    model = models_config.get("meal_generation_model")
     if not model:
         raise ValueError(
             "No meal generation model configured: models.json has no "
             "'meal_generation_model' and no --model/drawer selection was made. "
             "Set one in models.json."
         )
+    _require_known_model(models_config, "meal_generation_model", model)
     return model
 
 
@@ -2415,14 +2545,20 @@ def resolve_recipe_parser_model(config: dict) -> str:
     pricier) model the week is generated with.
     """
     models_config = config.get("models") or {}
-    model = models_config.get("recipe_parser_model") or models_config.get(
-        "meal_generation_model"
-    )
+    role = "recipe_parser_model"
+    model = models_config.get(role)
+    if not model:
+        # Falling back names the *other* key, so the error has to as well — a
+        # message blaming `recipe_parser_model` for a value it never held sends
+        # the reader to the wrong line of the file.
+        role = "meal_generation_model"
+        model = models_config.get(role)
     if not model:
         raise ValueError(
             "No recipe parser model configured: models.json has neither "
             "'recipe_parser_model' nor 'meal_generation_model' set."
         )
+    _require_known_model(models_config, role, model)
     return model
 
 

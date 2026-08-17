@@ -32,15 +32,25 @@ Set `OPENROUTER_API_KEY` in `.env` (copy the placeholder already there), plus
 
 ## Layout
 
-Six directories, flat inside each — `src/` (the Python modules), `scripts/`
-(the shell entry points), `tests/`, and four for files:
+Seven directories — `src/` (the Python modules), `scripts/` (the shell entry
+points), `tests/`, and four for files:
 
     config/     hand-edited. Change these to change what the app does.
-    reference/  shipped corpora (whfoods.json). Read-only in practice.
+    reference/  shipped corpora (whfoods.json). Read by `select_nudge_foods`;
+                see "Nudging generation toward whole foods".
     data/       written by the app. Never hand-edit.
     logs/       written by the app. Disposable.
 
-Root holds only README.md, CLAUDE.md, .env, .gitignore and requirements.txt.
+Flat inside each, with two deliberate exceptions: `src/integrations/` (see
+"Biometric sync", which explains the `sys.path` insert that buys the
+subdirectory back) and `tests/fixtures/`.
+
+Root holds README.md, CLAUDE.md, future-ideas.md, .env, .gitignore and
+requirements.txt. It also accumulates four **gitignored** AI-assistant bundles
+— `python_codebase.md`, `project_context.md`, `data_schemas.md` (written by
+`./scripts/prepare.sh`) and `test_suite.md` (written by `./scripts/upload.sh`).
+They are generated, never edited: a change belongs in the source they
+concatenate.
 
 **The four-way split is by who writes the file, not by what the file is
 about**, because "which file do I edit to change X" is the question a reader
@@ -64,38 +74,60 @@ would resolve in only one of those. The shell scripts each `cd` to the project
 root for the same reason. Anything new that needs a file should go through
 `StoragePaths`, not spell out a relative path.
 
-### config/ is six files, merged back into one dict
+### config/ is seven files — five merged into one dict, two loaded apart
 
 `config.json` was one 196-line file holding twenty unrelated top-level keys.
-It is now six, and `LocalJSONRepository.load_config()` merges them into the
-same flat dict `AppConfig` has always validated — so **nothing downstream of
-the repository knows the config arrived in pieces**, and `planner`, `week` and
-`ui_app` still read `config["weekly_schedule"]` exactly as before. Splitting
-the *files* without splitting the *object* is the whole trick; namespacing the
-dict would have touched hundreds of call sites for no gain.
+It is now seven files, and the split is **two-tier**: five *core* files are
+merged by `LocalJSONRepository.load_config()` into the same flat dict
+`AppConfig` has always validated — so **nothing downstream of the repository
+knows the config arrived in pieces**, and `planner`, `week` and `ui_app` still
+read `config["weekly_schedule"]` exactly as before. Splitting the *files*
+without splitting the *object* is the whole trick; namespacing the dict would
+have touched hundreds of call sites for no gain.
+
+The five core files, listed in `CONFIG_FILES`:
 
 | file | holds |
 |---|---|
 | `profile.json` | the body and the numbers aimed at it — `user_profile`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
-| `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `week_defaults` |
+| `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `diet_styles`, `week_defaults` |
 | `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` |
-| `schedule.json` | where you are and what you're doing — `training_schedule`, plus the location keys (see below) |
+| `schedule.json` | where you are and what you're doing — `training_schedule`, plus `base_schedule`, `location_rules` and `regional`, which are declared but not yet read (see below) |
 | `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
-| `models.json` | model selection (see "Picking a model") |
-| `integrations.json` | sync tuning (see "Biometric sync") |
 
-`CONFIG_FILES` in `repository.py` is the manifest of which file owns which
-key, and the merge validates against it: a key in the wrong file, a typo'd
-key, or a missing file each fail at load with the **filename** in the message.
-That is strictly better than `AppConfig`'s `extra="forbid"`, which knows a key
-is unwanted but not where it should have gone — and far better than the
-silent-default failure, where the file holding `weekly_schedule` goes unread
-and a week gets planned against nothing.
+The two supplemental files, loaded by their own methods and **not** part of
+the merge:
+
+| file | holds | loader |
+|---|---|---|
+| `models.json` | model selection and LLM call params (see "Picking a model") | `load_models_config()` |
+| `integrations.json` | sync tuning (see "Biometric sync") | `load_integrations_config()` |
+
+**The tiers differ in what a missing file means, which is why they are
+separate.** A missing core file is fatal: every one of them carries keys with
+no safe default, and planning a week against a silently-defaulted
+`weekly_schedule` is the exact failure the loud `load_config` contract exists
+to prevent. A missing supplemental file resolves to `{}`, because every value
+in one has an in-code fallback and a checkout that never syncs anything must
+not need `integrations.json` to start.
+
+`CONFIG_FILES` in `repository.py` is the manifest of which core file owns
+which key, and the merge validates against it: a key in the wrong file, a
+typo'd key, or a missing file each fail at load with the **filename** in the
+message. That is strictly better than `AppConfig`'s `extra="forbid"`, which
+knows a key is unwanted but not where it should have gone.
 
 Adding a field to `AppConfig` therefore means adding it to `CONFIG_FILES` too.
 The merge says so if you forget. That coupling is deliberate: a new key has to
 belong to *some* file, and deciding which one at the moment it is added is the
-entire point.
+entire point. **It applies to the five core files only** — `models.json` and
+`integrations.json` keys are read directly by the code that needs them and
+appear in neither `AppConfig` nor `CONFIG_FILES`.
+
+`base_schedule`, `location_rules` and `regional` are declared on `AppConfig`
+purely so `schedule.json` passes `extra="forbid"`; nothing reads them yet.
+They are typed loosely on purpose — a schema for data no code consumes would
+be a guess, and the alternative is a config file the app refuses to load.
 
 `tests/test_config_layout.py` holds a snapshot of the merged dict and asserts
 nothing was lost or altered. Regenerate it (`python tests/test_config_layout.py
@@ -114,6 +146,22 @@ nohup, the PID file and the log:
     ./scripts/server.sh status
     ./scripts/server.sh stop
     MEALS_PORT=9000 ./scripts/server.sh start
+
+The other scripts, none of which the app itself calls:
+
+| script | does |
+|---|---|
+| `server.sh` | the NiceGUI server — venv, nohup, PID file, log (above) |
+| `prepare.sh` | regenerates `python_codebase.md`, `project_context.md`, `data_schemas.md` (all gitignored) |
+| `upload.sh` | the same bundles plus `test_suite.md`, for pasting into an assistant |
+| `release.sh` | `<patch\|minor\|major>` version bump, tag and release notes |
+| `claude-queue.sh` | runs the ordered prompts in `.prompts/` |
+| `model-list.py` | dumps OpenRouter's top 50 models and prices to CSV |
+
+**`prepare.sh` walks `src/` recursively.** It used to carry `-maxdepth 1`,
+which silently excluded all of `src/integrations/` — so the bundle described
+the biometric sync in CLAUDE.md and shipped none of its code. If you add
+another subdirectory under `src/`, check it lands in the bundle.
 
 ### Web UI
 
@@ -157,6 +205,7 @@ concerns:
 | `ui_telemetry.py` | the header's week banner, context-pipeline strip, and macro bars |
 | `ui_shopping.py` | the shopping slide-over |
 | `ui_drawer.py` | the left drawer's targets/training/pantry/catalog/import sections |
+| `ui_prep_options.py` | the "Generate Current Week" options popup — cuisine picker, diet-style picker, bulk-prep and long-cook toggles, each a one-off for the *next* run only (see below) |
 | `ui_today.py` | the Today tab (see below) |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
@@ -424,9 +473,10 @@ meal-type *order* (`MEAL_TYPE_PRIORITY`) carries the same guarantee across
 types: dinner is generated before lunch so the one cross-type leftover
 `week.leftover_meal_type_error` permits always has its source already cooked.
 
-- `config/` — external configuration, six files merged and validated once at
-  load through `AppConfig` (`extra="forbid"`, so an unknown or typo'd key
-  fails at startup). See "config/ is six files" under Layout.
+- `config/` — external configuration; five core files merged and validated
+  once at load through `AppConfig` (`extra="forbid"`, so an unknown or typo'd
+  key fails at startup), plus two supplemental files loaded apart from the
+  merge. See "config/ is seven files" under Layout.
   Model selection lives in `config/models.json`: `meal_generation_model` is
   the standing choice, and `config["openrouter_model"]` is a per-run
   selection injected **in memory only** by the CLI's `--model` and the
@@ -588,7 +638,45 @@ is planned against. `hydrate_dynamic_targets()` replaces them with
 `nutrition_engine.calculate_macro_targets()`'s output — BMR from the latest
 weigh-in, TDEE from the activity factor, and a deficit that slides with the
 remaining gap to `target_weight_kg`. It is a **pure function**; `hydrate_config()`
-is the thin `async` wrapper that fetches the weigh-in for it.
+is the thin `async` wrapper that fetches the biometrics for it.
+
+#### TDEE is measured once there is enough data to measure it
+
+The activity-factor TDEE above is a population regression, and those sit ~300
+kcal from an individual. `calculate_adaptive_tdee` measures instead:
+
+    adaptive TDEE = mean logged calories + (kg lost per day x 7700)
+
+Eat 2000 and lose 0.5 kg a fortnight and you expended about 2275, whatever a
+formula predicted. This is what closes the loop the Cronometer sync exists to
+feed — before it was wired in, `daily_actuals` was written to disk, read once
+by `logged_intake_for` for a single regenerated meal, and never reached a
+target at all.
+
+Three things about how it is wired matter:
+
+- **It needs the series, not the latest row.** `hydrate_config` therefore
+  reads `load_biometrics()` *as well as* `get_latest_biometrics()`. Two reads
+  of one small file, on purpose: "latest" is a question about dates rather
+  than list order, and reimplementing that rule to save a read would be a
+  second place for it to be wrong.
+- **The estimate is bounded, never blended.** `reconcile_adaptive_tdee` keeps
+  the formula whenever the measured figure sits more than
+  `ADAPTIVE_TDEE_TOLERANCE` (25%) away from it. Systematic under-logging is
+  the common failure and it always reads *low*, so an unbounded measurement
+  would quietly cut the target of whoever logs least carefully. It chooses one
+  number rather than averaging the two, because an average of a good estimate
+  and a bad one is a slightly bad estimate with no way to tell which it was.
+- **`basis["tdee_source"]` says which won**, with `"formula"` (nothing to
+  measure — the normal state until a few weeks of sync accumulate) kept
+  distinct from `"formula_adaptive_rejected"` (measured and disbelieved). Only
+  the second is worth investigating, and it logs a warning naming both figures.
+
+`calculate_adaptive_tdee` returns `None` — meaning "keep using the formula" —
+for fewer than two weigh-ins, a span under `MIN_TREND_SPAN_DAYS`, or no logs.
+So a fresh checkout plans exactly as it did before this existed, and protein
+stays locked to the target weight whichever TDEE wins: a measurement buys back
+energy, not protein.
 
 It is called at the top of all three generation entry points
 (`generate_week_plan`, `regenerate_single_day`, `regenerate_single_meal`)
@@ -884,6 +972,16 @@ names before combining them. Every normalisation rule and the bad line it
 fixes are in `.claude/rules/shopping.md`, which loads automatically when
 working on `shopping.py`.
 
+`collect_unique_plants` rides on the same normalisation: it counts distinct
+ingredients in the `PLANT_DEPARTMENTS` (Produce, Herbs & Spices, Nuts/Seeds &
+Spreads) across the week's cook events, stored on `WeekPlan.unique_plants` at
+generation and shown as the telemetry header's 🌱 count. It reuses the
+shopping key rather than raw names, so "Cucumber, diced" and "Cucumber,
+sliced" count once — a plant-variety readout that double-counted prep
+variants would flatter the week rather than describe it. Recomputed by both
+narrow regenerations, since replacing one recipe changes the week's plant
+set.
+
 Duplicate *staples* are attacked from both ends. `PANTRY_CONSOLIDATION_RULE`
 (in `build_generation_rules`, so both generation axes send it) asks the model
 for one variant per staple — one cottage cheese, one mustard, one oil — and
@@ -898,6 +996,55 @@ exists to prevent when they aren't, so a canonical name carrying a state only
 claims names whose own state is absent or equivalent ("frozen sardines" stays
 its own line) and exclusion lists keep "mustard seeds" out of mustard and "oat
 milk" out of oats.
+
+### Batch cooking on purpose: the two prep toggles
+
+The drawer's Generate button opens `ui_prep_options`' popup rather than
+running the week directly, and two of its controls reshape the *grid* before
+generation rather than merely briefing the model: **bulk prep** and **long
+cook**. Each calls `week.spread_batch`, which picks one dinner as an anchor
+and links enough forward slots to it — via ordinary `link_leftover` calls, so
+portions stay derived and nothing new is invented — to approach
+`planning_rules.batch_target_servings`.
+
+Order matters and is deliberate (`ui_generation.apply_batch_selections`):
+bulk prep runs first and gets first claim on whatever room the grid has;
+long cook runs second, prefers weekend days, and excludes bulk prep's anchor
+day so both toggles produce two distinct batches rather than one
+double-booked dinner. On a week whose lunches are already linked to the
+previous day's dinner there is often only one slot left for a batch to grow
+into, so with both toggles on the second finds nothing — `generate_week`
+warns rather than silently generating a mislabeled dinner.
+
+`spread_batch` returns `None` for an anchor that never grew past what an
+ordinary dinner already gets for free, which is the same "no batch happened"
+signal as no valid anchor at all. Both are honest outcomes; neither is an
+error. The chosen anchors ride on config as `long_cook_anchor` /
+`bulk_prep_anchor`, which is how `generate_meal_type_week` knows to send the
+per-slot anchor directive instead of the whole-week rule, and how
+`generate_sunday_prep_session` knows there is something to prep.
+
+`Recipe.long_oven_cook` and `Recipe.bulk_prep_friendly` are the model's own
+answers about a dish, and they are separate fields on purpose — a dish can be
+either, both or neither. `is_sunday_prepped` tests them rather than
+`prep_notes`, which is set on *any* cook outliving its own day (including the
+ordinary "link to next lunch") and so once marked every multi-day dinner in
+the week as Sunday-prepped.
+
+### Nudging generation toward whole foods
+
+`reference/whfoods.json` is a 130-entry corpus of nutrient-dense whole foods.
+`select_nudge_foods` samples 12 of them **once per run** and puts them on
+`config["nudge_foods"]`; `build_slot_brief` names that same dozen in every
+slot's brief. Sampled per run rather than per slot deliberately — a different
+set per recipe would push the week's flavour profile in twelve directions at
+once, where one consistent dozen reads as a theme.
+
+It is a priority, not a constraint, and the wording says so ("where flavour
+profiles permit"). An absent or empty `whfoods.json` resolves to `[]`, which
+`build_slot_brief` treats as "say nothing" — the same tolerance
+`inventory_instruction` extends to an empty pantry list, so an older checkout
+generates exactly as it did before this existed.
 
 ### Using up what's already in the house
 
@@ -1013,6 +1160,22 @@ touches the network: both clients are reached through one seam each, and the
 fakes speak the real payload dialect (grams for Garmin mass, `Energy (kcal)`
 headers for the CSV) because the unit and key mapping *is* the module.
 
+**That was not always true, and the way it failed is worth keeping.** Both
+constructors used to read `username or os.environ.get("CRONOMETER_USERNAME")`.
+`""` is falsy, so `CronometerSyncService(username="")` — written by the one
+test whose whole purpose was proving the guard fires *before* any call —
+silently received the developer's real `.env` credentials, passed
+`_require_credentials`, and issued a genuine authenticated request to
+cronometer.com on every run of the suite. It surfaced only as a `429` once
+the account had been rate-limited enough to start refusing; until then the
+test passed, for entirely the wrong reason.
+
+`_from_env` now distinguishes `None` ("read the environment") from `""` ("no
+credential"), and `TestCredentialGuards` runs with a *populated* fake
+environment so the assertion means something. A guard test that constructs
+its subject with empty credentials must be run against a filled environment,
+or it only proves something about the machine it ran on.
+
 ## Metric unit rules
 
 - All ingredient quantities are in **grams** (`quantity_g`). No cups, oz, lbs,
@@ -1050,3 +1213,20 @@ headers for the CSV) because the unit and key mapping *is* the module.
 - `meal_history.json` entries written before the weekly rewrite have no
   `styles` key. `history_styles()` tolerates that (those days simply don't
   seed style rotation), so old history files don't need migrating.
+- **A model id named in `models.json` must appear in that file's `models`
+  table.** `resolve_planner_model`/`resolve_recipe_parser_model` enforce it at
+  load. Without that check the two drifted apart unnoticed:
+  `recipe_parser_model` pointed at `google/gemini-3.6-flash` while only
+  `google/gemini-3.7-flash` was described, so `model_metadata` returned `{}`,
+  the `reasoning_required` flag never applied, and every recipe import died on
+  the hard 400 in "Some providers reject the disable switch outright". A
+  per-run `--model` is deliberately *not* checked — trying an unrecorded id is
+  the flag's whole purpose.
+- **Testing a "fails before any call" guard requires a populated
+  environment.** See the sync-credentials note under "Biometric sync": a guard
+  test that constructs its subject with `""` and runs against an empty `.env`
+  proves nothing about the guard and everything about the machine.
+- `src/proposed-engine.py` (Kalman weight smoother, Holt trend) was deleted —
+  unreferenced, unimportable by that filename, and depending on `numpy`, which
+  is not in requirements.txt. The finished, tested version of what it was
+  reaching for is `calculate_adaptive_tdee`, now wired in above.

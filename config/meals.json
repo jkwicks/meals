@@ -7,11 +7,11 @@
   ],
   "meal_styles": {
     "breakfast": {
-      "custom_shake": "Protein Shake Template. BASE (REQUIRED): 1.5 scoops protein powder, 5g creatine, 300ml water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g Barley max, 15g Oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
+      "custom_shake": "Protein Shake Template. BASE (REQUIRED, FIXED — never scale these to hit budget): 45g protein powder (1.5 scoops), 5g creatine, 300g water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target; if the fixed base doesn't cover the protein budget, one of them MUST be a Protein Boost item — never raise the 45g protein powder to compensate): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g barley max, 15g oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (3g flaxseeds, 4g chia seeds, 3g hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
       "eggs_salmon": "Scrambled eggs and smoked salmon served on toasted whole-grain bread.",
       "fish_pate": "Tinned sardines or tinned mackerel pate served on toasted whole-grain bread.",
       "beans_toast": "Classic baked beans served on toasted whole-grain bread.",
-      "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds, pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
+      "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 3g flaxseeds, 4g chia seeds, 3g hemp seeds, 5g pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
     },
     "lunch": {
       "salad": "a substantial cold salad with a protein on top",

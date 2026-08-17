@@ -221,6 +221,52 @@ def calculate_tdee(bmr: float, activity_level: str = "light_office") -> float:
     return bmr * ACTIVITY_FACTORS[key]
 
 
+# How far a measured (adaptive) TDEE may sit from the formula estimate before
+# it is treated as bad data rather than a better measurement.
+#
+# Mifflin and Katch are population regressions that sit within roughly 10-15%
+# of an individual, so a genuine personal difference of 25% is already at the
+# edge of plausible. Past that the likelier explanations are all artefacts:
+# systematic under-logging (the common one, which *depresses* the estimate), a
+# fortnight of water-weight swing dominating the trend, or a stretch of days
+# nobody logged. `calculate_adaptive_tdee` deliberately returns its figure
+# unclamped so that bad data stays visible rather than being folded into a
+# plausible-looking number; this is the caller-side sanity check its docstring
+# asks for.
+ADAPTIVE_TDEE_TOLERANCE = 0.25
+
+
+def reconcile_adaptive_tdee(
+    formula_tdee: float, adaptive_tdee: Optional[float]
+) -> Tuple[float, str]:
+    """Pick between the population formula and the measured estimate.
+
+    Returns `(tdee, source)`, where source is one of:
+
+    - `"formula"` — no adaptive figure was available at all (too few weigh-ins,
+      too short a span, nothing logged). The normal state on a fresh checkout.
+    - `"adaptive"` — the measured figure was close enough to the formula to
+      believe, and is used.
+    - `"formula_adaptive_rejected"` — a measured figure existed but sat outside
+      `ADAPTIVE_TDEE_TOLERANCE`, so the formula was kept. Distinct from plain
+      `"formula"` on purpose: "we measured and disbelieved it" is a different
+      state from "we had nothing to measure", and only the first one is worth
+      investigating.
+
+    Deliberately *chooses* rather than blends. A weighted average of a good
+    estimate and a bad one is a slightly bad estimate with no way to tell which
+    it was — where picking leaves `basis` able to say plainly which number the
+    week was planned against.
+    """
+    if not adaptive_tdee or adaptive_tdee <= 0:
+        return formula_tdee, "formula"
+    low = formula_tdee * (1 - ADAPTIVE_TDEE_TOLERANCE)
+    high = formula_tdee * (1 + ADAPTIVE_TDEE_TOLERANCE)
+    if not low <= adaptive_tdee <= high:
+        return formula_tdee, "formula_adaptive_rejected"
+    return adaptive_tdee, "adaptive"
+
+
 def alpert_fat_energy_ceiling_kcal(
     current_weight_kg: float, body_fat_pct: Optional[float]
 ) -> Optional[float]:
@@ -309,6 +355,7 @@ def calculate_macro_targets(
     user_profile: dict,
     latest_biometrics: Optional[dict] = None,
     net_carbs_g: Optional[float] = None,
+    adaptive_tdee: Optional[float] = None,
 ) -> dict:
     """A full day's macro target for the person `user_profile` describes.
 
@@ -374,7 +421,11 @@ def calculate_macro_targets(
         body_fat_pct=body_fat_pct,
     )
     activity_level = profile.get("activity_level") or "light_office"
-    tdee = calculate_tdee(bmr, activity_level)
+    # The formula estimate is always computed, even when an adaptive figure
+    # supersedes it: `reconcile_adaptive_tdee` needs it as the sanity bound,
+    # and `basis` reports both so two runs a fortnight apart can be compared.
+    tdee_formula = calculate_tdee(bmr, activity_level)
+    tdee, tdee_source = reconcile_adaptive_tdee(tdee_formula, adaptive_tdee)
 
     target_weight_kg = profile.get("target_weight_kg") or weight_kg
     deficit = calculate_dynamic_deficit(weight_kg, target_weight_kg, body_fat_pct)
@@ -395,6 +446,12 @@ def calculate_macro_targets(
         "basis": {
             "bmr": round(bmr, 1),
             "tdee": round(tdee, 1),
+            # Which number the week was actually planned against, and what the
+            # formula would have said. Equal values with source "formula" is
+            # the normal state until enough weigh-ins and logs accumulate.
+            "tdee_source": tdee_source,
+            "tdee_formula": round(tdee_formula, 1),
+            "tdee_adaptive": round(adaptive_tdee, 1) if adaptive_tdee else None,
             "deficit_kcal": round(deficit, 1),
             # None unless the weigh-in carried body_fat_pct — the fat-mass-only
             # cap calculate_dynamic_deficit layers on top of the weight ramp.

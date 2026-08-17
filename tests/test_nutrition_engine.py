@@ -460,5 +460,94 @@ class TestSmoothSeries(unittest.TestCase):
         self.assertEqual(ne.smooth_series([]), [])
 
 
+class TestReconcileAdaptiveTdee(unittest.TestCase):
+    """The caller-side sanity check `calculate_adaptive_tdee` asks for.
+
+    That function returns its figure deliberately unclamped, so bad data stays
+    visible rather than hiding inside a plausible-looking number. This is
+    where the judgement about whether to believe it lives.
+    """
+
+    FORMULA = 2600.0
+
+    def test_no_measurement_leaves_the_formula_alone(self):
+        self.assertEqual(
+            ne.reconcile_adaptive_tdee(self.FORMULA, None),
+            (self.FORMULA, "formula"),
+        )
+
+    def test_a_close_measurement_is_believed(self):
+        value, source = ne.reconcile_adaptive_tdee(self.FORMULA, 2800.0)
+        self.assertEqual((value, source), (2800.0, "adaptive"))
+
+    def test_a_measurement_far_below_is_rejected(self):
+        """Under-logging is the common case and it always reads low."""
+        value, source = ne.reconcile_adaptive_tdee(self.FORMULA, 1500.0)
+        self.assertEqual((value, source), (self.FORMULA, "formula_adaptive_rejected"))
+
+    def test_a_measurement_far_above_is_rejected(self):
+        value, source = ne.reconcile_adaptive_tdee(self.FORMULA, 4000.0)
+        self.assertEqual((value, source), (self.FORMULA, "formula_adaptive_rejected"))
+
+    def test_the_band_is_symmetric_and_inclusive(self):
+        tolerance = ne.ADAPTIVE_TDEE_TOLERANCE
+        for edge in (self.FORMULA * (1 - tolerance), self.FORMULA * (1 + tolerance)):
+            with self.subTest(edge=edge):
+                self.assertEqual(
+                    ne.reconcile_adaptive_tdee(self.FORMULA, edge)[1],
+                    "adaptive",
+                )
+
+    def test_rejection_is_distinguishable_from_having_no_data(self):
+        """Two different states: "we measured and disbelieved it" is worth
+        investigating, "we had nothing to measure" is the normal early state."""
+        self.assertNotEqual(
+            ne.reconcile_adaptive_tdee(self.FORMULA, None)[1],
+            ne.reconcile_adaptive_tdee(self.FORMULA, 100.0)[1],
+        )
+
+    def test_it_chooses_rather_than_blends(self):
+        """A weighted average of a good estimate and a bad one is a slightly
+        bad estimate with no way to tell which it was."""
+        value, _ = ne.reconcile_adaptive_tdee(self.FORMULA, 2700.0)
+        self.assertEqual(value, 2700.0)
+
+
+class TestAdaptiveTdeeInMacroTargets(unittest.TestCase):
+    PROFILE = {
+        "birth_date": "1971-01-10",
+        "height_cm": 183,
+        "gender": "male",
+        "target_weight_kg": 80.0,
+        "activity_level": "light_office",
+    }
+    WEIGH_IN = {"weight_kg": 98.4, "body_fat_pct": 27.5}
+
+    def targets(self, adaptive=None):
+        return ne.calculate_macro_targets(
+            self.PROFILE, self.WEIGH_IN, adaptive_tdee=adaptive
+        )
+
+    def test_the_default_is_the_formula_unchanged(self):
+        basis = self.targets()["basis"]
+        self.assertEqual(basis["tdee_source"], "formula")
+        self.assertEqual(basis["tdee"], basis["tdee_formula"])
+        self.assertIsNone(basis["tdee_adaptive"])
+
+    def test_a_believed_measurement_moves_the_calorie_target(self):
+        formula = self.targets()
+        adaptive = self.targets(formula["basis"]["tdee_formula"] * 1.1)
+        self.assertEqual(adaptive["basis"]["tdee_source"], "adaptive")
+        self.assertGreater(adaptive["calories"], formula["calories"])
+
+    def test_protein_does_not_move_with_it(self):
+        """Locked to target weight. A measurement buys back energy, not
+        protein — the whole point of the lock is that it holds while the
+        numbers around it change."""
+        formula = self.targets()
+        adaptive = self.targets(formula["basis"]["tdee_formula"] * 1.1)
+        self.assertEqual(adaptive["protein_g"], formula["protein_g"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
