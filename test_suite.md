@@ -1,4 +1,389 @@
-# Test Suite & Unit Tests
+# Test Suite, Integration Tests & Fixtures
+
+=== File: tests/test_week_composition.py ===
+"""Tests for how a week is composed before a single token is generated.
+
+Three deterministic, API-free decisions live between `default_week_spec` and
+the first API call, and all three were added to cut food waste rather than to
+change what a meal looks like:
+
+- **Cuisine blocks** (`cuisine_block_sizes`, `pick_cuisine_blocks`) — four
+  nights of one cuisine and three of a complementary second, instead of seven
+  countries that share nothing on the shopping list.
+- **Workout-synced breakfasts** (`morning_training_days`, `week.pin_style`) —
+  a morning gym or cardio session forces that day's breakfast to a shake.
+- **Ingredient canonicalisation** (`shopping.canonical_ingredient`) — the
+  variants of one staple that reach the list anyway get merged into one line.
+
+Everything here is a pure function of its arguments, so there is no
+repository, no event loop and no API in this file. `unittest` and the
+`sys.path` insert match `test_planner_dynamic_targets.py`; see its docstring
+for why.
+"""
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import planner  # noqa: E402
+import shopping  # noqa: E402
+from week import MODE_COOK, MODE_LEFTOVER, SlotSpec, WeekSpec, pin_style  # noqa: E402
+
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+# Small standalone config rather than the shipped config/: these tests are about
+# the layout rules, and a cuisine list that shifts with the user's taste would
+# re-baseline the expected blocks underneath them. `test_real_config` below is
+# what keeps the shipped file honest.
+CONFIG = {
+    "meal_types": ["breakfast", "lunch", "dinner", "snack"],
+    "meal_styles": {
+        "breakfast": {
+            "custom_shake": "shake",
+            "eggs_salmon": "eggs",
+            "yoghurt_bowl": "yoghurt",
+        },
+        "dinner": {"one_pan": "tray bake", "curry": "curry", "grill": "grill"},
+    },
+    "cuisines": ["thai", "vietnamese", "italian", "greek", "korean"],
+    "cuisine_affinities": {"thai": ["vietnamese"], "italian": ["greek"]},
+    "cuisine_meal_types": ["dinner"],
+    "planning_rules": dict(planner.DEFAULT_PLANNING_RULES),
+    "training_schedule": [],
+}
+
+
+def week_spec(**overrides) -> WeekSpec:
+    """A full 7-day grid of cook slots, before any auto choice is resolved."""
+    slots = [
+        SlotSpec(day=day, meal_type=meal_type, mode=MODE_COOK)
+        for day in DAYS
+        for meal_type in CONFIG["meal_types"]
+    ]
+    return WeekSpec(days=DAYS, servings_per_meal=2, slots=slots, **overrides)
+
+
+def dinner_cuisines(spec: WeekSpec):
+    return [slot.cuisine for slot in spec.slots if slot.meal_type == "dinner"]
+
+
+class TestCuisineBlockSizes(unittest.TestCase):
+    """The 4/3 pattern is a ratio, not a day count."""
+
+    def test_full_week_is_four_then_three(self):
+        self.assertEqual(planner.cuisine_block_sizes(7, [4, 3]), [4, 3])
+
+    def test_sizes_always_sum_to_the_days_available(self):
+        for num_days in range(1, 15):
+            with self.subTest(num_days=num_days):
+                self.assertEqual(sum(planner.cuisine_block_sizes(num_days, [4, 3])), num_days)
+
+    def test_short_weeks_keep_the_larger_block_first(self):
+        # Four dinners cooked (three eaten as leftovers) splits evenly; five
+        # gives the spare day to the block the pattern made bigger.
+        self.assertEqual(planner.cuisine_block_sizes(4, [4, 3]), [2, 2])
+        self.assertEqual(planner.cuisine_block_sizes(5, [4, 3]), [3, 2])
+
+    def test_empty_blocks_drop_out_rather_than_claiming_a_cuisine(self):
+        self.assertEqual(planner.cuisine_block_sizes(1, [4, 3]), [1])
+        self.assertEqual(planner.cuisine_block_sizes(0, [4, 3]), [])
+
+    def test_pattern_of_ones_restores_a_cuisine_per_night(self):
+        self.assertEqual(planner.cuisine_block_sizes(7, [1] * 7), [1] * 7)
+
+
+class TestPickCuisineBlocks(unittest.TestCase):
+    def test_seven_days_resolve_to_exactly_two_cuisines(self):
+        picked = planner.pick_cuisine_blocks(7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"])
+        self.assertEqual(len(picked), 7)
+        self.assertEqual(picked[:4], [picked[0]] * 4)
+        self.assertEqual(picked[4:], [picked[4]] * 3)
+        self.assertNotEqual(picked[0], picked[4])
+
+    def test_first_block_continues_the_across_week_rotation(self):
+        # Strict LRU, same as the per-slot pick this replaced: thai was used
+        # most recently of the two the affinity map pairs, so italian leads.
+        picked = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], ["italian", "greek", "korean", "vietnamese", "thai"],
+            CONFIG["cuisine_affinities"],
+        )
+        self.assertEqual(picked[0], "italian")
+
+    def test_second_block_prefers_a_complementary_cuisine(self):
+        picked = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], ["thai"], CONFIG["cuisine_affinities"]
+        )
+        self.assertEqual(picked[0], "vietnamese")
+        # vietnamese lists no affinities, so the second block falls back to
+        # the global LRU pick rather than repeating the first.
+        self.assertNotEqual(picked[4], "vietnamese")
+
+    def test_no_cuisines_configured_yields_nothing(self):
+        self.assertEqual(planner.pick_cuisine_blocks(7, [], []), [])
+
+
+class TestResolveAutoChoices(unittest.TestCase):
+    def test_dinners_resolve_into_two_contiguous_blocks(self):
+        resolved = planner.resolve_auto_choices(week_spec(), CONFIG, [])
+        cuisines = dinner_cuisines(resolved)
+        self.assertEqual(len(set(cuisines)), 2)
+        self.assertEqual(cuisines[:4], [cuisines[0]] * 4)
+        self.assertEqual(cuisines[4:], [cuisines[4]] * 3)
+
+    def test_only_cuisine_meal_types_get_a_cuisine(self):
+        resolved = planner.resolve_auto_choices(week_spec(), CONFIG, [])
+        for slot in resolved.slots:
+            if slot.meal_type != "dinner":
+                self.assertIsNone(slot.cuisine, slot.id)
+
+    def test_leftover_dinners_shrink_the_blocks_rather_than_breaking_them(self):
+        spec = week_spec()
+        slots = [
+            slot.model_copy(update={"mode": MODE_LEFTOVER, "source": "Monday:dinner"})
+            if slot.meal_type == "dinner" and slot.day in ("Tuesday", "Thursday", "Saturday")
+            else slot
+            for slot in spec.slots
+        ]
+        resolved = planner.resolve_auto_choices(spec.model_copy(update={"slots": slots}), CONFIG, [])
+        cooked = [slot.cuisine for slot in resolved.slots if slot.meal_type == "dinner" and slot.mode == MODE_COOK]
+        self.assertEqual(len(cooked), 4)
+        self.assertEqual(cooked[:2], [cooked[0]] * 2)
+        self.assertEqual(cooked[2:], [cooked[2]] * 2)
+
+    def test_an_explicit_cuisine_is_never_overwritten(self):
+        spec = week_spec()
+        slots = [
+            slot.model_copy(update={"cuisine": "korean"})
+            if slot.id == "Wednesday:dinner"
+            else slot
+            for slot in spec.slots
+        ]
+        resolved = planner.resolve_auto_choices(spec.model_copy(update={"slots": slots}), CONFIG, [])
+        by_id = resolved.by_id()
+        self.assertEqual(by_id["Wednesday:dinner"].cuisine, "korean")
+        # ...and it seeds the rotation, so the auto blocks steer around it.
+        self.assertNotIn("korean", {by_id[f"{day}:dinner"].cuisine for day in DAYS} - {"korean"})
+        self.assertNotEqual(by_id["Monday:dinner"].cuisine, "korean")
+
+
+class TestWorkoutBreakfasts(unittest.TestCase):
+    def config_with(self, *sessions) -> dict:
+        return dict(CONFIG, training_schedule=list(sessions))
+
+    def test_morning_gym_and_cardio_qualify(self):
+        config = self.config_with(
+            {"day": "Monday", "time": "06:30", "type": "gym_hypertrophy"},
+            {"day": "Thursday", "time": "07:15", "type": "cardio_run"},
+        )
+        self.assertEqual(planner.morning_training_days(config), ["Monday", "Thursday"])
+
+    def test_evening_sessions_and_walks_do_not(self):
+        config = self.config_with(
+            {"day": "Monday", "time": "18:00", "type": "gym_hypertrophy"},
+            {"day": "Tuesday", "time": "07:00", "type": "walk"},
+            {"day": "Wednesday", "time": "11:30", "type": "cardio_run"},
+        )
+        self.assertEqual(planner.morning_training_days(config), [])
+
+    def test_breakfast_is_pinned_to_a_shake_on_those_days(self):
+        config = self.config_with({"day": "Monday", "time": "06:30", "type": "gym_hypertrophy"})
+        resolved = planner.resolve_auto_choices(week_spec(), config, [])
+        by_id = resolved.by_id()
+        self.assertEqual(by_id["Monday:breakfast"].style, planner.WORKOUT_BREAKFAST_STYLE)
+        # The pin seeds the rotation like any other style, so the rest of the
+        # week's breakfasts still rotate rather than all becoming shakes.
+        self.assertNotEqual(by_id["Tuesday:breakfast"].style, planner.WORKOUT_BREAKFAST_STYLE)
+
+    def test_an_explicit_breakfast_style_survives_the_pin(self):
+        config = self.config_with({"day": "Monday", "time": "06:30", "type": "gym_hypertrophy"})
+        spec = week_spec()
+        slots = [
+            slot.model_copy(update={"style": "eggs_salmon"})
+            if slot.id == "Monday:breakfast"
+            else slot
+            for slot in spec.slots
+        ]
+        resolved = planner.resolve_auto_choices(
+            spec.model_copy(update={"slots": slots}), config, []
+        )
+        self.assertEqual(resolved.by_id()["Monday:breakfast"].style, "eggs_salmon")
+
+    def test_pin_style_leaves_uncooked_slots_alone(self):
+        spec = week_spec()
+        slots = [
+            slot.model_copy(update={"mode": MODE_LEFTOVER, "source": "Sunday:breakfast"})
+            if slot.id == "Monday:breakfast"
+            else slot
+            for slot in spec.slots
+        ]
+        pinned = pin_style(
+            spec.model_copy(update={"slots": slots}), "breakfast", "custom_shake", ["Monday"]
+        )
+        self.assertIsNone(pinned.by_id()["Monday:breakfast"].style)
+
+    def test_a_config_without_the_shake_style_keeps_rotating(self):
+        config = dict(
+            self.config_with({"day": "Monday", "time": "06:30", "type": "gym_hypertrophy"}),
+            meal_styles={"breakfast": {"eggs_salmon": "eggs"}, "dinner": CONFIG["meal_styles"]["dinner"]},
+        )
+        resolved = planner.resolve_auto_choices(week_spec(), config, [])
+        self.assertEqual(resolved.by_id()["Monday:breakfast"].style, "eggs_salmon")
+
+
+class TestPromptRules(unittest.TestCase):
+    def slots_by_day(self, cuisines, style=None):
+        return {
+            day: SlotSpec(day=day, meal_type="dinner", mode=MODE_COOK, cuisine=cuisine, style=style)
+            for day, cuisine in zip(DAYS, cuisines)
+        }
+
+    def test_continuity_rule_describes_the_blocks(self):
+        rule = planner.build_cuisine_continuity_rule(
+            self.slots_by_day(["thai"] * 4 + ["vietnamese"] * 3)
+        )
+        self.assertIn("thai on Monday, Tuesday, Wednesday, Thursday", rule)
+        self.assertIn("vietnamese on Friday, Saturday, Sunday", rule)
+
+    def test_a_week_of_seven_cuisines_states_no_blocks(self):
+        rule = planner.build_cuisine_continuity_rule(
+            self.slots_by_day(
+                ["thai", "greek", "italian", "korean", "cajun", "indian", "bbq"]
+            )
+        )
+        self.assertEqual(rule, "")
+
+    def test_consecutive_protein_repeats_are_forbidden(self):
+        self.assertIn("two consecutive nights", planner.DINNER_VARIETY_RULE)
+
+    def test_pantry_consolidation_reaches_both_generation_axes(self):
+        for style_rule, variety_rule, budget_rule in (
+            (planner.DAY_STYLE_RULE, planner.DAY_VARIETY_RULE, planner.DAY_BUDGET_RULE),
+            (planner.WEEK_STYLE_RULE, planner.WEEK_VARIETY_RULE, planner.WEEK_BUDGET_RULE),
+        ):
+            rules = planner.build_generation_rules(
+                CONFIG | {"dietary_rules": {"allowed_nova_groups": [1, 2, 3], "banned_ingredients": []}},
+                style_rule=style_rule,
+                variety_rule=variety_rule,
+                budget_rule=budget_rule,
+            )
+            self.assertIn("Pantry consolidation", rules)
+
+    def test_a_shake_slot_carries_the_rotation_directive(self):
+        brief = planner.build_slot_brief(
+            SlotSpec(day="Monday", meal_type="breakfast", mode=MODE_COOK, style="custom_shake"),
+            CONFIG,
+            1,
+            {"calories": 400, "protein_g": 40, "net_carbs_g": 30, "fat_g": 12},
+        )
+        self.assertIn("Protein shake:", brief)
+
+
+class TestIngredientCanonicalisation(unittest.TestCase):
+    def assert_one_line(self, *names):
+        keys = {shopping.normalize_name(name) for name in names}
+        displays = {shopping.display_name(name) for name in names}
+        self.assertEqual(len(keys), 1, keys)
+        self.assertEqual(len(displays), 1, displays)
+
+    def test_canned_fish_variants_are_one_purchase(self):
+        self.assert_one_line(
+            "Sardines (canned)", "sardines in water (tinned)", "Tinned sardines, drained"
+        )
+        self.assertEqual(shopping.display_name("sardines in water (tinned)"), "Sardines (canned)")
+
+    def test_staple_qualifiers_collapse_to_one_variant(self):
+        self.assert_one_line("Low fat cottage cheese", "Cottage cheese", "cottage cheese, plain")
+        self.assert_one_line("Extra virgin olive oil", "Olive oil")
+        self.assert_one_line("Greek yogurt", "Greek yoghurt, plain")
+        self.assert_one_line("Rolled oats", "Porridge oats", "oats")
+        self.assert_one_line("Ground flaxseed", "Flax seeds", "flaxseeds")
+
+    def test_specific_rules_beat_general_ones(self):
+        self.assertEqual(shopping.display_name("Greek yoghurt"), "Greek yoghurt")
+        self.assertEqual(shopping.display_name("Plain yogurt"), "Yoghurt")
+        self.assertNotEqual(
+            shopping.normalize_name("Greek yoghurt"), shopping.normalize_name("Plain yoghurt")
+        )
+
+    def test_a_different_food_sharing_a_word_is_left_alone(self):
+        for name, other in (
+            ("Mustard seeds", "Dijon mustard"),
+            ("Oat milk", "Rolled oats"),
+        ):
+            with self.subTest(name=name):
+                self.assertNotEqual(
+                    shopping.normalize_name(name), shopping.normalize_name(other)
+                )
+
+    def test_a_conflicting_state_blocks_the_merge(self):
+        # The whole point of the state suffix is that a gram of one isn't a
+        # gram of the other — canonicalisation must not override it.
+        self.assertNotEqual(
+            shopping.normalize_name("Frozen sardines"),
+            shopping.normalize_name("Sardines (canned)"),
+        )
+        self.assertNotEqual(
+            shopping.normalize_name("Oats, cooked"), shopping.normalize_name("Rolled oats")
+        )
+
+    def test_departments_still_resolve_from_the_canonical_name(self):
+        for name, department in (
+            ("sardines in water (tinned)", "Fish & Seafood"),
+            ("Low fat cottage cheese", "Dairy & Eggs"),
+            ("Porridge oats", "Grains & Bakery"),
+            ("Ground flaxseed", "Nuts, Seeds & Spreads"),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    shopping.categorize_department(shopping.display_name(name)), department
+                )
+
+    def test_untouched_names_normalise_exactly_as_before(self):
+        # The canonical table is a narrow addition, not a rewrite: anything it
+        # doesn't name must keep the behaviour the shopping rules document.
+        self.assertEqual(shopping.normalize_name("Cucumber, diced"), "cucumber")
+        self.assertEqual(shopping.normalize_name("Fresh lemon juice"), "juice lemon")
+        self.assertEqual(shopping.normalize_name("Garlic cloves"), "garlic")
+        self.assertNotEqual(
+            shopping.normalize_name("Quinoa, dry"), shopping.normalize_name("Quinoa, cooked")
+        )
+
+
+class TestRealConfig(unittest.TestCase):
+    """The shipped config/ still validates, and still drives the new layout."""
+
+    def config(self) -> dict:
+        from repository import LocalJSONRepository, run_sync
+
+        return planner.load_app_config(run_sync(LocalJSONRepository().load_config()))
+
+    def test_shipped_config_validates_and_blocks_the_week(self):
+        config = self.config()
+        self.assertEqual(planner.planning_rule(config, "cuisine_block_pattern"), [4, 3])
+        resolved = planner.resolve_auto_choices(week_spec(), config, [])
+        cuisines = dinner_cuisines(resolved)
+        self.assertEqual(len(set(cuisines)), 2)
+        self.assertEqual(cuisines[:4], [cuisines[0]] * 4)
+
+    def test_every_affinity_names_a_configured_cuisine(self):
+        config = self.config()
+        known = set(config["cuisines"])
+        for cuisine, partners in config["cuisine_affinities"].items():
+            with self.subTest(cuisine=cuisine):
+                self.assertIn(cuisine, known)
+                self.assertTrue(set(partners) <= known, set(partners) - known)
+
+    def test_the_pinned_workout_style_exists(self):
+        self.assertIn(
+            planner.WORKOUT_BREAKFAST_STYLE, self.config()["meal_styles"]["breakfast"]
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+-e 
 
 === File: tests/test_sync_service.py ===
 """Tests for `src/integrations/sync_service.py`.
@@ -437,19 +822,6 @@ class TestCronometerCredentialGuards(unittest.TestCase):
             service.fetch_daily_summary("2026-08-16")
         self.assertIn("CRONOMETER_USERNAME", str(caught.exception))
 
-    def test_missing_sidecar_message_says_how_to_fix_it(self):
-        """The 3.9-vs-3.11 mismatch is the expected state of this project."""
-        service = sync.CronometerSyncService(
-            username="u", password="p", python_executable="/nonexistent/python"
-        )
-        if sys.version_info >= (3, 11):
-            self.skipTest("in-process import is available on this interpreter")
-        with self.assertRaises(RuntimeError) as caught:
-            service.fetch_daily_summary("2026-08-16")
-        message = str(caught.exception)
-        self.assertIn("venv-cronometer", message)
-        self.assertIn("MEALS_CRONOMETER_PYTHON", message)
-
 
 if __name__ == "__main__":
     unittest.main()
@@ -479,7 +851,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import planner  # noqa: E402  (path setup must precede the import)
 from week import MODE_COOK, MODE_LEFTOVER, SlotSpec  # noqa: E402
 
-# data/config.json's own user_profile. Every expected number below is worked
+# config/profile.json's own user_profile. Every expected number below is worked
 # out by hand from it rather than captured from a run, so a changed constant
 # fails loudly instead of re-baselining itself against the code under test.
 PROFILE = {
@@ -821,13 +1193,14 @@ import sys
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import nutrition_engine as ne  # noqa: E402  (path setup must precede the import)
 
 
-# The profile the app actually ships in data/config.json, at the top of the
+# The profile the app actually ships in config/profile.json, at the top of the
 # journey: 100 kg heading for 80 kg. Every expected number below is worked out
 # by hand from these, so a change to a constant fails loudly rather than
 # quietly re-baselining itself against the code it is meant to check.
@@ -839,12 +1212,16 @@ PROFILE = {
     "protein_multiplier": 1.8,
     "activity_level": "light_office",
 }
-AGE_55 = date(2026, 8, 16)
 
 
 class TestAgeFromBirthDate(unittest.TestCase):
     def test_age_on_reference_date(self):
-        self.assertEqual(ne.age_from_birth_date("1971-01-10", AGE_55), 55)
+        # Any date on/after the Jan-10 birthday in 2026 gives age 55; picked
+        # arbitrarily rather than reusing the real calendar date, since
+        # `on_date` is passed explicitly and the test asserts nothing about
+        # when it's run.
+        reference_date = date(2026, 1, 15)
+        self.assertEqual(ne.age_from_birth_date("1971-01-10", reference_date), 55)
 
     def test_birthday_not_yet_reached_this_year(self):
         """The day before a birthday must still be the younger age."""
@@ -965,10 +1342,32 @@ class TestDeriveFatG(unittest.TestCase):
         self.assertEqual(ne.derive_fat_g(500, 150, 60), 0.0)
 
 
+class _FixedToday(date):
+    """`date` with `.today()` pinned.
+
+    `calculate_macro_targets` resolves age via `age_from_birth_date(birth_date)`
+    with no reference date, so it falls back to the real `date.today()`. Left
+    unpatched, every expected number below that assumes age 55 (BMR, TDEE,
+    ...) is only correct for real-world dates in the 55th year after the
+    profile's 1971-01-10 birth date — this class quietly starts failing the
+    day that year ends, with no code change to explain why. Subclassing
+    (rather than replacing `date` outright) keeps every other use of `date` in
+    `nutrition_engine` — the `date(...)` constructor, `_parse_iso_date` — working
+    unchanged.
+    """
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 8, 16)
+
+
 class TestMacroTargets(unittest.TestCase):
     """The headline case: 55 years old, 100 kg, aiming at 80 kg."""
 
     def setUp(self):
+        patcher = mock.patch("nutrition_engine.date", _FixedToday)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.result = ne.calculate_macro_targets(
             PROFILE, {"date": "2026-08-16", "weight_kg": 100.0}
         )
@@ -1193,5 +1592,762 @@ class TestSmoothSeries(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+-e 
+
+=== File: tests/fixtures/config_snapshot.json ===
+{
+  "base_schedule": {
+    "Friday": "Office",
+    "Monday": "Office",
+    "Saturday": "Outing",
+    "Sunday": "Home",
+    "Thursday": "Office",
+    "Tuesday": "WFH",
+    "Wednesday": "WFH"
+  },
+  "cuisine_affinities": {
+    "bbq": [
+      "cajun",
+      "mexican"
+    ],
+    "cajun": [
+      "bbq",
+      "mexican"
+    ],
+    "greek": [
+      "mediterranean",
+      "middle_eastern"
+    ],
+    "indian": [
+      "middle_eastern",
+      "thai"
+    ],
+    "italian": [
+      "mediterranean",
+      "greek"
+    ],
+    "japanese": [
+      "korean",
+      "vietnamese"
+    ],
+    "korean": [
+      "japanese",
+      "bbq"
+    ],
+    "mediterranean": [
+      "italian",
+      "greek"
+    ],
+    "mexican": [
+      "cajun",
+      "bbq"
+    ],
+    "middle_eastern": [
+      "greek",
+      "mediterranean"
+    ],
+    "thai": [
+      "vietnamese",
+      "indian"
+    ],
+    "vietnamese": [
+      "thai",
+      "japanese"
+    ]
+  },
+  "cuisine_meal_types": [
+    "dinner"
+  ],
+  "cuisines": [
+    "mexican",
+    "indian",
+    "thai",
+    "japanese",
+    "korean",
+    "bbq",
+    "middle_eastern",
+    "italian",
+    "mediterranean",
+    "vietnamese",
+    "cajun",
+    "greek"
+  ],
+  "diet_styles": {
+    "aip": {
+      "label": "Autoimmune Protocol (AIP)",
+      "principles": "Exclude grains, legumes, nightshades (tomato, pepper, eggplant, potato), dairy, eggs and seed-based spices; build meals from organ meats, clean proteins, bone broth and non-nightshade vegetables."
+    },
+    "anti_inflammatory": {
+      "label": "Anti-Inflammatory",
+      "principles": "Load meals with polyphenol-rich vegetables, cruciferous greens, wild fatty fish and therapeutic spices and aromatics (turmeric, ginger, garlic); avoid refined seed oils and refined carbohydrates."
+    },
+    "blue_zones": {
+      "label": "Blue Zones / Longevity",
+      "principles": "Build the plate almost entirely from whole plants \u2014 legumes, beans, nuts, seeds, wild herbs and extra virgin olive oil \u2014 with wild-caught fish only 2-3 times a week and meat rare to never."
+    },
+    "dash": {
+      "label": "DASH Diet",
+      "principles": "Favor vegetables, fruit, low-fat dairy and whole grains; minimize added salt and sodium-heavy ingredients such as cured meats, brined or canned-in-salt items, and salty condiments."
+    },
+    "fast_800": {
+      "label": "Fast 800",
+      "principles": "Keep dishes simple and calorie-light within the given budget: lean protein and vegetables first, minimal added fat, sauce or oil, and no refined carbs padding the plate."
+    },
+    "low_fodmap": {
+      "label": "Low-FODMAP",
+      "principles": "Avoid high-FODMAP ingredients \u2014 onion, garlic, wheat, most legumes, high-fructose fruit \u2014 substituting garlic-infused oil, scallion or spring-onion greens, fresh ginger and chives, and favor gut-friendly produce like zucchini, bok choy and carrots."
+    },
+    "mediterranean_diet": {
+      "label": "Mediterranean Diet",
+      "principles": "Favor olive oil, oily fish, legumes, whole grains and vegetables; limit red meat and butter to occasional use."
+    },
+    "mind_diet": {
+      "label": "MIND Diet",
+      "principles": "Include leafy greens daily and berries at least twice a week; favor walnuts, olive oil, poultry and fish; strictly limit cheese, butter, fried food and pastries."
+    },
+    "nordic_diet": {
+      "label": "Nordic Diet",
+      "principles": "Favor fatty cold-water fish (mackerel, salmon, herring), root vegetables, cruciferous vegetables and berries, dressed in cold-pressed rapeseed or flaxseed oil rather than tropical oils or butter."
+    },
+    "paleo": {
+      "label": "Paleo",
+      "principles": "Build meals from pastured meat, seafood, eggs, fibrous vegetables, root vegetables, fruit and nuts; exclude all grains, legumes, refined sugar and standard dairy."
+    },
+    "pegan": {
+      "label": "Pegan",
+      "principles": "Give non-starchy, low-glycemic vegetables and healthy fats (avocado, nuts, seeds, olive oil) roughly three-quarters of the plate, with clean animal protein as a smaller side rather than the centerpiece."
+    },
+    "total_wellbeing_diet": {
+      "label": "Total Wellbeing Diet",
+      "principles": "High protein with moderate low-GI carbs, lean meat or dairy at most meals, and strict portion discipline \u2014 no incidental extras beyond what the budget calls for."
+    }
+  },
+  "dietary_rules": {
+    "active_diet_styles": [],
+    "allowed_nova_groups": [
+      1,
+      2,
+      3
+    ],
+    "banned_ingredients": [
+      "high fructose corn syrup",
+      "artificial sweeteners",
+      "hydrogenated oil",
+      "MSG",
+      "seed oils",
+      "soy protein isolate",
+      "eggplant",
+      "apricot",
+      "banana",
+      "Almond milk",
+      "soy beans"
+    ]
+  },
+  "enable_sunday_prep": true,
+  "inventory_rules": {
+    "fridge_safe_days": 4,
+    "perishable_day_gap": 3
+  },
+  "inventory_to_clear": [],
+  "location_rules": {
+    "Office": {
+      "lunch_mode": "leftover",
+      "max_prep_minutes": 0,
+      "restrictions": [
+        "portable",
+        "no_reheat",
+        "no_long_prep"
+      ]
+    },
+    "Outing": {
+      "dinner_mode": "leftover",
+      "lunch_mode": "skip",
+      "notes": "Dining out or packed nutrition"
+    },
+    "WFH": {
+      "lunch_mode": "cook",
+      "max_prep_minutes": 15,
+      "restrictions": [
+        "quick_cook"
+      ]
+    }
+  },
+  "max_prep_active_mins": 120,
+  "meal_styles": {
+    "breakfast": {
+      "beans_toast": "Classic baked beans served on toasted whole-grain bread.",
+      "custom_shake": "Protein Shake Template. BASE (REQUIRED): 1.5 scoops protein powder, 5g creatine, 300ml water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g Barley max, 15g Oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
+      "eggs_salmon": "Scrambled eggs and smoked salmon served on toasted whole-grain bread.",
+      "fish_pate": "Tinned sardines or tinned mackerel pate served on toasted whole-grain bread.",
+      "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 1 tsp flaxseeds, 1 tsp chia seeds, 1 tsp hemp seeds, pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
+    },
+    "dinner": {
+      "braise": "a slow-braised pot dish that improves after resting",
+      "curry": "a simmered curry or stew in sauce, served with a side",
+      "grill": "grilled or pan-seared protein with cooked vegetable sides",
+      "one_pan": "a single tray-bake or one-pan meal",
+      "roast": "a roasted joint or whole bird with roasted vegetables",
+      "stir_fry": "a fast high-heat stir fry"
+    },
+    "lunch": {
+      "cold_plate": "a no-cook cold plate: cured/cooked protein, cheese, raw veg, dips",
+      "grain_bowl": "a warm grain or legume bowl with protein and vegetables",
+      "salad": "a substantial cold salad with a protein on top",
+      "soup": "a hearty soup or broth, reheatable",
+      "wrap": "a wrap, flatbread or hand-held roll"
+    },
+    "snack": {
+      "boiled_eggs": "boiled eggs with seasoning",
+      "fruit_and_protein": "fruit paired with a protein source",
+      "nuts_seeds": "a portion of nuts and seeds",
+      "yoghurt": "yoghurt with a simple topping"
+    }
+  },
+  "meal_types": [
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snack"
+  ],
+  "meal_weights": {
+    "breakfast": 0.3,
+    "dinner": 0.3,
+    "lunch": 0.3,
+    "snack": 0.1
+  },
+  "planning_rules": {
+    "cuisine_block_pattern": [
+      4,
+      3
+    ],
+    "history_max_entries": 21,
+    "min_meal_protein_g": 35.0,
+    "portion_trim_deadband": 0.03,
+    "portion_trim_limits": [
+      0.6,
+      1.6
+    ],
+    "protein_avoid_window": 6,
+    "protein_lookback_entries": 3
+  },
+  "regional": {
+    "country": "AU",
+    "hemisphere": "southern",
+    "postcode": "3350",
+    "state": "VIC"
+  },
+  "serving_rules": {
+    "servings_per_meal": 2
+  },
+  "shopping": {
+    "shop_days": [
+      "Sunday",
+      "Wednesday"
+    ]
+  },
+  "training_schedule": [
+    {
+      "day": "Monday",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350,
+      "time": "18:00",
+      "type": "gym_hypertrophy"
+    }
+  ],
+  "ui_settings": {
+    "bar_scale_limit": 1.6,
+    "title_tooltip_chars": 38
+  },
+  "user_profile": {
+    "activity_level": "light_office",
+    "birth_date": "1971-01-10",
+    "gender": "male",
+    "height_cm": 183.0,
+    "protein_multiplier": 1.8,
+    "target_weight_kg": 80.0
+  },
+  "week_defaults": {
+    "breakfast": "cook",
+    "dinner": "cook",
+    "lunch": "cook",
+    "snack": "cook"
+  },
+  "week_start_day": "Monday",
+  "weekly_schedule": {
+    "Friday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    },
+    "Monday": {
+      "calories": 1500.0,
+      "fat_g": 55.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 130.0,
+      "protein_g": 120.0
+    },
+    "Saturday": {
+      "calories": 1200.0,
+      "fat_g": 44.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 85.0,
+      "protein_g": 115.0
+    },
+    "Sunday": {
+      "calories": 1500.0,
+      "fat_g": 55.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 130.0,
+      "protein_g": 120.0
+    },
+    "Thursday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    },
+    "Tuesday": {
+      "calories": 1200.0,
+      "fat_g": 44.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 400,
+          "fat_g": 15,
+          "net_carbs_g": 35,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 85.0,
+      "protein_g": 115.0
+    },
+    "Wednesday": {
+      "calories": 1000.0,
+      "fat_g": 35.0,
+      "meal_overrides": {
+        "breakfast": {
+          "calories": 350,
+          "fat_g": 12,
+          "net_carbs_g": 25,
+          "protein_g": 30
+        }
+      },
+      "net_carbs_g": 60.0,
+      "protein_g": 110.0
+    }
+  }
+}
+-e 
+
+=== File: tests/test_config_layout.py ===
+"""The safety net for the config/reference/data/logs split.
+
+The refactor moves `data/config.json` into six files under `config/` and has
+`LocalJSONRepository.load_config()` merge them back into the one flat dict
+`AppConfig` has always validated. Every consumer downstream — `planner`,
+`week`, `ui_app` — keeps reading `config["weekly_schedule"]`,
+`config["meal_styles"]` and the rest, so the whole refactor is correct exactly
+when that merged dict is unchanged.
+
+`fixtures/config_snapshot.json` is that dict, captured before the first file
+moved. A key that lands in the wrong file, gets dropped by the merge, or
+changes type on the way through fails here — one assertion naming the key —
+rather than surfacing weeks later as a week generated against a silently
+defaulted value.
+
+Regenerate the fixture only when a config value is *deliberately* changed, and
+in the same commit as the change, so the diff shows exactly which keys moved:
+
+    source venv/bin/activate && python tests/test_config_layout.py --update
+
+Additions are allowed and removals are not: `config/schedule.json` brings the
+`base_schedule`/`location_rules`/`regional` keys in with it, declared on
+`AppConfig` before anything reads them, and a new key can't break a caller
+that doesn't know it exists. A *missing* key always can.
+"""
+
+import json
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import planner  # noqa: E402
+from repository import LocalJSONRepository, run_sync  # noqa: E402
+
+SNAPSHOT = Path(__file__).resolve().parent / "fixtures" / "config_snapshot.json"
+
+
+def merged_config() -> dict:
+    """The shipped config as every caller downstream sees it.
+
+    Deliberately `load_config()` and not `load_config_with_models()`:
+    models.json is reshaped by this refactor on purpose (`meal_generation_model`,
+    per-model metadata), so pinning its contents here would turn an intended
+    change into a test failure. What must not change is config.json's own
+    merged output.
+    """
+    return planner.load_app_config(run_sync(LocalJSONRepository().load_config()))
+
+
+class TestMergedConfigIsUnchanged(unittest.TestCase):
+    def setUp(self) -> None:
+        self.snapshot = json.loads(SNAPSHOT.read_text())
+        self.config = merged_config()
+
+    def test_no_key_was_lost(self):
+        missing = sorted(set(self.snapshot) - set(self.config))
+        self.assertEqual(
+            missing,
+            [],
+            f"config keys vanished in the split: {missing}. Either the key "
+            f"landed in no file, or its file is absent from the merge manifest.",
+        )
+
+    def test_every_value_survived_intact(self):
+        # Per-key subTest rather than one dict comparison: a 200-line
+        # weekly_schedule diff buries which key actually moved, and the whole
+        # point of this file is to name it.
+        for key, expected in sorted(self.snapshot.items()):
+            with self.subTest(key=key):
+                self.assertEqual(self.config.get(key), expected)
+
+    def test_snapshot_is_not_empty(self):
+        # Guards the failure mode where a regeneration runs against a broken
+        # or half-written config and quietly bakes in an empty baseline,
+        # after which every other test here passes vacuously.
+        self.assertGreaterEqual(len(self.snapshot), 20)
+        self.assertIn("weekly_schedule", self.snapshot)
+
+
+if __name__ == "__main__":
+    if "--update" in sys.argv:
+        SNAPSHOT.write_text(json.dumps(merged_config(), indent=2, sort_keys=True) + "\n")
+        print(f"Wrote {SNAPSHOT.relative_to(Path.cwd())}")
+    else:
+        unittest.main()
+-e 
+
+=== File: tests/test_history.py ===
+"""Tests for dating meal_history.json entries and archiving their planned
+targets (week.day_date, planner.record_week_history) — Phase 5a of the UI
+roadmap in CLAUDE.md.
+
+Real `LocalJSONRepository` on a temp directory, `run_sync` to bridge the
+async call from a plain `unittest.TestCase` — same pattern
+`test_sync_service.TestPersistence` already uses for a repository round trip.
+"""
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from planner import CookEvent, Ingredient, Recipe, WeekPlan, record_week_history  # noqa: E402
+from repository import LocalJSONRepository, run_sync  # noqa: E402
+from week import day_date  # noqa: E402
+
+DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+TARGETS = {
+    day: {"calories": 2200.0, "protein_g": 144.0, "net_carbs_g": 180.0, "fat_g": 70.0}
+    for day in DAYS
+}
+
+
+def recipe(name: str, meal_type: str) -> Recipe:
+    return Recipe(
+        name=name,
+        meal_type=meal_type,
+        ingredients=[
+            Ingredient(
+                name="Chicken thigh",
+                quantity_g=200,
+                nova_group=1,
+                calories=400,
+                protein_g=40,
+                net_carbs_g=0,
+                fat_g=25,
+            )
+        ],
+        instructions=["Cook it."],
+        prep_time_minutes=20,
+    )
+
+
+def week_plan(**overrides) -> WeekPlan:
+    defaults = dict(
+        days=DAYS,
+        servings_per_meal=2,
+        generated_at="2026-08-16T20:31:21",
+        week_start_date="2026-08-10",
+        cook_events=[
+            CookEvent(
+                slot_id="Sunday:dinner",
+                day="Sunday",
+                meal_type="dinner",
+                portions=2,
+                style="grill",
+                cuisine="middle_eastern",
+                recipe=recipe("Lamb Sirloin", "dinner"),
+            ),
+        ],
+        slots=[],
+        targets=TARGETS,
+    )
+    defaults.update(overrides)
+    return WeekPlan(**defaults)
+
+
+class TestDayDate(unittest.TestCase):
+    def test_first_day_is_the_start_date_itself(self):
+        self.assertEqual(day_date("2026-08-10", DAYS, "Monday"), "2026-08-10")
+
+    def test_last_day_is_six_days_later(self):
+        self.assertEqual(day_date("2026-08-10", DAYS, "Sunday"), "2026-08-16")
+
+    def test_a_middle_day_is_its_own_offset(self):
+        self.assertEqual(day_date("2026-08-10", DAYS, "Wednesday"), "2026-08-12")
+
+    def test_a_week_start_day_other_than_monday_still_offsets_by_rotation_position(self):
+        rotated = ["Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday"]
+        self.assertEqual(day_date("2026-08-12", rotated, "Monday"), "2026-08-17")
+
+
+class TestRecordWeekHistory(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = LocalJSONRepository(data_dir=self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def entry_for(self, day: str) -> dict:
+        history = run_sync(self.repo.load_history())
+        return next(e for e in history if e["day_of_week"] == day)
+
+    def test_a_cooked_day_is_dated_from_week_start_date(self):
+        run_sync(record_week_history(week_plan(), self.repo, config=None))
+        self.assertEqual(self.entry_for("Sunday")["date"], "2026-08-16")
+
+    def test_the_days_planned_targets_are_archived_verbatim(self):
+        run_sync(record_week_history(week_plan(), self.repo, config=None))
+        self.assertEqual(self.entry_for("Sunday")["targets"], TARGETS["Sunday"])
+
+    def test_a_plan_with_no_week_start_date_records_no_date(self):
+        """Pre-Phase-4 plans (or a bare `regenerate_single_day` on one)
+        carry no week_start_date — recording a guessed date for a *past*
+        day would be worse than recording none, unlike today_in_week's
+        live fallback for "does this cover today"."""
+        run_sync(record_week_history(week_plan(week_start_date=None), self.repo, config=None))
+        self.assertIsNone(self.entry_for("Sunday")["date"])
+
+    def test_a_day_missing_from_targets_records_no_targets_rather_than_raising(self):
+        sparse_targets = {k: v for k, v in TARGETS.items() if k != "Sunday"}
+        run_sync(record_week_history(week_plan(targets=sparse_targets), self.repo, config=None))
+        self.assertIsNone(self.entry_for("Sunday")["targets"])
+
+    def test_existing_fields_are_unaffected_by_the_new_ones(self):
+        run_sync(record_week_history(week_plan(), self.repo, config=None))
+        entry = self.entry_for("Sunday")
+        self.assertEqual(entry["cuisine"], "middle_eastern")
+        self.assertEqual(entry["styles"], {"dinner": "grill"})
+        self.assertEqual(entry["recipe_names"], ["Lamb Sirloin"])
+
+    def test_a_day_with_no_cook_events_is_not_recorded_at_all(self):
+        run_sync(record_week_history(week_plan(), self.repo, config=None))
+        history = run_sync(self.repo.load_history())
+        recorded_days = {e["day_of_week"] for e in history}
+        self.assertEqual(recorded_days, {"Sunday"})
+
+    def test_old_untouched_entries_keep_validating_with_no_date_or_targets_key(self):
+        """Regression guard: entries written before this change have neither
+        key at all (not even `None`) — history.json is a plain list of
+        dicts, never Pydantic-validated (repository.py deals in plain
+        dicts/lists), so nothing should choke on their absence."""
+        pre_migration_entry = {
+            "day_of_week": "Saturday",
+            "generated_at": "2026-07-01T09:00:00",
+            "cuisine": "thai",
+            "styles": {},
+            "main_proteins": [],
+            "recipe_names": ["Old Dish"],
+        }
+        run_sync(self.repo.save_history([pre_migration_entry]))
+        run_sync(record_week_history(week_plan(), self.repo, config=None))
+        history = run_sync(self.repo.load_history())
+        self.assertEqual(history[0]["day_of_week"], "Saturday")
+        self.assertNotIn("date", history[0])
+        self.assertEqual(history[1]["date"], "2026-08-16")
+
+
+if __name__ == "__main__":
+    unittest.main()
+-e 
+
+=== File: tests/test_diet_styles.py ===
+"""Tests for the diet-style axis: a standing eating pattern (Mediterranean,
+Fast 800, DASH, Total Wellbeing Diet) layered on top of cuisine.
+
+Two things need covering: `AppConfig` rejects an `active_diet_styles` entry
+the `diet_styles` catalog doesn't know about (the same "fail at load, name
+the typo" policy every other section here gets), and
+`build_diet_style_rule` emits nothing when no style is active and the
+right guidance text when one is. `unittest` and the `sys.path` insert match
+`test_week_composition.py`; see its docstring for why.
+"""
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import planner  # noqa: E402
+from repository import LocalJSONRepository, run_sync  # noqa: E402
+
+BASE_CONFIG = {
+    "weekly_schedule": {
+        "Monday": {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55},
+    },
+    "dietary_rules": {
+        "allowed_nova_groups": [1, 2, 3],
+        "banned_ingredients": [],
+    },
+    "diet_styles": {
+        "mediterranean_diet": {
+            "label": "Mediterranean Diet",
+            "principles": "Favor olive oil and oily fish.",
+        },
+        "fast_800": {
+            "label": "Fast 800",
+            "principles": "Keep dishes simple and calorie-light.",
+        },
+    },
+}
+
+
+class TestBuildDietStyleRule(unittest.TestCase):
+    def test_no_active_styles_emits_nothing(self):
+        config = dict(BASE_CONFIG, dietary_rules=dict(BASE_CONFIG["dietary_rules"]))
+        self.assertEqual(planner.build_diet_style_rule(config), "")
+
+    def test_missing_diet_styles_key_emits_nothing(self):
+        # A config predating this feature has no `diet_styles` key at all —
+        # must behave exactly like an empty catalog, not KeyError.
+        config = {"dietary_rules": dict(BASE_CONFIG["dietary_rules"])}
+        self.assertEqual(planner.build_diet_style_rule(config), "")
+
+    def test_active_style_names_label_and_principles(self):
+        config = dict(
+            BASE_CONFIG,
+            dietary_rules=dict(BASE_CONFIG["dietary_rules"], active_diet_styles=["fast_800"]),
+        )
+        rule = planner.build_diet_style_rule(config)
+        self.assertIn("Fast 800", rule)
+        self.assertIn("Keep dishes simple and calorie-light.", rule)
+        self.assertNotIn("Mediterranean", rule)
+
+    def test_multiple_active_styles_all_appear(self):
+        config = dict(
+            BASE_CONFIG,
+            dietary_rules=dict(
+                BASE_CONFIG["dietary_rules"],
+                active_diet_styles=["mediterranean_diet", "fast_800"],
+            ),
+        )
+        rule = planner.build_diet_style_rule(config)
+        self.assertIn("Mediterranean Diet", rule)
+        self.assertIn("Fast 800", rule)
+
+    def test_rule_folds_into_build_generation_rules(self):
+        config = dict(
+            BASE_CONFIG,
+            dietary_rules=dict(BASE_CONFIG["dietary_rules"], active_diet_styles=["fast_800"]),
+        )
+        rules = planner.build_generation_rules(
+            config,
+            style_rule=planner.DAY_STYLE_RULE,
+            variety_rule=planner.DAY_VARIETY_RULE,
+            budget_rule=planner.DAY_BUDGET_RULE,
+        )
+        self.assertIn("Fast 800", rules)
+
+
+class TestAppConfigValidatesDietStyles(unittest.TestCase):
+    def test_unknown_active_style_fails_at_load(self):
+        raw = dict(
+            BASE_CONFIG,
+            dietary_rules=dict(
+                BASE_CONFIG["dietary_rules"], active_diet_styles=["not_a_real_diet"]
+            ),
+        )
+        with self.assertRaises(ValueError):
+            planner.load_app_config(raw)
+
+    def test_known_active_style_loads_cleanly(self):
+        raw = dict(
+            BASE_CONFIG,
+            dietary_rules=dict(
+                BASE_CONFIG["dietary_rules"], active_diet_styles=["mediterranean_diet"]
+            ),
+        )
+        config = planner.load_app_config(raw)
+        self.assertEqual(config["dietary_rules"]["active_diet_styles"], ["mediterranean_diet"])
+        self.assertIn("mediterranean_diet", config["diet_styles"])
+
+
+class TestRealConfig(unittest.TestCase):
+    """The shipped config/ still validates with the diet_styles catalog in it."""
+
+    def test_shipped_diet_styles_catalog_loads(self):
+        config = planner.load_app_config(run_sync(LocalJSONRepository().load_config()))
+        self.assertIn("mediterranean_diet", config["diet_styles"])
+        self.assertIn("fast_800", config["diet_styles"])
+        self.assertEqual(config["dietary_rules"]["active_diet_styles"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()
 -e 
 

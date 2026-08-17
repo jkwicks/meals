@@ -150,6 +150,16 @@ class PlannerState:
     # say which days are overridden and reset them one at a time, and means a
     # day nobody touched still follows the file if the file changes.
     target_overrides: Dict[str, dict] = field(default_factory=dict)
+    # The popup's picks for the *next* generation only — same "transient,
+    # diff-based, never persisted" contract as target_overrides. An empty
+    # list means "use config.json's list unchanged"; a non-empty pick
+    # REPLACES the file's list. Booleans default from
+    # config["enable_sunday_prep"] at load() time, so a config that already
+    # had the old feature on opens the popup with both boxes pre-checked.
+    cuisine_override: List[str] = field(default_factory=list)
+    diet_style_override: List[str] = field(default_factory=list)
+    bulk_prep_enabled: bool = False
+    long_cook_enabled: bool = False
     # Workout sessions ({day, time, type, duration_minutes, estimated_burn_kcal}).
     # Seeded from config's `training_schedule` and edited in the drawer; like
     # the pantry it is an input to the *next* run, folded into
@@ -229,6 +239,8 @@ class PlannerState:
             model=resolve_planner_model(dict(config, models=models_config)),
             pantry=[str(item).strip() for item in config["inventory_to_clear"] if str(item).strip()],
             training_schedule=[dict(session) for session in config["training_schedule"]],
+            bulk_prep_enabled=config["enable_sunday_prep"],
+            long_cook_enabled=config["enable_sunday_prep"],
         )
         state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
@@ -534,6 +546,21 @@ class PlannerState:
                 # base URL from models.json instead of the pre-models.json
                 # literals.
                 models=self.models_config,
+                # cuisine_override/diet_style_override REPLACE (not add to)
+                # config's own lists when non-empty — resolve_auto_choices'
+                # pick_cuisine_blocks and build_diet_style_rule already just
+                # read whatever's here, so overriding these two values is the
+                # entire cuisine/diet-style popup feature; no new algorithm.
+                cuisines=self.cuisine_override or self.config["cuisines"],
+                dietary_rules=dict(
+                    self.config["dietary_rules"],
+                    active_diet_styles=(
+                        self.diet_style_override
+                        or self.config["dietary_rules"]["active_diet_styles"]
+                    ),
+                ),
+                bulk_prep_enabled=self.bulk_prep_enabled,
+                long_cook_enabled=self.long_cook_enabled,
             )
         )
 

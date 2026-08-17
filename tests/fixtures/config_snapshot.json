@@ -10,8 +10,9 @@
   },
   "cuisine_affinities": {
     "bbq": [
-      "cajun",
-      "mexican"
+      "homestyle",
+      "pub_classic",
+      "cajun"
     ],
     "cajun": [
       "bbq",
@@ -22,8 +23,8 @@
       "middle_eastern"
     ],
     "indian": [
-      "middle_eastern",
-      "thai"
+      "homestyle",
+      "modern_australian"
     ],
     "italian": [
       "mediterranean",
@@ -42,7 +43,8 @@
       "greek"
     ],
     "mexican": [
-      "cajun",
+      "homestyle",
+      "modern_australian",
       "bbq"
     ],
     "middle_eastern": [
@@ -50,8 +52,8 @@
       "mediterranean"
     ],
     "thai": [
-      "vietnamese",
-      "indian"
+      "modern_australian",
+      "homestyle"
     ],
     "vietnamese": [
       "thai",
@@ -73,9 +75,63 @@
     "mediterranean",
     "vietnamese",
     "cajun",
-    "greek"
+    "greek",
+    "homestyle",
+    "modern_australian",
+    "pub_classic"
   ],
+  "diet_styles": {
+    "aip": {
+      "label": "Autoimmune Protocol (AIP)",
+      "principles": "Exclude grains, legumes, nightshades (tomato, pepper, eggplant, potato), dairy, eggs and seed-based spices; build meals from organ meats, clean proteins, bone broth and non-nightshade vegetables."
+    },
+    "anti_inflammatory": {
+      "label": "Anti-Inflammatory",
+      "principles": "Load meals with polyphenol-rich vegetables, cruciferous greens, wild fatty fish and therapeutic spices and aromatics (turmeric, ginger, garlic); avoid refined seed oils and refined carbohydrates."
+    },
+    "blue_zones": {
+      "label": "Blue Zones / Longevity",
+      "principles": "Build the plate almost entirely from whole plants \u2014 legumes, beans, nuts, seeds, wild herbs and extra virgin olive oil \u2014 with wild-caught fish only 2-3 times a week and meat rare to never."
+    },
+    "dash": {
+      "label": "DASH Diet",
+      "principles": "Favor vegetables, fruit, low-fat dairy and whole grains; minimize added salt and sodium-heavy ingredients such as cured meats, brined or canned-in-salt items, and salty condiments."
+    },
+    "fast_800": {
+      "label": "Fast 800",
+      "principles": "Keep dishes simple and calorie-light within the given budget: lean protein and vegetables first, minimal added fat, sauce or oil, and no refined carbs padding the plate."
+    },
+    "low_fodmap": {
+      "label": "Low-FODMAP",
+      "principles": "Avoid high-FODMAP ingredients \u2014 onion, garlic, wheat, most legumes, high-fructose fruit \u2014 substituting garlic-infused oil, scallion or spring-onion greens, fresh ginger and chives, and favor gut-friendly produce like zucchini, bok choy and carrots."
+    },
+    "mediterranean_diet": {
+      "label": "Mediterranean Diet",
+      "principles": "Favor olive oil, oily fish, legumes, whole grains and vegetables; limit red meat and butter to occasional use."
+    },
+    "mind_diet": {
+      "label": "MIND Diet",
+      "principles": "Include leafy greens daily and berries at least twice a week; favor walnuts, olive oil, poultry and fish; strictly limit cheese, butter, fried food and pastries."
+    },
+    "nordic_diet": {
+      "label": "Nordic Diet",
+      "principles": "Favor fatty cold-water fish (mackerel, salmon, herring), root vegetables, cruciferous vegetables and berries, dressed in cold-pressed rapeseed or flaxseed oil rather than tropical oils or butter."
+    },
+    "paleo": {
+      "label": "Paleo",
+      "principles": "Build meals from pastured meat, seafood, eggs, fibrous vegetables, root vegetables, fruit and nuts; exclude all grains, legumes, refined sugar and standard dairy."
+    },
+    "pegan": {
+      "label": "Pegan",
+      "principles": "Give non-starchy, low-glycemic vegetables and healthy fats (avocado, nuts, seeds, olive oil) roughly three-quarters of the plate, with clean animal protein as a smaller side rather than the centerpiece."
+    },
+    "total_wellbeing_diet": {
+      "label": "Total Wellbeing Diet",
+      "principles": "High protein with moderate low-GI carbs, lean meat or dairy at most meals, and strict portion discipline \u2014 no incidental extras beyond what the budget calls for."
+    }
+  },
   "dietary_rules": {
+    "active_diet_styles": [],
     "allowed_nova_groups": [
       1,
       2,
@@ -92,7 +148,9 @@
       "apricot",
       "banana",
       "Almond milk",
-      "soy beans"
+      "soy beans",
+      "venison",
+      "grapes"
     ]
   },
   "enable_sunday_prep": true,
@@ -168,6 +226,7 @@
     "snack": 0.1
   },
   "planning_rules": {
+    "batch_target_servings": 6,
     "cuisine_block_pattern": [
       4,
       3
@@ -204,6 +263,55 @@
       "estimated_burn_kcal": 350,
       "time": "18:00",
       "type": "gym_hypertrophy"
+    },
+    {
+      "day": "Tuesday",
+      "duration_minutes": 30,
+      "estimated_burn_kcal": 320,
+      "time": "18:00",
+      "type": "cardio_hiit"
+    },
+    {
+      "day": "Wednesday",
+      "duration_minutes": 25,
+      "estimated_burn_kcal": 180,
+      "time": "18:00",
+      "type": "cardio_easy"
+    },
+    {
+      "day": "Thursday",
+      "duration_minutes": 0,
+      "estimated_burn_kcal": 0,
+      "time": "00:00",
+      "type": "rest"
+    },
+    {
+      "day": "Friday",
+      "duration_minutes": 25,
+      "estimated_burn_kcal": 180,
+      "time": "18:00",
+      "type": "cardio_easy"
+    },
+    {
+      "day": "Saturday",
+      "duration_minutes": 60,
+      "estimated_burn_kcal": 350,
+      "time": "08:00",
+      "type": "gym_hypertrophy"
+    },
+    {
+      "day": "Saturday",
+      "duration_minutes": 30,
+      "estimated_burn_kcal": 320,
+      "time": "09:15",
+      "type": "cardio_hiit"
+    },
+    {
+      "day": "Sunday",
+      "duration_minutes": 90,
+      "estimated_burn_kcal": 650,
+      "time": "08:00",
+      "type": "cardio_ride"
     }
   ],
   "ui_settings": {

@@ -92,6 +92,7 @@ from ui_cards import build_cards
 from ui_context import Refreshables, UIContext
 from ui_drawer import build_drawer
 from ui_generation import build_generation
+from ui_prep_options import build_prep_options
 from ui_shopping import build_shopping
 from ui_state import PlannerState
 from ui_telemetry import build_telemetry
@@ -136,11 +137,15 @@ async def planner_page() -> None:
 
     # Build order matters only where one module's factory needs another's
     # return value: generation before cards (a card's regenerate icon calls
-    # into it), cards before today (a Today card's click opens cards' own
-    # recipe detail dialog), everything before the refresh-topic
+    # into it), generation before prep_options (its "Generate" button starts
+    # a run via generation.run_generation), prep_options before drawer (the
+    # drawer's sticky Generate button opens this dialog rather than running
+    # the week directly), cards before today (a Today card's click opens
+    # cards' own recipe detail dialog), everything before the refresh-topic
     # registration at the bottom (every topic there names a section some
     # `build_*` returned).
     generation = build_generation(ctx)
+    prep_options = build_prep_options(ctx, generation)
     cards = build_cards(ctx, generation)
     telemetry = build_telemetry(ctx)
     shopping = build_shopping(ctx)
@@ -252,7 +257,7 @@ async def planner_page() -> None:
         telemetry.context_pipeline()
         telemetry.telemetry()
 
-    drawer = build_drawer(ctx, generation)
+    drawer = build_drawer(ctx, generation, prep_options)
 
     # ---- refresh topics ----------------------------------------------------
     # Registered here, last, once every section named below actually exists —

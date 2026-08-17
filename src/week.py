@@ -16,8 +16,9 @@ fully resolved (styles, cuisines, portions, windows) before a single token is
 generated, so the UI can preview exactly what it is about to ask for.
 """
 
+import math
 from datetime import date, datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -302,6 +303,28 @@ def pin_style(spec: WeekSpec, meal_type: str, style: str, days: Iterable[str]) -
     return spec.model_copy(update={"slots": updated})
 
 
+def clear_cuisines(spec: WeekSpec) -> WeekSpec:
+    """A copy of `spec` with every cook slot's cuisine reset to auto (None).
+
+    Same escape hatch as `PlannerState.shuffle_styles`, scoped to cuisine
+    only: once a week has been generated, every slot carries the concrete
+    cuisine that run resolved, and `resolve_auto_choices`/`pick_cuisine_blocks`
+    only ever pick a fresh one when a slot is empty (planner.py) — otherwise
+    every later run repeats the exact same per-day cuisine forever. Called
+    only when the generate popup's cuisine picker narrows `config["cuisines"]`
+    for this run (`ui_generation.generate_week`): without it, a slot carrying
+    a concrete cuisine from a wider list a previous run picked from would fail
+    `validate_week`'s "cuisine is not in config cuisines" check the moment the
+    list no longer contains it, rather than simply being re-picked from the
+    narrower one.
+    """
+    updated = [
+        slot.model_copy(update={"cuisine": None}) if slot.mode == MODE_COOK else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
 def next_day_slot_id(spec: WeekSpec, day: str, meal_type: str) -> Optional[str]:
     """`meal_type`'s slot on the day after `day`, or None past the week's end.
 
@@ -398,6 +421,104 @@ def link_leftover(spec: WeekSpec, target_id: str, source_id: str) -> WeekSpec:
         for slot in spec.slots
     ]
     return spec.model_copy(update={"slots": updated})
+
+
+def spread_batch(
+    spec: WeekSpec,
+    anchor_meal_type: str,
+    target_servings: int,
+    exclude_days: Optional[Set[str]] = None,
+    prefer_days: Optional[List[str]] = None,
+) -> Tuple[WeekSpec, Optional[str]]:
+    """Pick one cook slot as a batch anchor and link enough forward slots to
+    it to approximate `target_servings`, entirely via `link_leftover`.
+
+    Anchor selection: any MODE_COOK slot of `anchor_meal_type`, excluding only
+    `exclude_days` (so a second call for the week's other toggle doesn't reuse
+    the same day). A slot that's already a leftover source for something else
+    — most commonly a dinner already feeding the next day's lunch, the
+    long-standing "Link to next lunch" pattern — is deliberately NOT excluded
+    here: on a grid that already links every dinner forward (a well-used
+    week), excluding those would leave nothing eligible but the last day of
+    the week, which by definition has no day left to spread into and produces
+    a "batch" of one. Reusing an already-linked day as the anchor and simply
+    topping up its remaining claims is what makes this work on exactly the
+    grid this feature is for. `prefer_days`, when non-empty, narrows the pool
+    first — the long-cook caller passes the week's weekend days; bulk-prep
+    passes None. Within the (possibly narrowed) pool, the earliest day in
+    `spec.days` order wins — deterministic, and it leaves the most week left
+    to spread across.
+
+    Spreading: starting the day after the anchor, walks the rest of
+    `spec.days` in order, trying that day's `anchor_meal_type` slot then its
+    "lunch" slot — the only two links `leftover_meal_type_error` allows out of
+    a dinner anchor — at most one link per day. Links until the anchor's total
+    claims (existing plus new, via `claim_counts`) reach `target_claims` or
+    the week runs out, whichever first: a batch that can only reach fewer
+    days still generates, just smaller, and an anchor that already had enough
+    claims before this call adds none.
+
+    `target_claims` = `max(2, min(3, ceil(target_servings /
+    servings_per_meal)))` — at least 2 (a "batch" of one day isn't one) and
+    at most 3, so a small household's arithmetic doesn't spread one dish
+    across half the week.
+
+    Returns the (possibly updated) spec and the anchor's slot id, or the
+    original spec and None if no valid anchor existed at all — callers treat
+    that as "nothing to do this run", not an error.
+
+    A second case also returns `None`, deliberately the same way: an anchor
+    whose claims never grow past what an *ordinary* dinner already gets for
+    free (itself plus, on an already-linked grid, the standard next-day-lunch
+    claim) isn't a batch — it's a normal dinner the model was misleadingly
+    told to mark `long_oven_cook`/`bulk_prep_friendly`. This bites hardest
+    when a grid already has every dinner linked to the next day's lunch (via
+    `autofill_leftovers` or repeated "Link to next lunch" clicks): the
+    forward walk below refuses to convert a cook slot that's already feeding
+    its own next-day lunch (see `leftover_link_error`'s dependants check) and
+    refuses a lunch slot that's already fed *by* one, so on a fully-linked
+    week there is at most one slot anywhere left free to claim — and a second
+    `spread_batch` call for the week's other toggle finds nothing left at
+    all. Reporting that honestly (as "no batch happened") beats silently
+    keeping an anchor that never moved past its starting claim count.
+    """
+    exclude_days = exclude_days or set()
+
+    candidates = [
+        slot
+        for slot in spec.cook_slots()
+        if slot.meal_type == anchor_meal_type and slot.day not in exclude_days
+    ]
+    if not candidates:
+        return spec, None
+
+    pool = [slot for slot in candidates if slot.day in (prefer_days or [])] or candidates
+    anchor = min(pool, key=lambda slot: spec.day_index(slot.day))
+
+    target_claims = max(2, min(3, math.ceil(target_servings / spec.servings_per_meal)))
+    existing_claims = claim_counts(spec).get(anchor.id, 1)
+    additional_links_needed = max(0, target_claims - existing_claims)
+
+    linked = 0
+    for day in spec.days[spec.day_index(anchor.day) + 1 :]:
+        if linked >= additional_links_needed:
+            break
+        by_id = spec.by_id()
+        for meal_type in (anchor_meal_type, "lunch"):
+            target_id = slot_id(day, meal_type)
+            target = by_id.get(target_id)
+            if target is None or target.mode != MODE_COOK:
+                continue
+            if leftover_link_error(spec, target_id, anchor.id):
+                continue
+            spec = link_leftover(spec, target_id, anchor.id)
+            linked += 1
+            break
+
+    if linked == 0 and existing_claims < target_claims:
+        return spec, None
+
+    return spec, anchor.id
 
 
 def claim_counts(spec: WeekSpec) -> Dict[str, int]:

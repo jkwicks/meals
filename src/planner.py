@@ -239,6 +239,69 @@ DINNER_VARIETY_RULE = (
     "nights share a cuisine.\n"
 )
 
+# Injected only into the dinner call, and only when Sunday prep is enabled.
+# LONG_OVEN_COOK_RULE (below `build_generation_rules`, shared by both axes)
+# says WHEN a dish qualifies to set the flag — on its own that reads as
+# permission, not a request, and the model's easiest path is seven quick
+# stovetop dinners that all legitimately satisfy "false for anything needing
+# active stovetop attention." This is what actually asks for one. Scoped to
+# the dinner axis for the same reason as DINNER_VARIETY_RULE: only this call
+# sees all 7 nights at once and can choose which day gets it; gated on
+# `enable_sunday_prep` because a week with the feature off has no use for what
+# this produces, and `generate_sunday_prep_session` already no-ops without a
+# candidate. Asking for exactly one, and ruling the rest out, is what keeps
+# `generate_sunday_prep_session`'s candidate list small and genuinely
+# "aggregate this one batch" rather than every braise-ish dinner qualifying.
+BATCH_ROAST_RULE = (
+    "- Make exactly ONE dinner this week a genuinely long (60+ minutes), "
+    "mostly hands-off oven roast/bake or slow-cooker/braise, and set its "
+    "long_oven_cook to true (per the long_oven_cook rule below). Prefer "
+    "whichever day suits a slower, lazier cook — a weekend day, if one is "
+    "listed below — unless that day's own brief points somewhere else. Every "
+    "other dinner stays normal-length, active-cook, and must NOT be marked "
+    "long_oven_cook.\n"
+)
+
+# The anchor-aware sibling of BATCH_ROAST_RULE, above. That rule leaves day
+# choice to the model; this one is used instead whenever `week.spread_batch`
+# has already picked the day (config["long_cook_anchor"], set only by
+# ui_generation.apply_batch_selections) — the model just executes the choice,
+# communicated per-slot via LONG_COOK_ANCHOR_SLOT_DIRECTIVE. BATCH_ROAST_RULE
+# itself stays wired to its old gate for the CLI's "enable_sunday_prep but no
+# anchor" case — see generate_meal_type_week's gating below.
+BATCH_ROAST_ANCHOR_RULE = (
+    "- One dinner below is already marked as this week's long cook (see its "
+    "own line for the [LONG COOK] directive) — make THAT one, and only that "
+    "one, a genuinely long (60+ minutes), mostly hands-off oven roast/bake "
+    "or slow-cooker/braise, and set its long_oven_cook to true (per the "
+    "long_oven_cook rule below). Every other dinner stays normal-length, "
+    "active-cook, and must NOT be marked long_oven_cook.\n"
+)
+
+LONG_COOK_ANCHOR_SLOT_DIRECTIVE = (
+    "[LONG COOK: this is the week's long, hands-off oven roast/bake or "
+    "slow-cooker/braise — see the long-cook rule above. Set long_oven_cook "
+    "to true.]"
+)
+
+# Bulk-prep's own whole-week rule, gated on config["bulk_prep_anchor"] — set
+# only by ui_generation.apply_batch_selections, so this never fires for CLI
+# or regeneration (bulk_prep didn't exist before this feature, so there is no
+# prior CLI behaviour to preserve here).
+BULK_PREP_RULE = (
+    "- One dinner below is already marked as this week's bulk-prep batch "
+    "(see its own line for the [BULK PREP] directive) — make THAT one, and "
+    "only that one, well suited to big-batch cooking and multi-day storage "
+    "(a soup, stew, curry, chilli, casserole or similar — it does not need "
+    "to be a long or hands-off cook) and set its bulk_prep_friendly to true. "
+    "Every other dinner must NOT be marked bulk_prep_friendly.\n"
+)
+
+BULK_PREP_ANCHOR_SLOT_DIRECTIVE = (
+    "[BULK PREP: this is the week's bulk-prep batch — see the bulk-prep "
+    "rule above. Set bulk_prep_friendly to true.]"
+)
+
 # Injected into the breakfast call when more than one breakfast is a shake.
 # The style description in config.json already lists the base and the pools to
 # draw from; what one slot's brief cannot say is what the *other* shakes did,
@@ -285,6 +348,50 @@ PANTRY_CONSOLIDATION_RULE = (
     "about the food variety asked for above: keep varying the vegetables, "
     "proteins and spices — just don't buy three kinds of mustard.\n"
 )
+
+
+def build_diet_style_rule(config: dict) -> str:
+    """Standing dietary-approach guidance — Mediterranean, Fast 800, DASH,
+    the Total Wellbeing Diet — layered on top of cuisine, not instead of it.
+
+    A cuisine is a flavour tradition (`style_rule`, one per day/block); a diet
+    style is a food-selection philosophy that applies regardless of which
+    tradition is cooking, so a Korean dinner can be Mediterranean-principled
+    and a Fast 800 day at the same time — exactly the stacking a single
+    `cuisines` pick can't express. Selection lives in
+    `dietary_rules.active_diet_styles`, catalog text in `diet_styles` (see
+    config/meals.json): same active-list/catalog split as cuisines, minus the
+    block rotation, since a diet style is followed for the whole week rather
+    than picked per day.
+
+    Deliberately carries no numeric lever — no calorie ceiling, no macro
+    override. `weekly_schedule`/`hydrate_dynamic_targets` already own the
+    day's numbers (see CLAUDE.md's "Targets come from the body, not the
+    file"), and a second calorie-adjusting input would risk exactly the kind
+    of double-count that section warns about for training uplift. Fast 800's
+    calorie discipline is expressed as food-selection guidance instead —
+    simple, lean, low-added-fat dishes — inside whatever budget the day was
+    already given.
+
+    Empty when no active styles are configured (the default), so the prompt
+    is byte-identical to before this feature existed — same convention as
+    `build_avoid_rules`/`inventory_instruction`.
+    """
+    catalog = config.get("diet_styles") or {}
+    active = config["dietary_rules"].get("active_diet_styles") or []
+    lines = "".join(
+        f"  - {catalog[key]['label']}: {catalog[key]['principles']}\n"
+        for key in active
+        if key in catalog
+    )
+    if not lines:
+        return ""
+    return (
+        "- This week also follows these standing dietary approaches, in "
+        "addition to (not instead of) each meal's cuisine — cuisine is the "
+        "flavour tradition, a dietary approach is what to prioritize within "
+        "it, and a dish should satisfy both at once:\n" + lines
+    )
 
 # --------------------------------------------------------------------------
 # Prompt rules shared by both generation axes
@@ -410,17 +517,20 @@ def build_generation_rules(
 
     Ordering is deliberate and shared: hard constraints (units, NOVA groups,
     banned ingredients) first, because they are the ones a validator will
-    reject on; then composition guidance — style, variety, and the pantry
-    consolidation rule that qualifies variety, in that order, because
-    consolidation only makes sense read as a limit on the sentence before it;
-    then `extras` — the per-call blocks (dinner variety, cuisine blocks, shake
-    rotation, avoid lists, pantry, fixed leftovers, batch cooking) that only
-    sometimes apply; then the budget, which the model should read last and
-    closest to the per-slot briefs in the user prompt.
+    reject on; then composition guidance — style, diet style, variety, and
+    the pantry consolidation rule that qualifies variety, in that order,
+    because diet style is a second "what approach" axis read right after
+    cuisine and consolidation only makes sense read as a limit on the
+    sentence before it; then `extras` — the per-call blocks (dinner variety,
+    cuisine blocks, shake rotation, avoid lists, pantry, fixed leftovers,
+    batch cooking) that only sometimes apply; then the budget, which the
+    model should read last and closest to the per-slot briefs in the user
+    prompt.
 
-    `config` supplies only `dietary_rules`; everything else is a caller
-    decision, so this stays a pure string builder with no I/O and no model
-    knowledge.
+    `config` supplies `dietary_rules` (including which diet styles are
+    active) and the `diet_styles` catalog those keys resolve against;
+    everything else is a caller decision, so this stays a pure string
+    builder with no I/O and no model knowledge.
     """
     dietary_rules = config["dietary_rules"]
     return (
@@ -433,6 +543,7 @@ def build_generation_rules(
         "- Never use any of these banned ingredients: "
         f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
         f"{style_rule}"
+        f"{build_diet_style_rule(config)}"
         f"{variety_rule}"
         f"{PANTRY_CONSOLIDATION_RULE}"
         "- Keep single dairy/staple portions realistic (e.g., max 200-250g "
@@ -518,6 +629,10 @@ class PlanningRules(BaseModel):
     cuisine_block_pattern: List[int] = Field(
         default_factory=lambda: list(DEFAULT_CUISINE_BLOCK_PATTERN)
     )
+    # Ceiling `spread_batch` (week.py) spreads a bulk-prep/long-cook anchor
+    # toward — not a promise: a batch that runs into the end of the week or an
+    # already-claimed day settles for fewer servings.
+    batch_target_servings: int = 6
 
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
@@ -528,6 +643,30 @@ class DietaryRules(BaseModel):
 
     allowed_nova_groups: List[int] = Field(default_factory=lambda: list(DEFAULT_ALLOWED_NOVA_GROUPS))
     banned_ingredients: List[str] = Field(default_factory=list)
+    # Keys into config.json's top-level `diet_styles` catalog (see
+    # `DietStyle` below) — the standing dietary approach(es) this week
+    # follows, e.g. "mediterranean_diet". Empty by default, so a config
+    # predating this feature generates exactly as before. Cross-checked
+    # against the catalog by `AppConfig.diet_styles_are_known` rather than
+    # here, because `DietaryRules` alone can't see `diet_styles`.
+    active_diet_styles: List[str] = Field(default_factory=list)
+
+
+class DietStyle(BaseModel):
+    """One `diet_styles` catalog entry: a standing eating pattern (Mediterranean,
+    Fast 800, DASH, ...) distinct from a `cuisines` entry.
+
+    A cuisine is a flavour tradition picked per day/block
+    (`pick_cuisine_blocks`); a diet style is a food-selection philosophy that
+    applies across whatever cuisine is cooking that night — `principles` is
+    sent to the model as guidance layered on top of the cuisine rule, never
+    instead of it. See `build_diet_style_rule`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    principles: str
 
 
 class InventoryRules(BaseModel):
@@ -637,6 +776,10 @@ class AppConfig(BaseModel):
     # the shared-ingredient bonus.
     cuisine_affinities: Dict[str, List[str]] = Field(default_factory=dict)
     cuisine_meal_types: List[str] = Field(default_factory=list)
+    # The diet-style catalog (see `DietStyle`); which entries are active for
+    # this week lives on `dietary_rules.active_diet_styles` instead, next to
+    # the app's other standing dietary constraints.
+    diet_styles: Dict[str, DietStyle] = Field(default_factory=dict)
     serving_rules: ServingRules = Field(default_factory=ServingRules)
     shopping: ShoppingConfig = Field(default_factory=ShoppingConfig)
     training_schedule: List[Dict[str, Any]] = Field(default_factory=list)
@@ -664,6 +807,21 @@ class AppConfig(BaseModel):
         meal_types(config)` at every call site."""
         if not self.cuisine_meal_types:
             self.cuisine_meal_types = list(self.meal_types)
+        return self
+
+    @model_validator(mode="after")
+    def diet_styles_are_known(self) -> "AppConfig":
+        """`dietary_rules.active_diet_styles` entries must exist in the
+        `diet_styles` catalog — the same "fail at load, name the typo" policy
+        `Ingredient.reject_banned_ingredients` gives banned ingredients,
+        applied here instead of `DietaryRules` because only `AppConfig` can
+        see both fields at once."""
+        unknown = sorted(set(self.dietary_rules.active_diet_styles) - set(self.diet_styles))
+        if unknown:
+            raise ValueError(
+                f"dietary_rules.active_diet_styles names unknown diet_styles entries: "
+                f"{unknown}. Known: {sorted(self.diet_styles)}"
+            )
         return self
 
 
@@ -711,6 +869,9 @@ def planning_rule(config: Optional[dict], key: str):
 TRAINING_INTENSITY_SPLIT = {
     "gym_hypertrophy": {"carb_share": 0.5, "protein_share": 0.5},
     "cardio_run": {"carb_share": 0.75, "protein_share": 0.25},
+    "cardio_hiit": {"carb_share": 0.65, "protein_share": 0.35},
+    "cardio_ride": {"carb_share": 0.75, "protein_share": 0.25},
+    "cardio_easy": {"carb_share": 0.7, "protein_share": 0.3},
     "walk": {"carb_share": 0.7, "protein_share": 0.3},
 }
 
@@ -1572,6 +1733,18 @@ class Recipe(BaseModel):
             "treated as not hands-off)."
         ),
     )
+    bulk_prep_friendly: bool = Field(
+        default=False,
+        description=(
+            "True if this dish is well suited to big-batch cooking and "
+            "multi-day storage — a soup, stew, curry, chilli, casserole or "
+            "similar that reheats well. Does NOT need to be a long or "
+            "hands-off cook to qualify (that's long_oven_cook, a separate "
+            "field — a dish can be either, both, or neither). False for "
+            "anything better made fresh in single portions. Defaults to "
+            "False (older saved recipes predate this field)."
+        ),
+    )
 
     @field_validator("prep_time_minutes")
     @classmethod
@@ -1980,13 +2153,17 @@ SUNDAY_PREP_REHEAT_MINUTES = 10
 def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
     """Whether `event` was folded into `week_plan`'s Sunday prep session.
 
-    `prep_notes` is set only for a batch that outlives its cook day (see
-    `Recipe.scale_to_servings`), and `generate_sunday_prep_session` takes
-    every such candidate into the session — so "has prep_notes" plus "a
-    session exists" is exactly "this batch was prepped ahead", without
-    needing a separate stored link.
+    Mirrors `generate_sunday_prep_session`'s own candidate filter
+    (`long_oven_cook` or `bulk_prep_friendly`) rather than testing
+    `prep_notes` alone. `prep_notes` is set on *any* cook that outlives its
+    own day — which includes the ordinary "link to next lunch" pattern, not
+    just a Sunday-prepped batch — so a week with a real prep session (for one
+    dish) used to mark every other multi-day-claimed dinner in the week as
+    "prepped on Sunday" too, regardless of whether it actually qualified.
     """
-    return bool(event.recipe.prep_notes) and week_plan.sunday_prep_session is not None
+    return bool(event.recipe.long_oven_cook or event.recipe.bulk_prep_friendly) and (
+        week_plan.sunday_prep_session is not None
+    )
 
 
 def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
@@ -2582,7 +2759,8 @@ async def select_nudge_foods(
 
 
 def build_slot_brief(
-    slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict, pinned: bool = False
+    slot: SlotSpec, config: dict, times_eaten_today: int, budget: dict,
+    pinned: bool = False, batch_directive: str = "",
 ) -> str:
     """One prompt line describing a single meal the model has to invent.
 
@@ -2615,6 +2793,8 @@ def build_slot_brief(
             parts.append(f"({style_description})")
     if slot.style == WORKOUT_BREAKFAST_STYLE:
         parts.append(SHAKE_SLOT_DIRECTIVE)
+    if batch_directive:
+        parts.append(batch_directive)
     if slot.cuisine:
         parts.append(f"cuisine: {humanize(slot.cuisine)} — authentic flavours and technique")
     nudge_foods = config.get("nudge_foods")
@@ -2829,7 +3009,11 @@ def build_cuisine_continuity_rule(cook_slots_by_day: Dict[str, SlotSpec]) -> str
         "staples so one shop covers all of its nights and nothing is opened "
         "for a single meal — then make those nights differ by main protein, "
         "vegetables, cooking method and dish format, never by drifting to "
-        "another cuisine.\n"
+        "another cuisine. Do not reuse the same heavy spice paste, marinade "
+        "or seasoning profile on consecutive nights within a block — rotate "
+        "how the shared aromatics are expressed (a dry rub one night, a wet "
+        "marinade the next, a fresh finishing sauce another) so consecutive "
+        "dinners don't read as the same meal twice.\n"
     )
 
 
@@ -2858,8 +3042,9 @@ def generate_meal_type_week(
     cooked — a leftover or skipped day never reaches here, so the model is
     never asked to invent something Python is about to discard.
 
-    Three of the rules it sends exist only because this axis can see the whole
+    Four of the rules it sends exist only because this axis can see the whole
     week at once: `DINNER_VARIETY_RULE` (protein spread across the nights),
+    `BATCH_ROAST_RULE` (which single night gets the long oven cook),
     `build_cuisine_continuity_rule` (which days share a cuisine, and that they
     do so on purpose) and `SHAKE_ROTATION_RULE` (the other shakes this week).
     None of them can be stated by a per-slot brief, and none of them survive
@@ -2870,6 +3055,18 @@ def generate_meal_type_week(
     pinned_days = pinned_days or []
 
     dinner_variety_instruction = DINNER_VARIETY_RULE if meal_type == "dinner" else ""
+    long_cook_anchor = config.get("long_cook_anchor")
+    bulk_prep_anchor = config.get("bulk_prep_anchor")
+    batch_roast_instruction = (
+        BATCH_ROAST_ANCHOR_RULE
+        if meal_type == "dinner" and long_cook_anchor
+        else BATCH_ROAST_RULE
+        if meal_type == "dinner" and config["enable_sunday_prep"]
+        else ""
+    )
+    bulk_prep_instruction = (
+        BULK_PREP_RULE if meal_type == "dinner" and bulk_prep_anchor else ""
+    )
     # Both are whole-week facts a single slot's brief cannot state: which days
     # share a cuisine, and which other breakfasts are also shakes. This call is
     # the only place in the app that can see either.
@@ -2905,6 +3102,14 @@ def generate_meal_type_week(
         else ""
     )
 
+    def batch_directive_for(day: str) -> str:
+        target_id = slot_id(day, meal_type)
+        if target_id == long_cook_anchor:
+            return LONG_COOK_ANCHOR_SLOT_DIRECTIVE
+        if target_id == bulk_prep_anchor:
+            return BULK_PREP_ANCHOR_SLOT_DIRECTIVE
+        return ""
+
     slot_briefs = "\n".join(
         f"- {day} "
         + build_slot_brief(
@@ -2913,6 +3118,7 @@ def generate_meal_type_week(
             times_eaten_today.get(day, 1),
             day_budgets[day],
             pinned=day in pinned_days,
+            batch_directive=batch_directive_for(day),
         ).lstrip("- ")
         for day, slot in cook_slots_by_day.items()
     )
@@ -2934,6 +3140,8 @@ def generate_meal_type_week(
             budget_rule=WEEK_BUDGET_RULE,
             extras=(
                 dinner_variety_instruction
+                + batch_roast_instruction
+                + bulk_prep_instruction
                 + cuisine_continuity_instruction
                 + shake_rotation_instruction
                 + build_avoid_rules(avoid_proteins, avoid_recipe_names)
@@ -3021,6 +3229,49 @@ def build_sunday_prep_brief(event: CookEvent, spec: WeekSpec) -> str:
     )
 
 
+def find_shake_candidate(
+    cook_events: Iterable[CookEvent], spec: WeekSpec
+) -> Tuple[Optional[CookEvent], int]:
+    """The week's first workout shake (by day order) and how many mornings repeat it.
+
+    Shakes are never leftover-linked across mornings the way a dinner batch
+    is — each morning still gets its own fresh blend (see `pin_style`, which
+    only pins the *style*, not a cook/leftover link) — so there is nothing to
+    anchor or spread here. What's worth doing ahead is portioning the shared
+    base (protein, liquid — the part `SHAKE_ROTATION_RULE` keeps identical
+    across the week) into grab-and-go containers once, rather than measuring
+    it out fresh every training morning. Returns the first such event so
+    `build_shake_prep_brief` has one real recipe's ingredients to work from,
+    plus the count so it can tell the model how many mornings to portion for.
+    """
+    shake_events = sorted(
+        (event for event in cook_events if event.style == WORKOUT_BREAKFAST_STYLE),
+        key=lambda event: spec.day_index(event.day),
+    )
+    if not shake_events:
+        return None, 0
+    return shake_events[0], len(shake_events)
+
+
+def build_shake_prep_brief(event: CookEvent, morning_count: int) -> str:
+    """The shake's candidate line for the Sunday prep prompt.
+
+    Deliberately not `build_sunday_prep_brief`: a shake isn't cooked ahead or
+    leftover-linked (see `find_shake_candidate`), so there is no eaten-on
+    span and no storage window to report — only ingredients to portion out,
+    once, for however many mornings repeat it.
+    """
+    ingredient_list = ", ".join(
+        f"{ingredient.name} {ingredient.quantity_g:.0f}g" for ingredient in event.recipe.ingredients
+    )
+    return (
+        f"- {event.recipe.name} (breakfast shake, portion-ahead only — repeats, "
+        f"with rotating fruit/seed, on {morning_count} morning(s) this week; "
+        "NOT cooked or blended ahead)\n"
+        f"  Ingredients (one morning's worth): {ingredient_list}"
+    )
+
+
 def generate_sunday_prep_session(
     cook_events: List[CookEvent],
     spec: WeekSpec,
@@ -3028,17 +3279,35 @@ def generate_sunday_prep_session(
 ) -> Optional[SundayPrepSession]:
     """Turn the week's already-generated batch cooks into one Sunday prep timeline.
 
-    Candidates are cook events with a `prep_notes` (`scale_to_servings` only
-    writes one when `keeps_for_days > 0`, i.e. the batch has to outlive the
-    day it's cooked) AND `recipe.long_oven_cook` — a batch that's actually a
-    quick stovetop stir-fry or a no-cook smoothie pack doesn't belong in a
-    hands-off Sunday session even though it's eaten across several days; it
-    needs active attention on ITS OWN cook day like anything else. Only a
-    genuinely long, mostly-unattended oven roast/bake or slow-cooker/braise —
-    the kind of thing you start and walk away from — is worth folding into one
-    aggregated prep block. A week with no such dish has nothing to aggregate,
-    so this returns None rather than an empty session — same "no candidates,
-    no prompt" rule `inventory_instruction` uses for an empty pantry list.
+    Candidates are, at most, the two dinners `ui_generation.
+    apply_batch_selections` actually anchored this run (`config["long_cook_
+    anchor"]`/`["bulk_prep_anchor"]`, matched by slot_id) — a batch that's
+    actually a quick stovetop stir-fry or a no-cook smoothie pack doesn't
+    belong in a hands-off Sunday session even though it's eaten across
+    several days, and only `long_cook`'s genuinely long, mostly-unattended
+    oven roast/bake or slow-cooker braise, or `bulk_prep`'s soup/stew/curry
+    (see `Recipe.long_oven_cook`/`bulk_prep_friendly`), are worth folding
+    into one aggregated prep block. Matching by slot_id rather than by flag
+    alone is what caps this at 2 dishes: the field exists on every recipe
+    regardless of axis, so trusting the flag would let an unprompted
+    `long_oven_cook`/`bulk_prep_friendly` the model set on some other dinner
+    (a stray choice, or a day regenerated after the anchor was picked) pull
+    a 3rd dish into the session nothing actually asked for.
+
+    A week with neither anchor set falls back to `long_oven_cook` alone —
+    the CLI's legacy `enable_sunday_prep` path, where `BATCH_ROAST_RULE`
+    lets the model pick its own day rather than Python anchoring one in
+    advance, so there is no slot_id to match against. A week with no
+    candidate dish under either path has nothing to aggregate, so this
+    returns None rather than an empty session — same "no candidates, no
+    prompt" rule `inventory_instruction` uses for an empty pantry list.
+
+    A week's first workout shake rides along automatically whenever a real
+    anchor produced at least one dish above (see `find_shake_candidate`) —
+    capped at one representative morning, never a trigger on its own. It is
+    portioned, not cooked ahead (`build_shake_prep_brief`), since unlike the
+    two dinners it is never leftover-linked: each training morning still
+    blends its own fresh shake, only the shared base gets bagged up Sunday.
 
     This only reorganises recipes the day-generation calls already produced —
     it never invents food, so unlike `generate_day` there is no macro budget
@@ -3048,18 +3317,61 @@ def generate_sunday_prep_session(
     model in the prompt and the bound `SundayPrepSession` validates against,
     threaded through instructor's `context=` so the two can never disagree.
     """
-    if not config["enable_sunday_prep"]:
+    long_cook_anchor = config.get("long_cook_anchor")
+    bulk_prep_anchor = config.get("bulk_prep_anchor")
+    if not (config["enable_sunday_prep"] or long_cook_anchor or bulk_prep_anchor):
         return None
 
-    candidates = [
-        event for event in cook_events if event.recipe.prep_notes and event.recipe.long_oven_cook
-    ]
+    # When an anchor was actually picked (ui_generation.apply_batch_selections
+    # ran), match candidates by slot_id, not by flag alone — each toggle
+    # names at most one dinner, so this is what caps the session at 2 dishes
+    # regardless of what else the model may have set. `long_oven_cook` has no
+    # per-run gate of its own the way `bulk_prep_friendly` does, so without
+    # this an unprompted flag on some other dinner (a stray model choice, or
+    # a day regenerated after the anchor was picked) could pull a 3rd dish
+    # into the session even though nothing asked it to.
+    #
+    # `enable_sunday_prep` alone (the CLI's legacy path, no anchor known in
+    # advance because BATCH_ROAST_RULE lets the model pick freely) still
+    # falls back to flag detection — there is no slot_id to match against.
+    anchor_ids = {value for value in (long_cook_anchor, bulk_prep_anchor) if value}
+    if anchor_ids:
+        candidates = [event for event in cook_events if event.slot_id in anchor_ids]
+    else:
+        candidates = [
+            event
+            for event in cook_events
+            if event.recipe.prep_notes and event.recipe.long_oven_cook
+        ]
     if not candidates:
         return None
+
+    # The shake rides along automatically whenever a real anchor produced at
+    # least one dinner candidate above — it never triggers a session on its
+    # own (see find_shake_candidate's docstring: there's no anchor/spread for
+    # it), and it's capped at one representative morning regardless of how
+    # many the week actually has, same "at most 1" ceiling the two dinner
+    # anchors already give the dish side.
+    shake_event, shake_morning_count = (
+        find_shake_candidate(cook_events, spec) if anchor_ids else (None, 0)
+    )
 
     max_active = config["max_prep_active_mins"]
     fridge_safe_days = config["inventory_rules"]["fridge_safe_days"]
     candidate_briefs = "\n".join(build_sunday_prep_brief(event, spec) for event in candidates)
+    if shake_event is not None:
+        candidate_briefs += "\n" + build_shake_prep_brief(shake_event, shake_morning_count)
+
+    shake_instruction = (
+        "- One candidate above is a breakfast shake marked \"portion-ahead "
+        "only\" — it is NOT cooked, blended or assembled in this session. "
+        "Add exactly one step that portions its base ingredients into "
+        "grab-and-go containers/bags for its stated number of mornings; the "
+        "blending itself happens fresh each of those mornings, not Sunday. "
+        "Include it in meals_included like any other candidate.\n"
+        if shake_event is not None
+        else ""
+    )
 
     system_prompt = (
         "You are planning ONE Sunday batch-prep session that gets a week's "
@@ -3067,6 +3379,7 @@ def generate_sunday_prep_session(
         "below are fixed — do not change ingredients, quantities or methods, "
         "only organise the work of cooking them.\n\n"
         "Rules:\n"
+        f"{shake_instruction}"
         f"- Hard cap: total_active_minutes must not exceed {max_active}. Active "
         "minutes are hands-on time (chopping, stirring, portioning, sealing "
         "bags) — time a slow cooker, oven or fridge runs unattended is "
@@ -3101,8 +3414,9 @@ def generate_sunday_prep_session(
         "data only."
     )
 
+    candidate_count = len(candidates) + (1 if shake_event is not None else 0)
     user_prompt = (
-        f"This week's batch-prep candidates ({len(candidates)}):\n\n"
+        f"This week's batch-prep candidates ({candidate_count}):\n\n"
         f"{candidate_briefs}\n\n"
         "Build the Sunday prep session for exactly these candidates."
     )
@@ -3112,7 +3426,7 @@ def generate_sunday_prep_session(
     max_tokens = FREE_MODEL_MAX_TOKENS if is_free_model(model) else PAID_MODEL_MAX_TOKENS
 
     logger.info(
-        "sunday_prep: requesting session for %d candidate(s) from %s", len(candidates), model
+        "sunday_prep: requesting session for %d candidate(s) from %s", candidate_count, model
     )
     started = time.monotonic()
     session, completion = client.chat.completions.create_with_completion(
