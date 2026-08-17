@@ -501,8 +501,9 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 ):
                     ui.label("Not generated").classes("text-[10px] text-slate-500")
                     ui.label(
-                        "Enable enable_sunday_prep and regenerate the week for a "
-                        "batch-prep timeline here."
+                        "Turn on Bulk prep or Long cook meal in the Generate popup "
+                        "for a batch-prep timeline here (or set enable_sunday_prep "
+                        "in config.json to do it every week)."
                     ).classes("text-[9px] text-slate-600 mt-1")
                 return
             # What this session is for, before how — a shopper glancing at the

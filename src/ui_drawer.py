@@ -16,6 +16,7 @@ from planner import api_key_error, import_external_recipe, selectable_models, sh
 from ui_catalog import toggle_favorite
 from ui_context import UIContext
 from ui_generation import GenerationHandles
+from ui_prep_options import PrepOptionsHandles
 from ui_theme import TARGET_FIELDS, TRAINING_TYPE_LABELS, WEEK_SELECTION_LABELS
 from week import portions_for, shopping_windows, slot_label
 
@@ -28,7 +29,9 @@ class DrawerHandles:
     favorites_list: Callable
 
 
-def build_drawer(ctx: UIContext, generation: GenerationHandles) -> DrawerHandles:
+def build_drawer(
+    ctx: UIContext, generation: GenerationHandles, prep_options: PrepOptionsHandles
+) -> DrawerHandles:
     state = ctx.state
     REPOSITORY = ctx.repository
     refreshables = ctx.refreshables
@@ -371,7 +374,7 @@ def build_drawer(ctx: UIContext, generation: GenerationHandles) -> DrawerHandles
             "sticky top-0 z-10 bg-slate-900 flex flex-col gap-2 pb-2"
         ):
             generate = (
-                ui.button(icon="bolt", on_click=lambda: generation.run_generation(generate))
+                ui.button(icon="bolt", on_click=lambda: prep_options.open())
                 .props("dense")
                 .classes("w-full")
             )
@@ -385,7 +388,8 @@ def build_drawer(ctx: UIContext, generation: GenerationHandles) -> DrawerHandles
             )
             with generate:
                 ui.tooltip(
-                    "Generates every meal set to cook in this grid — one API call per "
+                    "Opens cuisine, diet-style, bulk-prep and long-cook options, then "
+                    "generates every meal set to cook in this grid — one API call per "
                     "meal type, covering each day it's cooked. Overwrites the selected "
                     "week's cached plan and appends to history."
                 )

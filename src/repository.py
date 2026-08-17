@@ -78,6 +78,7 @@ CONFIG_FILES = {
         "cuisines",
         "cuisine_affinities",
         "cuisine_meal_types",
+        "diet_styles",
         "week_defaults",
     ),
     # The shape of a week and the logistics around it.

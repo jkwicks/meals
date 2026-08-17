@@ -483,9 +483,11 @@ types: dinner is generated before lunch so the one cross-type leftover
     The prompt side of blocking lives in `generate_meal_type_week`, which is
     the only call that can see the whole week: `build_cuisine_continuity_rule`
     tells the model which days share a cuisine *on purpose* and to make those
-    nights differ by protein/vegetable/method instead, and it swaps
-    `WEEK_STYLE_RULE` for `WEEK_CUISINE_BLOCK_STYLE_RULE` — the standing rule
-    says consecutive days must differ in tradition, which is the exact
+    nights differ by protein/vegetable/method — and by how the shared
+    aromatics are expressed (rub vs. marinade vs. finishing sauce), so a block
+    doesn't read as the same spice paste four nights running — instead, and it
+    swaps `WEEK_STYLE_RULE` for `WEEK_CUISINE_BLOCK_STYLE_RULE` — the standing
+    rule says consecutive days must differ in tradition, which is the exact
     opposite of a 4/3 split and invites the model to "fix" the repetition by
     substituting a cuisine. It emits nothing at all when no cuisine spans more
     than one day, so a hand-picked week of seven cuisines still reads as
@@ -493,6 +495,18 @@ types: dinner is generated before lunch so the one cross-type leftover
     two consecutive nights" for the same reason: once four nights are Greek,
     the week-wide "no protein more than twice" cap is satisfied by lamb, lamb,
     chicken, chicken, which reads as the same meal twice.
+
+    Everyday Western baselines (`homestyle`, `modern_australian`,
+    `pub_classic`) exist in `cuisines` for the same food-waste reason as every
+    other affinity pairing: `cuisine_affinities` routes heavily-spiced
+    cuisines (`mexican`, `bbq`, `thai`, `indian`) toward one of them for the
+    *next* block rather than toward another adventurous cuisine, so a spice-
+    paste-heavy block is reliably followed by a plain roast-and-veg block
+    instead of two intense blocks back to back. They carry no `principles`
+    entry the way `diet_styles` do — a bare name in `cuisines` is how every
+    other cuisine already works, and `humanize()` (underscore -> space, no
+    special-casing) is enough for the model to know what "modern australian"
+    means without a description to keep in sync.
 
     `SHAKE_ROTATION_RULE` (whole-week, sent when more than one breakfast is a
     shake) and `SHAKE_SLOT_DIRECTIVE` (per slot, so a single regenerated shake
@@ -513,6 +527,59 @@ types: dinner is generated before lunch so the one cross-type leftover
     `DayRecipes` produces `$defs`/`$ref`) with a 422 `"uses $defs"` error.
     `MD_JSON` mode just asks the model to emit JSON as text, which works with
     far more free-tier providers.
+
+### Diet styles: a standing philosophy, orthogonal to cuisine
+
+`config/meals.json`'s `diet_styles` is a catalog of named eating patterns —
+twelve today, spanning cognitive/longevity frameworks (Mediterranean, MIND,
+Nordic, Blue Zones), metabolic/anti-inflammatory ones (Fast 800, Total
+Wellbeing, Anti-Inflammatory, Paleo, Pegan) and gut-health/elimination ones
+(DASH, Low-FODMAP, AIP) — each a `label` and a `principles` string.
+`dietary_rules.active_diet_styles` (in
+`config/profile.json`, empty by default) says which of them are in effect.
+The two are split the same way cuisines split into `cuisines` and a
+per-day/block pick, and for the same reason: the catalog is vocabulary,
+`dietary_rules` is the standing choice made against it — but unlike cuisine,
+diet style is deliberately **not** rotated per day or per block. These are
+patterns people follow for a stretch, not a nightly pick, and a meal is meant
+to satisfy its cuisine *and* every active diet style at once (a Korean dinner
+can still be Mediterranean-principled), which a single per-slot pick like
+`cuisines` can't express.
+
+`AppConfig.diet_styles_are_known` cross-checks `active_diet_styles` against
+the catalog at load time — same "fail loudly, name the typo" policy as every
+other section, and the reason the check lives on `AppConfig` rather than on
+`DietaryRules` itself: only the parent model can see both fields at once.
+
+`build_diet_style_rule()` turns the active entries' `principles` into one
+`Rules:` line, sent by both generation axes via `build_generation_rules` —
+same mechanism as `PANTRY_CONSOLIDATION_RULE`, and empty when nothing is
+active so the prompt is byte-identical to before this feature existed. It is
+placed right after the cuisine rule (`style_rule`) and before the variety
+rule, because cuisine and diet style are both "what approach" — variety is a
+different concern.
+
+**Deliberately no numeric lever.** Fast 800's real-world hook is a low
+calorie ceiling, but `weekly_schedule`/`hydrate_dynamic_targets` already own
+every day's calorie number (see below), computed from the body and the
+config's `deficit`/`target_weight_kg` gap — a second, diet-style-driven
+calorie adjustment would be exactly the kind of double-count
+`hydrate_dynamic_targets` already has to guard against for training uplift.
+So Fast 800 is expressed as food-selection guidance instead — simple,
+lean, low-added-fat dishes — inside whatever budget the day was already
+given, not as a competing source of truth for the number itself. If Fast
+800's actual calorie ceiling is ever wanted as a hard target, it belongs as
+an adjustment inside `hydrate_dynamic_targets`, not as a second config knob
+sitting beside it.
+
+**All twelve are soft guidance, including the two — Paleo and AIP — that read
+like hard elimination lists.** "Exclude all grains, legumes and dairy" is
+`principles` text sent to the model, not a Pydantic validator: nothing stops
+a slip-through the way `Ingredient.reject_banned_ingredients` stops a banned
+ingredient outright. Real hard exclusions for one of these belong in
+`dietary_rules.banned_ingredients`, same as any other must-never-appear
+ingredient; `diet_styles` is for shaping what the model reaches for, not
+policing what it must not.
 
 ### Targets come from the body, not the file
 
@@ -963,6 +1030,10 @@ headers for the CSV) because the unit and key mapping *is* the module.
   target in `weekly_schedule`. `calculate_daily_targets()` derives `fat_g`
   from whatever's left after protein and carbs, so a low carb target already
   pushes fat up without any special-casing.
+- `dietary_rules.active_diet_styles` (Mediterranean, Fast 800, DASH, the Total
+  Wellbeing Diet, ...) is soft guidance, not a hard constraint like the two
+  rules above — it shapes food selection via the generation prompt rather
+  than rejecting a recipe. See "Diet styles" under Architecture.
 
 ## Notes for future sessions
 

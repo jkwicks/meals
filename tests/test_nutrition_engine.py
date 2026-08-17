@@ -148,6 +148,45 @@ class TestDynamicDeficit(unittest.TestCase):
         self.assertAlmostEqual(ne.calculate_dynamic_deficit(110.0, 105.0), 750.0)
         self.assertAlmostEqual(ne.calculate_dynamic_deficit(100.0, 105.0), 350.0)
 
+    def test_unknown_body_fat_reproduces_the_weight_only_ramp(self):
+        """No body_fat_pct must behave exactly as before the Alpert cap existed."""
+        for weight in (100.0, 90.0, 82.0, 74.0):
+            self.assertAlmostEqual(
+                ne.calculate_dynamic_deficit(weight, 80.0),
+                ne.calculate_dynamic_deficit(weight, 80.0, body_fat_pct=None),
+            )
+
+    def test_alpert_cap_binds_for_a_lean_heavy_body(self):
+        """8% body fat at 100kg: fat mass alone can't fund the full 750kcal ramp."""
+        # fat_mass = 100 * 0.08 = 8kg; ceiling = 8 * 69.3 * 0.80 = 443.52
+        deficit = ne.calculate_dynamic_deficit(100.0, 80.0, body_fat_pct=8.0)
+        self.assertAlmostEqual(deficit, 443.52)
+        self.assertLess(deficit, 750.0)  # would otherwise be the full ramp
+
+    def test_alpert_cap_never_raises_the_deficit(self):
+        """Generous body fat must leave the weight ramp untouched, not increase it."""
+        # fat_mass = 100 * 0.35 = 35kg; ceiling = 35 * 69.3 * 0.80 = 1940.4,
+        # well above the 750kcal ramp ceiling.
+        deficit = ne.calculate_dynamic_deficit(100.0, 80.0, body_fat_pct=35.0)
+        self.assertAlmostEqual(deficit, 750.0)
+
+
+class TestAlpertFatEnergyCeiling(unittest.TestCase):
+    def test_none_when_body_fat_unknown(self):
+        self.assertIsNone(ne.alpert_fat_energy_ceiling_kcal(100.0, None))
+
+    def test_scales_with_fat_mass_not_total_weight(self):
+        # Same fat mass (20kg) at two different body weights must agree.
+        a = ne.alpert_fat_energy_ceiling_kcal(100.0, 20.0)
+        b = ne.alpert_fat_energy_ceiling_kcal(80.0, 25.0)
+        self.assertAlmostEqual(a, b)
+
+    def test_matches_the_published_alpert_constant(self):
+        # 10kg fat mass * 69.3 kcal/kg * 0.80 safety factor = 554.4
+        self.assertAlmostEqual(
+            ne.alpert_fat_energy_ceiling_kcal(50.0, 20.0), 554.4
+        )
+
 
 class TestDeriveFatG(unittest.TestCase):
     def test_fat_spends_the_remaining_energy(self):
@@ -243,6 +282,17 @@ class TestMacroTargets(unittest.TestCase):
             PROFILE, {"weight_kg": 100.0, "body_fat_pct": 0}
         )
         self.assertEqual(result["basis"]["bmr_method"], "mifflin_st_jeor")
+
+    def test_alpert_ceiling_is_none_without_a_body_fat_reading(self):
+        self.assertIsNone(self.result["basis"]["alpert_ceiling_kcal"])
+
+    def test_alpert_ceiling_reported_and_applied_when_body_fat_known(self):
+        # 100kg * 8% = 8kg fat mass; ceiling = 8 * 69.3 * 0.80 = 443.52
+        result = ne.calculate_macro_targets(
+            PROFILE, {"weight_kg": 100.0, "body_fat_pct": 8.0}
+        )
+        self.assertAlmostEqual(result["basis"]["alpert_ceiling_kcal"], 443.5)
+        self.assertAlmostEqual(result["basis"]["deficit_kcal"], 443.5)
 
     def test_deficit_shrinks_as_the_target_nears(self):
         far = ne.calculate_macro_targets(PROFILE, {"weight_kg": 100.0})

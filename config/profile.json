@@ -114,6 +114,7 @@
     "snack": 0.1
   },
   "dietary_rules": {
+    "active_diet_styles": [],
     "allowed_nova_groups": [
       1,
       2,
@@ -130,7 +131,9 @@
       "apricot",
       "banana",
       "Almond milk",
-      "soy beans"
+      "soy beans",
+      "venison",
+      "grapes"
     ]
   }
 }

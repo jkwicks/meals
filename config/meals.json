@@ -47,20 +47,24 @@
     "mediterranean",
     "vietnamese",
     "cajun",
-    "greek"
+    "greek",
+    "homestyle",
+    "modern_australian",
+    "pub_classic"
   ],
   "cuisine_affinities": {
     "mexican": [
-      "cajun",
+      "homestyle",
+      "modern_australian",
       "bbq"
     ],
     "indian": [
-      "middle_eastern",
-      "thai"
+      "homestyle",
+      "modern_australian"
     ],
     "thai": [
-      "vietnamese",
-      "indian"
+      "modern_australian",
+      "homestyle"
     ],
     "japanese": [
       "korean",
@@ -71,8 +75,9 @@
       "bbq"
     ],
     "bbq": [
-      "cajun",
-      "mexican"
+      "homestyle",
+      "pub_classic",
+      "cajun"
     ],
     "middle_eastern": [
       "greek",
@@ -102,6 +107,56 @@
   "cuisine_meal_types": [
     "dinner"
   ],
+  "diet_styles": {
+    "mediterranean_diet": {
+      "label": "Mediterranean Diet",
+      "principles": "Favor olive oil, oily fish, legumes, whole grains and vegetables; limit red meat and butter to occasional use."
+    },
+    "fast_800": {
+      "label": "Fast 800",
+      "principles": "Keep dishes simple and calorie-light within the given budget: lean protein and vegetables first, minimal added fat, sauce or oil, and no refined carbs padding the plate."
+    },
+    "dash": {
+      "label": "DASH Diet",
+      "principles": "Favor vegetables, fruit, low-fat dairy and whole grains; minimize added salt and sodium-heavy ingredients such as cured meats, brined or canned-in-salt items, and salty condiments."
+    },
+    "total_wellbeing_diet": {
+      "label": "Total Wellbeing Diet",
+      "principles": "High protein with moderate low-GI carbs, lean meat or dairy at most meals, and strict portion discipline — no incidental extras beyond what the budget calls for."
+    },
+    "mind_diet": {
+      "label": "MIND Diet",
+      "principles": "Include leafy greens daily and berries at least twice a week; favor walnuts, olive oil, poultry and fish; strictly limit cheese, butter, fried food and pastries."
+    },
+    "nordic_diet": {
+      "label": "Nordic Diet",
+      "principles": "Favor fatty cold-water fish (mackerel, salmon, herring), root vegetables, cruciferous vegetables and berries, dressed in cold-pressed rapeseed or flaxseed oil rather than tropical oils or butter."
+    },
+    "blue_zones": {
+      "label": "Blue Zones / Longevity",
+      "principles": "Build the plate almost entirely from whole plants — legumes, beans, nuts, seeds, wild herbs and extra virgin olive oil — with wild-caught fish only 2-3 times a week and meat rare to never."
+    },
+    "anti_inflammatory": {
+      "label": "Anti-Inflammatory",
+      "principles": "Load meals with polyphenol-rich vegetables, cruciferous greens, wild fatty fish and therapeutic spices and aromatics (turmeric, ginger, garlic); avoid refined seed oils and refined carbohydrates."
+    },
+    "paleo": {
+      "label": "Paleo",
+      "principles": "Build meals from pastured meat, seafood, eggs, fibrous vegetables, root vegetables, fruit and nuts; exclude all grains, legumes, refined sugar and standard dairy."
+    },
+    "pegan": {
+      "label": "Pegan",
+      "principles": "Give non-starchy, low-glycemic vegetables and healthy fats (avocado, nuts, seeds, olive oil) roughly three-quarters of the plate, with clean animal protein as a smaller side rather than the centerpiece."
+    },
+    "low_fodmap": {
+      "label": "Low-FODMAP",
+      "principles": "Avoid high-FODMAP ingredients — onion, garlic, wheat, most legumes, high-fructose fruit — substituting garlic-infused oil, scallion or spring-onion greens, fresh ginger and chives, and favor gut-friendly produce like zucchini, bok choy and carrots."
+    },
+    "aip": {
+      "label": "Autoimmune Protocol (AIP)",
+      "principles": "Exclude grains, legumes, nightshades (tomato, pepper, eggplant, potato), dairy, eggs and seed-based spices; build meals from organ meats, clean proteins, bone broth and non-nightshade vegetables."
+    }
+  },
   "week_defaults": {
     "breakfast": "cook",
     "lunch": "cook",

@@ -12,14 +12,16 @@ a different module, after this one.
 """
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Dict, Optional, Tuple
 
 from nicegui import ui
 
 from planner import (
+    WEEKEND_DAYS,
     api_key_error,
     generate_week_plan,
     meal_type_order,
+    planning_rule,
     record_week_history,
     regenerate_single_day,
     regenerate_single_meal,
@@ -29,7 +31,63 @@ from planner import (
 from ui_context import UIContext
 from ui_state import SlotView
 from ui_theme import WEEK_SELECTION_LABELS, pluralize
-from week import MODE_COOK, WeekSpec, humanize, slot_label, validate_week
+from week import (
+    MODE_COOK,
+    WeekSpec,
+    clear_cuisines,
+    humanize,
+    parse_slot_id,
+    slot_label,
+    spread_batch,
+    validate_week,
+)
+
+
+def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict]:
+    """Turn the popup's bulk-prep/long-cook toggles into leftover links.
+
+    Two independent `week.spread_batch` calls, both anchored on "dinner" (the
+    only meal type link rules let feed both another dinner and a lunch).
+    bulk_prep runs first and gets first claim on whatever room the grid has
+    — it is the priority batch, and everything else (long_cook, and the
+    ordinary per-day dinners) fills in around whatever it takes. long_cook
+    runs second, with a real day preference of its own (weekends), and its
+    search excludes bulk_prep's anchor day so a week with both toggles on
+    still gets two distinct batches rather than one dinner double-booked.
+
+    Returns the (possibly updated) spec and a dict of the two anchor slot ids
+    actually chosen (None where a toggle was off, no valid anchor existed, or
+    `spread_batch` couldn't grow that anchor past what an ordinary dinner
+    already gets — see its docstring) — merge straight into `config` so
+    `generate_meal_type_week`/`generate_sunday_prep_session` can read
+    `long_cook_anchor`/`bulk_prep_anchor` off it.
+
+    On a week whose lunches are already linked to the previous day's dinner
+    (`autofill_leftovers`, or repeated "Link to next lunch" clicks), there is
+    often only one slot left anywhere for a batch to grow into — so with both
+    toggles on, whichever runs first claims it and the other gets nothing.
+    Running bulk_prep first means that scarcity falls on long_cook, not on
+    the priority batch. `generate_week` below checks for exactly that and
+    warns rather than generating a mislabeled dinner silently.
+    """
+    target_servings = planning_rule(config, "batch_target_servings")
+    anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
+
+    if config.get("bulk_prep_enabled"):
+        spec, anchors["bulk_prep_anchor"] = spread_batch(spec, "dinner", target_servings)
+
+    if config.get("long_cook_enabled"):
+        weekend_days = [day for day in spec.days if day in WEEKEND_DAYS]
+        exclude_days = (
+            {parse_slot_id(anchors["bulk_prep_anchor"])[0]}
+            if anchors["bulk_prep_anchor"]
+            else None
+        )
+        spec, anchors["long_cook_anchor"] = spread_batch(
+            spec, "dinner", target_servings, prefer_days=weekend_days, exclude_days=exclude_days
+        )
+
+    return spec, anchors
 
 
 @dataclass
@@ -108,6 +166,47 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             return
 
         spec = generation_spec()
+        if state.cuisine_override:
+            # A slot on screen still carries the concrete cuisine a previous
+            # run picked from the FULL list — validate_week would reject it
+            # the instant the popup's pick narrows config["cuisines"] out
+            # from under it. Clearing lets resolve_auto_choices below re-pick
+            # every cook slot's cuisine from the narrower list instead.
+            spec = clear_cuisines(spec)
+        # Bulk-prep/long-cook are fully-automatic leftover links, applied
+        # before validate_week (so that single pass checks the grid actually
+        # being generated from) and before resolve_auto_choices below (so it
+        # never wastes a style/cuisine pick on a slot about to become a
+        # leftover). Anchors ride on config rather than a new
+        # generate_week_plan parameter — see apply_batch_selections.
+        spec, batch_anchors = apply_batch_selections(spec, config)
+        config = dict(config, **batch_anchors)
+
+        # apply_batch_selections returns None for a toggle that requested a
+        # batch but never found room to grow one — most often because every
+        # dinner on the grid already feeds the next day's lunch, leaving
+        # nothing for a second batch to claim once the first has run. Surface
+        # that now, not as a dinner card that quietly never says "bulk prep"
+        # on it three weeks from now.
+        stranded = [
+            label
+            for enabled_key, anchor_key, label in (
+                ("long_cook_enabled", "long_cook_anchor", "Long cook"),
+                ("bulk_prep_enabled", "bulk_prep_anchor", "Bulk prep"),
+            )
+            if config.get(enabled_key) and not batch_anchors.get(anchor_key)
+        ]
+        if stranded:
+            ui.notify(
+                f"{' and '.join(stranded)} couldn't find a day with room to grow this run "
+                "— every dinner may already be linked to the next day's lunch. "
+                "Unlink one, or turn off one of the two toggles, to give it room.",
+                type="warning",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+
         errors = validate_week(spec, config)
         if errors:
             ui.notify(

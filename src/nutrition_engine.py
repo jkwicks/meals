@@ -30,6 +30,13 @@ Three ideas are worth reading before changing anything:
 - **Fat is always derived, never chosen.** `derive_fat_g` spends whatever
   energy protein and carbs didn't, so the four macros always reconcile to the
   calorie figure. A typed fat number could only disagree with the other three.
+- **The deficit is also capped by fat mass, not just distance to target.**
+  `calculate_dynamic_deficit` layers `alpert_fat_energy_ceiling_kcal` — Alpert's
+  measured limit on how fast fat alone can fund a deficit before fat-free mass
+  starts covering the shortfall instead — on top of the weight ramp above. It
+  is a second, independent floor under lean mass, not a replacement for the
+  first: it only ever pulls the deficit down, engages only when `body_fat_pct`
+  is known, and rarely binds outside a lean, heavy, or long-running cut.
 """
 
 from datetime import date, datetime, timedelta
@@ -78,6 +85,20 @@ ACTIVITY_FACTORS = {
 DEFICIT_CEILING_KCAL = 750.0
 DEFICIT_FLOOR_KCAL = 350.0
 DEFICIT_CEILING_WEIGHT_KG = 100.0
+
+# A second, independent cap on the same deficit: Alpert's measured limit on
+# how fast fat mass alone can supply energy before fat-free mass starts
+# covering the shortfall instead — (290 +/- 25) kJ/kg fat mass/day, derived
+# from the Minnesota Starvation Experiment data. Alpert SS, "A limit on the
+# energy transfer rate from the human fat store in hypophagia," J Theor Biol.
+# 2005;233(1):1-13 (PMID 15615615). 290 kJ / 4.184 = 69.3 kcal.
+ALPERT_KCAL_PER_KG_FAT_MASS = 69.3
+
+# Margin kept below that measured ceiling rather than programming a deficit
+# right up against it: the published figure carries its own ~9% (25/290)
+# measurement uncertainty, so this app keeps a further buffer instead of
+# planning at the exact edge of what the study measured.
+ALPERT_SAFETY_FACTOR = 0.80
 
 # Baseline daily net carbohydrate allowance when no schedule supplies one.
 # Low, so the derived fat figure absorbs the remaining energy — the app has no
@@ -200,8 +221,28 @@ def calculate_tdee(bmr: float, activity_level: str = "light_office") -> float:
     return bmr * ACTIVITY_FACTORS[key]
 
 
+def alpert_fat_energy_ceiling_kcal(
+    current_weight_kg: float, body_fat_pct: Optional[float]
+) -> Optional[float]:
+    """The deficit ceiling implied by fat mass alone, or None when unknown.
+
+    `ALPERT_KCAL_PER_KG_FAT_MASS x fat_mass_kg x ALPERT_SAFETY_FACTOR` — past
+    this rate the body starts covering the shortfall from fat-free mass
+    rather than fat. Deliberately returns None instead of assuming a body-fat
+    percentage when one wasn't measured: guessing one to compute a "safety"
+    ceiling would be exactly the fabricated body `calculate_macro_targets`
+    already refuses to invent elsewhere.
+    """
+    if body_fat_pct is None:
+        return None
+    fat_mass_kg = current_weight_kg * (body_fat_pct / 100.0)
+    return fat_mass_kg * ALPERT_KCAL_PER_KG_FAT_MASS * ALPERT_SAFETY_FACTOR
+
+
 def calculate_dynamic_deficit(
-    current_weight_kg: float, target_weight_kg: float = 80.0
+    current_weight_kg: float,
+    target_weight_kg: float = 80.0,
+    body_fat_pct: Optional[float] = None,
 ) -> float:
     """The day's calorie deficit, scaled to how far there is left to go.
 
@@ -214,21 +255,35 @@ def calculate_dynamic_deficit(
     mass and adherence at exactly the stage they matter most. Sliding the
     number means the aggression tapers on its own instead of relying on
     someone remembering to edit config every few kilos.
+
+    When `body_fat_pct` is supplied, the ramped figure above is additionally
+    capped at `alpert_fat_energy_ceiling_kcal` — never raised by it, only ever
+    pulled down. The weight-only ramp is usually the binding constraint; the
+    Alpert cap only takes over once fat mass itself, not just weight, is
+    getting scarce (a heavy but already-lean body, or a cut that has run past
+    what the weight ramp alone accounts for). Omitting `body_fat_pct`
+    reproduces exactly this function's behaviour from before the cap existed.
     """
     if current_weight_kg <= target_weight_kg:
-        return DEFICIT_FLOOR_KCAL
-    if current_weight_kg >= DEFICIT_CEILING_WEIGHT_KG:
-        return DEFICIT_CEILING_KCAL
+        ramped = DEFICIT_FLOOR_KCAL
+    elif current_weight_kg >= DEFICIT_CEILING_WEIGHT_KG:
+        ramped = DEFICIT_CEILING_KCAL
+    else:
+        span_kg = DEFICIT_CEILING_WEIGHT_KG - target_weight_kg
+        if span_kg <= 0:
+            # A target at or above the ceiling weight leaves no ramp to
+            # interpolate over. Anything above the target still gets the full
+            # deficit; the branches above have already handled at-or-below.
+            ramped = DEFICIT_CEILING_KCAL
+        else:
+            progress = (current_weight_kg - target_weight_kg) / span_kg
+            ramped = (
+                DEFICIT_FLOOR_KCAL
+                + (DEFICIT_CEILING_KCAL - DEFICIT_FLOOR_KCAL) * progress
+            )
 
-    span_kg = DEFICIT_CEILING_WEIGHT_KG - target_weight_kg
-    if span_kg <= 0:
-        # A target at or above the ceiling weight leaves no ramp to
-        # interpolate over. Anything above the target still gets the full
-        # deficit; the branches above have already handled at-or-below.
-        return DEFICIT_CEILING_KCAL
-
-    progress = (current_weight_kg - target_weight_kg) / span_kg
-    return DEFICIT_FLOOR_KCAL + (DEFICIT_CEILING_KCAL - DEFICIT_FLOOR_KCAL) * progress
+    ceiling = alpert_fat_energy_ceiling_kcal(current_weight_kg, body_fat_pct)
+    return ramped if ceiling is None else min(ramped, ceiling)
 
 
 def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float:
@@ -322,8 +377,9 @@ def calculate_macro_targets(
     tdee = calculate_tdee(bmr, activity_level)
 
     target_weight_kg = profile.get("target_weight_kg") or weight_kg
-    deficit = calculate_dynamic_deficit(weight_kg, target_weight_kg)
+    deficit = calculate_dynamic_deficit(weight_kg, target_weight_kg, body_fat_pct)
     calories = max(0.0, tdee - deficit)
+    alpert_ceiling = alpert_fat_energy_ceiling_kcal(weight_kg, body_fat_pct)
 
     protein_multiplier = profile.get("protein_multiplier") or 1.8
     protein_g = target_weight_kg * protein_multiplier
@@ -340,6 +396,14 @@ def calculate_macro_targets(
             "bmr": round(bmr, 1),
             "tdee": round(tdee, 1),
             "deficit_kcal": round(deficit, 1),
+            # None unless the weigh-in carried body_fat_pct — the fat-mass-only
+            # cap calculate_dynamic_deficit layers on top of the weight ramp.
+            # Whether it was the binding constraint is visible by comparing
+            # this to deficit_kcal above (equal deficit_kcal to the ramp value
+            # means it wasn't).
+            "alpert_ceiling_kcal": (
+                round(alpert_ceiling, 1) if alpert_ceiling is not None else None
+            ),
             "current_weight_kg": weight_kg,
             "target_weight_kg": target_weight_kg,
             "activity_level": activity_level,
