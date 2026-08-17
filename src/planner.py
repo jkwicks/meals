@@ -640,6 +640,16 @@ class PlanningRules(BaseModel):
     # toward — not a promise: a batch that runs into the end of the week or an
     # already-claimed day settles for fewer servings.
     batch_target_servings: int = 6
+    # How far past its own weighted share a meal's briefed budget may be pushed
+    # by drift the cascade hands it (see `cap_to_weighted_share`). Generation
+    # subtracts each stage's *actual* output from the day, so every earlier
+    # meal's miss lands on whichever meal is generated last — and the protein
+    # half of that miss is never recoverable, because `fit_recipe_to_budget`
+    # scales a recipe to hit calories and cannot change a macro ratio.
+    # Unbounded, that asks the 0.10-weighted snack to carry three meals'
+    # accumulated shortfall. 1.75 leaves real room for ordinary drift to be
+    # absorbed where it should be, and stops only the runaway case.
+    max_meal_share_multiple: float = 1.75
 
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
@@ -2839,6 +2849,61 @@ def apply_protein_floor(
     return adjusted
 
 
+def cap_to_weighted_share(
+    budget: dict, apriori: Optional[dict], config: Optional[dict] = None
+) -> Tuple[dict, bool]:
+    """Stop the cascade dumping every earlier meal's drift on the last one.
+
+    `generate_week_plan` subtracts each stage's **actual** output from the day
+    before splitting the remainder across the meal types still pending. That is
+    the right rule — a later meal should aim at what is genuinely left, not at
+    a static weight guess — but it has an end effect: by the final stage there
+    is exactly one pending slot, so it inherits the whole accumulated
+    difference between what the earlier meals were briefed and what they
+    actually came back as. `apply_protein_floor` cannot moderate it either, as
+    it returns early below two slots: there is nowhere left to move grams from.
+
+    Calories mostly self-correct — `fit_recipe_to_budget` lands each recipe on
+    its budget, so the drift is a few percent a meal. **Protein does not.** A
+    single scale factor resizes a portion without changing its macro *ratio*
+    (that limit is stated outright in `fit_recipe_to_budget`), so a dinner that
+    hits its calories 20 g of protein light passes every check and hands that
+    20 g straight down the cascade. Three meals of that ask a snack for 90 g of
+    protein in a 200 kcal slot — the exact "snack with no protein source"
+    failure `min_meal_protein_g` exists to prevent, arrived at from the
+    opposite direction, and one nothing downstream would reject:
+    `reject_untrimmable_macro_miss` only ever checks calories.
+
+    So the briefed budget is capped at `planning_rules.max_meal_share_multiple`
+    x what that meal would have been given had nothing drifted (`apriori` —
+    `split_targets` run against the day's full target). Every macro is scaled
+    by the same factor rather than calories alone, because each slot's budget
+    has to stay internally consistent (`calories ~= 4p + 4c + 9f`) for
+    `reject_untrimmable_macro_miss` to check a response against it.
+
+    **The capped surplus is deliberately not reallocated anywhere.** There is
+    nowhere to put it — every other meal that day is already cooked — so the
+    day lands visibly under target instead. That is this codebase's standing
+    answer whenever the numbers don't reconcile: an orphaned leftover
+    contributes 0 macros and shows as a shortfall, `apply_protein_floor` does
+    nothing and logs when the floor is unaffordable, an overspent
+    `meal_overrides` floors the rest at 0 and warns. A day that cannot be made
+    to total its target is a target problem, and distorting one meal into a
+    900 kcal "snack" to hide it is worse than showing the gap.
+
+    Returns the budget and whether it was capped, so the caller can say so.
+    """
+    if not apriori:
+        return budget, False
+    multiple = planning_rule(config, "max_meal_share_multiple")
+    ceiling = apriori.get("calories", 0) * multiple
+    calories = budget.get("calories", 0)
+    if ceiling <= 0 or calories <= ceiling:
+        return budget, False
+    factor = ceiling / calories
+    return {key: budget[key] * factor for key in MACRO_KEYS}, True
+
+
 def inventory_instruction(config: dict) -> str:
     """Prompt line telling the model to build around food already in the house.
 
@@ -3841,6 +3906,24 @@ async def generate_week_plan(
     failures: Dict[str, str] = {}
 
     order = meal_type_order(config)
+
+    # What each meal would be briefed had nothing drifted: `split_targets`
+    # against the day's *full* target, with every slot pending. Identical to
+    # what the first stage below computes for itself (stage 0's pending set is
+    # every meal type, and the day is still unmutated), but needed at every
+    # later stage as the ceiling `cap_to_weighted_share` measures against —
+    # see it for why the last stage otherwise inherits the whole week's drift.
+    apriori_budgets: Dict[str, Dict[str, dict]] = {}
+    for day in spec.days:
+        day_slots = [
+            by_id[slot_id(day, meal_type)]
+            for meal_type in order
+            if by_id[slot_id(day, meal_type)].mode in (MODE_COOK, MODE_LEFTOVER)
+        ]
+        apriori_budgets[day] = split_targets(
+            targets[day], day_slots, day_multiplicity(spec, day), config,
+            meal_overrides_for(day, config),
+        )
     for stage_index, meal_type in enumerate(order):
         cook_days = [
             day for day in spec.days if by_id[slot_id(day, meal_type)].mode == MODE_COOK
@@ -3878,9 +3961,31 @@ async def generate_week_plan(
                     daily_macro_budgets[day], pending_slots, day_multiplicity(spec, day),
                     config, overrides,
                 )
-                day_budgets[day] = budgets[slot_id(day, meal_type)]
+                this_slot = slot_id(day, meal_type)
+                budget = budgets[this_slot]
                 if meal_type in overrides:
+                    # A pinned budget is a fixed number by definition — it was
+                    # assigned verbatim by `split_targets` and never took a
+                    # share of the remainder, so there is no drift on it to cap.
                     pinned_days.append(day)
+                else:
+                    budget, capped = cap_to_weighted_share(
+                        budget, apriori_budgets[day].get(this_slot), config
+                    )
+                    if capped:
+                        logger.info(
+                            "%s %s: budget capped to %.0f kcal — earlier meals came back "
+                            "under brief and the remainder would have pushed this slot "
+                            "past %sx its share; the day will land under target",
+                            day, meal_type, budget["calories"],
+                            planning_rule(config, "max_meal_share_multiple"),
+                        )
+                        if note_callback:
+                            note_callback(
+                                f"{day} {meal_type}: capped at {budget['calories']:.0f} kcal "
+                                "rather than absorbing the day's whole shortfall"
+                            )
+                day_budgets[day] = budget
 
             carried_descriptions_by_day = {
                 day: carried_macros(spec, day, events)[1] for day in cook_days

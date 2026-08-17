@@ -850,6 +850,44 @@ protein is chronically low, change the model, not the trim limits.
 Adjustments are surfaced, never silent: `note_callback` collects them and the
 UI lists them under "Portion adjustments".
 
+#### The cascade's end effect, and the cap on it
+
+Generation subtracts each stage's **actual** output from the day before
+splitting the remainder across the meal types still pending. That is the right
+rule — a later meal should aim at what is genuinely left — but it has an end
+effect: by the final stage (`snack`, last in `MEAL_TYPE_PRIORITY`) exactly one
+slot is pending, so it inherits the entire accumulated difference between what
+the earlier meals were briefed and what they came back as.
+`apply_protein_floor` cannot moderate it either — it returns early below two
+slots, because there is nowhere left to move grams from.
+
+Calories mostly self-correct, since layer 2 lands each recipe on its budget.
+**Protein does not.** A single scale factor resizes a portion without changing
+its macro *ratio*, so a dinner that hits its calories 20 g of protein light
+passes every check and hands that 20 g down the cascade. Three meals of that
+brief a snack for ~90 g of protein in a 200 kcal slot — the same "snack with no
+protein source" failure `min_meal_protein_g` exists to prevent, reached from
+the opposite direction, and one nothing downstream catches:
+`reject_untrimmable_macro_miss` only ever checks calories.
+
+`cap_to_weighted_share` bounds the briefed budget at
+`planning_rules.max_meal_share_multiple` (1.75) x what that meal would have
+been given had nothing drifted — `split_targets` run against the day's full
+target, computed once per day before the stage loop. Every macro scales by the
+same factor, not calories alone, because each slot's budget must stay
+internally consistent (`calories ~= 4p + 4c + 9f`) for the response validator
+to check against it. Pinned meals are exempt: an override never took a share
+of the remainder, so there is no drift on it to cap.
+
+**The capped surplus is deliberately dropped, not moved.** There is nowhere to
+put it — every other meal that day is already cooked — so the day lands
+visibly under target instead. That is this codebase's standing answer whenever
+the numbers don't reconcile: an orphaned leftover contributes 0 and shows as a
+shortfall, `apply_protein_floor` does nothing and logs when the floor is
+unaffordable, an overspent `meal_overrides` floors the rest at 0 and warns.
+Distorting one meal into a 900 kcal "snack" to hide a target problem is worse
+than showing the gap. It logs and emits a note when it fires.
+
 ### A failed meal must not fail the week
 
 `generate_week_plan()` catches per-*meal-type* exceptions into
@@ -1197,6 +1235,43 @@ or it only proves something about the machine it ran on.
   Wellbeing Diet, ...) is soft guidance, not a hard constraint like the two
   rules above — it shapes food selection via the generation prompt rather
   than rejecting a recipe. See "Diet styles" under Architecture.
+
+## Tests
+
+`python -m unittest discover -s tests` from the venv. `unittest` throughout —
+this venv carries no pytest, so the suite runs with no extra dependency, and
+the classes are plain `TestCase`s so they would run under pytest anyway. The
+whole suite is under a tenth of a second because **nothing in it touches the
+network, a model, or the clock**: every module reaches its outside world
+through one seam, and the tests substitute at that seam.
+
+| file | covers |
+|---|---|
+| `test_week_composition.py` | style/cuisine resolution, cuisine blocks, workout breakfasts |
+| `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
+| `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
+| `test_planner_dynamic_targets.py` | target hydration, the protein floor, logged-intake substitution, adaptive TDEE |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic and the adaptive estimate |
+| `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
+| `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
+| `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
+| `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views |
+| `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
+| `test_history.py` | history recording and rotation seeding |
+
+**Where the line is drawn on the UI.** `ui_state.py` is tested because it is
+the view model — grid edits, derived portions, override precedence — and those
+rules are exactly what a UI change can silently break. The other eleven `ui_*`
+modules are widget construction, and testing them would mean a NiceGUI
+harness asserting on element trees, which pins the layout rather than the
+behaviour. If logic worth testing appears in one of them, the move is to pull
+it into `ui_state.py` (or a pure helper) rather than to grow a UI harness.
+
+Two of these were written after a bug that the absence of the test allowed, and
+both docstrings say so — `test_model_resolution.py` and the credential guards
+in `test_sync_service.py`. That is the shape to follow: when a test is added
+because something broke, record the failure in the test, not just the fix.
 
 ## Notes for future sessions
 
