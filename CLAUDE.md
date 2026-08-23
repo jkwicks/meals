@@ -92,7 +92,7 @@ The five core files, listed in `CONFIG_FILES`:
 | `profile.json` | the body and the numbers aimed at it — `user_profile`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
 | `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `diet_styles`, `week_defaults` |
 | `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` |
-| `schedule.json` | where you are and what you're doing — `training_schedule`, plus `base_schedule`, `location_rules` and `regional`, which are declared but not yet read (see below) |
+| `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below) |
 | `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
 
 The two supplemental files, loaded by their own methods and **not** part of
@@ -124,10 +124,14 @@ entire point. **It applies to the five core files only** — `models.json` and
 `integrations.json` keys are read directly by the code that needs them and
 appear in neither `AppConfig` nor `CONFIG_FILES`.
 
-`base_schedule`, `location_rules` and `regional` are declared on `AppConfig`
-purely so `schedule.json` passes `extra="forbid"`; nothing reads them yet.
-They are typed loosely on purpose — a schema for data no code consumes would
-be a guess, and the alternative is a config file the app refuses to load.
+`base_schedule` and `location_rules` were in that same "declared so the file
+loads, read by nothing" state until `week.apply_location_modes` gave them a
+consumer — see "Some slots are decided before the model is called". They stay
+typed loosely (`Dict[str, Dict[str, Any]]`) because the *shape* is still open:
+a location rule is a bag of `<meal_type>_mode` keys plus `restrictions`, and
+pinning that down would make adding the next kind of rule a schema change.
+`regional` reached the same milestone earlier, when `sourcing` arrived beside
+it (see "Buying what the shops actually stock").
 
 `tests/test_config_layout.py` holds a snapshot of the merged dict and asserts
 nothing was lost or altered. Regenerate it (`python tests/test_config_layout.py
@@ -300,6 +304,49 @@ card's hover style its partners three columns away without a Python round trip
 per mouseenter, which would be visibly laggy for a hover effect. Chain classes
 are unique per chain, colours cycle, so the outline is what disambiguates when
 a busy week reuses a hue.
+
+#### The expanded recipe card
+
+Clicking any card — Week tab or Today tab, they share the one dialog — opens
+`ui_cards.recipe_detail`, which is laid out as a document you cook from rather
+than as a roomier version of the card that opened it: a mono eyebrow
+(`MEAL TYPE — STYLE`), the title, one ruled strip carrying
+`KCAL/PRO/CHO/FAT/PREP`, ingredients as a two-column table with the quantities
+right-aligned in one mono column, and the method as numbered rows. Type and
+alignment do the work because the grid *behind* the dialog is already spending
+every colour the app owns; the only hues inside it are the status chip, the
+`MACRO_TINTS` on the three macro labels, and the amber prep note.
+
+Four decisions in it are worth keeping:
+
+- **Ingredients are for the batch, macros are for one serving**, and on a
+  bulk-cooked dinner those differ by a factor of six. Each half is labelled
+  next to itself — `ALL 6 PORTIONS` on the ingredients header, `PER SERVING`
+  under the macro strip — rather than once at the top where it would be read
+  as applying to both.
+- **The reference design this came from had a 1x/2x/4x portion multiplier,
+  and it is deliberately absent.** Portions are derived (`week.portions_for`),
+  which is what makes a batch size unable to disagree with the meals it
+  covers; a multiplier sitting on the recipe would be a second source of
+  truth for the same number. The status chip took that corner of the eyebrow
+  instead, so the dialog says what it opened from.
+- **Ticking a step mutates that row's classes**, never `recipe_detail.refresh()`
+  — repainting to strike one line out of nine would lose the scroll position
+  in the recipe you are reading. It is not persisted, and resets whenever the
+  dialog opens: scratch state for one cook, the same reasoning as the shopping
+  list's unticked checkboxes. `add=`/`remove=` rather than `toggle=` because
+  the pairs are conflicting Tailwind utilities (`text-slate-200` vs
+  `text-slate-600`), and both present at once resolves by stylesheet order.
+- **`flex-nowrap` on the step and prep-note rows is load-bearing.** Quasar's
+  own `.flex` rule sets `flex-wrap: wrap` and Tailwind's `flex-row` does not
+  undo it, so a step long enough to fill its row wrapped *below* its number
+  and ran back underneath it. `min-w-0` on the label is the other half — a
+  flex item's default `min-width: auto` won't shrink past its longest word.
+  Worth knowing before adding any icon-plus-text row anywhere in this UI.
+
+NOVA group moved to a per-ingredient tooltip: every group that reaches the
+dialog is an allowed one (4 is rejected in validation), so it is worth being
+able to check and not worth a column.
 
 ### The Today tab
 
@@ -515,13 +562,17 @@ types: dinner is generated before lunch so the one cross-type leftover
       why this had to move out of the per-slot loop. Explicit cuisines are
       left alone and seeded into the LRU *first*, so a hand-picked Wednesday
       pushes the auto blocks away from itself rather than being overwritten.
-    - **A morning session's breakfast is pinned to a shake** before any
-      rotation runs: `morning_training_days()` (gym/cardio starting at or
-      before `MORNING_TRAINING_CUTOFF`, walks excluded) picks the days,
-      `week.pin_style()` applies `WORKOUT_BREAKFAST_STYLE`. A shake is the
-      only breakfast in `meal_styles` drinkable ten minutes before a session,
-      and the style rotation has no way to know that — left to it, a 06:30 gym
-      slot gets eggs and smoked salmon on toast about one week in five. An
+    - **A morning gym (hypertrophy) session's breakfast is pinned to a
+      shake** before any rotation runs, as a hard rule: `morning_training_days()`
+      (`WORKOUT_BREAKFAST_TYPES = ("gym",)`, starting at or before
+      `MORNING_TRAINING_CUTOFF`) picks the days, `week.pin_style()` applies
+      `WORKOUT_BREAKFAST_STYLE`. Cardio and walks are deliberately excluded —
+      a shake is specifically what a hypertrophy session's fast-digesting,
+      protein-forward refuel needs, and forcing one on every cardio morning
+      too would empty the breakfast rotation for a session that doesn't need
+      it. A shake is also the only breakfast in `meal_styles` drinkable ten
+      minutes before a session, so left to plain rotation a 06:30 gym slot
+      gets eggs and smoked salmon on toast about one week in five. An
       *evening* session is deliberately not covered: it is already handled as
       macros by `apply_training_adjustments` (expanded budget, pinned
       post-workout meal, pre-workout digestion note), and pinning a *style*
@@ -529,6 +580,19 @@ types: dinner is generated before lunch so the one cross-type leftover
       Both are pins, not overrides — a style or cuisine the user chose in the
       drawer always survives, the same precedence a hand-written
       `meal_overrides` entry gets over a computed one.
+
+      **The pin only fires on a slot still on auto**, which is what makes
+      `ui_generation.generate_week` call `week.clear_styles`/`clear_cuisines`
+      unconditionally, on every full-week generation, before
+      `resolve_auto_choices` runs. Without that, a slot already carrying a
+      concrete style from a previous run — the normal state once a week has
+      been generated once — blocks the pin from ever re-firing, even after a
+      `training_schedule` edit newly qualifies that day: a schedule change
+      would otherwise silently fail to reach the plan until the drawer's
+      "Shuffle styles" button (`PlannerState.shuffle_styles`, same two
+      `week.clear_*` calls) was clicked by hand. Mode, leftover links and
+      skips survive the clear — those are structural edits the user made on
+      purpose, not picks due for a re-roll.
 
     The prompt side of blocking lives in `generate_meal_type_week`, which is
     the only call that can see the whole week: `build_cuisine_continuity_rule`
@@ -723,6 +787,74 @@ recipe). When the floor is unaffordable it does **nothing** and logs — raising
 some meals and starving others would be an arbitrary choice about which meal
 gets short-changed, and a day that can't carry `n x 35 g` is a target problem,
 not a split problem.
+
+#### The floor and the day have to be affordable together, and once weren't
+
+Worth knowing before changing either number, because the interaction is not
+obvious and the shipped config was wrong about it. `hydrate_dynamic_targets`
+locks protein at 144 g (80 kg x 1.8) **whatever `weekly_schedule` says** — the
+file's `calories` and `protein_g` are replaced outright, and only
+`net_carbs_g` and hand-written `meal_overrides` survive. Four meals against a
+35 g floor need 140 g of that 144, leaving 4 g of slack across the entire day:
+in effect every meal was pinned near 36 g and no meal could be protein-forward.
+
+That is what made the shipped breakfast override unsatisfiable rather than
+merely small. It pinned 30 g in 350-400 kcal, `split_targets` assigns an
+override **verbatim**, and `apply_protein_floor` excludes pinned slots — so
+nothing downstream could lift it. Meanwhile the `custom_shake` style's own
+fixed base was 45 g of protein powder, about 36 g of protein, already over
+the pin before a single other ingredient. The model resolved the contradiction
+the only way it could: lean on the powder and ignore the rest of the template.
+
+The fix was config, not code, and it is two coupled changes — **change them
+together or not at all**:
+
+- `week_defaults.snack` is `skip`. Three meals instead of four is what frees
+  the protein: 144 - 60 leaves 84 g for lunch and dinner, 42 g each, clear of
+  the floor.
+- The two `gym_hypertrophy` mornings (Monday, Saturday — the days
+  `morning_training_days` pins to the shake) get `550 kcal / 60 g`. The other
+  five keep their smaller pins, because `eggs_salmon` and `beans_toast` have
+  no protein-powder base to build 60 g on.
+
+The arithmetic the matrix has to satisfy: base 150 kcal/30 g, then both
+Protein Boost items (+20 g), edamame (+4 g) and a seed (+2 g) reach ~55-60 g
+at ~400 kcal. That is 6-8 components, which is why the style text says
+**"choose 3-6 items on top of the mandatory base, at least one Protein
+Boost"** rather than the "2-4 items" it used to — a template that cannot
+reach its own budget is one the model abandons wholesale, which is the
+failure being fixed.
+
+##### The shake's mandatory greens, and the rule that would have eaten them
+
+The base is not just powder/creatine/water: **20-30 g of raw leafy green and
+50-80 g of raw frozen vegetable are mandatory in every shake.** Together they
+cost ~25-30 kcal and return ~2.5 g protein and ~2 g fibre, which is the best
+nutrient-per-calorie trade anywhere in the template — there is no budget in
+which they don't fit, and that sentence is in the prompt for exactly that
+reason.
+
+**Making them mandatory took three coordinated edits, not one.**
+`SHAKE_ROTATION_RULE` (whole-week) and `SHAKE_SLOT_DIRECTIVE` (per-slot) both
+told the model to keep "the base" identical and *vary the secondary
+components* so no two shakes are the same drink. Greens and vegetables sat in
+that secondary pool, so the rotation rule had standing permission to drop them
+— and they are the cheapest thing in a shake to drop when two drinks have to
+differ. Naming them as mandatory in `meals.json` alone would have set the
+style text against the rotation rule, with the rotation rule winning on
+whichever morning it needed a difference. All three now name them as base.
+
+Which green and which vegetable may still vary between shakes; that is the
+part rotation is welcome to touch. Only their presence is fixed.
+
+This is soft guidance, like every other style instruction — there is no
+validator rejecting a shake that arrives without spinach. That is the same
+call `diet_styles` makes for Paleo and AIP (see "Diet styles"), and it is
+worth remembering the reason: a rejection costs a full 30s-3min retry, and
+nothing but a retry can add a missing ingredient. If shakes still turn up
+without greens now the budget is satisfiable, a `model_validator` on the
+shake style is the next step — but the previous failure had an unsatisfiable
+budget as its root cause, and that is fixed.
 
 Everything degrades to the file's numbers, with a warning and a UI note, when
 no weight is available. That is not the fabricated body `nutrition_engine`
@@ -1054,6 +1186,46 @@ previous day's dinner there is often only one slot left for a batch to grow
 into, so with both toggles on the second finds nothing — `generate_week`
 warns rather than silently generating a mislabeled dinner.
 
+**Prep day is not the Sunday on the grid.** The batch-prep session runs the
+day *before* `spec.days[0]` — that is what `ui_cards.prep_day_column` draws as
+an eighth column left of day 0 — so on a Monday-start week `spec.days[-1]` is
+a full **7 days** after it. The Sunday a batch is cooked on and the Sunday at
+the end of the week are different Sundays, and nothing prepped ahead is still
+food by the second one. `spread_batch`'s `exclude_target_days` is the rule:
+`apply_batch_selections` passes `{spec.days[-1]}`, and no batch may link into
+it. The anchor may still land there, and an ordinary "Link to next lunch" from
+Saturday dinner into Sunday lunch is untouched — that one is cooked on
+Saturday, not on prep day, so `validate_week` deliberately gets no matching
+backstop.
+
+Two consequences worth knowing:
+
+- **The weekend preference now gives way rather than stranding.** `prefer_days`
+  narrows the anchor pool *before* the forward walk runs, so a day whose only
+  eligible target has been excluded gets picked ahead of a viable one and then
+  returns `None`. With the last day off-limits that is exactly Saturday, whose
+  only forward day is it — so long cook would have warned "couldn't find a day
+  with room" on every single run. `spread_batch` now filters the pool to
+  anchors that can still reach *some* eligible day, which drops both weekend
+  days and falls back to the earliest dinner that can actually carry a batch.
+  That is the right answer regardless: "a weekend suits a lazier cook" is about
+  when you *cook*, and a batch in the prep session is cooked on prep day
+  whichever day eats it first.
+- **On the shipped default grid, long cook now strands.** `location_rules`
+  already links Thursday and Friday lunches and Saturday dinner backwards, so
+  once bulk prep claims Monday the only slot anywhere left to grow into is
+  Sunday — which is now ruled out. `generate_week`'s existing warning covers
+  it. Unlinking one of those lunches, or turning off bulk prep, gives it room.
+
+Two things this deliberately does **not** fix, both still measured from the
+anchor day rather than prep day: `storage_note`'s `keeps_for_days` (so a
+prep-session candidate's "eaten across N day(s)" line under-reports, and
+`generate_sunday_prep_session`'s prompt then says "do not recompute it"), and
+`is_sunday_prepped`, which tests the `long_oven_cook`/`bulk_prep_friendly`
+flags while the anchor path selects by slot_id — so every incidentally-flagged
+recipe in the week claims the 10-minute reheat time even though the session
+only ever contains the one or two anchors.
+
 `spread_batch` returns `None` for an anchor that never grew past what an
 ordinary dinner already gets for free, which is the same "no batch happened"
 signal as no valid anchor at all. Both are honest outcomes; neither is an
@@ -1069,6 +1241,286 @@ either, both or neither. `is_sunday_prepped` tests them rather than
 ordinary "link to next lunch") and so once marked every multi-day dinner in
 the week as Sunday-prepped.
 
+### Buying what the shops actually stock
+
+A generated week called for **mustard greens**, which no supermarket within
+reach of `schedule.json`'s `regional` postcode carries, and reached for fresh
+seafood a regional Victorian town can't reliably supply. Availability is now a
+third axis beside cuisine and diet style, and it is answered in three places
+because the failure had three separate sources.
+
+`schedule.json`'s `sourcing` block is the config — beside `regional` rather
+than in `dietary_rules`, because it is a fact about the **shops**, not about
+the body: move house and every value here changes while not one dietary rule
+does. It is also `regional`'s first real consumer, so "Coles, Woolworths or
+Aldi" reaches the prompt qualified by "in VIC, AU" rather than left to mean
+whatever the model assumes.
+
+| key | means |
+|---|---|
+| `supermarkets` | the shops a week is bought from, named verbatim in the prompt — a shop name tells the model more about what is on the shelf than any adjective could |
+| `specialty_grocers_available_days` | which weekday names an Asian grocer, deli, health-food shop, fishmonger or farmers' market is actually reachable on — `None` (absent) is every day, `[]` is none |
+| `fresh_seafood_available_days` | same `None`/`[]`/list-of-weekdays shape, for a reliable fresh fish counter |
+| `max_seafood_meals_per_week` | whole-week cap on meals whose *dominant* protein is seafood; `None` is uncapped |
+
+**`build_sourcing_rule` is the soft half of a constraint whose hard half
+already exists.** `dietary_rules.banned_ingredients` rejects a named
+ingredient at validation, but a blocklist can only name what somebody already
+thought of, and "not stocked within an hour's drive" has an unenumerable tail
+— galangal, curry leaves, fresh yuzu, banana blossom, specialty butcher cuts.
+So this shapes what the model reaches for and `banned_ingredients` still
+polices what it must never return, the same division of labour `diet_styles`
+has with the same list. It sits immediately after the banned-ingredient line
+in `build_generation_rules` for that reason, and emits nothing at all when
+`sourcing` is absent or every field is at its permissive default.
+
+The wording is deliberately a **substitution instruction, not a prohibition**
+("substitute the closest ingredient a mainstream supermarket stocks and put
+the SUBSTITUTE in the recipe"). "Don't use it" invites the model to abandon
+the cuisine over one ingredient, or to name the unavailable item anyway
+because the dish genuinely needs one.
+
+**Availability can be day-of-week, not just week-wide** — a specialty
+grocer or fishmonger reachable only on a Saturday market run, say.
+`build_sourcing_rule` takes `days`, the cook days its caller's prompt
+actually covers, and `_sourcing_day_split` partitions them against each
+day-list into `restricted`/`open`. `generate_meal_type_week` passes every
+day the meal type is cooked (often all seven) and `generate_day` passes its
+one day, so a week where dinner is cooked every night but the market only
+opens Saturday/Sunday gets a day-scoped sentence naming exactly which nights
+each rule binds, rather than either an unconditional block or silence. A call
+whose days are wholly inside or wholly outside the available list still gets
+the plain unconditional wording — the day-scoped sentence only appears when a
+single call's days straddle both, which is the common case here since one
+`generate_meal_type_week` call spans the whole week.
+
+**The seafood cap is counted, not merely stated, and that is what makes it
+week-wide.** No single generation call can see more than its own axis —
+`generate_meal_type_week` sees one meal type's seven days — so a rule saying
+"at most one per week" sent to all four axes permits four. `generate_week_plan`
+instead counts what each stage actually returned (`is_seafood_meal`) and passes
+the **remaining** allowance to the next one, spending the cap in
+`MEAL_TYPE_PRIORITY` order — the same seed-then-extend pattern `avoid_proteins`
+already uses across stages. Dinner is first in that order, so it gets first
+claim, which is where a seafood meal is wanted if the week is only having one.
+Once spent, later axes are told none of theirs may be seafood.
+
+`is_seafood_meal` reads the recipe's **highest-protein ingredient** rather than
+scanning every name, because a scan spends the whole week's allowance on a Thai
+dinner's tablespoon of fish sauce or a bowl of dashi. Unlike
+`extract_main_protein` it applies to every meal type — a smoked-salmon
+breakfast is a trip to the same counter. Counting is per cook event, not per
+slot that eats it: a bulk-cooked salmon feeding three lunches was bought once.
+
+`regenerate_single_day`/`regenerate_single_meal` deliberately send the sourcing
+rule but **not** the cap: a single replaced meal has no week in front of it to
+count against, and a cap restated there would forbid seafood in the very slot
+being fixed.
+
+### Some slots are decided before the model is called
+
+Three things now claim a slot ahead of generation, and the order they run in
+is the order below. Everything they claim is one fewer recipe the model is
+asked for, so a week with favourites in it is also a cheaper week to run.
+
+**1. Where you are that day** (`schedule.json`'s `base_schedule` +
+`location_rules`). These were config nothing read — declared on `AppConfig`
+purely so `schedule.json` passed `extra="forbid"`. `week.apply_location_modes`
+is the consumer, called by `default_week_spec`, and it reads
+`<meal_type>_mode` off the day's location: an Office lunch inherits the
+previous day's dinner, a Holiday block skips all four meals.
+
+Two things about it are load-bearing. It applies to a **fresh grid only** —
+once a week exists its slots carry structural edits the user made on purpose,
+and re-imposing the schedule over those would silently undo them. And
+`lunch_mode: "leftover"` has to *resolve* to a source, not just set a mode: a
+leftover with no `source` fails `validate_week` outright, so it links to the
+previous day's dinner and **falls back to cooking** when there's nothing to
+inherit from (day one of the week). A grid that can't be generated is worse
+than a grid that cooks one extra lunch.
+
+`restrictions` reaches the prompt separately, via `build_location_note` in the
+per-slot brief — per slot rather than per call because `generate_meal_type_week`
+spans seven days and Monday at the office says nothing about Tuesday. The
+tags are translated through `LOCATION_RESTRICTION_PHRASES` rather than sent
+bare.
+
+**A location only constrains the meals it declares a `<meal_type>_mode` for**,
+which is what stops "must travel in a container" landing on a Monday
+*breakfast* — eaten at home, before leaving. `Office` names `lunch_mode` and
+nothing else, and that key is already the honest statement of which meals the
+location has an opinion about, so it is reused as the scope rather than
+duplicated into a parallel `restricted_meals` list that could disagree with
+it. **There is deliberately no "no reheat" tag**: the office has a
+microwave, which is also why `location_rules.Office` sets `lunch_mode:
+leftover`. The two together could only be reconciled with a per-recipe
+"edible cold" flag, and the product decision was that reheating is fine.
+
+**2. A morning gym session's breakfast**, pinned to a shake — unchanged, see
+"Targets come from the body" above.
+
+**3. A saved favourite** (`planner.select_favorite_assignments`). Some slots
+don't need inventing because there is already a dish you know you want.
+`SlotSpec.recipe_id` carries the catalog id; the slot is **still a cook**, so
+portions derive, shopping aggregates it and `span_days` works exactly as for
+a generated recipe — a fourth mode would have meant revisiting every
+`mode == MODE_COOK` test in the repo.
+
+The rules, and why each is shaped that way:
+
+- **Breakfast**: one favourite across `favorite_breakfast_slots` (2) mornings
+  rather than a different one each day — the point of a standing breakfast is
+  that it is the same one, and one shop covers both. A slot already pinned to
+  `WORKOUT_BREAKFAST_STYLE` is skipped: the shake is a hard nutritional rule
+  and a favourite is a preference.
+- **Lunch**: one per eligible slot. Office lunches mostly never reach here —
+  by this point they are leftovers, courtesy of step 1.
+- **Dinner**: up to `favorite_dinner_slots` (2) **distinct** favourites — a
+  count of dishes, not of days one dish covers the way breakfast works,
+  because dinner is where repetition shows and `DINNER_VARIETY_RULE` says so
+  outright. Capped rather than one-per-slot like lunch because dinner is the
+  only meal type `pick_cuisine_blocks` lays contiguous blocks over, and
+  `pin_recipe` blanks the cuisine of every slot it claims: left uncapped
+  against a large catalog every dinner becomes a pin, no block survives, and
+  the pantry overlap the blocks exist for goes with it. Two leaves five
+  generated dinners, which a 4/3 `cuisine_block_pattern` can still do
+  something with.
+
+  **Which days is `cuisine_run_ends`, and that is the whole reason selection
+  reads `slot.cuisine`.** Blocks are already resolved by the time this runs
+  (`resolve_auto_choices` precedes it), so the runs are visible — and
+  blanking a run's *last* day leaves the remainder contiguous, where blanking
+  a middle day splits one block into two shorter ones with a hole between,
+  which is then what `build_cuisine_continuity_rule` has to describe and what
+  the shopping list pays for. One pin per run rather than two from the same
+  run also spreads the favourites across the week instead of clustering them
+  at the front, and damages each block equally rather than halving one and
+  leaving the other whole. A week with no cuisines resolved degrades to
+  earliest-first, exactly as lunch already does.
+- **Snack**: nothing, deliberately. `week_defaults.snack` is `skip` in the
+  shipped config, so there is usually no snack slot to claim — and a rule
+  whose slots don't exist is one that can't be seen to be wrong.
+
+**A pinned dinner has to be visible to the model generating the same stage.**
+`avoid_proteins` is extended from `stage_events` only *after* a stage
+finishes, so pins built moments earlier in the same stage aren't in it yet.
+That was harmless while only breakfast and lunch could pin — neither has a
+consecutive-night protein rule — and is not harmless now: a pinned lamb
+Thursday the model cannot see is exactly how a generated lamb Friday gets
+through `DINNER_VARIETY_RULE`. `generate_week_plan` appends the stage's own
+pinned proteins and recipe names to what it passes down, without folding them
+into the running list, which stays the record of what *completed* stages
+cooked.
+
+Eligibility is strict LRU over `planning_rules.favorite_reuse_days`
+(`{"breakfast": 7, "lunch": 21}`) — same rule and same reasoning as
+`next_choice`. **`history_max_entries` had to move from 21 to 28 for this**:
+it caps *entries* (one per cooked day), so at 21 a favourite that aged off the
+window was indistinguishable from one never cooked, and the 21-day lunch rule
+silently stopped binding at exactly the point it should have started.
+
+Three details that were bugs first:
+
+- **Pinning clears the slot's style and cuisine** (`week.pin_recipe`).
+  `resolve_auto_choices` has already rolled a style by then, so a scramble
+  pinned onto a `yoghurt_bowl` slot rendered as "YOGHURT BOWL" over a plate
+  of eggs.
+- **The model must only be handed the unpinned days.**
+  `_generate_meal_type_events` derives which slots to ask for from
+  `day_budgets`' own keys, so passing the full dict generated — and paid for —
+  a second recipe for a slot already filled.
+- **A favourite is normalised to one serving first** (`planner.single_serving`).
+  It was bookmarked off a card already scaled to its portions, so a 2-serving
+  dinner needs a 0.5 factor — outside `portion_trim_limits`, so the clamp
+  fired at 0.6 and every pinned favourite silently served 20% over budget.
+  `PlannerState.swap_slot_with_favorite` already normalised for this reason;
+  the rule is now shared rather than copied.
+
+`ui_generation.generate_week` calls `week.clear_recipe_pins` unconditionally
+alongside `clear_styles`/`clear_cuisines`, for the identical reason: selection
+only ever fills an *empty* slot, so without the clear, week one's favourites
+would be re-served forever and the reuse window would never advance.
+
+### A skipped meal that was actually eaten
+
+`MODE_SKIP` contributed nothing anywhere, which is right for a meal genuinely
+not eaten and wrong for the common case — dinner with friends, a working
+lunch. Those calories are consumed, and a day that ignores them hands their
+whole share to the meals it does plan, which come back oversized.
+
+`SlotSpec.skip_estimate` (the four `MACRO_KEYS`, or None) makes such a slot
+behave **exactly like a leftover**, in the same two places a leftover is
+already handled:
+
+- `generate_week_plan` subtracts `week.skip_estimate_totals` from each day
+  into `plannable_targets` before the first split. `targets` itself is left
+  whole — it becomes `WeekPlan.targets`, the telemetry denominator, and the
+  day's goal doesn't shrink because part of it was met at a restaurant.
+- `WeekPlan.day_slot_macros` adds the same estimate to the numerator, so the
+  two agree and the header reads 100% rather than 60%.
+
+`None` and an all-zero estimate are deliberately different: None is "not
+eaten at all" (the original skip), zeros are "eaten, cost nothing measurable".
+The card's "Eaten out?" button seeds from `PlannerState.default_skip_estimate`
+— what the slot *would* have been briefed at, via `split_targets` with the
+slot temporarily added back as a cook — because a restaurant dinner is
+usually well above its weighted share and a missed meal is 0, so the default
+is only ever a starting point. Calories/protein/carbs are typed and fat is
+derived, the same division `ui_drawer.day_target_row` uses.
+
+Fibre is deliberately **not** part of a skip estimate: the fibre in a meal
+nobody cooked isn't estimable, and 0 is more honest than a guess.
+
+### Fibre is reported, never budgeted
+
+`Ingredient.fiber_g` exists and is summed everywhere a recipe's macros are,
+but it is **not** in `MACRO_KEYS`. That separation is the whole feature.
+
+Every budget in `planner.py` is checked against `calories ~= 4p + 4c + 9f`:
+`split_targets` scales all four together, `apply_protein_floor` moves calories
+with protein at 4 kcal/g to preserve it, `reject_untrimmable_macro_miss`
+bounces a response whose calories don't reconcile. Fibre has no term in that
+identity — it is already excluded from `net_carbs_g` by definition — so
+putting it in `MACRO_KEYS` would drop a fifth number into arithmetic with
+nowhere to put it.
+
+`NUTRIENT_KEYS` (`MACRO_KEYS + ("fiber_g",)`) is what it rides on instead:
+everything linear in an ingredient's quantity. `Ingredient.scaled`,
+`Recipe.total_macros` and `sum_serving_macros` all walk it, so the portion
+trim halves fibre along with everything else; every budget-side consumer
+indexes `MACRO_KEYS` out of the result and never sees it.
+
+Surfaced in three places, never with a denominator: the recipe dialog's macro
+strip (`MACRO_DETAIL_LABELS`), the telemetry header's day row as a bare `FIB
+32g`, and the PDF/Markdown exports. Printing `32/xx` would invent a goal the
+planner never aimed at. A daily fibre *target* is a real feature and a bigger
+one — it needs a term in `nutrition_engine.calculate_macro_targets` and a
+per-slot share in `split_targets`. This is deliberately not that.
+
+`fiber_g` defaults to `0.0`, which is what keeps recipes saved before it
+existed loadable — same pre-migration tolerance `history_styles()` extends to
+old `meal_history.json` entries. `FIBER_REPORTING_RULE` asks the model for it
+explicitly rather than relying on the schema description, because the default
+means an omitted field produces a silently fibre-free week rather than an
+error. The rule's second sentence is the important one: a model told to
+"report fibre" starts *optimising* for it and pulls the recipe off the budget
+that actually is checked.
+
+### Leftovers can't outlive the fridge
+
+`inventory_rules.fridge_safe_days` (4) was config that only ever flavoured a
+storage note. It is now enforced twice, and the split matters:
+
+- **Prevention.** `week.spread_batch` takes `max_span_days` and stops its
+  forward walk there, so neither batch toggle can plan food past the window.
+- **Backstop.** `validate_week` checks `span_days` against the same number.
+  A chain built by hand out of "Link to next lunch" clicks never goes through
+  `spread_batch`, and neither does an imported or hand-edited `week_plan.json`.
+
+Bounding the spread rather than only rejecting the result is the difference
+between never creating the problem and refusing to generate a week the
+planner itself just built.
+
 ### Nudging generation toward whole foods
 
 `reference/whfoods.json` is a 130-entry corpus of nutrient-dense whole foods.
@@ -1083,6 +1535,21 @@ profiles permit"). An absent or empty `whfoods.json` resolves to `[]`, which
 `build_slot_brief` treats as "say nothing" — the same tolerance
 `inventory_instruction` extends to an empty pantry list, so an older checkout
 generates exactly as it did before this existed.
+
+**The sample is filtered through `banned_ingredients` first, and that matters
+more than it looks.** whfoods.json is a shipped, location-blind reference: it
+lists Mustard greens, Halibut, Scallops and Cod beside broccoli and eggs, and
+`build_slot_brief` puts the sample in *every* slot's brief under "prioritize
+incorporating these" — a stronger and far more specific signal than any rule
+in `build_generation_rules`. Unfiltered it nominated foods the config already
+banned, producing a prompt that asked for cod two lines after forbidding it
+and burning a retry whenever the model obliged. Filtering in
+`select_nudge_foods` rather than pruning the corpus keeps whfoods.json usable
+in full by a config with different constraints, and makes `banned_ingredients`
+a **single lever**: ban an item and it stops being suggested as well as being
+rejected. Matching mirrors `Ingredient.reject_banned_ingredients` —
+case-insensitive substring, same accepted false positives — so the two can't
+disagree about whether something is banned.
 
 ### Using up what's already in the house
 
@@ -1214,6 +1681,57 @@ environment so the assertion means something. A guard test that constructs
 its subject with empty credentials must be run against a filled environment,
 or it only proves something about the machine it ran on.
 
+### Bootstrapping the catalog from Google Keep
+
+`src/integrations/keep_import.py` is a **once-off**: the recipes that have
+been sitting in Google Keep under one note colour, pulled into
+`data/recipes_master.json` so `select_favorite_assignments` has something to
+claim slots with. Run `--colors` first, always:
+
+    ./venv/bin/python src/integrations/keep_import.py --takeout ~/Downloads/Takeout --colors
+    ./venv/bin/python src/integrations/keep_import.py --takeout ~/Downloads/Takeout --color CERULEAN --dry-run
+    ./venv/bin/python src/integrations/keep_import.py --takeout ~/Downloads/Takeout --color CERULEAN
+
+It parses through `import_external_recipe` and writes through
+`repository.import_recipe`, so an imported note answers to the same NOVA and
+`banned_ingredients` rules a generated recipe does and lands as an ordinary
+catalog entry — no new storage, no second parse path.
+
+- **It reads a Takeout export, not an API.** `keep.googleapis.com` is
+  Workspace-only and needs domain-wide delegation through a service account —
+  it cannot see a consumer `@gmail.com` account at all, which is where these
+  notes are. The only live alternative is `gkeepapi`, an unofficial client
+  driving the mobile protocol behind a `gpsoauth` master token: a real
+  credential to store, an unpinned reverse-engineered dependency, and
+  something that breaks whenever Google ships. For a job that happens once,
+  "repeatable" is not worth paying for. Only `load_notes` is Takeout-shaped,
+  so a future standing sync would swap that one function.
+- **Keep's UI colour names are not the values Takeout writes**, and the two
+  lists do not correspond in any guessable order — Storm is `CERULEAN`, not
+  `DARKBLUE` or `STORM`. `--color` therefore takes the **raw enum**, and
+  `--colors` prints every value actually present with sample titles so the
+  right one is read off your own notes. `KEEP_COLOR_LABELS` is a display hint
+  for that output and deliberately not what the filter matches on: a Keep
+  release that renames a swatch must not silently retarget the import.
+- **A note that fails to parse must not end the run**, same policy as "a
+  failed meal must not fail the week" — handwritten notes are exactly the
+  input a parser chokes on, and the failures are named at the end for a
+  `--force` re-run.
+- **Titles are checked against the catalog before any API call.**
+  `import_recipe` already folds a duplicate by `recipe_content_key`, but that
+  is decided *after* the parse has been paid for, so a re-run after a crash
+  would re-parse everything. A title match needs no new storage and makes the
+  command resumable.
+- **Checklist notes carry their content in `listContent`**, not
+  `textContent`. A recipe kept as tickable ingredients has an empty
+  `textContent`, so reading only that field silently imports nothing from the
+  notes most likely to be recipes. `note_text` reads both and drops the tick
+  state — a ticked ingredient is one you have, not one the recipe omits.
+
+Imports are sequential on purpose: `recipe_parser_model` is often a free
+route, and a burst of concurrent calls is the reliable way to turn a working
+bootstrap into a wall of 429s halfway through.
+
 ## Metric unit rules
 
 - All ingredient quantities are in **grams** (`quantity_g`). No cups, oz, lbs,
@@ -1235,6 +1753,13 @@ or it only proves something about the machine it ran on.
   Wellbeing Diet, ...) is soft guidance, not a hard constraint like the two
   rules above — it shapes food selection via the generation prompt rather
   than rejecting a recipe. See "Diet styles" under Architecture.
+- **Fibre is tracked but never targeted** — `Ingredient.fiber_g` is reported
+  and displayed, and is deliberately absent from every macro budget. See
+  "Fibre is reported, never budgeted" under Architecture.
+- `schedule.json`'s `sourcing` block is soft in the same way, and constrains
+  what can be *bought* rather than what may be eaten. An ingredient that must
+  never appear belongs in `banned_ingredients`; `sourcing` covers the
+  unenumerable tail. See "Buying what the shops actually stock".
 
 ## Tests
 
@@ -1254,7 +1779,10 @@ through one seam, and the tests substitute at that seam.
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic and the adaptive estimate |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
+| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, and the nudge-sample ban filter |
+| `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
+| `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |

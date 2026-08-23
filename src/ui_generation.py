@@ -32,9 +32,12 @@ from ui_context import UIContext
 from ui_state import SlotView
 from ui_theme import WEEK_SELECTION_LABELS, pluralize
 from week import (
+    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     WeekSpec,
     clear_cuisines,
+    clear_recipe_pins,
+    clear_styles,
     humanize,
     parse_slot_id,
     slot_label,
@@ -55,6 +58,15 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
     search excludes bulk_prep's anchor day so a week with both toggles on
     still gets two distinct batches rather than one dinner double-booked.
 
+    That weekend preference is now a preference in the literal sense: with
+    the week's last day off-limits as a target (`prep_stale_days` below),
+    Saturday has nowhere left to spread, so `spread_batch` skips both
+    weekend days and falls back to the earliest dinner that can actually
+    carry a batch. Which is the right answer anyway — the "weekends suit a
+    lazier cook" reasoning is about when you *cook*, and a batch folded into
+    the prep session is cooked on prep day regardless of which day eats it
+    first.
+
     Returns the (possibly updated) spec and a dict of the two anchor slot ids
     actually chosen (None where a toggle was off, no valid anchor existed, or
     `spread_batch` couldn't grow that anchor past what an ordinary dinner
@@ -71,10 +83,32 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
     warns rather than generating a mislabeled dinner silently.
     """
     target_servings = planning_rule(config, "batch_target_servings")
+    # Cooked food keeps `fridge_safe_days`; a batch is not allowed to plan
+    # itself past that. Bounding the spread here rather than rejecting the
+    # result in `validate_week` is the difference between never creating the
+    # problem and refusing to generate a week the planner itself built.
+    max_span_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
+    # The batch-prep session runs the day *before* the week starts — that is
+    # what `ui_cards.prep_day_column` draws as an eighth column left of day 0
+    # — so the week's own last day sits a full 7 days after it. On a
+    # Monday-start week the Sunday the batch is cooked on and the Sunday at
+    # the end of the grid are not the same Sunday, and nothing prepped ahead
+    # is still food by then. It is ruled out as a batch *target* for both
+    # toggles; an anchor may still land there, and an ordinary "Link to next
+    # lunch" into it (cooked that Saturday, not on prep day) is untouched.
+    prep_stale_days = {spec.days[-1]} if spec.days else set()
     anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
 
     if config.get("bulk_prep_enabled"):
-        spec, anchors["bulk_prep_anchor"] = spread_batch(spec, "dinner", target_servings)
+        spec, anchors["bulk_prep_anchor"] = spread_batch(
+            spec,
+            "dinner",
+            target_servings,
+            max_span_days=max_span_days,
+            exclude_target_days=prep_stale_days,
+        )
 
     if config.get("long_cook_enabled"):
         weekend_days = [day for day in spec.days if day in WEEKEND_DAYS]
@@ -84,7 +118,13 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
             else None
         )
         spec, anchors["long_cook_anchor"] = spread_batch(
-            spec, "dinner", target_servings, prefer_days=weekend_days, exclude_days=exclude_days
+            spec,
+            "dinner",
+            target_servings,
+            prefer_days=weekend_days,
+            exclude_days=exclude_days,
+            max_span_days=max_span_days,
+            exclude_target_days=prep_stale_days,
         )
 
     return spec, anchors
@@ -166,13 +206,26 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             return
 
         spec = generation_spec()
-        if state.cuisine_override:
-            # A slot on screen still carries the concrete cuisine a previous
-            # run picked from the FULL list — validate_week would reject it
-            # the instant the popup's pick narrows config["cuisines"] out
-            # from under it. Clearing lets resolve_auto_choices below re-pick
-            # every cook slot's cuisine from the narrower list instead.
-            spec = clear_cuisines(spec)
+        # A full-week generation always starts from a clean slate: style and
+        # cuisine are blanked on every cook slot so resolve_auto_choices below
+        # re-rolls the whole week fresh, rather than repeating whatever a
+        # previous run on this same grid happened to resolve — the sticky
+        # behaviour `PlannerState.shuffle_styles` otherwise leaves in place.
+        # This is what makes a schedule change (e.g. a training session
+        # moving into the pinned-breakfast window) actually take effect on
+        # the next Generate, instead of being silently blocked by a slot that
+        # already carries a concrete style from before the change. It also
+        # covers the case where the popup's cuisine picker narrows
+        # config["cuisines"] out from under a slot's previous concrete pick.
+        # Mode, leftover links and skips are untouched — those are structural
+        # edits the user made on purpose, not picks due for a re-roll.
+        #
+        # `clear_recipe_pins` for the same reason: a pinned favourite from the
+        # previous run would still be sitting on its slot, and
+        # `select_favorite_assignments` only ever fills an *empty* one — so
+        # without this, week one's favourites would be re-served every week
+        # forever and the reuse window would never get a chance to advance.
+        spec = clear_recipe_pins(clear_cuisines(clear_styles(spec)))
         # Bulk-prep/long-cook are fully-automatic leftover links, applied
         # before validate_week (so that single pass checks the grid actually
         # being generated from) and before resolve_auto_choices below (so it

@@ -1,8 +1,9 @@
-"""The "Generate Current Week" options popup: cuisine picker, diet-style
-picker, bulk-prep toggle, long-cook toggle. Every pick here is a one-off for
-the *next* generation only (see `PlannerState.cuisine_override` and its
-siblings), never written to config.json — the same contract the drawer's
-per-day target overrides already keep.
+"""The "Generate Current Week" options popup: cuisine picker, western-style
+share slider, diet-style picker, bulk-prep toggle, long-cook toggle. Every
+pick here is a one-off for the *next* generation only (see
+`PlannerState.cuisine_override` and its siblings), never written to
+config.json — the same contract the drawer's per-day target overrides already
+keep.
 
 `build_prep_options(ctx, generation)` is built once per page load, after
 `build_generation` (its own "Generate" button is what actually starts a run,
@@ -59,6 +60,23 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
             ui.label("Leave empty to use config.json's cuisine list.").classes(
                 "text-[9px] text-slate-600 -mt-2"
             )
+
+            baseline_cuisines = state.config.get("baseline_cuisines") or []
+            if baseline_cuisines:
+                with ui.element("div").classes("flex flex-row items-center justify-between"):
+                    ui.label("Min. western-style share").classes("text-xs text-slate-300")
+                    ui.label().classes("text-xs font-mono text-slate-400").bind_text_from(
+                        state, "baseline_cuisine_share", backward=lambda share: f"{share:.0%}"
+                    )
+                ui.slider(min=0.0, max=1.0, step=0.05).bind_value(
+                    state, "baseline_cuisine_share"
+                ).props("dense color=teal")
+                ui.label(
+                    "Floor on how much of the week's cook days go to "
+                    + ", ".join(humanize(c).title() for c in baseline_cuisines)
+                    + " before the rest rotates freely. 0% turns the floor off"
+                    " for this run."
+                ).classes("text-[9px] text-slate-600 -mt-2")
 
             if diet_style_options:
                 ui.select(

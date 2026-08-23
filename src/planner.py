@@ -1,11 +1,12 @@
 import argparse
 import asyncio
 import logging
+import math
 import os
 import random
 import time
-from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import date, datetime
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import instructor
 from dotenv import load_dotenv
@@ -42,6 +43,7 @@ from shopping import (
 )
 from week import (
     DEFAULT_INVENTORY_RULES,
+    MACRO_KEYS,
     DEFAULT_MEAL_TYPES,
     DEFAULT_SERVINGS_PER_MEAL,
     MODE_COOK,
@@ -54,11 +56,15 @@ from week import (
     default_week_spec,
     eaten_on,
     humanize,
+    location_for,
+    location_rule,
     meal_types,
     parse_slot_id,
+    pin_recipe,
     pin_style,
     portions_for,
     shopping_windows,
+    skip_estimate_totals,
     slot_id,
     slot_label,
     styles_for,
@@ -149,7 +155,30 @@ def log_completion(label: str, completion, started: float) -> None:
 FREE_MODEL_MAX_TOKENS = 8000
 PAID_MODEL_MAX_TOKENS = 16000
 
-MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
+# MACRO_KEYS is imported from `week` rather than defined here: `SlotSpec.
+# skip_estimate` validates against it, and the module dependency runs
+# planner -> week, so the tuple has to live at the bottom of that edge.
+# Re-exported by this import so `from planner import MACRO_KEYS` — which
+# ui_state and the tests use — keeps working.
+
+# Everything that scales linearly with an ingredient's quantity — the budgeted
+# four above, plus fibre.
+#
+# **Fibre is reported, never budgeted, and the split is the whole point.**
+# Every budget in this module is checked against the identity
+# `calories ~= 4p + 4c + 9f` — `split_targets` scales all four together,
+# `apply_protein_floor` moves calories with protein at 4 kcal/g to preserve it,
+# and `DayRecipes.reject_untrimmable_macro_miss` bounces a response whose
+# calories don't reconcile. Fibre does not participate in that identity (it is
+# already excluded from `net_carbs_g` by definition), so adding it to
+# `MACRO_KEYS` would put a fifth number into arithmetic that has no term for
+# it. It rides on `NUTRIENT_KEYS` instead: scaled by the portion trim like any
+# other quantity, summed for display, and invisible to every budget.
+#
+# Giving fibre a daily *target* is a real feature and a bigger one — it needs a
+# term in `nutrition_engine.calculate_macro_targets` and a per-slot share in
+# `split_targets`. This is deliberately not that.
+NUTRIENT_KEYS = MACRO_KEYS + ("fiber_g",)
 
 WEEKEND_DAYS = {"Saturday", "Sunday"}
 
@@ -314,15 +343,24 @@ BULK_PREP_ANCHOR_SLOT_DIRECTIVE = (
 # evenly" rather than "every ingredient must be unique" because the pools are
 # small (three fruits, three seeds) and a rule that can't be satisfied is one
 # the model resolves by ignoring the constraint entirely.
+# Note what counts as "the base" here, and what doesn't. The leafy green and
+# the frozen vegetable are named as part of it alongside the powder, because
+# the shake style makes them mandatory in every shake — and a rotation rule
+# whose job is to make two drinks differ will reach for whatever it is allowed
+# to drop. Left in the "secondary components" pool they would be exactly that:
+# the cheapest thing to remove from one of the two shakes, which is the one
+# outcome making them mandatory was meant to prevent.
 SHAKE_ROTATION_RULE = (
-    "- More than one breakfast below is a protein shake. Keep the base "
-    "identical in every one (protein powder, creatine, water) and rotate the "
-    "secondary components so no two shakes this week are the same drink: no "
-    "two may share the same combination of fruit, seeds, nuts and "
-    "flavouring, and the listed options must be spread as evenly as possible "
-    "across the week rather than one favourite repeating. Give each shake its "
-    "own distinct name — a reworded name over identical ingredients is a "
-    "repeat.\n"
+    "- More than one breakfast below is a protein shake. Keep the mandatory "
+    "base in every one — protein powder, creatine, water, a leafy green and a "
+    "frozen vegetable, none of which may ever be dropped to make two shakes "
+    "differ — and rotate the secondary components so no two shakes this week "
+    "are the same drink: no two may share the same combination of fruit, "
+    "seeds, nuts and flavouring, and the listed options must be spread as "
+    "evenly as possible across the week rather than one favourite repeating. "
+    "Varying WHICH green or WHICH vegetable between shakes is encouraged; "
+    "omitting either is not. Give each shake its own distinct name — a "
+    "reworded name over identical ingredients is a repeat.\n"
 )
 
 # The per-slot half of the same rule, sent by both generation axes (a single
@@ -331,9 +369,11 @@ SHAKE_ROTATION_RULE = (
 SHAKE_SLOT_DIRECTIVE = (
     "[Protein shake: keep the base exactly at its fixed gram amounts (protein "
     "powder, creatine, water) — never scale the protein powder up to hit the "
-    "budget; add a Protein Boost ingredient instead. Vary only the secondary "
-    "components — pick a fruit/seed/nut/spice combination no other shake "
-    "this week uses.]"
+    "budget; add a Protein Boost ingredient instead. A leafy green (20-30g) "
+    "and a raw frozen vegetable (50-80g) are also mandatory and must appear "
+    "in this shake: together they cost about 25-30 kcal, so there is no "
+    "budget in which they don't fit. Vary only the secondary components — "
+    "pick a fruit/seed/nut/spice combination no other shake this week uses.]"
 )
 
 # Standing rule for both axes. Variety (above) is about *foods*; this is about
@@ -355,6 +395,182 @@ PANTRY_CONSOLIDATION_RULE = (
     "about the food variety asked for above: keep varying the vegetables, "
     "proteins and spices — just don't buy three kinds of mustard.\n"
 )
+
+
+# Terms that mark a dominant protein as seafood, for the whole-week cap in
+# `sourcing.max_seafood_meals_per_week`. Matched against the *highest-protein
+# ingredient* only (see `is_seafood_meal`), never a scan of every name — a
+# scan counts a Thai dinner's tablespoon of fish sauce, or a dashi stock, as a
+# seafood meal, and the cap would then be spent by dishes that contain no fish.
+SEAFOOD_TERMS = (
+    "anchov", "barramundi", "calamari", "clam", "cod", "crab", "fish",
+    "flathead", "haddock", "hake", "halibut", "herring", "kipper", "lobster",
+    "mackerel", "mussel", "octopus", "oyster", "prawn", "salmon", "sardine",
+    "scallop", "seafood", "shrimp", "snapper", "squid", "trout", "tuna",
+    "whiting",
+)
+
+
+def _sourcing_day_split(
+    days: List[str], available_days: Optional[List[str]]
+) -> Tuple[List[str], List[str]]:
+    """Split `days` into (restricted, open) against a sourcing day-list.
+
+    `None` means every day is open (unrestricted, the old bare `True`); `[]`
+    means every day is restricted (the old bare `False`). Order follows
+    `days`, which both callers already carry in week order.
+    """
+    if available_days is None:
+        return [], list(days)
+    available_set = set(available_days)
+    return (
+        [day for day in days if day not in available_set],
+        [day for day in days if day in available_set],
+    )
+
+
+def build_sourcing_rule(config: dict, days: List[str]) -> str:
+    """What the shops near this kitchen actually stock, and on which days.
+
+    The complaint this answers is a recipe that reads as ordinary and is
+    unbuyable: mustard greens, a specialty cut, a fresh whole fish. Wording is
+    deliberately a *substitution* instruction rather than a prohibition —
+    "swap it for what the supermarket has" keeps the dish, where "don't use
+    it" invites the model to abandon the cuisine or, worse, to name the
+    unavailable item anyway because the recipe needs one. Same
+    priority-not-constraint shape as `inventory_instruction`.
+
+    `days` is the cook days this call's prompt covers, in week order —
+    `generate_meal_type_week` passes every day the meal type is cooked (often
+    all seven), `generate_day` passes its single day. A call whose days
+    straddle both an open day (say, a Saturday market run) and a restricted
+    one gets a day-scoped sentence naming exactly which nights each rule
+    applies to, rather than the unconditional wording a fully-open or
+    fully-restricted call still gets.
+
+    Emits nothing when `sourcing` is absent or says nothing is constrained, so
+    an older checkout's prompt is unchanged. The hard half of this constraint
+    stays `dietary_rules.banned_ingredients`, which a validator enforces; a
+    specific offender belongs there, not here.
+    """
+    sourcing = config.get("sourcing") or {}
+    shops = sourcing.get("supermarkets") or []
+    regional = config.get("regional") or {}
+    where = ", ".join(
+        part for part in (regional.get("state"), regional.get("country")) if part
+    )
+
+    specialty_restricted, specialty_open = _sourcing_day_split(
+        days, sourcing.get("specialty_grocers_available_days")
+    )
+
+    lines = []
+    if shops or specialty_restricted:
+        # "Coles, Woolworths or Aldi" — an "or" list, because the model is
+        # picking one shop to imagine, not visiting all three.
+        shop_list = f"{', '.join(shops[:-1])} or {shops[-1]}" if len(shops) > 1 else "".join(shops)
+        at_shops = f" at {shop_list}" if shop_list else ""
+        in_region = f" in {where}" if where else ""
+        lines.append(
+            "- Ingredient sourcing: every ingredient must be buyable on one "
+            f"ordinary shop{at_shops}{in_region}. "
+        )
+        if specialty_restricted and specialty_open:
+            lines.append(
+                "A specialty grocer (Asian grocer, continental deli, "
+                "health-food shop, fishmonger or farmers' market) is also "
+                f"reachable on {', '.join(specialty_open)} — ingredients "
+                "needing one are fine for those day(s) only. On "
+                f"{', '.join(specialty_restricted)}, avoid anything that "
+                "needs one — specialty leafy greens (mustard greens, gai lan, "
+                "tatsoi, amaranth), hard-to-find fresh produce (galangal, "
+                "curry leaves, fresh yuzu, banana blossom), specialty butcher "
+                "cuts and imported niche products. "
+            )
+        elif specialty_restricted:
+            lines.append(
+                "There is no Asian grocer, continental deli, health-food shop, "
+                "fishmonger or farmers' market in reach, so avoid anything that "
+                "needs one — specialty leafy greens (mustard greens, gai lan, "
+                "tatsoi, amaranth), hard-to-find fresh produce (galangal, curry "
+                "leaves, fresh yuzu, banana blossom), specialty butcher cuts and "
+                "imported niche products. "
+            )
+        lines.append(
+            "Where a cuisine traditionally calls for something like that, "
+            "substitute the closest ingredient a mainstream supermarket stocks "
+            "and put the SUBSTITUTE in the recipe — do not name the original "
+            "and do not abandon the cuisine over it.\n"
+        )
+
+    seafood_restricted, seafood_open = _sourcing_day_split(
+        days, sourcing.get("fresh_seafood_available_days")
+    )
+    if seafood_restricted and seafood_open:
+        lines.append(
+            "- Fresh fish, whole fish and fresh shellfish are only reliably "
+            f"available here on {', '.join(seafood_open)}. On "
+            f"{', '.join(seafood_restricted)}, any seafood must be the tinned "
+            "or frozen kind a supermarket always has (tinned tuna, salmon, "
+            "sardines or mackerel; frozen fish fillets or prawns).\n"
+        )
+    elif seafood_restricted:
+        lines.append(
+            "- Any seafood must be the tinned or frozen kind a supermarket "
+            "always has (tinned tuna, salmon, sardines or mackerel; frozen "
+            "fish fillets or prawns). Fresh fish, whole fish and fresh "
+            "shellfish are not reliably available here.\n"
+        )
+
+    return "".join(lines)
+
+
+def build_seafood_limit_rule(
+    config: dict, meal_type: str, slot_count: int, already_used: int = 0
+) -> str:
+    """The whole-week seafood cap, stated for the meal type about to generate.
+
+    Only the week axis (`generate_meal_type_week`) sends this, and only ever
+    with the allowance *remaining* after every earlier meal type's actual
+    output — `generate_week_plan` counts what each stage returned and spends
+    the cap in `MEAL_TYPE_PRIORITY` order, the same seed-then-extend pattern
+    `avoid_proteins` already uses across stages. Dinner is first in that
+    order, so it gets first claim, which is where a seafood meal is wanted if
+    the week is only having one.
+
+    `regenerate_single_day`/`regenerate_single_meal` deliberately send nothing:
+    a single replaced meal has no week in front of it to count against, and a
+    cap restated there would forbid seafood in the very slot being fixed.
+    """
+    sourcing = config.get("sourcing") or {}
+    cap = sourcing.get("max_seafood_meals_per_week")
+    if cap is None:
+        return ""
+
+    remaining = max(0, cap - already_used)
+    # "lunch" is the one meal type a bare "s" gets wrong, and "these 7 lunchs"
+    # in a prompt reads as sloppiness the model is free to match.
+    suffix = "es" if meal_type.endswith(("ch", "sh", "s", "x")) else "s"
+    plural = f"{meal_type}{suffix}" if slot_count != 1 else meal_type
+    if remaining == 0:
+        used = (
+            " — this week's whole allowance is already taken by earlier meals"
+            if already_used
+            else ""
+        )
+        return (
+            f"- Seafood: none of these {slot_count} {plural} may have seafood as "
+            f"its main protein{used}. Use meat, poultry, eggs, dairy or plant "
+            "proteins instead.\n"
+        )
+    if remaining >= slot_count:
+        return ""
+    return (
+        f"- Seafood: at most {remaining} of these {slot_count} {plural} may have "
+        "seafood as its main protein — fresh seafood is hard to buy here, so it "
+        "is a treat rather than a staple. Every other one uses meat, poultry, "
+        "eggs, dairy or plant proteins.\n"
+    )
 
 
 def build_diet_style_rule(config: dict) -> str:
@@ -415,6 +631,22 @@ def build_diet_style_rule(config: dict) -> str:
 
 # Sets the field `generate_sunday_prep_session` selects its candidates by. A
 # call that omits this rule can never contribute to a prep session.
+# Fibre is reported, never budgeted (see `NUTRIENT_KEYS`), and this rule has
+# to say both halves. The field has a 0.0 default, so a model that simply
+# omits it produces a silently fibre-free week rather than an error — which is
+# why asking for it explicitly is worth a prompt line rather than left to the
+# schema description. The second sentence is the important one: without it a
+# model told to "report fibre" starts *optimising* for it, swapping ingredients
+# to raise a number nothing is aiming at and pulling the recipe off the macro
+# budget that actually is checked.
+FIBER_REPORTING_RULE = (
+    "- Report fiber_g for every ingredient — the dietary fibre in that "
+    "quantity, in grams, in addition to net_carbs_g (which already excludes "
+    "it). This is tracked for reporting only and has no target: never trade "
+    "calories, protein, carbs or fat against it, and never pick an "
+    "ingredient to raise it.\n"
+)
+
 LONG_OVEN_COOK_RULE = (
     "- Set long_oven_cook to true only if this dish is a genuinely long "
     "(60+ minutes), mostly hands-off oven roast/bake or slow-cooker/braise "
@@ -514,6 +746,7 @@ def build_avoid_rules(
 def build_generation_rules(
     config: dict,
     *,
+    days: List[str],
     style_rule: str,
     variety_rule: str,
     budget_rule: str,
@@ -524,7 +757,10 @@ def build_generation_rules(
 
     Ordering is deliberate and shared: hard constraints (units, NOVA groups,
     banned ingredients) first, because they are the ones a validator will
-    reject on; then composition guidance — style, diet style, variety, and
+    reject on, followed immediately by the sourcing rule — it is the soft half
+    of the line above it (what cannot be *bought* rather than what will be
+    *rejected*), and it reads as an afterthought anywhere else; then
+    composition guidance — style, diet style, variety, and
     the pantry consolidation rule that qualifies variety, in that order,
     because diet style is a second "what approach" axis read right after
     cuisine and consolidation only makes sense read as a limit on the
@@ -537,7 +773,9 @@ def build_generation_rules(
     `config` supplies `dietary_rules` (including which diet styles are
     active) and the `diet_styles` catalog those keys resolve against;
     everything else is a caller decision, so this stays a pure string
-    builder with no I/O and no model knowledge.
+    builder with no I/O and no model knowledge. `days` is passed straight
+    through to `build_sourcing_rule`, which is the only rule here that needs
+    to know which cook days are in scope.
     """
     dietary_rules = config["dietary_rules"]
     return (
@@ -549,6 +787,7 @@ def build_generation_rules(
         "Never use Group 4 ultra-processed ingredients.\n"
         "- Never use any of these banned ingredients: "
         f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
+        f"{build_sourcing_rule(config, days)}"
         f"{style_rule}"
         f"{build_diet_style_rule(config)}"
         f"{variety_rule}"
@@ -565,6 +804,7 @@ def build_generation_rules(
         "every ingredient's quantity_g and its calories/protein_g/net_carbs_g/"
         "fat_g for a SINGLE serving too. Do not multiply by the number of "
         "people or by any batch size — Python scales the recipe afterwards.\n"
+        f"{FIBER_REPORTING_RULE}"
         "- Leave servings and prep_notes at their schema defaults — Python "
         "fills those in.\n"
         f"{LONG_OVEN_COOK_RULE}"
@@ -636,6 +876,48 @@ class PlanningRules(BaseModel):
     cuisine_block_pattern: List[int] = Field(
         default_factory=lambda: list(DEFAULT_CUISINE_BLOCK_PATTERN)
     )
+    # Floor on the share of a week's cook days `pick_cuisine_blocks` reserves
+    # for `config.baseline_cuisines` (homestyle, modern_australian, pub_classic
+    # in the shipped config) — the everyday-Western pool cuisine_affinities
+    # already routes other cuisines toward for the *block after* theirs. This
+    # is the same idea made a floor rather than a landing spot: enough of the
+    # week's largest blocks are reserved for the pool to clear the share
+    # before the rest rotates freely, so other cuisines read as the exception
+    # that breaks up the week rather than the default. Only takes effect when
+    # `baseline_cuisines` is non-empty — see that field's docstring.
+    min_baseline_cuisine_share: float = Field(default=0.5, ge=0.0, le=1.0)
+    # How recently a saved favourite may have been cooked before
+    # `select_favorite_assignments` will schedule it again, per meal type.
+    # Two different windows because the two rules mean different things: a
+    # standing breakfast is *meant* to recur weekly, while a favourite lunch
+    # is a break from rotation and wants a real gap behind it.
+    #
+    # Both must stay comfortably inside `history_max_entries` (a cap on
+    # entries, one per cooked day) or `recipe_last_scheduled` cannot see far
+    # enough back to answer, and a favourite that aged off the window looks
+    # like one never cooked.
+    favorite_reuse_days: Dict[str, int] = Field(
+        default_factory=lambda: {"breakfast": 7, "lunch": 21, "dinner": 21}
+    )
+    # How many breakfasts one favourite covers. The point of a standing
+    # breakfast is that it's the same one two mornings running, not a
+    # different favourite each day — and it means one shop covers both.
+    favorite_breakfast_slots: int = 2
+    # How many dinners a week may be claimed by saved favourites. Unlike
+    # breakfast this is a count of *distinct* favourites, not of days one
+    # favourite covers — a standing dinner every Tuesday is not the point,
+    # and `DINNER_VARIETY_RULE` exists precisely because dinner is where
+    # repetition shows.
+    #
+    # It is a cap rather than lunch's "one per eligible slot" because dinner
+    # is the one meal type `pick_cuisine_blocks` lays contiguous blocks over,
+    # and `pin_recipe` blanks the cuisine of every slot it claims. Left
+    # uncapped against a large catalog every dinner would be a pin, there
+    # would be no block left to speak of, and the pantry overlap the blocks
+    # exist for would go with it. Two leaves five generated dinners, which a
+    # 4/3 `cuisine_block_pattern` can still do something with. Raise it if
+    # you would rather cook the catalog than shop it cheaply.
+    favorite_dinner_slots: int = 2
     # Ceiling `spread_batch` (week.py) spreads a bulk-prep/long-cook anchor
     # toward — not a promise: a batch that runs into the end of the week or an
     # already-claimed day settles for fewer servings.
@@ -684,6 +966,54 @@ class DietStyle(BaseModel):
 
     label: str
     principles: str
+
+
+class SourcingRules(BaseModel):
+    """config/schedule.json's "sourcing" object: what can actually be bought
+    where this week is being cooked.
+
+    Lives beside `regional` rather than inside `dietary_rules` because it is a
+    fact about the shops, not about the body — move house and every value here
+    changes while not one dietary rule does. It is the *soft* half of a
+    constraint whose hard half already exists: `banned_ingredients` rejects a
+    named ingredient outright at validation, but a blocklist can only name what
+    somebody already thought of, and "not stocked within an hour's drive" has
+    an unenumerable tail (galangal, curry leaves, yuzu, tatsoi, fresh whole
+    fish). So this shapes what the model reaches for; `banned_ingredients`
+    still polices what it must never return. Same division of labour as
+    `diet_styles` vs. `banned_ingredients`.
+
+    Every field defaults to "no constraint", so a checkout whose schedule.json
+    predates this section generates a byte-identical prompt to before it
+    existed — the same tolerance `inventory_instruction` and
+    `build_diet_style_rule` extend to an empty list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The shops a week is actually bought from. Named in the prompt, so
+    # "Coles, Woolworths or Aldi" tells the model far more about what is on
+    # the shelf than any adjective would.
+    supermarkets: List[str] = Field(default_factory=list)
+    # Which weekday names a specialty grocer (Asian grocer, continental deli,
+    # health-food shop, fishmonger, farmers' market) is actually reachable —
+    # a Saturday market run, say. None means every day (no constraint, the
+    # old bare `True`); [] means no day (the old bare `False`); a list
+    # restricts specialty ingredients to cook days that fall on it. This is
+    # the single biggest source of ingredients that read as ordinary in a
+    # recipe and are unbuyable at the till on an average weeknight.
+    specialty_grocers_available_days: Optional[List[str]] = None
+    # Same None/[]/list-of-weekdays shape, for when a fishmonger or reliable
+    # fresh counter is reachable. Seafood outside those days is steered to
+    # tinned and frozen rather than dropped, since both are stocked everywhere
+    # and `PORTION_DENSITY_GUARD` already leans on tinned sardines and
+    # mackerel.
+    fresh_seafood_available_days: Optional[List[str]] = None
+    # A whole-week cap on meals whose dominant protein is seafood, counted
+    # across meal types by `generate_week_plan` and spent in
+    # `MEAL_TYPE_PRIORITY` order, so dinner gets first claim on it. None means
+    # uncapped. See `build_seafood_limit_rule`.
+    max_seafood_meals_per_week: Optional[int] = None
 
 
 class InventoryRules(BaseModel):
@@ -793,6 +1123,12 @@ class AppConfig(BaseModel):
     # the shared-ingredient bonus.
     cuisine_affinities: Dict[str, List[str]] = Field(default_factory=dict)
     cuisine_meal_types: List[str] = Field(default_factory=list)
+    # The pool `pick_cuisine_blocks` draws from to satisfy
+    # `planning_rules.min_baseline_cuisine_share` — a subset of `cuisines`,
+    # not a separate vocabulary. Empty by default, which is the feature's off
+    # switch: with nothing to reserve blocks for, `pick_cuisine_blocks` picks
+    # exactly as it did before this existed regardless of the share config.
+    baseline_cuisines: List[str] = Field(default_factory=list)
     # The diet-style catalog (see `DietStyle`); which entries are active for
     # this week lives on `dietary_rules.active_diet_styles` instead, next to
     # the app's other standing dietary constraints.
@@ -816,6 +1152,10 @@ class AppConfig(BaseModel):
     base_schedule: Dict[str, str] = Field(default_factory=dict)
     location_rules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     regional: Dict[str, Any] = Field(default_factory=dict)
+    # `regional`'s first actual consumer: `build_sourcing_rule` reads the two
+    # together, so "Coles, Woolworths or Aldi" is qualified by "regional VIC,
+    # AU" rather than left to mean whatever the model assumes.
+    sourcing: SourcingRules = Field(default_factory=SourcingRules)
 
     @model_validator(mode="after")
     def default_cuisine_meal_types_to_meal_types(self) -> "AppConfig":
@@ -911,10 +1251,12 @@ TRAINING_PRE_WORKOUT_DIGESTION_MINUTES = 120
 # around rather than merely budgeted for — see `morning_training_days`.
 MORNING_TRAINING_CUTOFF = "11:00"
 # Session type prefixes that qualify, matched with `str.startswith` so a new
-# `gym_strength` or `cardio_bike` is covered without editing this. A `walk`
-# deliberately isn't: it needs no fuelling decision, and forcing a shake on
-# every day with a morning stroll in it would empty the breakfast rotation.
-WORKOUT_BREAKFAST_TYPES = ("gym", "cardio")
+# `gym_strength` is covered without editing this. Hypertrophy training is
+# what actually needs the fast-digesting, protein-forward refuel a shake
+# gives; cardio and a `walk` both deliberately don't qualify — forcing a
+# shake on every cardio morning would empty the breakfast rotation for a
+# session that doesn't need this specific fuelling.
+WORKOUT_BREAKFAST_TYPES = ("gym",)
 # Must be a key in config.json's `meal_styles.breakfast` — `resolve_auto_choices`
 # checks that before pinning, so a config without this style keeps rotating
 # normally instead of briefing the model on a style it was never given.
@@ -1531,12 +1873,38 @@ def cuisine_block_sizes(num_days: int, pattern: Optional[List[int]] = None) -> L
     return [size for size in sizes if size > 0]
 
 
+def _reserve_baseline_block_indices(sizes: List[int], min_share: float, num_days: int) -> set:
+    """Which block indices (into `sizes`) must be drawn from the baseline pool
+    to clear `min_share` of `num_days`.
+
+    Largest blocks first, so the fewest blocks possible are reserved — that
+    leaves the most room for the rest of the week to rotate through the other
+    cuisines freely rather than being squeezed toward the floor as well.
+    Ties keep the earlier block, matching `cuisine_block_sizes`' own
+    tie-break, so which block is "first" stays predictable.
+    """
+    if min_share <= 0 or num_days <= 0:
+        return set()
+    target = math.ceil(min_share * num_days)
+    order = sorted(range(len(sizes)), key=lambda index: (-sizes[index], index))
+    reserved: set = set()
+    total = 0
+    for index in order:
+        if total >= target:
+            break
+        reserved.add(index)
+        total += sizes[index]
+    return reserved
+
+
 def pick_cuisine_blocks(
     num_days: int,
     cuisines: List[str],
     recent: List[str],
     affinities: Optional[Dict[str, List[str]]] = None,
     pattern: Optional[List[int]] = None,
+    baseline_cuisines: Optional[List[str]] = None,
+    min_baseline_share: float = 0.0,
 ) -> List[str]:
     """One cuisine per cooked day, laid out in contiguous blocks.
 
@@ -1558,27 +1926,42 @@ def pick_cuisine_blocks(
     at the till: thai then vietnamese share fish sauce, lime, coriander and
     rice noodles, where thai then cajun buys two of everything and finishes
     neither.
+
+    `baseline_cuisines`/`min_baseline_share` add a floor on top of that:
+    enough of the week's largest blocks are reserved to a `baseline_cuisines`
+    cuisine to clear the share, and only those blocks have their pool
+    narrowed — everything else about the pick (affinity-first, LRU fallback,
+    strict rotation) runs unchanged, just against the narrower pool for a
+    reserved block. A block that already prefers a baseline cuisine via
+    affinity (mexican -> homestyle, say) still picks it through the normal
+    affinity path; the floor only forces the issue when affinity and LRU
+    alone wouldn't have gotten there. No `baseline_cuisines` (the feature's
+    off switch) reserves nothing and this is exactly the old function.
     """
     sizes = cuisine_block_sizes(num_days, pattern)
     if not cuisines or not sizes:
         return []
 
     affinities = affinities or {}
+    baseline = [cuisine for cuisine in (baseline_cuisines or []) if cuisine in cuisines]
+    reserved = _reserve_baseline_block_indices(sizes, min_baseline_share, num_days) if baseline else set()
+
     seen = list(recent)
     chosen: List[str] = []
     for index, _ in enumerate(sizes):
+        pool = baseline if index in reserved else cuisines
         options: List[str] = []
         if index and chosen:
             options = [
                 cuisine
                 for cuisine in affinities.get(chosen[-1], [])
-                if cuisine in cuisines and cuisine not in chosen
+                if cuisine in pool and cuisine not in chosen
             ]
         if not options:
-            # `or list(cuisines)` covers a pattern with more blocks than the
-            # config has cuisines — repeating one is better than a block with
-            # no cuisine at all, which would leave those days unthemed.
-            options = [cuisine for cuisine in cuisines if cuisine not in chosen] or list(cuisines)
+            # `or list(pool)` covers a pattern with more blocks than the pool
+            # has cuisines — repeating one is better than a block with no
+            # cuisine at all, which would leave those days unthemed.
+            options = [cuisine for cuisine in pool if cuisine not in chosen] or list(pool)
         cuisine = next_choice(options, seen)
         chosen.append(cuisine)
         seen.append(cuisine)
@@ -1587,21 +1970,26 @@ def pick_cuisine_blocks(
 
 
 def morning_training_days(config: dict) -> List[str]:
-    """Days carrying a gym or cardio session early enough to train on.
+    """Days carrying a morning gym (hypertrophy) session early enough to train on.
 
     `resolve_auto_choices` pins these days' breakfast to
-    `WORKOUT_BREAKFAST_STYLE`. A shake is the only breakfast in `meal_styles`
-    that can be drunk in the ten minutes before a session and still be
-    digested by the first set; left to the style rotation, a 06:30 gym slot
-    gets eggs and smoked salmon on toast roughly one week in five, and the
-    rotation has no way to know why that is wrong.
+    `WORKOUT_BREAKFAST_STYLE`, unconditionally — this is a hard rule, not a
+    suggestion the model can weigh against anything else. A shake is the
+    only breakfast in `meal_styles` that can be drunk in the ten minutes
+    before a session and still be digested by the first set; left to the
+    style rotation, a 06:30 gym slot gets eggs and smoked salmon on toast
+    roughly one week in five, and the rotation has no way to know why that
+    is wrong.
 
-    A walk doesn't count and neither does anything after
-    `MORNING_TRAINING_CUTOFF`. An evening session is already handled, as
-    macros rather than as a menu: `apply_training_adjustments` expands the
-    day's budget, pins the meal after it, and marks the meal before it as
-    pre-workout fuel. Pinning a *style* is only warranted when the session
-    lands before the meal has any time to settle.
+    Cardio and a walk don't count, and neither does anything after
+    `MORNING_TRAINING_CUTOFF`. Cardio's fuelling need isn't the same as a
+    hypertrophy session's — forcing a shake on every cardio morning would
+    empty the breakfast rotation for a session that doesn't need this
+    specific refuel. An evening session is already handled, as macros rather
+    than as a menu: `apply_training_adjustments` expands the day's budget,
+    pins the meal after it, and marks the meal before it as pre-workout
+    fuel. Pinning a *style* is only warranted when the session lands before
+    the meal has any time to settle.
     """
     cutoff = _clock_minutes(MORNING_TRAINING_CUTOFF)
     days: List[str] = []
@@ -1614,6 +2002,207 @@ def morning_training_days(config: dict) -> List[str]:
         if day and day not in days:
             days.append(day)
     return days
+
+
+def recipe_last_scheduled(history: List[dict]) -> Dict[str, date]:
+    """recipe name -> the most recent date it was planned for.
+
+    Only entries carrying a real `date` count. `record_week_history` writes
+    None for a plan generated before `WeekPlan.week_start_date` existed, and
+    an undated entry cannot answer "how long ago" — treating it as "never
+    scheduled" is the safe reading, since the alternative is silently
+    re-serving a favourite that was on last week's plan.
+
+    **This is bounded by `planning_rules.history_max_entries`**, which is a cap
+    on entries (one per cooked day), not on days. A favourite that fell off
+    the end of that window is indistinguishable here from one never cooked, so
+    the retention window has to stay comfortably longer than the longest reuse
+    window in `favorite_reuse_days` or the rule silently stops binding.
+    """
+    latest: Dict[str, date] = {}
+    for entry in history:
+        raw = entry.get("date")
+        if not raw:
+            continue
+        try:
+            when = datetime.fromisoformat(str(raw)[:10]).date()
+        except ValueError:
+            continue
+        for name in entry.get("recipe_names", []):
+            if name not in latest or when > latest[name]:
+                latest[name] = when
+    return latest
+
+
+def eligible_favorites(
+    favorites: List[dict],
+    meal_type: str,
+    reuse_days: int,
+    last_scheduled: Dict[str, date],
+    today: date,
+    already_used: Set[str],
+) -> List[dict]:
+    """Favourites of `meal_type` not cooked within `reuse_days`, oldest first.
+
+    Ordered by how long ago each was last scheduled, never-scheduled ones
+    first — the same least-recently-used rule `next_choice` applies to styles
+    and cuisines, for the same reason: "unused in the last N" starves the tail
+    of a short list, and a favourites list is by nature short.
+
+    `meal_type` is read off the saved recipe itself, which every catalog
+    record carries (`Recipe.meal_type` is a required field), so a dinner can
+    never be picked for a breakfast slot.
+    """
+    candidates = []
+    for record in favorites:
+        recipe = record.get("recipe") or {}
+        name = recipe.get("name")
+        if not name or recipe.get("meal_type") != meal_type or name in already_used:
+            continue
+        when = last_scheduled.get(name)
+        if when is not None and (today - when).days < reuse_days:
+            continue
+        candidates.append((when or date.min, record))
+    return [record for _, record in sorted(candidates, key=lambda pair: pair[0])]
+
+
+def cuisine_run_ends(slots: List[SlotSpec]) -> List[SlotSpec]:
+    """The last slot of each contiguous same-cuisine run, in week order.
+
+    `pick_cuisine_blocks` lays cuisines down in contiguous blocks (4/3 by
+    default) and `pin_recipe` blanks the cuisine of any slot a favourite
+    claims, so *which* day a pin takes decides how much of a block survives
+    it. Taking a run's last day leaves the remainder contiguous; taking a
+    middle day splits one block into two shorter ones with a hole between
+    them, which is the arrangement `build_cuisine_continuity_rule` then has
+    to describe and the shopping list pays for.
+
+    Slots with no cuisine each count as their own run — a week that never
+    resolved its cuisines (nothing pinned, or a caller that skipped
+    `resolve_auto_choices`) degrades to plain earliest-first order, which is
+    what lunch already does.
+    """
+    ends: List[SlotSpec] = []
+    for position, slot in enumerate(slots):
+        following = slots[position + 1] if position + 1 < len(slots) else None
+        if following is None or not slot.cuisine or following.cuisine != slot.cuisine:
+            ends.append(slot)
+    return ends
+
+
+def select_favorite_assignments(
+    spec: WeekSpec,
+    config: dict,
+    history: List[dict],
+    favorites: List[dict],
+    today: Optional[date] = None,
+) -> Dict[str, dict]:
+    """slot_id -> catalog record, for the slots a saved favourite should fill.
+
+    The stage between "what kind of meal goes here" (`resolve_auto_choices`)
+    and "invent one" (`generate_meal_type_week`): some slots don't need
+    inventing, because there is already a dish you know you want. Every slot
+    this returns is one fewer recipe the model is asked for, so it also makes
+    a week cheaper to generate.
+
+    The rules, in the order they are applied:
+
+    - **Breakfast.** A morning gym session's breakfast is already pinned to a
+      shake by `resolve_auto_choices` and is skipped here — that pin is a hard
+      nutritional rule and a favourite must not displace it. Whatever
+      breakfasts remain get one favourite spread across up to
+      `favorite_breakfast_slots` days, rather than a different favourite each
+      morning: the point of a standing breakfast is that it is the same one,
+      and it also means a single shop covers both mornings.
+    - **Lunch.** One favourite per eligible slot, drawn from the same LRU
+      order. Office lunches are handled by the grid rather than here — they
+      default to the previous day's dinner (`week.apply_location_modes`), so
+      by the time this runs an Office lunch is usually a leftover and not a
+      cook slot at all. The ones that reach here are the days you actually
+      cook lunch.
+    - **Dinner.** Up to `favorite_dinner_slots` (2) *distinct* favourites —
+      a count of dishes, not of days one dish covers, because dinner is where
+      repetition shows and `DINNER_VARIETY_RULE` says so out loud. Capped
+      rather than lunch's one-per-slot because dinner is the only meal type
+      `pick_cuisine_blocks` lays contiguous blocks over and `pin_recipe`
+      blanks the cuisine of every slot it claims: uncapped against a large
+      catalog there would be no block left and the pantry overlap would go
+      with it.
+
+      **Placement is one per cuisine run, taking the last day of each**, and
+      that is the whole reason this reads `slot.cuisine` at all. Blocks are
+      already resolved by the time this runs (`resolve_auto_choices` precedes
+      it), so the runs are visible — and blanking a run's *last* day leaves
+      the rest of it contiguous, where blanking a middle day would split one
+      block into two shorter ones with a hole between them. Taking one per
+      run rather than two from the same run also spreads the favourites
+      across the week instead of clustering them, and damages each block
+      equally rather than halving one and leaving the other whole. A week
+      with no cuisines resolved falls back to earliest-first, same as lunch.
+    - **Snack.** Nothing, deliberately. `week_defaults.snack` is `skip` in the
+      shipped config (see "The floor and the day have to be affordable
+      together"), so there is usually no snack slot to claim — and a rule
+      whose slots do not exist is one that cannot be seen to be wrong.
+
+    A slot the user has already pinned by hand keeps its pin — the same
+    precedence `pin_style` gives a hand-picked style, checked here by only
+    ever filling a slot whose `recipe_id` is empty.
+    """
+    today = today or date.today()
+    reuse_days = planning_rule(config, "favorite_reuse_days")
+    breakfast_slots = planning_rule(config, "favorite_breakfast_slots")
+    dinner_slots = planning_rule(config, "favorite_dinner_slots")
+    last_scheduled = recipe_last_scheduled(history)
+
+    assignments: Dict[str, dict] = {}
+    # Names already on the grid this week — a favourite must not be served
+    # twice in one week by two different rules, and a hand-pinned slot counts.
+    used: Set[str] = set()
+
+    def open_slots(meal_type: str) -> List[SlotSpec]:
+        return [
+            slot
+            for slot in spec.cook_slots()
+            if slot.meal_type == meal_type
+            and not slot.recipe_id
+            # The workout shake is a hard rule, not a preference.
+            and not (meal_type == "breakfast" and slot.style == WORKOUT_BREAKFAST_STYLE)
+        ]
+
+    breakfasts = sorted(open_slots("breakfast"), key=lambda slot: spec.day_index(slot.day))
+    if breakfasts and breakfast_slots > 0:
+        pick = eligible_favorites(
+            favorites, "breakfast", reuse_days.get("breakfast", 7), last_scheduled, today, used
+        )
+        if pick:
+            record = pick[0]
+            used.add(record["recipe"]["name"])
+            for slot in breakfasts[:breakfast_slots]:
+                assignments[slot.id] = record
+
+    lunches = sorted(open_slots("lunch"), key=lambda slot: spec.day_index(slot.day))
+    for slot in lunches:
+        pick = eligible_favorites(
+            favorites, "lunch", reuse_days.get("lunch", 21), last_scheduled, today, used
+        )
+        if not pick:
+            break
+        record = pick[0]
+        used.add(record["recipe"]["name"])
+        assignments[slot.id] = record
+
+    dinners = sorted(open_slots("dinner"), key=lambda slot: spec.day_index(slot.day))
+    for slot in cuisine_run_ends(dinners)[: max(0, dinner_slots)]:
+        pick = eligible_favorites(
+            favorites, "dinner", reuse_days.get("dinner", 21), last_scheduled, today, used
+        )
+        if not pick:
+            break
+        record = pick[0]
+        used.add(record["recipe"]["name"])
+        assignments[slot.id] = record
+
+    return assignments
 
 
 def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> WeekSpec:
@@ -1641,6 +2230,8 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
     cuisine_meal_types = config["cuisine_meal_types"]
     affinities = config.get("cuisine_affinities") or {}
     block_pattern = planning_rule(config, "cuisine_block_pattern")
+    baseline_cuisines = config.get("baseline_cuisines") or []
+    min_baseline_share = planning_rule(config, "min_baseline_cuisine_share")
 
     if WORKOUT_BREAKFAST_STYLE in styles_for(config, "breakfast"):
         spec = pin_style(
@@ -1668,7 +2259,13 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
             key=lambda slot: spec.day_index(slot.day),
         )
         assigned = pick_cuisine_blocks(
-            len(auto_slots), cuisines, recent_cuisines, affinities, block_pattern
+            len(auto_slots),
+            cuisines,
+            recent_cuisines,
+            affinities,
+            block_pattern,
+            baseline_cuisines,
+            min_baseline_share,
         )
         block_cuisines.update(
             {slot.id: cuisine for slot, cuisine in zip(auto_slots, assigned)}
@@ -1736,6 +2333,17 @@ class Ingredient(BaseModel):
     protein_g: float = Field(..., ge=0)
     net_carbs_g: float = Field(..., ge=0)
     fat_g: float = Field(..., ge=0)
+    fiber_g: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Dietary fibre in grams. Reported for tracking only — it is not "
+            "part of any macro budget, so never trade it off against the "
+            "calorie, protein, carb or fat targets. Note this is fibre in "
+            "addition to net_carbs_g, which already excludes it. Defaults to "
+            "0.0 so recipes saved before this field existed stay loadable."
+        ),
+    )
 
     @field_validator("nova_group")
     @classmethod
@@ -1784,14 +2392,20 @@ class Ingredient(BaseModel):
 
     def per_serving_macros(self, total_servings: int = 1) -> Dict[str, float]:
         servings = max(1, total_servings)
-        return {key: getattr(self, key) / servings for key in MACRO_KEYS}
+        return {key: getattr(self, key) / servings for key in NUTRIENT_KEYS}
 
     def scaled(self, factor: float) -> "Ingredient":
         """Multiply quantity and macros by `factor`, quantity snapped to a
-        practical grocery amount via `round_ingredient_quantity`."""
+        practical grocery amount via `round_ingredient_quantity`.
+
+        `NUTRIENT_KEYS`, not `MACRO_KEYS`: fibre is not budgeted but it is
+        still linear in quantity, so halving a portion has to halve its fibre
+        too. Leaving it out here would let the trim silently inflate the
+        reported figure relative to the food actually on the plate.
+        """
         return self.model_copy(
             update=dict(
-                {key: round(getattr(self, key) * factor, 1) for key in MACRO_KEYS},
+                {key: round(getattr(self, key) * factor, 1) for key in NUTRIENT_KEYS},
                 quantity_g=round_ingredient_quantity(
                     self.name, self.quantity_g * factor, categorize_department(self.name)
                 ),
@@ -1869,9 +2483,17 @@ class Recipe(BaseModel):
 
     @property
     def total_macros(self) -> Dict[str, float]:
-        totals = {key: 0.0 for key in MACRO_KEYS}
+        """Every `NUTRIENT_KEYS` figure summed over the ingredients.
+
+        Carries `fiber_g` alongside the budgeted four. Every budget-side
+        consumer indexes the keys it wants (`for key in MACRO_KEYS`) rather
+        than iterating whatever it is handed, so the extra key reaches the
+        display paths — cards, the detail dialog, the PDF — without reaching
+        any arithmetic. See `NUTRIENT_KEYS`.
+        """
+        totals = {key: 0.0 for key in NUTRIENT_KEYS}
         for ingredient in self.ingredients:
-            for key in MACRO_KEYS:
+            for key in NUTRIENT_KEYS:
                 totals[key] += getattr(ingredient, key)
         return totals
 
@@ -2164,7 +2786,16 @@ class WeekPlan(BaseModel):
         return [event for event in self.cook_events if event.day in day_set]
 
     def day_slot_macros(self, day: str) -> dict:
-        """What one person actually eats on `day`, summed across their slots."""
+        """What one person actually eats on `day`, summed across their slots.
+
+        Includes any `skip_estimate` on the day's skipped slots — a meal eaten
+        out is still eaten, and leaving it out would show a day at 60% of
+        target on the telemetry header when it was actually met by a
+        restaurant. `skip_estimate_totals` carries only `MACRO_KEYS`, so the
+        `fiber_g` this returns stays whatever the cooked recipes contribute:
+        the fibre in a meal nobody cooked isn't estimable, and 0 is the honest
+        reading rather than a guess.
+        """
         by_slot = self.by_slot()
         events = []
         for slot in self.slots:
@@ -2174,7 +2805,10 @@ class WeekPlan(BaseModel):
             event = by_slot.get(source_id)
             if event is not None:
                 events.append(event)
-        return sum_serving_macros(events)
+        totals = sum_serving_macros(events)
+        for key, value in skip_estimate_totals(self.slots, day).items():
+            totals[key] += value
+        return totals
 
 
 # --------------------------------------------------------------------------
@@ -2278,15 +2912,20 @@ def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
 def sum_serving_macros(events: Iterable[CookEvent]) -> dict:
     """Per-serving macros of `events`, summed key by key.
 
-    The one place that walks `MACRO_KEYS` to total up `CookEvent`s — every
+    The one place that walks `NUTRIENT_KEYS` to total up `CookEvent`s — every
     caller differs only in *which* events it hands in (a day's slots, just
     the leftovers, every other slot but one), so that selection logic stays
     with the caller and only the summation is shared.
+
+    Totals fibre as well as the budgeted four, which is what puts a day's
+    fibre on the telemetry header via `WeekPlan.day_slot_macros`. Callers
+    doing budget arithmetic index `MACRO_KEYS` out of the result and never
+    see it — see `NUTRIENT_KEYS`.
     """
-    totals = {key: 0.0 for key in MACRO_KEYS}
+    totals = {key: 0.0 for key in NUTRIENT_KEYS}
     for event in events:
         serving = event.recipe.per_serving_macros
-        for key in MACRO_KEYS:
+        for key in NUTRIENT_KEYS:
             totals[key] += serving[key]
     return totals
 
@@ -2940,7 +3579,9 @@ NUDGE_FOOD_SAMPLE_SIZE = 12
 
 
 async def select_nudge_foods(
-    repository: Optional[PlanRepository] = None, count: int = NUDGE_FOOD_SAMPLE_SIZE
+    repository: Optional[PlanRepository] = None,
+    config: Optional[dict] = None,
+    count: int = NUDGE_FOOD_SAMPLE_SIZE,
 ) -> List[str]:
     """A random sample of nutrient-dense whole foods (whfoods.json) to nudge
     generation toward this run.
@@ -2952,11 +3593,99 @@ async def select_nudge_foods(
     (older checkout, fresh install) resolves to an empty list, which
     `build_slot_brief` treats as "say nothing" — the same tolerance
     `inventory_instruction` extends to an empty pantry list.
+
+    **`config` is what stops the corpus contradicting the rules.** whfoods.json
+    is a shipped, location-blind reference — it lists mustard greens, halibut
+    and scallops beside broccoli and eggs — and `build_slot_brief` puts the
+    sample in *every* slot's brief under "prioritize incorporating these",
+    which is a stronger and far more specific signal than any rule in
+    `build_generation_rules`. Left unfiltered it nominated foods
+    `banned_ingredients` forbids: a prompt that demanded cod two lines after
+    banning it, and burned a retry when the model complied. Filtering here
+    rather than pruning the corpus keeps whfoods.json a reference someone
+    else's config can use in full, and makes `banned_ingredients` the single
+    lever — ban an item and it stops being suggested as well as being
+    rejected. Matching mirrors `Ingredient.reject_banned_ingredients`:
+    case-insensitive substring, same accepted false positives.
     """
     foods = await (repository or LocalJSONRepository()).load_whfoods()
+    banned = ((config or {}).get("dietary_rules") or {}).get("banned_ingredients") or []
+    if banned:
+        lowered = [term.lower() for term in banned]
+        foods = [
+            food for food in foods
+            if not any(term in food.lower() for term in lowered)
+        ]
     if not foods:
         return []
     return random.sample(foods, min(count, len(foods)))
+
+
+# How each `location_rules[...].restrictions` tag reads to the model. A tag is
+# a config token, not prose, and translating it here rather than sending the
+# bare word is what stops "portable" being read as a brand of lunchbox.
+#
+# Deliberately absent: any tag about reheating. The office has a microwave, so
+# an Office lunch is free to be last night's curry — which is also why
+# `location_rules.Office` sets `lunch_mode: leftover`. A "no_reheat" tag
+# alongside that would contradict it, and the two together can only be
+# reconciled with a per-recipe "edible cold" signal that doesn't exist.
+LOCATION_RESTRICTION_PHRASES = {
+    "portable": (
+        "must travel in a container and be eaten away from a kitchen — "
+        "nothing that needs plating, assembling on the spot, or a knife and fork "
+        "at a table"
+    ),
+    "no_long_prep": "must need no preparation at the eating location beyond reheating",
+    "quick_cook": "must come together quickly, in one pan where possible",
+}
+
+
+def build_location_note(slot: SlotSpec, config: dict) -> str:
+    """The bracketed clause describing where this meal is eaten, or "".
+
+    Per slot rather than per call, because location is a fact about one day
+    and `generate_meal_type_week` spans seven of them — the same reason
+    `training_notes` is keyed by day and meal type. `build_sourcing_rule`
+    partitions its days instead, but it can: a shop is open or shut for the
+    whole week's worth of a rule, whereas Monday at the office says nothing
+    about Tuesday.
+
+    **A location only constrains the meals it declares a mode for.** Being at
+    the office all day says nothing about breakfast, which is eaten at home
+    before leaving — so a note reading "must travel in a container" on a
+    Monday breakfast is simply wrong, and it was the first thing this emitted
+    before the scope was narrowed. `location_rules.Office` names `lunch_mode`
+    and nothing else, and that key is already the honest statement of which
+    meals the location has an opinion about; `Holiday` names all four,
+    `Outing` names lunch and dinner. Reusing it here rather than adding a
+    parallel `restricted_meals` list keeps the two from ever disagreeing.
+
+    Emits nothing when the day has no location, the location has no rule, the
+    rule says nothing about this meal type, or it carries neither restrictions
+    nor a note — so a config without `base_schedule` produces a byte-identical
+    prompt to before this existed. Structural consequences of a location
+    (`lunch_mode`, `dinner_mode`) are not restated: those already reshaped the
+    grid in `week.apply_location_modes`, and repeating them would describe the
+    slot the model is looking at back to it.
+    """
+    rule = location_rule(config, slot.day)
+    if not rule or f"{slot.meal_type}_mode" not in rule:
+        return ""
+
+    phrases = [
+        LOCATION_RESTRICTION_PHRASES[tag]
+        for tag in rule.get("restrictions") or []
+        if tag in LOCATION_RESTRICTION_PHRASES
+    ]
+    note = str(rule.get("notes") or "").strip()
+    if not phrases and not note:
+        return ""
+
+    where = location_for(config, slot.day)
+    clauses = "; ".join(phrases)
+    detail = " ".join(part for part in [clauses, note] if part)
+    return f"[Eaten at {where}: {detail}]"
 
 
 def build_slot_brief(
@@ -3016,6 +3745,9 @@ def build_slot_brief(
     training_note = config.get("training_notes", {}).get(slot.day, {}).get(slot.meal_type)
     if training_note:
         parts.append(training_note)
+    location_note = build_location_note(slot, config)
+    if location_note:
+        parts.append(location_note)
     if slot.day in WEEKEND_DAYS:
         parts.append(
             f"[Weekend meal: multi-step or slow-cooked recipes up to "
@@ -3091,6 +3823,7 @@ def generate_day(
         "exactly. Recipes must be realistic, varied and non-repetitive.\n\n"
         + build_generation_rules(
             config,
+            days=[day],
             style_rule=DAY_STYLE_RULE,
             variety_rule=DAY_VARIETY_RULE,
             budget_rule=DAY_BUDGET_RULE,
@@ -3227,6 +3960,7 @@ def generate_meal_type_week(
     times_eaten_today: Dict[str, int],
     carried_descriptions_by_day: Dict[str, List[str]],
     pinned_days: Optional[List[str]] = None,
+    seafood_used: int = 0,
     avoid_proteins: Optional[List[str]] = None,
     avoid_recipe_names: Optional[List[str]] = None,
     progress_note=None,
@@ -3256,6 +3990,13 @@ def generate_meal_type_week(
     pinned_days = pinned_days or []
 
     dinner_variety_instruction = DINNER_VARIETY_RULE if meal_type == "dinner" else ""
+    # Whole-week, like the four rules below, but counted rather than stated:
+    # `seafood_used` is what the meal types generated before this one actually
+    # returned, so the cap is spent in MEAL_TYPE_PRIORITY order instead of
+    # being re-offered in full to every axis.
+    seafood_instruction = build_seafood_limit_rule(
+        config, meal_type, len(days), seafood_used
+    )
     long_cook_anchor = config.get("long_cook_anchor")
     bulk_prep_anchor = config.get("bulk_prep_anchor")
     batch_roast_instruction = (
@@ -3332,6 +4073,7 @@ def generate_meal_type_week(
         "non-repetitive across the days.\n\n"
         + build_generation_rules(
             config,
+            days=days,
             style_rule=(
                 WEEK_CUISINE_BLOCK_STYLE_RULE
                 if cuisine_continuity_instruction
@@ -3341,6 +4083,7 @@ def generate_meal_type_week(
             budget_rule=WEEK_BUDGET_RULE,
             extras=(
                 dinner_variety_instruction
+                + seafood_instruction
                 + batch_roast_instruction
                 + bulk_prep_instruction
                 + cuisine_continuity_instruction
@@ -3670,6 +4413,29 @@ def on_calling_loop(callback):
     return forward
 
 
+def single_serving(recipe: Recipe) -> Recipe:
+    """A recipe resized to exactly one serving, whatever it was saved at.
+
+    Everything downstream of generation assumes one serving: every prompt
+    says so, `fit_recipe_to_budget` trims against a one-serving budget, and
+    `build_cook_event` scales up from one to the batch the slot owes. A saved
+    favourite breaks that assumption — it was bookmarked off a card already
+    scaled to its portions, so a 2-portion dinner carries `servings: 2` and
+    double the ingredients.
+
+    Trimming that against a one-serving budget doesn't merely halve it: the
+    needed factor lands outside `portion_trim_limits`, so the clamp fires and
+    the recipe comes out at 0.6x — 20% over budget, silently, on every pinned
+    favourite. `PlannerState.swap_slot_with_favorite` already normalises for
+    exactly this reason; this is the same rule shared rather than copied.
+    """
+    if recipe.servings == 1:
+        return recipe
+    return recipe.resize_by_factor(1 / max(1, recipe.servings)).model_copy(
+        update={"servings": 1}
+    )
+
+
 def build_cook_event(
     slot: SlotSpec,
     recipe: Recipe,
@@ -3782,6 +4548,7 @@ async def _generate_meal_type_events(
     avoid_proteins: List[str],
     avoid_recipe_names: List[str],
     note_callback=None,
+    seafood_used: int = 0,
 ) -> Dict[str, CookEvent]:
     """Generate and scale one meal type's cook events across the week, keyed by slot_id.
 
@@ -3815,6 +4582,7 @@ async def _generate_meal_type_events(
         day_budgets=day_budgets,
         config=config,
         servings_per_meal=spec.servings_per_meal,
+        seafood_used=seafood_used,
         times_eaten_today=times_eaten_today,
         carried_descriptions_by_day=carried_descriptions_by_day,
         pinned_days=pinned_days,
@@ -3879,9 +4647,40 @@ async def generate_week_plan(
     # against — reads this one config, so hydrating it here is what makes the
     # whole run aim at the body rather than at the file.
     config = await hydrate_config(config, repository, note_callback)
-    nudge_foods = await select_nudge_foods(repository)
+    nudge_foods = await select_nudge_foods(repository, config)
     if nudge_foods:
         config = dict(config, nudge_foods=nudge_foods)
+
+    # Saved favourites claim their slots before anything is generated, so the
+    # stage loop below never asks the model for a meal already decided. Done
+    # here rather than in `resolve_auto_choices` (where the style and cuisine
+    # picks live) purely because it needs the repository, the same reason
+    # `hydrate_config` and `select_nudge_foods` sit here.
+    pinned_recipes: Dict[str, Recipe] = {}
+    favorites = await (repository or LocalJSONRepository()).get_favorites()
+    for pin_slot_id, record in select_favorite_assignments(
+        spec, config, history, favorites
+    ).items():
+        try:
+            # No `context=` here on purpose. A favourite was validated when it
+            # was saved, and re-validating against today's `dietary_rules`
+            # would reject a dish banned since — which is a real thing to know
+            # but not something to discover mid-run, one slot at a time, with
+            # no way to act on it. It is skipped instead, with a note.
+            pinned_recipes[pin_slot_id] = Recipe.model_validate(record["recipe"])
+        except ValidationError as exc:
+            logger.warning(
+                "favorite %s is not a usable recipe, generating that slot instead: %s",
+                record.get("id"), short_error(exc),
+            )
+            continue
+        spec = pin_recipe(spec, pin_slot_id, record.get("id"))
+        if note_callback:
+            note_callback(
+                f"{slot_label(pin_slot_id)}: cooking saved favourite "
+                f"\"{record['recipe']['name']}\" — not generating this slot"
+            )
+
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -3894,13 +4693,44 @@ async def generate_week_plan(
     # short lookback — a recipe name must not repeat at all within it.
     avoid_recipe_names = recent_recipe_names(history)
     protein_avoid_window = planning_rule(config, "protein_avoid_window")
+    # Same seed-then-extend shape as avoid_proteins, but a count rather than a
+    # list: how much of `sourcing.max_seafood_meals_per_week` earlier stages
+    # have actually spent. Counting each stage's real output — instead of
+    # handing every meal type the same full cap — is what makes the limit
+    # genuinely week-wide, since no single call can see more than its own axis.
+    seafood_used = 0
 
     by_id = spec.by_id()
-    # The full daily targets, mutated down as each meal type's actual
-    # consumption is subtracted — see the cascade step at the end of the loop
-    # below. This is the "daily_macro_budgets" the horizontal-generation
-    # design cascades through.
-    daily_macro_budgets: Dict[str, dict] = {day: dict(targets[day]) for day in spec.days}
+    # What the meals this run actually generates may spend: the day's target
+    # less whatever a skipped-but-eaten slot already claims (dinner out, a
+    # working lunch — `SlotSpec.skip_estimate`). Floored at 0 for the same
+    # reason `split_targets` floors an overspent `meal_overrides`: a day whose
+    # estimate exceeds its target should land visibly at zero rather than hand
+    # the remaining meals a negative budget to scale against.
+    #
+    # `targets` itself is deliberately left whole — it becomes `WeekPlan.
+    # targets`, the telemetry header's denominator, and the day's goal doesn't
+    # shrink because part of it was met at a restaurant. `day_slot_macros`
+    # adds the same estimate to the numerator, so the two agree.
+    plannable_targets: Dict[str, dict] = {}
+    for day in spec.days:
+        spent = skip_estimate_totals(spec.slots, day)
+        plannable_targets[day] = {
+            key: max(0.0, float(targets[day][key]) - spent[key]) for key in MACRO_KEYS
+        }
+        if note_callback and any(spent[key] for key in MACRO_KEYS):
+            note_callback(
+                f"{day}: {spent['calories']:.0f} kcal / {spent['protein_g']:.0f}g protein "
+                "reserved for a meal eaten out — planning the rest of the day around it"
+            )
+
+    # The daily targets, mutated down as each meal type's actual consumption
+    # is subtracted — see the cascade step at the end of the loop below. This
+    # is the "daily_macro_budgets" the horizontal-generation design cascades
+    # through.
+    daily_macro_budgets: Dict[str, dict] = {
+        day: dict(plannable_targets[day]) for day in spec.days
+    }
 
     events: Dict[str, CookEvent] = {}
     failures: Dict[str, str] = {}
@@ -3921,18 +4751,26 @@ async def generate_week_plan(
             if by_id[slot_id(day, meal_type)].mode in (MODE_COOK, MODE_LEFTOVER)
         ]
         apriori_budgets[day] = split_targets(
-            targets[day], day_slots, day_multiplicity(spec, day), config,
+            plannable_targets[day], day_slots, day_multiplicity(spec, day), config,
             meal_overrides_for(day, config),
         )
     for stage_index, meal_type in enumerate(order):
-        cook_days = [
+        # Every day this meal type is cooked, split by who cooks it. A slot
+        # carrying a pinned favourite still needs a budget computed (it is
+        # trimmed onto it, and its actual output still cascades), so it stays
+        # in `all_cook_days` — it is only kept out of the *model* call.
+        all_cook_days = [
             day for day in spec.days if by_id[slot_id(day, meal_type)].mode == MODE_COOK
         ]
+        pinned_days = [
+            day for day in all_cook_days if slot_id(day, meal_type) in pinned_recipes
+        ]
+        cook_days = [day for day in all_cook_days if day not in pinned_days]
 
         if progress_callback:
             progress_callback(meal_type, len(cook_days))
 
-        if cook_days:
+        if all_cook_days:
             # This stage's per-day budget: split what's left of each day
             # (already reduced by every earlier-generated meal type) across
             # whichever meal types haven't been resolved yet — current stage
@@ -3941,8 +4779,12 @@ async def generate_week_plan(
             # recomputed fresh at each stage against a shrinking remainder.
             pending_types = order[stage_index:]
             day_budgets: Dict[str, dict] = {}
-            pinned_days: List[str] = []
-            for day in cook_days:
+            # Days whose budget came from a `meal_overrides` entry — a
+            # different kind of pin from `pinned_days` above, which is about a
+            # pinned *recipe*. Passed to the model so it knows the number is
+            # fixed rather than a share of a remainder.
+            fixed_budget_days: List[str] = []
+            for day in all_cook_days:
                 # A not-yet-resolved LEFTOVER slot (source not generated this
                 # run yet — always true for a pending meal type, since its
                 # source is either the same pending meal type or resolves no
@@ -3967,7 +4809,7 @@ async def generate_week_plan(
                     # A pinned budget is a fixed number by definition — it was
                     # assigned verbatim by `split_targets` and never took a
                     # share of the remainder, so there is no drift on it to cap.
-                    pinned_days.append(day)
+                    fixed_budget_days.append(day)
                 else:
                     budget, capped = cap_to_weighted_share(
                         budget, apriori_budgets[day].get(this_slot), config
@@ -3991,13 +4833,69 @@ async def generate_week_plan(
                 day: carried_macros(spec, day, events)[1] for day in cook_days
             }
 
-            try:
-                stage_events = await _generate_meal_type_events(
-                    meal_type, spec, config, day_budgets, portions, claims,
-                    carried_descriptions_by_day, pinned_days,
-                    avoid_proteins[-protein_avoid_window:], avoid_recipe_names,
-                    note_callback,
+            # Pinned favourites first, and outside the try: they cannot raise
+            # a provider error, and building them before the model call means
+            # a meal type whose every slot is pinned makes no API call at all.
+            stage_events: Dict[str, CookEvent] = {}
+            for day in pinned_days:
+                pinned_slot = by_id[slot_id(day, meal_type)]
+                # Trimmed onto its budget exactly as a generated recipe is —
+                # a favourite was saved at whatever portion it was cooked at,
+                # and serving it unscaled would spend a budget the rest of the
+                # day is counting on. `fit_recipe_to_budget` clamps to
+                # `portion_trim_limits`, so a favourite too far off simply
+                # lands as close as the clamp allows and shows as a delta.
+                fitted, factor = fit_recipe_to_budget(
+                    single_serving(pinned_recipes[pinned_slot.id]),
+                    day_budgets[day],
+                    config,
                 )
+                if note_callback and abs(factor - 1.0) > 0.01:
+                    note_callback(
+                        f"{day} {meal_type}: saved favourite "
+                        f"\"{fitted.name}\" scaled to {factor:.0%} of its "
+                        "saved portion to fit the day's budget"
+                    )
+                stage_events[pinned_slot.id] = build_cook_event(
+                    pinned_slot, fitted, spec, portions, claims, config
+                )
+
+            try:
+                # Only the unpinned days: `_generate_meal_type_events` derives
+                # which slots to ask for from `day_budgets`' own keys, so
+                # handing it the full dict would put a pinned favourite's day
+                # back in the prompt and get a second recipe generated for a
+                # slot already filled.
+                # `avoid_proteins` is extended from `stage_events` only after
+                # this stage finishes, so the pins built moments ago are not in
+                # it yet — and until dinner favourites existed that was
+                # harmless, because no meal type could pin and generate at the
+                # same time in a way variety cared about. It is not harmless
+                # now: `DINNER_VARIETY_RULE` promises the same primary protein
+                # never lands on two consecutive nights, and a pinned lamb
+                # Thursday that the model cannot see is exactly how a
+                # generated lamb Friday gets through. Appended rather than
+                # folded into the running list, which stays the record of what
+                # *completed* stages actually cooked.
+                pinned_proteins = [
+                    protein
+                    for protein in (
+                        extract_main_protein(event.recipe)
+                        for event in stage_events.values()
+                    )
+                    if protein
+                ]
+                model_events = await _generate_meal_type_events(
+                    meal_type, spec, config,
+                    {day: day_budgets[day] for day in cook_days},
+                    portions, claims,
+                    carried_descriptions_by_day,
+                    [day for day in fixed_budget_days if day in cook_days],
+                    avoid_proteins[-protein_avoid_window:] + pinned_proteins,
+                    avoid_recipe_names + [e.recipe.name for e in stage_events.values()],
+                    note_callback, seafood_used,
+                ) if cook_days else {}
+                stage_events.update(model_events)
             except Exception as exc:
                 # One bad meal type must not discard everything else. Free
                 # routes fail in ways no amount of retrying fixes (a provider
@@ -4014,7 +4912,11 @@ async def generate_week_plan(
                 )
                 if note_callback:
                     note_callback(f"{meal_type}: generation failed — {message}")
-                stage_events = {}
+                # `stage_events` keeps whatever the pinned favourites already
+                # produced: those never went near the provider, so a failed
+                # call must not discard them — the same "one failure must not
+                # cost what already succeeded" rule as the per-meal-type catch
+                # itself.
 
             for event in stage_events.values():
                 protein = extract_main_protein(event.recipe)
@@ -4022,6 +4924,11 @@ async def generate_week_plan(
                     avoid_proteins.append(protein)
                 if event.recipe.name not in avoid_recipe_names:
                     avoid_recipe_names.append(event.recipe.name)
+                # Counted per cook event, not per slot that eats it: a bulk-
+                # cooked salmon feeding three lunches was bought once and is
+                # one trip to the fish counter, which is what the cap is about.
+                if is_seafood_meal(event.recipe):
+                    seafood_used += 1
             events.update(stage_events)
 
         # Cascade: subtract this meal type's actual per-day consumption from
@@ -4381,6 +5288,24 @@ async def regenerate_single_meal(
 # --------------------------------------------------------------------------
 # History
 # --------------------------------------------------------------------------
+
+
+def is_seafood_meal(recipe: Recipe) -> bool:
+    """Does this recipe's *dominant* protein come from the sea?
+
+    What `sourcing.max_seafood_meals_per_week` is counted in. Keyed off the
+    highest-protein ingredient — the same cheap proxy `extract_main_protein`
+    uses — rather than a scan of every ingredient name, because a scan spends
+    the week's whole seafood allowance on a Thai dinner's tablespoon of fish
+    sauce or a bowl of dashi. Unlike `extract_main_protein` this applies to
+    every meal type: a smoked-salmon breakfast is a seafood meal, and a cap
+    that only watched lunch and dinner would miss it.
+    """
+    if not recipe.ingredients:
+        return False
+    main = max(recipe.ingredients, key=lambda ingredient: ingredient.protein_g)
+    name = main.name.lower()
+    return any(term in name for term in SEAFOOD_TERMS)
 
 
 def extract_main_protein(recipe: Recipe) -> Optional[str]:

@@ -1,6 +1,6 @@
 {
   "planning_rules": {
-    "history_max_entries": 21,
+    "history_max_entries": 28,
     "protein_lookback_entries": 3,
     "protein_avoid_window": 6,
     "portion_trim_limits": [
@@ -11,7 +11,8 @@
     "cuisine_block_pattern": [
       4,
       3
-    ]
+    ],
+    "min_baseline_cuisine_share": 0.5
   },
   "ui_settings": {
     "bar_scale_limit": 1.6,

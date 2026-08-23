@@ -1,13 +1,14 @@
-"""Formats a generated week into a printable menu — Markdown text and a
+"""Formats a generated week into a printable menu — Markdown text, a
 magazine-style PDF (CSIRO Total Wellbeing Diet inspired: restrained dark-ink
 typography, a teal-header day-by-day grid, a tickable prep checklist, a
 single hairline-ruled recipe page per meal grouped by meal type, and a
-catalog-style shopping list).
+catalog-style shopping list), and a self-contained mobile HTML page.
 
-Both walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved against
-`WeekPlan.by_slot()` (cook events), the same source `WeekPlan.day_slot_macros`
-reads — not `PlannerState`/`SlotView`, so this module has no UI dependency
-and works the same from the NiceGUI drawer today or a future CLI flag.
+All three walk `WeekPlan.slots` (one `SlotSpec` per eating slot) resolved
+against `WeekPlan.by_slot()` (cook events), the same source
+`WeekPlan.day_slot_macros` reads — not `PlannerState`/`SlotView`, so this
+module has no UI dependency and works the same from the NiceGUI drawer today
+or a future CLI flag.
 
 `build_week_menu_pdf` needs `reportlab` (pure Python, no system libraries —
 unlike `weasyprint`, which needs Cairo/Pango, it installs cleanly into this
@@ -15,9 +16,22 @@ project's venv with a plain `pip install`); it's a hard requirement (see
 `requirements.txt`), and `ui_app.py` already needs it for the "Download PDF
 Menu" button to exist, so importing it at module level costs nothing the app
 doesn't already pay.
+
+`build_week_menu_html` needs nothing beyond the standard library — the PDF
+paginates for a printer, which is exactly wrong for a phone: no page to turn,
+pinch-zoom fighting a fixed layout, and the printed page's checkboxes are
+just ink. The HTML export is a single scrolling page sized for a phone, and
+its "tap a step when done" behaviour (a step's `onclick` toggles one CSS
+class) is real state, not a static mark — the same `line-through` treatment
+`ui_cards.recipe_detail`'s step rows already use in the live UI, so a cook
+who has seen the app once recognises it instantly. Deliberately unpersisted
+(no `localStorage`): reopening the file starts every step unticked, the same
+scratch-state choice `recipe_detail` and the shopping drawer already make, so
+a re-downloaded plan can't disagree with stale ticks from a previous week.
 """
 
 import io
+from html import escape as html_escape
 from typing import Dict, List, Optional
 from xml.sax.saxutils import escape
 
@@ -229,10 +243,20 @@ def _day_entries(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], day: str) -
 
 
 def _macro_text(macros: dict) -> str:
-    return (
+    """The per-serving macro line shared by the PDF grid and the Markdown export.
+
+    Fibre is appended last and only when present. `.get` rather than `[]`
+    because a `week_plan.json` generated before `Ingredient.fiber_g` existed
+    totals without the key — the same pre-migration tolerance
+    `history_styles` extends to old `meal_history.json` entries — and a
+    zero-fibre line is noise rather than information.
+    """
+    text = (
         f"{macros['calories']:.0f} kcal · {macros['protein_g']:.0f}g P · "
         f"{macros['net_carbs_g']:.0f}g C · {macros['fat_g']:.0f}g F"
     )
+    fiber = macros.get("fiber_g") or 0.0
+    return f"{text} · {fiber:.0f}g fibre" if fiber else text
 
 
 def format_week_menu_markdown(week_plan: WeekPlan) -> str:
@@ -426,10 +450,12 @@ def _serves_line(event: CookEvent) -> str:
     macros = event.recipe.per_serving_macros
     portions = event.portions
     lead = f"Makes {portions} serving{'s' if portions != 1 else ''}."
+    fiber = macros.get("fiber_g") or 0.0
+    fiber_text = f", {fiber:.0f}g fibre" if fiber else ""
     return (
         f"<b>{lead}</b> Each serving provides {macros['calories']:.0f} kcal, "
         f"{macros['protein_g']:.0f}g protein, {macros['net_carbs_g']:.0f}g carbs, "
-        f"{macros['fat_g']:.0f}g fat."
+        f"{macros['fat_g']:.0f}g fat{fiber_text}."
     )
 
 
@@ -642,3 +668,296 @@ def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------
+# Mobile HTML export
+#
+# One scrolling page, not the PDF's paginated layout: a sticky pill nav
+# jumps between the day summary, the prep checklist (if any), each meal
+# type's recipes, and the shopping list. Every tappable row (a step, a
+# shopping item, a prep phase) is a plain `onclick="this.classList.toggle(
+# 'done')"` — no `<script>` block needed at all, which keeps the file exactly
+# what it looks like: static markup you can open straight from a phone's
+# downloads folder with nothing to fetch and nothing to break.
+# --------------------------------------------------------------------------
+
+_HTML_STYLE = """
+:root {
+  --bg: #fbfaf8; --surface: #ffffff; --ink: #1f2937; --muted: #6b7280;
+  --rule: #e5e7eb; --accent: #0f766e; --done-bg: rgba(16,185,129,.12);
+  --done-ink: #059669;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a; --surface: #131f35; --ink: #e2e8f0; --muted: #94a3b8;
+    --rule: #253449; --accent: #2dd4bf; --done-bg: rgba(52,211,153,.15);
+    --done-ink: #6ee7b7;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.page-header { padding: 20px 16px 8px; }
+.page-header h1 { margin: 0 0 4px; font-size: 22px; }
+.subtle { margin: 0; color: var(--muted); font-size: 13px; }
+.topnav {
+  position: sticky; top: 0; z-index: 5; display: flex; gap: 6px;
+  overflow-x: auto; padding: 8px 16px; background: var(--bg);
+  border-bottom: 1px solid var(--rule); -webkit-overflow-scrolling: touch;
+}
+.topnav a {
+  flex: none; padding: 6px 12px; border-radius: 999px; background: var(--surface);
+  border: 1px solid var(--rule); color: var(--ink); text-decoration: none;
+  font-size: 13px; white-space: nowrap;
+}
+main { max-width: 640px; margin: 0 auto; padding: 8px 16px 48px; }
+section { margin-top: 28px; }
+h2 {
+  font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--rule);
+}
+h3 { font-size: 19px; margin: 0 0 2px; }
+h4.label {
+  font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent); margin: 16px 0 6px;
+}
+.day-list, .shop-list, .prep-list { list-style: none; margin: 0; padding: 0; }
+.day-row, .shop-row, .prep-row {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  padding: 9px 4px; border-bottom: 1px solid var(--rule);
+}
+.day-row-type { font-weight: 600; min-width: 78px; }
+.day-row-dish { flex: 1 1 auto; }
+.day-row-meta, .shop-note, .prep-desc { flex-basis: 100%; color: var(--muted); font-size: 12.5px; }
+.day-row.muted .day-row-dish { color: var(--muted); font-style: italic; }
+.day-total { text-align: right; font-weight: 600; color: var(--accent); padding: 8px 4px 0; }
+.failures { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px; }
+.failures ul { margin: 6px 0 0; padding-left: 18px; }
+.recipe {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 12px;
+  padding: 16px; margin-bottom: 16px;
+}
+.eyebrow { margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.feeds { margin: 4px 0 0; font-size: 12.5px; color: var(--accent); }
+.ingredients { list-style: none; margin: 0; padding: 0; }
+.ingredients li { padding: 7px 2px; border-bottom: 1px solid var(--rule); font-size: 14.5px; }
+.steps { list-style: none; margin: 0; padding: 0; }
+.step {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 6px;
+  border-bottom: 1px solid var(--rule); cursor: pointer; user-select: none;
+}
+.step-num {
+  flex: none; width: 24px; height: 24px; border-radius: 50%;
+  border: 1.5px solid var(--muted); color: var(--muted); font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+.step-text { flex: 1 1 auto; min-width: 0; }
+.step.done { background: var(--done-bg); }
+.step.done .step-text { text-decoration: line-through; color: var(--muted); }
+.step.done .step-num { background: var(--done-ink); border-color: var(--done-ink); color: var(--surface); }
+.prep-note { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+.serves { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+.shop-name { flex: 1 1 auto; font-weight: 500; }
+.shop-qty { color: var(--muted); font-variant-numeric: tabular-nums; }
+.shop-row { cursor: pointer; user-select: none; }
+.shop-row.done { background: var(--done-bg); }
+.shop-row.done .shop-name { text-decoration: line-through; color: var(--muted); }
+.prep-name { font-weight: 600; flex: 1 1 auto; }
+.prep-time { color: var(--muted); font-size: 12.5px; }
+.prep-row { cursor: pointer; user-select: none; }
+.prep-row.done { background: var(--done-bg); }
+.prep-row.done .prep-name { text-decoration: line-through; color: var(--muted); }
+"""
+
+
+def _html_slug(value: str) -> str:
+    return value.replace(":", "-").replace(" ", "-").lower()
+
+
+def _html_day_section(week_plan: WeekPlan, by_slot: Dict[str, CookEvent], day: str) -> str:
+    rows = []
+    for entry in _day_entries(week_plan, by_slot, day):
+        bits = []
+        if entry["note"]:
+            bits.append(html_escape(entry["note"]))
+        if entry["macros"]:
+            bits.append(html_escape(_macro_text(entry["macros"])))
+        meta = " · ".join(bits)
+        rows.append(
+            f'<li class="day-row{"" if entry["macros"] else " muted"}">'
+            f'<span class="day-row-type">{html_escape(entry["meal_type"].title())}</span>'
+            f'<span class="day-row-dish">{html_escape(entry["dish"])}</span>'
+            + (f'<span class="day-row-meta">{meta}</span>' if meta else "")
+            + "</li>"
+        )
+    total = html_escape(_macro_text(week_plan.day_slot_macros(day)))
+    return (
+        f'<section class="day" id="day-{_html_slug(day)}">'
+        f"<h2>{html_escape(day)}</h2>"
+        f'<ul class="day-list">{"".join(rows)}</ul>'
+        f'<p class="day-total">Day total — {total}</p>'
+        "</section>"
+    )
+
+
+def _html_recipe_card(event: CookEvent) -> str:
+    recipe = event.recipe
+    macros = recipe.per_serving_macros
+    portions_label = f"ALL {event.portions} PORTION{'S' if event.portions != 1 else ''}"
+    ingredients = "".join(
+        f"<li>{html_escape(_ingredient_line(ingredient))}</li>" for ingredient in recipe.ingredients
+    )
+    steps = "".join(
+        '<li class="step" onclick="this.classList.toggle(\'done\')">'
+        f'<span class="step-num">{index}</span>'
+        f'<span class="step-text">{html_escape(step)}</span>'
+        "</li>"
+        for index, step in enumerate(recipe.instructions, start=1)
+    )
+    fiber = macros.get("fiber_g") or 0.0
+    serves = (
+        f"Makes {event.portions} serving{'s' if event.portions != 1 else ''}. "
+        f"Each serving provides {macros['calories']:.0f} kcal, {macros['protein_g']:.0f}g protein, "
+        f"{macros['net_carbs_g']:.0f}g carbs, {macros['fat_g']:.0f}g fat"
+        + (f", {fiber:.0f}g fibre" if fiber else "")
+        + "."
+    )
+    feeds = _feeds_note(event)
+    feeds_html = f'<p class="feeds">{html_escape(feeds)}</p>' if feeds else ""
+    prep_html = f'<p class="prep-note">{html_escape(recipe.prep_notes)}</p>' if recipe.prep_notes else ""
+    return (
+        f'<article class="recipe" id="recipe-{_html_slug(event.slot_id)}">'
+        f'<p class="eyebrow">{html_escape(_recipe_meta_line(event))}</p>'
+        f"<h3>{html_escape(recipe.name)}</h3>"
+        f"{feeds_html}"
+        f'<h4 class="label">{portions_label}</h4>'
+        f'<ul class="ingredients">{ingredients}</ul>'
+        '<h4 class="label">Method — tap a step when it\'s done</h4>'
+        f'<ol class="steps">{steps}</ol>'
+        f"{prep_html}"
+        f'<p class="serves">{html_escape(serves)}</p>'
+        "</article>"
+    )
+
+
+def _html_prep_section(session: SundayPrepSession) -> str:
+    subtitle_parts = [
+        f"{session.total_active_minutes} min active",
+        f"{session.total_passive_minutes} min passive",
+    ]
+    if session.meals_included:
+        subtitle_parts.append("covers " + ", ".join(session.meals_included))
+
+    phases = "".join(
+        '<li class="prep-row" onclick="this.classList.toggle(\'done\')">'
+        f'<span class="prep-name">{html_escape(phase.name)}</span>'
+        '<span class="prep-time">'
+        f"{phase.active_minutes} min active"
+        + (f" / {phase.passive_minutes} min passive" if phase.passive_minutes else "")
+        + "</span>"
+        + (f'<span class="prep-desc">{html_escape(phase.description)}</span>' if phase.description else "")
+        + "</li>"
+        for phase in session.timeline
+    )
+    aggregated = "".join(
+        '<li class="prep-row" onclick="this.classList.toggle(\'done\')">'
+        f'<span class="prep-name">{html_escape(item)}</span>'
+        f'<span class="prep-desc">{html_escape(note)}</span></li>'
+        for item, note in session.aggregated_ingredients.items()
+    )
+    aggregated_html = (
+        f'<h4 class="label">Aggregated Prep</h4><ul class="prep-list">{aggregated}</ul>' if aggregated else ""
+    )
+    return (
+        '<section class="prep" id="prep">'
+        "<h2>Batch Cooking &amp; Preparation Checklist</h2>"
+        f'<p class="subtle">{html_escape(" · ".join(subtitle_parts))}</p>'
+        f'<ul class="prep-list">{phases}</ul>'
+        f"{aggregated_html}"
+        "</section>"
+    )
+
+
+def _html_shopping_section(week_plan: WeekPlan) -> str:
+    if not week_plan.cook_events:
+        return ""
+    shopping_list = aggregate_cook_events(week_plan.cook_events, week_plan.days)
+    departments = []
+    for department in sorted(shopping_list.categories):
+        rows = "".join(
+            '<li class="shop-row" onclick="this.classList.toggle(\'done\')">'
+            f'<span class="shop-name">{html_escape(item.name)}</span>'
+            f'<span class="shop-qty">{html_escape(format_quantity(item.name, item.total_amount_g))}</span>'
+            + ('<span class="shop-note">buy fresh closer to the day</span>' if item.buy_late else "")
+            + "</li>"
+            for item in shopping_list.categories[department]
+        )
+        departments.append(f'<h4 class="label">{html_escape(department)}</h4><ul class="shop-list">{rows}</ul>')
+    count = len(shopping_list.items())
+    return (
+        '<section class="shopping" id="shopping">'
+        "<h2>Shopping List</h2>"
+        f'<p class="subtle">Everything for the week, grouped by department — {count} items. '
+        "Tap an item to check it off.</p>"
+        f"{''.join(departments)}"
+        "</section>"
+    )
+
+
+def build_week_menu_html(week_plan: WeekPlan) -> str:
+    """The whole week as one self-contained, mobile-sized HTML page: a
+    sticky nav, a day-by-day summary, an optional Sunday prep checklist,
+    every recipe with tap-to-strike steps, and a tap-to-check shopping list.
+
+    Returns a `str`, the same "hand it to the caller" shape as
+    `format_week_menu_markdown` and `build_week_menu_pdf` (bytes) — the
+    caller (`ui.download`) decides how it leaves the process.
+    """
+    by_slot = week_plan.by_slot()
+    generated = f"Generated {week_plan.generated_at[:16].replace('T', ' ')}" if week_plan.generated_at else ""
+
+    nav_links = [f'<a href="#day-{_html_slug(day)}">{html_escape(day)}</a>' for day in week_plan.days]
+    if week_plan.sunday_prep_session:
+        nav_links.append('<a href="#prep">Prep</a>')
+    for meal_type in _grid_meal_types(week_plan):
+        nav_links.append(f'<a href="#recipes-{_html_slug(meal_type)}">{html_escape(meal_type.title())}</a>')
+    if week_plan.cook_events:
+        nav_links.append('<a href="#shopping">Shopping</a>')
+
+    failures_html = ""
+    if week_plan.failures:
+        items = "".join(
+            f"<li>{html_escape(slot_label(key))}: {html_escape(error)}</li>"
+            for key, error in week_plan.failures.items()
+        )
+        failures_html = f'<section class="failures"><h2>Not generated</h2><ul>{items}</ul></section>'
+
+    day_sections = "".join(_html_day_section(week_plan, by_slot, day) for day in week_plan.days)
+
+    recipe_sections = "".join(
+        f'<section class="recipes" id="recipes-{_html_slug(meal_type)}">'
+        f"<h2>{html_escape(meal_type.title())} Meals</h2>"
+        f"{''.join(_html_recipe_card(event) for event in events)}"
+        "</section>"
+        for meal_type, events in _recipes_by_category(week_plan)
+    )
+
+    prep_html = _html_prep_section(week_plan.sunday_prep_session) if week_plan.sunday_prep_session else ""
+    shopping_html = _html_shopping_section(week_plan)
+
+    return (
+        "<!doctype html>\n"
+        '<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">\n'
+        f"<title>Weekly Menu</title>\n<style>{_HTML_STYLE}</style>\n</head>\n<body>\n"
+        '<header class="page-header"><h1>Weekly Menu</h1>'
+        f'<p class="subtle">{html_escape(generated)}</p></header>\n'
+        f'<nav class="topnav">{"".join(nav_links)}</nav>\n'
+        f"<main>\n{failures_html}\n"
+        f'<section class="summary" id="summary">{day_sections}</section>\n'
+        f"{prep_html}\n{recipe_sections}\n{shopping_html}\n"
+        "</main>\n</body>\n</html>\n"
+    )

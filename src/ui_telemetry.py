@@ -230,6 +230,15 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                             ui.label(
                                 f"{short} {totals[key]:.0f}/{float(target[key]):.0f}{unit}"
                             ).classes(f"text-[9px] font-mono {MACRO_TINTS[key]}")
+                        # Fibre rides on the same row but carries no
+                        # denominator, because there is no fibre target to
+                        # divide by (`planner.NUTRIENT_KEYS`) — printing one
+                        # would invent a goal the planner never aimed at.
+                        # `.get` because a plan generated before `fiber_g`
+                        # existed totals without the key.
+                        ui.label(f"FIB {totals.get('fiber_g', 0.0):.0f}g").classes(
+                            f"text-[9px] font-mono {MACRO_TINTS['fiber_g']}"
+                        )
                     with ui.tooltip():
                         for key, short, unit in MACRO_LABELS:
                             delta = totals[key] - float(target[key])
@@ -237,6 +246,9 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                                 f"{short}: {totals[key]:.0f}{unit} "
                                 f"({delta:+.0f} vs {float(target[key]):.0f})"
                             )
+                        ui.label(
+                            f"fibre: {totals.get('fiber_g', 0.0):.0f}g (tracked, no target)"
+                        )
                         if overridden:
                             ui.label("target overridden — applies on next generation")
                         if training:

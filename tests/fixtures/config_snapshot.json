@@ -8,6 +8,11 @@
     "Tuesday": "WFH",
     "Wednesday": "WFH"
   },
+  "baseline_cuisines": [
+    "homestyle",
+    "modern_australian",
+    "pub_classic"
+  ],
   "cuisine_affinities": {
     "bbq": [
       "homestyle",
@@ -151,7 +156,10 @@
       "soy beans",
       "venison",
       "grapes",
-      "cod"
+      "cod",
+      "mustard greens",
+      "halibut",
+      "scallops"
     ]
   },
   "enable_sunday_prep": true,
@@ -161,12 +169,18 @@
   },
   "inventory_to_clear": [],
   "location_rules": {
+    "Holiday": {
+      "breakfast_mode": "skip",
+      "dinner_mode": "skip",
+      "lunch_mode": "skip",
+      "notes": "Holiday food - eaten out, not planned",
+      "snack_mode": "skip"
+    },
     "Office": {
       "lunch_mode": "leftover",
       "max_prep_minutes": 0,
       "restrictions": [
         "portable",
-        "no_reheat",
         "no_long_prep"
       ]
     },
@@ -187,7 +201,7 @@
   "meal_styles": {
     "breakfast": {
       "beans_toast": "Classic baked beans served on toasted whole-grain bread.",
-      "custom_shake": "Protein Shake Template. BASE (REQUIRED, FIXED \u2014 never scale these to hit budget): 45g protein powder (1.5 scoops), 5g creatine, 300g water. DYNAMIC INGREDIENT SELECTION (choose 2-4 items to meet target; if the fixed base doesn't cover the protein budget, one of them MUST be a Protein Boost item \u2014 never raise the 45g protein powder to compensate): Fruits (100g frozen mixed berries, frozen mango, frozen cherries), Carbs (15g barley max, 15g oats), Protein Boost (80g yoghurt, cottage cheese, milk, silken tofu), Nuts (20g almonds, 20g walnuts), Seeds (3g flaxseeds, 4g chia seeds, 3g hemp seeds), Greens/Vege (30g spinach, 50g frozen raw broccoli, 50g frozen raw cauliflower), Flavor/Spice (cocoa powder, ginger, mustard seeds, turmeric).",
+      "custom_shake": "Protein Shake Template. MANDATORY BASE (REQUIRED in every shake - never scale these to hit the budget, and never drop one to make two shakes differ): (a) 1 scoop (30g) protein powder, 5g creatine, 250ml water - about 150 kcal and 30g protein; (b) 20-30g raw leafy green - frozen spinach, frozen kale, fresh rocket or fresh spinach; (c) 50-80g raw frozen vegetable - frozen broccoli florets or frozen cauliflower. The green and the vegetable together add only about 25-30 kcal and are included for fibre and micronutrient density, not for flavour or macros. WHICH green and WHICH vegetable may vary from shake to shake, but both must be present in every one. THE INGREDIENT MATRIX - on top of the mandatory base, choose 3-6 items from the tiers below to reach the stated budget. At least one Protein Boost item is MANDATORY: the fixed base alone never covers the protein target, and the powder must NEVER be raised above 1 scoop to compensate. (1) Protein Boost: low-fat cottage cheese (80g = 60 kcal), plain 0-2% Greek yoghurt (110g = 70 kcal). (2) Carb & Fibre Core: BarleyMax (15g = 50 kcal), rolled oats (20g = 75 kcal), roasted and cooled sweet potato (50g = 45 kcal), shelled frozen edamame (40g = 50 kcal). (3) Super Seeds (all ~40 kcal): ground linseed (7g), chia seeds (8g), hemp hearts (7g), pepitas (7g), sunflower seeds (7g). (4) Healthy Nuts (all ~35-40 kcal): whole almonds (6g), walnuts (6g), peanuts (6g), peanut butter (6g), almond butter (6g). (5) Spice Activator: ground mustard seeds, turmeric. (6) Flavour Enhancer: cacao powder (1 tsp), fresh grated ginger (1 tsp). (7) Fruit Fusion (all ~25 kcal): frozen mixed berries (50g), frozen mango (40g), frozen cherries (40g).",
       "eggs_salmon": "Scrambled eggs and smoked salmon served on toasted whole-grain bread.",
       "fish_pate": "Tinned sardines or tinned mackerel pate served on toasted whole-grain bread.",
       "yoghurt_bowl": "Yoghurt Bowl. BASE: 120g yoghurt. SEEDS: 3g flaxseeds, 4g chia seeds, 3g hemp seeds, 5g pumpkin seeds. FRUIT: 20g fresh blueberries, 20g fresh strawberries. NUTS: 20g almonds, 20g walnuts."
@@ -232,8 +246,16 @@
       4,
       3
     ],
-    "history_max_entries": 21,
+    "favorite_breakfast_slots": 2,
+    "favorite_dinner_slots": 2,
+    "favorite_reuse_days": {
+      "breakfast": 7,
+      "dinner": 21,
+      "lunch": 21
+    },
+    "history_max_entries": 28,
     "max_meal_share_multiple": 1.75,
+    "min_baseline_cuisine_share": 0.5,
     "min_meal_protein_g": 35.0,
     "portion_trim_deadband": 0.03,
     "portion_trim_limits": [
@@ -246,7 +268,7 @@
   "regional": {
     "country": "AU",
     "hemisphere": "southern",
-    "postcode": "3350",
+    "postcode": "3205",
     "state": "VIC"
   },
   "serving_rules": {
@@ -258,26 +280,42 @@
       "Wednesday"
     ]
   },
+  "sourcing": {
+    "fresh_seafood_available_days": [
+      "Saturday",
+      "Sunday"
+    ],
+    "max_seafood_meals_per_week": 1,
+    "specialty_grocers_available_days": [
+      "Saturday",
+      "Sunday"
+    ],
+    "supermarkets": [
+      "Coles",
+      "Woolworths",
+      "Aldi"
+    ]
+  },
   "training_schedule": [
     {
       "day": "Monday",
       "duration_minutes": 60,
       "estimated_burn_kcal": 350,
-      "time": "18:00",
+      "time": "05:30",
       "type": "gym_hypertrophy"
     },
     {
       "day": "Tuesday",
       "duration_minutes": 30,
       "estimated_burn_kcal": 320,
-      "time": "18:00",
+      "time": "05:30",
       "type": "cardio_hiit"
     },
     {
       "day": "Wednesday",
       "duration_minutes": 25,
       "estimated_burn_kcal": 180,
-      "time": "18:00",
+      "time": "06:00",
       "type": "cardio_easy"
     },
     {
@@ -291,28 +329,28 @@
       "day": "Friday",
       "duration_minutes": 25,
       "estimated_burn_kcal": 180,
-      "time": "18:00",
+      "time": "06:00",
       "type": "cardio_easy"
     },
     {
       "day": "Saturday",
       "duration_minutes": 60,
       "estimated_burn_kcal": 350,
-      "time": "08:00",
+      "time": "05:30",
       "type": "gym_hypertrophy"
     },
     {
       "day": "Saturday",
       "duration_minutes": 30,
       "estimated_burn_kcal": 320,
-      "time": "09:15",
+      "time": "06:30",
       "type": "cardio_hiit"
     },
     {
       "day": "Sunday",
       "duration_minutes": 90,
       "estimated_burn_kcal": 650,
-      "time": "08:00",
+      "time": "06:00",
       "type": "cardio_ride"
     }
   ],
@@ -332,7 +370,7 @@
     "breakfast": "cook",
     "dinner": "cook",
     "lunch": "cook",
-    "snack": "cook"
+    "snack": "skip"
   },
   "week_start_day": "Monday",
   "weekly_schedule": {
@@ -355,10 +393,10 @@
       "fat_g": 55.0,
       "meal_overrides": {
         "breakfast": {
-          "calories": 400,
-          "fat_g": 15,
+          "calories": 550,
+          "fat_g": 19,
           "net_carbs_g": 35,
-          "protein_g": 30
+          "protein_g": 60
         }
       },
       "net_carbs_g": 130.0,
@@ -369,10 +407,10 @@
       "fat_g": 44.0,
       "meal_overrides": {
         "breakfast": {
-          "calories": 400,
-          "fat_g": 15,
+          "calories": 550,
+          "fat_g": 19,
           "net_carbs_g": 35,
-          "protein_g": 30
+          "protein_g": 60
         }
       },
       "net_carbs_g": 85.0,

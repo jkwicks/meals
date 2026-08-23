@@ -172,5 +172,67 @@ class TestSlotEntryIsSharedWithThePdf(unittest.TestCase):
         self.assertIn("## Tuesday", text)
 
 
+class TestBuildWeekMenuHtml(unittest.TestCase):
+    """`build_week_menu_html` is the mobile counterpart to the PDF — one
+    scrolling page instead of paginated print output, with tap-to-strike
+    steps. Unlike the PDF (untested — asserting on reportlab bytes would pin
+    layout, not content), plain markup can be asserted on directly.
+    """
+
+    def setUp(self):
+        self.plan = week_plan()
+        self.html = export_menu.build_week_menu_html(self.plan)
+
+    def test_it_renders_without_a_caller(self):
+        self.assertTrue(self.html.strip())
+        self.assertIn("<!doctype html>", self.html.lower())
+
+    def test_every_day_gets_a_section(self):
+        for day in DAYS:
+            with self.subTest(day=day):
+                self.assertIn(f'id="day-{day.lower()}"', self.html)
+
+    def test_a_cooked_dish_is_named(self):
+        self.assertIn("Green Chicken Curry", self.html)
+        self.assertIn("Smoked Salmon Scramble", self.html)
+
+    def test_a_failed_slot_is_shown_rather_than_omitted(self):
+        self.assertRegex(self.html, r"(?i)not generated")
+
+    def test_recipe_steps_are_present_and_individually_clickable(self):
+        self.assertIn("Cook it.", self.html)
+        self.assertIn("Serve it.", self.html)
+        # Two recipes x two instructions each = four tappable step rows.
+        self.assertEqual(self.html.count('class="step" onclick='), 4)
+
+    def test_shopping_list_is_included_and_tappable(self):
+        self.assertIn('id="shopping"', self.html)
+        self.assertIn("Chicken breast", self.html)
+        self.assertIn('class="shop-row" onclick=', self.html)
+
+    def test_a_plan_with_no_cook_events_has_no_shopping_section(self):
+        plan = self.plan.model_copy(update={"cook_events": []})
+        html = export_menu.build_week_menu_html(plan)
+        self.assertNotIn('id="shopping"', html)
+
+    def test_recipe_name_is_escaped(self):
+        """A model-generated dish name is untrusted text going straight into
+        markup — an unescaped `<`/`&` would break the page it's embedded in."""
+        events = [
+            e.model_copy(update={"recipe": e.recipe.model_copy(update={"name": "Pan & <Grill>"})})
+            if e.slot_id == "Monday:breakfast" else e
+            for e in self.plan.cook_events
+        ]
+        html = export_menu.build_week_menu_html(self.plan.model_copy(update={"cook_events": events}))
+        self.assertIn("Pan &amp; &lt;Grill&gt;", html)
+        self.assertNotIn("<Grill>", html)
+
+    def test_no_script_tag(self):
+        """The whole point of onclick-toggled classes over a script block:
+        nothing to fetch, nothing to break, on a file opened straight from a
+        phone's downloads folder."""
+        self.assertNotIn("<script", self.html.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

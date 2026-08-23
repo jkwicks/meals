@@ -78,6 +78,7 @@ CONFIG_FILES = {
         "cuisines",
         "cuisine_affinities",
         "cuisine_meal_types",
+        "baseline_cuisines",
         "diet_styles",
         "week_defaults",
     ),
@@ -99,6 +100,7 @@ CONFIG_FILES = {
         "base_schedule",
         "location_rules",
         "regional",
+        "sourcing",
     ),
     # Tuning for the planner itself rather than for the food.
     "engine.json": ("planning_rules", "ui_settings"),

@@ -8,7 +8,8 @@ change what a meal looks like:
   nights of one cuisine and three of a complementary second, instead of seven
   countries that share nothing on the shopping list.
 - **Workout-synced breakfasts** (`morning_training_days`, `week.pin_style`) —
-  a morning gym or cardio session forces that day's breakfast to a shake.
+  a morning gym (hypertrophy) session forces that day's breakfast to a
+  shake; cardio deliberately doesn't.
 - **Ingredient canonicalisation** (`shopping.canonical_ingredient`) — the
   variants of one staple that reach the list anyway get merged into one line.
 
@@ -121,6 +122,64 @@ class TestPickCuisineBlocks(unittest.TestCase):
         self.assertEqual(planner.pick_cuisine_blocks(7, [], []), [])
 
 
+class TestBaselineCuisineFloor(unittest.TestCase):
+    """`baseline_cuisines`/`min_baseline_share` reserve enough of a week's
+    largest blocks to clear a floor, on top of the ordinary affinity/LRU pick
+    `pick_cuisine_blocks` already does. "greek"/"korean" stand in for a
+    baseline pool here — the mechanism doesn't care which cuisines they are,
+    and CONFIG's real "homestyle"/"modern_australian" analogues live in
+    `config/meals.json`, not this standalone fixture."""
+
+    BASELINE = ["greek", "korean"]
+
+    def test_zero_share_leaves_the_pick_unchanged(self):
+        with_floor = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"], None, self.BASELINE, 0.0
+        )
+        without_floor = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"]
+        )
+        self.assertEqual(with_floor, without_floor)
+
+    def test_an_unconfigured_baseline_pool_is_a_no_op(self):
+        # A high share with nothing to reserve blocks *for* must not error or
+        # narrow the pool to nothing — this is the feature's off switch.
+        picked = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"], None, [], 0.9
+        )
+        without_floor = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"]
+        )
+        self.assertEqual(picked, without_floor)
+
+    def test_half_share_reserves_only_the_larger_block(self):
+        # Unfloored, block 0 goes to thai (see
+        # test_seven_days_resolve_to_exactly_two_cuisines) — the floor must
+        # override that for the reserved block without touching the other,
+        # since 4 of 7 days already clears a 0.5 floor on its own.
+        picked = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"], None, self.BASELINE, 0.5
+        )
+        self.assertIn(picked[0], self.BASELINE)
+        self.assertEqual(picked[:4], [picked[0]] * 4)
+        self.assertNotIn(picked[4], self.BASELINE)
+
+    def test_full_share_reserves_every_block(self):
+        picked = planner.pick_cuisine_blocks(
+            7, CONFIG["cuisines"], [], CONFIG["cuisine_affinities"], None, self.BASELINE, 1.0
+        )
+        self.assertTrue(set(picked) <= set(self.BASELINE))
+
+    def test_resolve_auto_choices_reads_the_floor_off_config(self):
+        config = dict(
+            CONFIG,
+            baseline_cuisines=self.BASELINE,
+            planning_rules=dict(CONFIG["planning_rules"], min_baseline_cuisine_share=0.5),
+        )
+        resolved = planner.resolve_auto_choices(week_spec(), config, [])
+        self.assertIn(dinner_cuisines(resolved)[0], self.BASELINE)
+
+
 class TestResolveAutoChoices(unittest.TestCase):
     def test_dinners_resolve_into_two_contiguous_blocks(self):
         resolved = planner.resolve_auto_choices(week_spec(), CONFIG, [])
@@ -169,12 +228,20 @@ class TestWorkoutBreakfasts(unittest.TestCase):
     def config_with(self, *sessions) -> dict:
         return dict(CONFIG, training_schedule=list(sessions))
 
-    def test_morning_gym_and_cardio_qualify(self):
+    def test_morning_gym_qualifies(self):
         config = self.config_with(
             {"day": "Monday", "time": "06:30", "type": "gym_hypertrophy"},
+        )
+        self.assertEqual(planner.morning_training_days(config), ["Monday"])
+
+    def test_morning_cardio_does_not_qualify(self):
+        # Only hypertrophy training gets the shake pin — cardio's fuelling
+        # need isn't the same, and forcing a shake on every cardio morning
+        # would empty the breakfast rotation for no reason.
+        config = self.config_with(
             {"day": "Thursday", "time": "07:15", "type": "cardio_run"},
         )
-        self.assertEqual(planner.morning_training_days(config), ["Monday", "Thursday"])
+        self.assertEqual(planner.morning_training_days(config), [])
 
     def test_evening_sessions_and_walks_do_not(self):
         config = self.config_with(
@@ -261,6 +328,7 @@ class TestPromptRules(unittest.TestCase):
         ):
             rules = planner.build_generation_rules(
                 CONFIG | {"dietary_rules": {"allowed_nova_groups": [1, 2, 3], "banned_ingredients": []}},
+                days=["Monday"],
                 style_rule=style_rule,
                 variety_rule=variety_rule,
                 budget_rule=budget_rule,
@@ -371,6 +439,17 @@ class TestRealConfig(unittest.TestCase):
             with self.subTest(cuisine=cuisine):
                 self.assertIn(cuisine, known)
                 self.assertTrue(set(partners) <= known, set(partners) - known)
+
+    def test_baseline_cuisines_are_known_and_clear_the_floor(self):
+        config = self.config()
+        known = set(config["cuisines"])
+        baseline = config["baseline_cuisines"]
+        self.assertTrue(set(baseline) <= known, set(baseline) - known)
+        resolved = planner.resolve_auto_choices(week_spec(), config, [])
+        cuisines = dinner_cuisines(resolved)
+        share = planner.planning_rule(config, "min_baseline_cuisine_share")
+        baseline_days = sum(1 for cuisine in cuisines if cuisine in baseline)
+        self.assertGreaterEqual(baseline_days / len(cuisines), share)
 
     def test_the_pinned_workout_style_exists(self):
         self.assertIn(

@@ -84,7 +84,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from nicegui import ui
 
-from export_menu import build_week_menu_pdf
+from export_menu import build_week_menu_html, build_week_menu_pdf
 from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
 from shopping import aggregate_cook_events
@@ -235,6 +235,29 @@ async def planner_page() -> None:
             ).classes("text-slate-300")
             with print_button:
                 ui.tooltip("Download this week as a PDF — summary, every recipe, and the shopping list.")
+
+            # Same source as the PDF button (`state.week_plan`), a different
+            # shape: one scrolling page sized for a phone instead of pages
+            # meant for a printer, with tap-to-strike steps for cooking from
+            # screen in hand rather than a sheet on the counter.
+            def download_html_menu() -> None:
+                if state.week_plan is None:
+                    ui.notify("Generate a week first — there's nothing to export yet.", type="warning")
+                    return
+                ui.download(
+                    build_week_menu_html(state.week_plan).encode("utf-8"),
+                    filename="weekly_menu.html",
+                    media_type="text/html",
+                )
+
+            mobile_button = ui.button(icon="smartphone", on_click=download_html_menu).props(
+                "dense flat no-caps"
+            ).classes("text-slate-300")
+            with mobile_button:
+                ui.tooltip(
+                    "Download this week as a mobile-friendly page — tap a recipe step or "
+                    "shopping item to check it off."
+                )
 
             # Prominent and un-dense on purpose — this is the button that
             # gets used every single week, not an occasional control, so it

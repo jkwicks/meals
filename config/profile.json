@@ -15,10 +15,10 @@
       "fat_g": 55,
       "meal_overrides": {
         "breakfast": {
-          "calories": 400,
-          "protein_g": 30,
+          "calories": 550,
+          "protein_g": 60,
           "net_carbs_g": 35,
-          "fat_g": 15
+          "fat_g": 19
         }
       }
     },
@@ -85,10 +85,10 @@
       "fat_g": 44,
       "meal_overrides": {
         "breakfast": {
-          "calories": 400,
-          "protein_g": 30,
+          "calories": 550,
+          "protein_g": 60,
           "net_carbs_g": 35,
-          "fat_g": 15
+          "fat_g": 19
         }
       }
     },
@@ -134,7 +134,10 @@
       "soy beans",
       "venison",
       "grapes",
-      "cod"
+      "cod",
+      "mustard greens",
+      "halibut",
+      "scallops"
     ]
   }
 }
