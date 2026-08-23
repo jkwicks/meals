@@ -120,18 +120,6 @@
     }
   },
   {
-    "food_id": "collard_greens",
-    "name": "Collard greens",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Steam",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Slice leaves into 1/2-inch strips and steam for 5 minutes."
-      ]
-    }
-  },
-  {
     "food_id": "cucumbers",
     "name": "Cucumbers",
     "category": "Vegetables",
@@ -140,18 +128,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Eat raw with skin intact to capture silica and fiber."
-      ]
-    }
-  },
-  {
-    "food_id": "eggplant",
-    "name": "Eggplant",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Steam / Saute",
-      "duration_minutes": 7,
-      "prep_tips": [
-        "Cube 1/2-inch thick and steam for 7 minutes to preserve nasunin in peel."
       ]
     }
   },
@@ -252,18 +228,6 @@
     }
   },
   {
-    "food_id": "mustard_greens",
-    "name": "Mustard greens",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Steam",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Chop finely and steam for 5 minutes."
-      ]
-    }
-  },
-  {
     "food_id": "olives",
     "name": "Olives",
     "category": "Vegetables",
@@ -308,18 +272,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Serve fresh and raw for maximum folate and Vitamin K."
-      ]
-    }
-  },
-  {
-    "food_id": "sea_vegetables",
-    "name": "Sea vegetables",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Soak / Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Rehydrate in warm water for 5–10 minutes; avoid boiling."
       ]
     }
   },
@@ -396,30 +348,6 @@
     }
   },
   {
-    "food_id": "turnip_greens",
-    "name": "Turnip greens",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Steam",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Chop leaves into 1/2-inch strips and steam for 5 minutes."
-      ]
-    }
-  },
-  {
-    "food_id": "yams",
-    "name": "Yams",
-    "category": "Vegetables",
-    "optimal_cooking": {
-      "recommended_method": "Steam",
-      "duration_minutes": 10,
-      "prep_tips": [
-        "Cube into 1/2-inch pieces and steam for 10 minutes."
-      ]
-    }
-  },
-  {
     "food_id": "apples",
     "name": "Apples",
     "category": "Fruits",
@@ -428,18 +356,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Eat raw with skin intact to preserve pectin and polyphenols."
-      ]
-    }
-  },
-  {
-    "food_id": "apricots",
-    "name": "Apricots",
-    "category": "Fruits",
-    "optimal_cooking": {
-      "recommended_method": "Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Eat raw or gently poached to release carotenoids."
       ]
     }
   },
@@ -468,18 +384,6 @@
     }
   },
   {
-    "food_id": "cantaloupe",
-    "name": "Cantaloupe",
-    "category": "Fruits",
-    "optimal_cooking": {
-      "recommended_method": "Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Serve raw and chilled to protect heat-sensitive Vitamin C."
-      ]
-    }
-  },
-  {
     "food_id": "cranberries",
     "name": "Cranberries",
     "category": "Fruits",
@@ -500,18 +404,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Eat fresh or dried raw for high dietary fiber and calcium."
-      ]
-    }
-  },
-  {
-    "food_id": "grapefruit",
-    "name": "Grapefruit",
-    "category": "Fruits",
-    "optimal_cooking": {
-      "recommended_method": "Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Section and eat raw including inner pink membranes for lycopene."
       ]
     }
   },
@@ -564,18 +456,6 @@
     }
   },
   {
-    "food_id": "papaya",
-    "name": "Papaya",
-    "category": "Fruits",
-    "optimal_cooking": {
-      "recommended_method": "Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Eat raw with a squeeze of lime juice to boost papain enzyme availability."
-      ]
-    }
-  },
-  {
     "food_id": "pears",
     "name": "Pears",
     "category": "Fruits",
@@ -596,18 +476,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Eat raw and fresh to preserve heat-sensitive bromelain enzymes."
-      ]
-    }
-  },
-  {
-    "food_id": "plums",
-    "name": "Plums",
-    "category": "Fruits",
-    "optimal_cooking": {
-      "recommended_method": "Raw",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Eat raw with skin for neochlorogenic and chlorogenic acids."
       ]
     }
   },
@@ -780,18 +648,6 @@
     }
   },
   {
-    "food_id": "barley",
-    "name": "Barley",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 45,
-      "prep_tips": [
-        "Simmer hulled barley in 3 parts water for 45 minutes."
-      ]
-    }
-  },
-  {
     "food_id": "brown_rice",
     "name": "Brown rice",
     "category": "Grains",
@@ -804,18 +660,6 @@
     }
   },
   {
-    "food_id": "buckwheat",
-    "name": "Buckwheat",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 15,
-      "prep_tips": [
-        "Simmer groats in 2 parts water for 15 minutes."
-      ]
-    }
-  },
-  {
     "food_id": "corn",
     "name": "Corn",
     "category": "Grains",
@@ -824,18 +668,6 @@
       "duration_minutes": 5,
       "prep_tips": [
         "Steam kernels or cobs for 5 minutes to boost ferulic acid antioxidant activity."
-      ]
-    }
-  },
-  {
-    "food_id": "millet",
-    "name": "Millet",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 25,
-      "prep_tips": [
-        "Simmer 1 part millet to 2.5 parts liquid for 25 minutes."
       ]
     }
   },
@@ -860,42 +692,6 @@
       "duration_minutes": 15,
       "prep_tips": [
         "Rinse thoroughly to remove saponins, simmer in 2 parts water for 15 minutes."
-      ]
-    }
-  },
-  {
-    "food_id": "rye",
-    "name": "Rye",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 60,
-      "prep_tips": [
-        "Soak whole berries overnight, simmer for 60 minutes."
-      ]
-    }
-  },
-  {
-    "food_id": "spelt",
-    "name": "Spelt",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 50,
-      "prep_tips": [
-        "Soak whole spelt berries 8 hours, simmer for 50 minutes."
-      ]
-    }
-  },
-  {
-    "food_id": "whole_wheat",
-    "name": "Whole wheat",
-    "category": "Grains",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 50,
-      "prep_tips": [
-        "Simmer cracked wheat or wheat berries for 50 minutes."
       ]
     }
   },
@@ -960,18 +756,6 @@
     }
   },
   {
-    "food_id": "lima_beans",
-    "name": "Lima beans",
-    "category": "Beans & Legumes",
-    "optimal_cooking": {
-      "recommended_method": "Simmer",
-      "duration_minutes": 45,
-      "prep_tips": [
-        "Soak overnight and simmer 45 minutes until tender."
-      ]
-    }
-  },
-  {
     "food_id": "miso",
     "name": "Miso",
     "category": "Beans & Legumes",
@@ -1008,30 +792,6 @@
     }
   },
   {
-    "food_id": "soybeans",
-    "name": "Soybeans",
-    "category": "Beans & Legumes",
-    "optimal_cooking": {
-      "recommended_method": "Steam",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Steam edamame pods for 5 minutes; eat green seeds raw or lightly seasoned."
-      ]
-    }
-  },
-  {
-    "food_id": "tempeh",
-    "name": "Tempeh",
-    "category": "Beans & Legumes",
-    "optimal_cooking": {
-      "recommended_method": "Steam / Saute",
-      "duration_minutes": 10,
-      "prep_tips": [
-        "Steam block for 10 minutes first to reduce bitterness before browning."
-      ]
-    }
-  },
-  {
     "food_id": "tofu",
     "name": "Tofu",
     "category": "Beans & Legumes",
@@ -1040,30 +800,6 @@
       "duration_minutes": 5,
       "prep_tips": [
         "Press out excess liquid, cube, and light saute for 5 minutes."
-      ]
-    }
-  },
-  {
-    "food_id": "cod",
-    "name": "Cod",
-    "category": "Seafood",
-    "optimal_cooking": {
-      "recommended_method": "Poach / Bake",
-      "duration_minutes": 10,
-      "prep_tips": [
-        "Bake at 350°F (175°C) for 10 minutes per inch of thickness."
-      ]
-    }
-  },
-  {
-    "food_id": "halibut",
-    "name": "Halibut",
-    "category": "Seafood",
-    "optimal_cooking": {
-      "recommended_method": "Bake",
-      "duration_minutes": 10,
-      "prep_tips": [
-        "Bake for 10 mins per inch to preserve lean selenium and B vitamins."
       ]
     }
   },
@@ -1140,18 +876,6 @@
     }
   },
   {
-    "food_id": "calfs_liver",
-    "name": "Calf's liver",
-    "category": "Poultry & Lean Meats",
-    "optimal_cooking": {
-      "recommended_method": "Quick Saute",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Sauté gently for 5 minutes over medium heat to maintain tenderness."
-      ]
-    }
-  },
-  {
     "food_id": "chicken",
     "name": "Chicken",
     "category": "Poultry & Lean Meats",
@@ -1188,18 +912,6 @@
     }
   },
   {
-    "food_id": "venison",
-    "name": "Venison",
-    "category": "Poultry & Lean Meats",
-    "optimal_cooking": {
-      "recommended_method": "Roast / Sear",
-      "duration_minutes": 15,
-      "prep_tips": [
-        "Sear or roast gently; lean game meat dries out quickly if overcooked."
-      ]
-    }
-  },
-  {
     "food_id": "low_fat_cheese",
     "name": "Low-fat cheese",
     "category": "Eggs & Dairy",
@@ -1232,18 +944,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Drink cool or gently warm without boiling."
-      ]
-    }
-  },
-  {
-    "food_id": "goats_milk",
-    "name": "Goat's milk",
-    "category": "Eggs & Dairy",
-    "optimal_cooking": {
-      "recommended_method": "Raw / Warm",
-      "duration_minutes": null,
-      "prep_tips": [
-        "Consume gently warmed for easiest A2-protein digestion."
       ]
     }
   },
@@ -1412,18 +1112,6 @@
       "duration_minutes": null,
       "prep_tips": [
         "Chop fresh flat-leaf parsley raw for Vitamin C and apigenin."
-      ]
-    }
-  },
-  {
-    "food_id": "peppermint",
-    "name": "Peppermint",
-    "category": "Spices & Herbs",
-    "optimal_cooking": {
-      "recommended_method": "Steep",
-      "duration_minutes": 5,
-      "prep_tips": [
-        "Steep fresh or dried leaves in hot water for 5 minutes."
       ]
     }
   },

@@ -8,6 +8,8 @@ its inputs as arguments and returns either a string or renders directly via
 `telemetry_bar` already had in the monolith.
 """
 
+import re
+
 from nicegui import ui
 
 from planner import TRAINING_INTENSITY_SPLIT
@@ -99,7 +101,39 @@ MACRO_TINTS = {
     "protein_g": "text-sky-300",
     "net_carbs_g": "text-amber-300",
     "fat_g": "text-violet-300",
+    # Only read by the detail dialog and the day-totals row — fibre is not on
+    # the card strip this dict was originally written for.
+    "fiber_g": "text-emerald-300",
 }
+
+# The same four macros again, labelled for the expanded recipe card rather
+# than for a 12-column grid cell. `MACRO_LABELS`' single letters exist because
+# a card is one seventh of the screen wide; the detail dialog has room for the
+# conventional three-letter forms, which is what a recipe card reads like
+# everywhere outside this app. Calories carry no unit suffix for the same
+# reason they don't there — "590kcal KCAL".
+MACRO_DETAIL_LABELS = [
+    ("calories", "KCAL", ""),
+    ("protein_g", "PRO", "g"),
+    ("net_carbs_g", "CHO", "g"),
+    ("fat_g", "FAT", "g"),
+    # Fibre is reported, never budgeted (see `planner.NUTRIENT_KEYS`), so it
+    # appears here — where there is room for it — and deliberately not on
+    # `MACRO_LABELS`' card strip, which is one seventh of the screen wide and
+    # carries only figures being compared against a target. It is tinted
+    # emerald rather than left grey so the strip still reads as a set, but it
+    # sits last because it is the one number with nothing to divide by.
+    ("fiber_g", "FIB", "g"),
+]
+
+# The mono, letter-spaced, uppercase section heading the expanded card is
+# built out of ("INGREDIENTS (6 ITEMS)", "PREPARATION INSTRUCTIONS"). One
+# constant because the look only reads as a system while every heading in the
+# dialog shares it exactly — a second hand-typed copy drifting by a pixel of
+# tracking is what makes this kind of layout look approximate.
+MONO_SECTION_LABEL = (
+    "text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500"
+)
 
 # Fallbacks for config.json's "ui_settings" object, used when a config.json
 # predates that section.
@@ -200,6 +234,25 @@ PIPELINE_STAGES = [
         True,
     ),
 ]
+
+
+def split_quantity(text: str) -> tuple:
+    """Split "200g" into ("200", "g") so the unit can be set smaller than the
+    number it qualifies.
+
+    The digits are what you read off an ingredient line; the unit is a
+    constant "g" down the whole column and only needs to be legible, not
+    prominent. Takes `shopping.format_quantity`'s output rather than raw
+    grams, so it inherits the count-unit forms ("2 eggs") too and simply
+    treats "eggs" as the unit.
+
+    A string with no numeric head (nothing produces one today) comes back as
+    ("", text), which renders as an unsplit label rather than as nothing.
+    """
+    match = re.match(r"^([\d.,]+)\s*(.*)$", text.strip())
+    if not match:
+        return "", text
+    return match.group(1), match.group(2)
 
 
 def pluralize(word: str) -> str:

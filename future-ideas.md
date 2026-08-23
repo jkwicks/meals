@@ -95,3 +95,44 @@ are not installed and would be for three line charts.
 architecture review as having no data source whatsoever — would need a new
 logging entry point of its own, a separate product decision from either 5b
 or 5c above.
+
+## Pantry photo → an inventory ledger with real quantities
+
+**The gap:** `config.inventory_to_clear` is a flat list of strings ("600g
+chicken thighs", "half a bag of spinach") and `inventory_instruction()` sends
+it as one priority line per day. There are no quantities the code can reason
+about, which is why CLAUDE.md is explicit that the shopping list can't
+subtract inventory from what it tells you to buy. It also means one tin of
+tuna can be written into five recipes in the same week — nothing tracks that
+it was spent the first time.
+
+**Two decisions belong to the maintainer, not to whoever builds this:**
+
+1. **Whether the photo path earns a third model role.** `models.json` names
+   two today (`meal_generation_model`, `recipe_parser_model`), both text.
+   Reading a pantry shelf needs a vision model, and it needs somewhere to put
+   the image: `StoragePaths` handles JSON only, and nothing in `data/` is
+   binary. The cheaper first version skips the camera entirely — a quantity
+   column on the existing list, typed by hand — and that version delivers
+   most of the value below, because the ledger is the hard part, not the OCR.
+2. **Whether a decremented ledger writes back to disk.** A count that only
+   lives for one run is honest and simple; a count that persists starts
+   disagreeing with the actual shelf the moment you cook something without
+   telling the app, which is the same "state able to disagree with reality"
+   problem the shopping list's unpersisted checkboxes were designed around.
+
+**The mechanism, once those are settled, already has a precedent in the
+codebase.** A week-wide count that each generation stage spends and passes
+on is exactly what `seafood_used` does for
+`sourcing.max_seafood_meals_per_week`, and what `avoid_proteins`/
+`avoid_recipe_names` do for variety: seed before the stage loop, subtract
+each stage's actual output, hand the remainder to the next axis. An
+inventory ledger is that pattern with a dict instead of an int —
+`{"tinned tuna": 1}` seeded from config, decremented by what each meal type
+actually used, and once an item hits zero the later axes are told it is gone.
+Doing it any other way (handing every meal type the full pantry) permits four
+meal types to each claim the same tin, which is the current behaviour.
+
+**What it would then unlock, and only then:** subtracting inventory from the
+shopping list, which is the thing people actually want from this feature and
+which is impossible today for want of a number.

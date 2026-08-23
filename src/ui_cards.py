@@ -11,7 +11,7 @@ from typing import Callable, Optional
 
 from nicegui import ui
 
-from planner import Recipe
+from planner import MACRO_KEYS, Recipe, derive_fat_g
 from shopping import format_quantity
 from ui_catalog import favorited_catalog, is_favorited, toggle_favorite
 from ui_context import UIContext
@@ -20,15 +20,18 @@ from ui_state import SlotView, slot_target_budget
 from ui_theme import (
     LINK_ACTION_LABEL,
     LINK_SOURCE_MEAL,
+    MACRO_DETAIL_LABELS,
     MACRO_LABELS,
     MACRO_TINTS,
+    MONO_SECTION_LABEL,
     PREP_BADGE_STYLES,
     PREP_COLUMN_ACCENT,
     STATUS_SKIP,
     STATUS_STYLES,
     link_line,
+    split_quantity,
 )
-from week import MODE_COOK, MODE_LEFTOVER, portions_for, slot_id, slot_label
+from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, portions_for, slot_id, slot_label
 
 
 @dataclass
@@ -38,6 +41,7 @@ class CardHandles:
     swap_matches: Callable
     swap_dialog_body: Callable
     open_detail: Callable
+    skip_estimate_body: Callable
 
 
 def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
@@ -47,6 +51,75 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
     # ---- recipe detail (read-only) ---------------------------------------
     # One dialog reused for every card: its body is refreshable and reads
     # state.focus, so opening a card is a refresh, not 28 pre-built dialogs.
+    #
+    # The layout is a cook's document rather than a denser version of the
+    # card that opened it: a mono eyebrow saying what kind of meal this is, a
+    # ruled macro strip, ingredients as a two-column table with the
+    # quantities right-aligned in one mono column, and the method as numbered
+    # rows you can tick off. Everything above `ui.separator`-free hairlines —
+    # a rule at 1px of `slate-800` — because the grid behind this dialog is
+    # already carrying every colour the app owns, and a recipe you are cooking
+    # from wants type and alignment doing the work instead.
+
+    def step_row(number: int, step: str) -> None:
+        """One method step, struck through on click.
+
+        Toggled by mutating this row's own classes, not by refreshing the
+        dialog: ticking step 2 of 9 must not repaint the recipe you are
+        reading (and lose its scroll position) to change one line. Same
+        in-place reasoning as `ui_drawer.day_target_row`.
+
+        Deliberately unpersisted, and reset every time the dialog opens
+        because `recipe_detail` rebuilds these rows — it is scratch state for
+        one cook, exactly like the shopping list's ticks, and storing it would
+        be more state able to disagree with `week_plan.json`.
+        """
+        done = False
+
+        # `flex-nowrap` is load-bearing, not tidiness: Quasar's own `.flex`
+        # rule sets `flex-wrap: wrap`, which Tailwind's `flex-row` doesn't
+        # undo, so a step long enough to fill the row wrapped *below* its
+        # number and ran back under it. `min-w-0` is the other half — a flex
+        # item's default `min-width: auto` won't shrink past its longest
+        # word, which reintroduces the overflow one step further along.
+        row = ui.element("div").classes(
+            "flex flex-row flex-nowrap items-start gap-3 px-3 py-2 rounded-md "
+            "cursor-pointer border border-slate-800 bg-slate-800/30 "
+            "hover:border-slate-700 transition-colors duration-100"
+        )
+        with row:
+            marker = ui.label(str(number)).classes(
+                "shrink-0 w-5 h-5 rounded-full grid place-items-center "
+                "text-[10px] font-mono border border-slate-700 text-slate-400"
+            )
+            label = ui.label(step).classes(
+                "min-w-0 text-[13px] leading-snug text-slate-200"
+            )
+
+        def toggle() -> None:
+            # add/remove rather than `toggle=`, because the pairs here are
+            # conflicting Tailwind utilities (`text-slate-200` vs
+            # `text-slate-600`): both present at once resolves by stylesheet
+            # order, which is not something this file gets to decide.
+            nonlocal done
+            done = not done
+            if done:
+                label.classes(add="line-through text-slate-600", remove="text-slate-200")
+                marker.classes(
+                    add="bg-emerald-400/15 text-emerald-300 border-emerald-400/40",
+                    remove="text-slate-400 border-slate-700",
+                )
+            else:
+                label.classes(add="text-slate-200", remove="line-through text-slate-600")
+                marker.classes(
+                    add="text-slate-400 border-slate-700",
+                    remove="bg-emerald-400/15 text-emerald-300 border-emerald-400/40",
+                )
+
+        row.on("click", toggle)
+
+    def hairline() -> None:
+        ui.element("div").classes("h-px bg-slate-700/60 my-4")
 
     @ui.refreshable
     def recipe_detail() -> None:
@@ -55,55 +128,139 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             ui.label("Nothing to show.").classes("text-slate-400")
             return
 
-        with ui.element("div").classes("flex flex-row items-center gap-1.5"):
-            ui.icon("restaurant").classes("text-base text-emerald-300")
-            ui.label(view.title).classes("text-lg font-semibold")
-        meta = " · ".join(
+        look = STATUS_STYLES[view.status]
+
+        # Eyebrow: what kind of meal this is, and — where the reference design
+        # put a portion multiplier this app can't have (portions are derived,
+        # see `week.portions_for`) — the same cook/leftover chip the card
+        # carries, so the dialog says what it opened from.
+        with ui.element("div").classes("flex flex-row items-center justify-between gap-3"):
+            eyebrow = " — ".join(
+                part.upper() for part in [view.meal_type, view.style] if part
+            )
+            ui.label(eyebrow).classes(MONO_SECTION_LABEL)
+            with ui.element("div").classes(
+                f"flex items-center gap-1 px-2 py-[2px] rounded-full shrink-0 {look['badge']}"
+            ):
+                ui.icon(look["icon"]).classes("text-[11px]")
+                ui.label(look["label"]).classes("text-[9px] font-semibold tracking-wide")
+
+        ui.label(view.title).classes(
+            "text-2xl font-semibold leading-tight text-slate-100 mt-2"
+        )
+
+        portion_note = f"{view.portions} portion{'' if view.portions == 1 else 's'}"
+        subtitle = " · ".join(
             part
             for part in [
-                view.meal_type.title(),
-                view.style,
                 view.cuisine,
-                f"{view.prep_minutes} min prep" if view.prep_minutes is not None else "",
-                f"{view.portions} portions",
+                portion_note if view.portions else "",
+                f"leftover from {view.source_label}" if view.source_label else "",
             ]
             if part
         )
-        ui.label(meta).classes("text-xs text-slate-400")
+        if subtitle:
+            ui.label(subtitle).classes("text-sm text-slate-400 mt-1")
 
         if view.macros:
-            with ui.element("div").classes("flex flex-row gap-4 mt-2"):
-                for key, short, unit in MACRO_LABELS:
-                    with ui.element("div").classes("flex flex-col"):
-                        ui.label(f"{view.macros[key]:.0f}{unit}").classes("text-sm font-mono")
-                        ui.label(short).classes("text-[10px] text-slate-500 uppercase")
-            ui.label("per serving").classes("text-[10px] text-slate-500")
+            # One ruled strip, dot-separated, rather than four stacked
+            # figure/label pairs: these numbers are read as a set ("590 / 46 /
+            # 34 / 29"), and a single line is what lets you compare them to
+            # the budget without the eye travelling.
+            cells = [
+                (f"{view.macros[key]:.0f}{unit}", label, MACRO_TINTS.get(key, "text-slate-500"))
+                for key, label, unit in MACRO_DETAIL_LABELS
+                if key in view.macros
+            ]
+            if view.prep_minutes is not None:
+                # The reference reads "30m total"; this is prep time, which is
+                # the only figure the recipe actually carries, so it says so.
+                cells.append((f"{view.prep_minutes}m", "PREP", "text-slate-500"))
 
-        ui.separator().classes("my-2")
-        ui.label(f"Ingredients — all {view.portions} portions").classes(
-            "text-xs uppercase tracking-wide text-slate-400"
-        )
-        with ui.element("div").classes("flex flex-col gap-0.5 mt-1"):
+            with ui.element("div").classes(
+                "flex flex-row items-center justify-between gap-2 mt-3 px-4 py-3 "
+                "rounded-lg border border-slate-800 bg-slate-800/40"
+            ):
+                for index, (value, label, tint) in enumerate(cells):
+                    if index:
+                        ui.label("·").classes("text-slate-600 text-sm")
+                    with ui.element("div").classes("flex flex-row items-baseline gap-1.5"):
+                        # Colour rides on the label, never the number — the
+                        # same rule `MACRO_TINTS` states for the card strip.
+                        ui.label(value).classes("text-base font-semibold text-slate-100")
+                        ui.label(label).classes(
+                            f"text-[10px] font-mono tracking-wider {tint}"
+                        )
+            ui.label("PER SERVING").classes(
+                "block text-right text-[9px] font-mono tracking-[0.18em] "
+                "text-slate-600 mt-1"
+            )
+
+        hairline()
+
+        # Ingredients are for the whole batch while the macros above are for
+        # one serving, and on a bulk-cooked dinner those are different numbers
+        # by a factor of four. Each half says which it is, next to itself.
+        count = len(view.recipe.ingredients)
+        with ui.element("div").classes("flex flex-row items-baseline justify-between gap-3"):
+            ui.label(f"INGREDIENTS ({count} ITEM{'' if count == 1 else 'S'})").classes(
+                MONO_SECTION_LABEL
+            )
+            if view.portions:
+                ui.label(f"ALL {portion_note.upper()}").classes(
+                    "text-[10px] font-mono tracking-wider text-slate-500 shrink-0"
+                )
+        with ui.element("div").classes("grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2"):
             for ingredient in view.recipe.ingredients:
-                ui.label(
-                    f"{ingredient.name} — "
-                    f"{format_quantity(ingredient.name, ingredient.quantity_g)} "
-                    f"(NOVA {ingredient.nova_group})"
-                ).classes("text-xs text-slate-300")
+                with ui.element("div").classes(
+                    "flex flex-row items-baseline justify-between gap-2 min-w-0 "
+                    "px-3 py-2 rounded-md border border-slate-800 bg-slate-800/30"
+                ):
+                    ui.label(ingredient.name).classes(
+                        "text-[13px] text-slate-200 truncate"
+                    )
+                    amount, unit = split_quantity(
+                        format_quantity(ingredient.name, ingredient.quantity_g)
+                    )
+                    with ui.element("div").classes(
+                        "flex flex-row items-baseline gap-1 shrink-0"
+                    ):
+                        ui.label(amount).classes("text-[13px] font-mono text-slate-300")
+                        if unit:
+                            ui.label(unit).classes("text-[11px] font-mono text-slate-500")
+                    # NOVA group moves to a tooltip rather than off the card:
+                    # every group that reaches here is an allowed one (4 is
+                    # rejected in validation), so it is worth being able to
+                    # check and not worth a column of its own.
+                    ui.tooltip(f"NOVA group {ingredient.nova_group}")
 
-        ui.label("Method").classes("text-xs uppercase tracking-wide text-slate-400 mt-3")
-        with ui.element("div").classes("flex flex-col gap-1 mt-1"):
+        hairline()
+
+        with ui.element("div").classes("flex flex-row items-baseline justify-between gap-3"):
+            ui.label("PREPARATION INSTRUCTIONS").classes(MONO_SECTION_LABEL)
+            ui.label("Click a step when complete").classes(
+                "text-[10px] text-slate-500 shrink-0"
+            )
+        with ui.element("div").classes("flex flex-col gap-2 mt-2"):
             for number, step in enumerate(view.recipe.instructions, start=1):
-                ui.label(f"{number}. {step}").classes("text-xs text-slate-300")
+                step_row(number, step)
 
         if view.recipe.prep_notes:
-            ui.label(view.recipe.prep_notes).classes(
-                "text-xs text-amber-300 mt-3 p-2 rounded bg-amber-400/10"
-            )
+            with ui.element("div").classes(
+                "flex flex-row flex-nowrap items-start gap-2 mt-4 px-3 py-2 "
+                "rounded-md border border-amber-400/25 bg-amber-400/[0.07]"
+            ):
+                ui.icon("inventory_2").classes(
+                    "shrink-0 text-[13px] text-amber-300 mt-[3px]"
+                )
+                ui.label(view.recipe.prep_notes).classes(
+                    "min-w-0 text-[12px] leading-snug text-amber-200/90"
+                )
 
     with ui.dialog() as detail_dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-[36rem] max-w-full max-h-[80vh] overflow-y-auto"
+            "bg-slate-900 rounded-xl border border-slate-800 p-6 "
+            "w-[46rem] max-w-full max-h-[85vh] overflow-y-auto"
         ):
             recipe_detail()
 
@@ -113,6 +270,107 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         state.focus = view
         refreshables.refresh("recipe_detail")
         detail_dialog.open()
+
+    # ---- "eaten out" estimate modal ----------------------------------------
+    # A skipped meal that was actually eaten somewhere — dinner with friends,
+    # a working lunch — still costs the day. Recording an estimate is what
+    # stops the remaining meals absorbing its share and coming back oversized
+    # (`week.skip_estimate_totals` has the full reasoning).
+    #
+    # Calories/protein/carbs are typed and fat is derived, the same division
+    # `ui_drawer.day_target_row` uses for daily targets: `derive_fat_g` is the
+    # rule every other budget in the app is built on, so an input for fat
+    # could only ever disagree with it.
+    skip_target: dict = {"slot_id": "", "calories": 0.0, "protein_g": 0.0, "net_carbs_g": 0.0}
+
+    def open_skip_estimate(view: SlotView) -> None:
+        # Prefilled from the existing estimate if there is one, otherwise from
+        # what this slot would have been briefed at had it been cooked —
+        # "roughly what this meal is normally worth" is a far better starting
+        # point to adjust than an empty box.
+        seed = view.skip_estimate or state.default_skip_estimate(view.id)
+        skip_target["slot_id"] = view.id
+        for key in ("calories", "protein_g", "net_carbs_g"):
+            skip_target[key] = round(float(seed.get(key, 0.0)), 1)
+        skip_estimate_body.refresh()
+        skip_dialog.open()
+
+    def save_skip_estimate() -> None:
+        estimate = {
+            "calories": float(skip_target["calories"] or 0.0),
+            "protein_g": float(skip_target["protein_g"] or 0.0),
+            "net_carbs_g": float(skip_target["net_carbs_g"] or 0.0),
+        }
+        estimate["fat_g"] = derive_fat_g(
+            estimate["calories"], estimate["protein_g"], estimate["net_carbs_g"]
+        )
+        error = state.set_skip_estimate(skip_target["slot_id"], estimate)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        skip_dialog.close()
+        refreshables.refresh("plan")
+
+    def clear_skip_estimate() -> None:
+        """Back to a plain skip — a meal genuinely not eaten, contributing 0.
+
+        Distinct from an all-zero estimate, which claims the meal happened and
+        cost nothing; `week.set_skip_estimate` keeps the two apart on purpose.
+        """
+        error = state.set_skip_estimate(skip_target["slot_id"], None)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        skip_dialog.close()
+        refreshables.refresh("plan")
+
+    @ui.refreshable
+    def skip_estimate_body() -> None:
+        ui.label("Eaten out").classes("text-base font-semibold text-slate-100")
+        ui.label(
+            slot_label(skip_target["slot_id"]) if skip_target["slot_id"] else ""
+        ).classes("text-[11px] font-mono uppercase tracking-widest text-slate-500")
+        ui.label(
+            "Roughly what this meal cost. It comes off the day so the other "
+            "meals aren't briefed for budget you've already spent."
+        ).classes("text-xs text-slate-400 mt-2 mb-1")
+
+        with ui.element("div").classes("flex flex-row gap-2"):
+            for key, label in (
+                ("calories", "kcal"),
+                ("protein_g", "Protein g"),
+                ("net_carbs_g", "Net carbs g"),
+            ):
+                ui.number(label=label, min=0, step=5, format="%.0f").bind_value(
+                    skip_target, key
+                ).props("dense outlined").classes("w-28")
+
+        # Read-only, recomputed on every repaint of this body — the same
+        # "displayed, never typed" treatment fat gets in the drawer.
+        fat = derive_fat_g(
+            float(skip_target["calories"] or 0.0),
+            float(skip_target["protein_g"] or 0.0),
+            float(skip_target["net_carbs_g"] or 0.0),
+        )
+        ui.label(f"fat {fat:.0f}g — derived from the three above").classes(
+            "text-[10px] font-mono text-slate-500 mt-1"
+        )
+
+        with ui.element("div").classes("flex flex-row justify-between items-center w-full mt-4"):
+            ui.button("Not eaten", on_click=clear_skip_estimate).props(
+                "flat dense no-caps size=sm"
+            ).classes("text-slate-400")
+            with ui.element("div").classes("flex flex-row gap-2"):
+                ui.button("Cancel", on_click=lambda: skip_dialog.close()).props(
+                    "flat dense no-caps size=sm"
+                ).classes("text-slate-400")
+                ui.button("Save", on_click=save_skip_estimate).props(
+                    "unelevated dense no-caps size=sm"
+                ).classes("bg-sky-400/20 text-sky-200")
+
+    with ui.dialog() as skip_dialog:
+        with ui.card().classes("bg-slate-900 border border-slate-800 min-w-[340px]"):
+            skip_estimate_body()
 
     # ---- swap-in modal -----------------------------------------------------
 
@@ -435,6 +693,23 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                                 f"text-[9px] font-mono {MACRO_TINTS[key]}"
                             )
 
+                if view.mode == MODE_SKIP and view.skip_estimate:
+                    # Same pill shape as a recipe's macro strip so the day
+                    # reads consistently, but slate rather than tinted: these
+                    # are estimated, not measured off a recipe, and the strip
+                    # should not claim the precision the cooked cards have.
+                    with ui.element("div").classes(
+                        "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
+                        "rounded-full bg-slate-950/40 w-fit max-w-full"
+                    ):
+                        ui.label(
+                            f"~{view.skip_estimate.get('calories', 0):.0f} kcal"
+                        ).classes("text-[9px] font-mono text-slate-400")
+                        ui.label("·").classes("text-[9px] text-slate-600")
+                        ui.label(
+                            f"~{view.skip_estimate.get('protein_g', 0):.0f}g P"
+                        ).classes("text-[9px] font-mono text-slate-400")
+
                 if view.mode == MODE_COOK and view.portions:
                     ui.label(
                         f"{view.portions} portions · {view.prep_minutes} min"
@@ -445,6 +720,26 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 if view.mode == MODE_LEFTOVER and view.prep_badge and view.prep_minutes is not None:
                     ui.label(f"{view.prep_minutes} min reheat/assemble").classes(
                         "text-[9px] text-amber-300/70 truncate"
+                    )
+
+            if view.mode == MODE_SKIP and view.day:
+                # Offered on every skipped slot, not only estimated ones —
+                # recording that a meal was eaten out is the *first* thing you
+                # do to one, so there has to be a way in from the plain state.
+                skip_button = ui.button(
+                    "Edit estimate" if view.skip_estimate else "Eaten out?",
+                    icon="restaurant",
+                    on_click=lambda v=view: open_skip_estimate(v),
+                )
+                skip_button.props("unelevated dense no-caps size=sm").classes(
+                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    "transition-all duration-150 bg-slate-800/60 text-slate-400 "
+                    "hover:bg-slate-700/60 hover:text-slate-200"
+                )
+                with skip_button:
+                    ui.tooltip(
+                        "Record roughly what this meal cost, so the rest of "
+                        "the day is planned around it"
                     )
 
             if view.mode == MODE_COOK and view.meal_type == LINK_SOURCE_MEAL:
@@ -571,4 +866,5 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         swap_matches=swap_matches,
         swap_dialog_body=swap_dialog_body,
         open_detail=open_detail,
+        skip_estimate_body=skip_estimate_body,
     )

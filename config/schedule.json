@@ -2,21 +2,21 @@
   "training_schedule": [
     {
       "day": "Monday",
-      "time": "18:00",
+      "time": "05:30",
       "type": "gym_hypertrophy",
       "duration_minutes": 60,
       "estimated_burn_kcal": 350
     },
     {
       "day": "Tuesday",
-      "time": "18:00",
+      "time": "05:30",
       "type": "cardio_hiit",
       "duration_minutes": 30,
       "estimated_burn_kcal": 320
     },
     {
       "day": "Wednesday",
-      "time": "18:00",
+      "time": "06:00",
       "type": "cardio_easy",
       "duration_minutes": 25,
       "estimated_burn_kcal": 180
@@ -30,28 +30,28 @@
     },
     {
       "day": "Friday",
-      "time": "18:00",
+      "time": "06:00",
       "type": "cardio_easy",
       "duration_minutes": 25,
       "estimated_burn_kcal": 180
     },
     {
       "day": "Saturday",
-      "time": "08:00",
+      "time": "05:30",
       "type": "gym_hypertrophy",
       "duration_minutes": 60,
       "estimated_burn_kcal": 350
     },
     {
       "day": "Saturday",
-      "time": "09:15",
+      "time": "06:30",
       "type": "cardio_hiit",
       "duration_minutes": 30,
       "estimated_burn_kcal": 320
     },
     {
       "day": "Sunday",
-      "time": "08:00",
+      "time": "06:00",
       "type": "cardio_ride",
       "duration_minutes": 90,
       "estimated_burn_kcal": 650
@@ -71,7 +71,6 @@
       "lunch_mode": "leftover",
       "restrictions": [
         "portable",
-        "no_reheat",
         "no_long_prep"
       ],
       "max_prep_minutes": 0
@@ -87,12 +86,35 @@
       "lunch_mode": "skip",
       "dinner_mode": "leftover",
       "notes": "Dining out or packed nutrition"
+    },
+    "Holiday": {
+      "breakfast_mode": "skip",
+      "lunch_mode": "skip",
+      "dinner_mode": "skip",
+      "snack_mode": "skip",
+      "notes": "Holiday food - eaten out, not planned"
     }
   },
   "regional": {
     "country": "AU",
     "state": "VIC",
-    "postcode": "3350",
+    "postcode": "3205",
     "hemisphere": "southern"
+  },
+  "sourcing": {
+    "supermarkets": [
+      "Coles",
+      "Woolworths",
+      "Aldi"
+    ],
+    "specialty_grocers_available_days": [
+      "Saturday",
+      "Sunday"
+    ],
+    "fresh_seafood_available_days": [
+      "Saturday",
+      "Sunday"
+    ],
+    "max_seafood_meals_per_week": 1
   }
 }

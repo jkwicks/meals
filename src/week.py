@@ -34,6 +34,14 @@ AUTO = "auto"
 DEFAULT_MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack"]
 DEFAULT_SERVINGS_PER_MEAL = 2
 
+# The four budgeted macros. Defined here rather than in `planner.py` (which
+# imports it from this module) because `SlotSpec.skip_estimate` is validated
+# against these keys and `week.py` cannot import `planner` — the dependency
+# runs the other way. `planner.NUTRIENT_KEYS` extends this with the reported-
+# only `fiber_g`; a skip estimate carries the budgeted four alone, since
+# fibre you didn't cook is fibre nobody can estimate.
+MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
+
 # Departments where a long gap between shopping and cooking is a real problem.
 # Used only to annotate the shopping list, never to change quantities.
 PERISHABLE_DEPARTMENTS = {
@@ -202,6 +210,23 @@ class SlotSpec(BaseModel):
         ge=0,
         description="Spare portions to freeze, on top of the slots claiming this cook",
     )
+    skip_estimate: Optional[Dict[str, float]] = Field(
+        default=None,
+        description=(
+            "Estimated macros for a skipped meal eaten elsewhere (mode=skip) — "
+            "dinner with friends, a working lunch. Keys are planner.MACRO_KEYS."
+        ),
+    )
+    recipe_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Catalog entry id (data/recipes_master.json) to cook here instead "
+            "of generating something new (mode=cook). Set by "
+            "planner.select_favorite_assignments before a run; the slot is "
+            "still a cook, so portions derive and shopping picks it up "
+            "exactly as for a generated recipe."
+        ),
+    )
 
     @property
     def id(self) -> str:
@@ -231,7 +256,13 @@ def default_week_spec(
     week_start: Optional[str] = None,
     servings_per_meal: Optional[int] = None,
 ) -> WeekSpec:
-    """A fresh grid with every slot on config's per-meal-type default mode."""
+    """A fresh grid on config's per-meal-type default mode, reshaped by location.
+
+    `week_defaults` is the baseline and `location_rules` overrides it per day
+    (see `apply_location_modes`) — an Office lunch inherits last night's
+    dinner, a Holiday block skips outright. A config with no `base_schedule`
+    gets `week_defaults` untouched, which is every config that predates this.
+    """
     days = week_days(config, week_start)
     defaults = config["week_defaults"]
     servings = servings_per_meal or config["serving_rules"]["servings_per_meal"]
@@ -245,7 +276,102 @@ def default_week_spec(
         for day in days
         for meal_type in meal_types(config)
     ]
-    return WeekSpec(days=days, servings_per_meal=servings, slots=slots)
+    return apply_location_modes(
+        WeekSpec(days=days, servings_per_meal=servings, slots=slots), config
+    )
+
+
+def location_for(config: dict, day: str) -> Optional[str]:
+    """Where `day` is spent, per `schedule.json`'s `base_schedule` — or None.
+
+    None covers both a day the schedule doesn't name and a config with no
+    `base_schedule` at all, which is what keeps every location feature opt-in:
+    an empty mapping means the week is shaped by `week_defaults` exactly as it
+    was before any of this existed.
+    """
+    return (config.get("base_schedule") or {}).get(day)
+
+
+def location_rule(config: dict, day: str) -> Dict:
+    """`day`'s entry out of `location_rules`, or `{}`.
+
+    `{}` for an unnamed day, an unnamed location, or a location with no rule —
+    all three mean the same thing to every caller ("no location constraint
+    here"), so distinguishing them would only push the same `or {}` outward.
+    """
+    return (config.get("location_rules") or {}).get(location_for(config, day)) or {}
+
+
+def location_mode(config: dict, day: str, meal_type: str) -> Optional[str]:
+    """The mode `day`'s location forces on `meal_type`, if it forces one.
+
+    Reads `<meal_type>_mode` — `lunch_mode`, `dinner_mode`, and so on — so a
+    location constrains only the meals it has an opinion about. An Office day
+    says `lunch_mode: leftover` and nothing about dinner, because being at the
+    office all day says nothing about what you cook that evening; a Holiday
+    block sets all four to `skip`.
+
+    An unrecognised mode string resolves to None rather than raising: this is
+    hand-edited config, and a typo should leave that meal on its default
+    rather than take the app down at load.
+    """
+    mode = location_rule(config, day).get(f"{meal_type}_mode")
+    return mode if mode in MODES else None
+
+
+def apply_location_modes(spec: WeekSpec, config: dict) -> WeekSpec:
+    """Reshape the grid to where the week is actually being spent.
+
+    Applied by `default_week_spec` to a *fresh* grid only, never to a week
+    that already exists: once a week has been generated its slots carry the
+    user's own structural edits, and re-imposing the schedule over those would
+    silently undo them. This is a better default, not a standing rule.
+
+    The subtle case is `lunch_mode: "leftover"`, which is the Office rule and
+    the whole reason this exists. A leftover slot needs a `source`, and a mode
+    set without one fails `validate_week` outright — so a location-driven
+    leftover is resolved to the previous day's dinner here (the one cross-type
+    link `leftover_meal_type_error` permits), and **falls back to cooking**
+    when there is nothing to inherit from: day one of the week, or a previous
+    day whose dinner is itself skipped. A grid that can't be generated is a
+    worse answer than a grid that cooks one extra lunch.
+    """
+    updated: List[SlotSpec] = []
+    by_id = spec.by_id()
+    for slot in spec.slots:
+        mode = location_mode(config, slot.day, slot.meal_type)
+        if mode is None or mode == slot.mode:
+            updated.append(slot)
+            continue
+
+        if mode != MODE_LEFTOVER:
+            # skip/cook need nothing resolving. `source` is cleared so a slot
+            # moving off leftover can't keep pointing at a cook it no longer
+            # eats — `validate_week` allows a stale source, but the shopping
+            # list and portion arithmetic would both still count the claim.
+            updated.append(slot.model_copy(update={"mode": mode, "source": None}))
+            continue
+
+        index = spec.day_index(slot.day)
+        candidates = (
+            [slot_id(spec.days[index - 1], "dinner")] if index > 0 else []
+        )
+        source = next(
+            (
+                candidate
+                for candidate in candidates
+                if by_id.get(candidate) is not None
+                and by_id[candidate].mode == MODE_COOK
+                and not leftover_meal_type_error("dinner", slot.meal_type)
+            ),
+            None,
+        )
+        updated.append(
+            slot.model_copy(update={"mode": MODE_LEFTOVER, "source": source})
+            if source
+            else slot
+        )
+    return spec.model_copy(update={"slots": updated})
 
 
 def autofill_leftovers(spec: WeekSpec, meal_type: str, source_meal_type: str) -> WeekSpec:
@@ -306,20 +432,37 @@ def pin_style(spec: WeekSpec, meal_type: str, style: str, days: Iterable[str]) -
 def clear_cuisines(spec: WeekSpec) -> WeekSpec:
     """A copy of `spec` with every cook slot's cuisine reset to auto (None).
 
-    Same escape hatch as `PlannerState.shuffle_styles`, scoped to cuisine
-    only: once a week has been generated, every slot carries the concrete
-    cuisine that run resolved, and `resolve_auto_choices`/`pick_cuisine_blocks`
-    only ever pick a fresh one when a slot is empty (planner.py) — otherwise
-    every later run repeats the exact same per-day cuisine forever. Called
-    only when the generate popup's cuisine picker narrows `config["cuisines"]`
-    for this run (`ui_generation.generate_week`): without it, a slot carrying
-    a concrete cuisine from a wider list a previous run picked from would fail
-    `validate_week`'s "cuisine is not in config cuisines" check the moment the
-    list no longer contains it, rather than simply being re-picked from the
-    narrower one.
+    Style counterpart is `clear_styles`, just below. Once a week has been
+    generated, every slot carries the concrete cuisine that run resolved,
+    and `resolve_auto_choices`/`pick_cuisine_blocks` only ever pick a fresh
+    one when a slot is empty (planner.py) — otherwise every later run
+    repeats the exact same per-day cuisine forever. `ui_generation.generate_week`
+    calls this unconditionally, on every full-week generation, precisely to
+    avoid that repeat: a slot carrying a concrete cuisine from a run before
+    this one — including one picked from a wider `config["cuisines"]` list
+    than the popup's cuisine picker has narrowed it to for this run — is
+    reset so it can't disagree with what this run is about to ask for.
     """
     updated = [
         slot.model_copy(update={"cuisine": None}) if slot.mode == MODE_COOK else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
+def clear_styles(spec: WeekSpec) -> WeekSpec:
+    """A copy of `spec` with every cook slot's style reset to auto (None).
+
+    Cuisine counterpart is `clear_cuisines`, just above — same reason, same
+    shape. `PlannerState.shuffle_styles` (the drawer's manual escape hatch)
+    and `ui_generation.generate_week` (called unconditionally, so every
+    full-week generation starts from a clean slate rather than repeating
+    whatever a previous run on this same grid happened to resolve) are the
+    two callers. Mode, leftover links and skips are untouched — those are
+    structural edits the user made on purpose, not picks due for a re-roll.
+    """
+    updated = [
+        slot.model_copy(update={"style": None}) if slot.mode == MODE_COOK else slot
         for slot in spec.slots
     ]
     return spec.model_copy(update={"slots": updated})
@@ -429,6 +572,8 @@ def spread_batch(
     target_servings: int,
     exclude_days: Optional[Set[str]] = None,
     prefer_days: Optional[List[str]] = None,
+    max_span_days: Optional[int] = None,
+    exclude_target_days: Optional[Set[str]] = None,
 ) -> Tuple[WeekSpec, Optional[str]]:
     """Pick one cook slot as a batch anchor and link enough forward slots to
     it to approximate `target_servings`, entirely via `link_leftover`.
@@ -463,6 +608,28 @@ def spread_batch(
     at most 3, so a small household's arithmetic doesn't spread one dish
     across half the week.
 
+    `max_span_days` (`inventory_rules.fridge_safe_days`, threaded in by
+    `ui_generation.apply_batch_selections`) stops the walk once it is that
+    many days past the anchor. **This is prevention, not validation**: cooked
+    food keeps 3-4 days refrigerated, and the alternative — letting the walk
+    reach Friday from a Sunday anchor and then refusing to generate the week
+    — reports a problem the planner created itself. `validate_week` still
+    checks the same bound as a backstop, because a hand-made chain of "Link
+    to next lunch" clicks never comes through here. None means unbounded,
+    which is what every caller that has no config in scope passes.
+
+    `exclude_target_days` names days that may not *receive* a link; the
+    anchor itself may still fall on one. `ui_generation.apply_batch_selections`
+    passes the week's last day, because the batch-prep session happens the
+    day *before* `spec.days[0]` (see `ui_cards.prep_day_column`, the eighth
+    column left of day 0) — which makes `spec.days[-1]` a full **7 days**
+    after prep. On a Monday-start week the Sunday a batch is prepped on and
+    the Sunday at the end of the grid are different Sundays, and nothing
+    cooked on the first is still food on the second. Deliberately *not* also
+    a `validate_week` rule: an ordinary "Link to next lunch" from Saturday
+    dinner into Sunday lunch is cooked on Saturday, not on prep day, and
+    stays perfectly legal.
+
     Returns the (possibly updated) spec and the anchor's slot id, or the
     original spec and None if no valid anchor existed at all — callers treat
     that as "nothing to do this run", not an error.
@@ -483,6 +650,7 @@ def spread_batch(
     keeping an anchor that never moved past its starting claim count.
     """
     exclude_days = exclude_days or set()
+    exclude_target_days = exclude_target_days or set()
 
     candidates = [
         slot
@@ -492,6 +660,24 @@ def spread_batch(
     if not candidates:
         return spec, None
 
+    # An anchor with no eligible day left in front of it can never grow, so it
+    # returns None below having spent the pick — and `prefer_days` narrows the
+    # pool *before* the walk runs, so a doomed day is chosen ahead of a viable
+    # one rather than after it. Not hypothetical: the long-cook caller prefers
+    # the weekend, `exclude_target_days` holds the week's last day, and between
+    # them Saturday's only forward day is ruled out. Without this filter that
+    # toggle would strand on every run instead of falling back to the earliest
+    # dinner that can actually carry a batch.
+    reachable = [
+        slot
+        for slot in candidates
+        if any(
+            day not in exclude_target_days
+            for day in spec.days[spec.day_index(slot.day) + 1 :]
+        )
+    ]
+    candidates = reachable or candidates
+
     pool = [slot for slot in candidates if slot.day in (prefer_days or [])] or candidates
     anchor = min(pool, key=lambda slot: spec.day_index(slot.day))
 
@@ -500,9 +686,19 @@ def spread_batch(
     additional_links_needed = max(0, target_claims - existing_claims)
 
     linked = 0
-    for day in spec.days[spec.day_index(anchor.day) + 1 :]:
+    anchor_index = spec.day_index(anchor.day)
+    for offset, day in enumerate(spec.days[anchor_index + 1 :], start=1):
         if linked >= additional_links_needed:
             break
+        # Past the fridge window there is nothing worth linking: the batch
+        # would be planned into food that isn't safe to eat by then.
+        if max_span_days is not None and offset > max_span_days:
+            break
+        # 7 days after prep day, not 0 — see `exclude_target_days` above.
+        # `continue` rather than `break`: this rules out one day, not the
+        # remainder of the walk.
+        if day in exclude_target_days:
+            continue
         by_id = spec.by_id()
         for meal_type in (anchor_meal_type, "lunch"):
             target_id = slot_id(day, meal_type)
@@ -519,6 +715,106 @@ def spread_batch(
         return spec, None
 
     return spec, anchor.id
+
+
+def skip_estimate_totals(slots: Iterable[SlotSpec], day: str) -> Dict[str, float]:
+    """`day`'s skipped-but-eaten macros, summed — zeros when there are none.
+
+    A skipped meal used to contribute nothing anywhere, which is right for a
+    meal genuinely not eaten and wrong for the common case: dinner with
+    friends, a working lunch, a restaurant. Those calories are consumed, and
+    a day that ignores them hands their whole share to the meals it *does*
+    plan — the remaining two meals absorb a third meal's budget and come back
+    oversized.
+
+    An estimate makes such a slot behave exactly like a leftover: it reduces
+    what generation briefs (`generate_week_plan` subtracts this from the
+    day before splitting) and it counts toward the day's totals
+    (`WeekPlan.day_slot_macros` adds it back). Those are the same two places
+    `carried_macros` and `day_slot_macros` already handle a leftover, which
+    is the parallel to keep in mind when changing either.
+
+    Takes an iterable of slots rather than a `WeekSpec` so `WeekPlan`, whose
+    `slots` are the same `SlotSpec` objects but which is not a `WeekSpec`,
+    can call it too.
+    """
+    totals = {key: 0.0 for key in MACRO_KEYS}
+    for slot in slots:
+        if slot.day != day or slot.mode != MODE_SKIP or not slot.skip_estimate:
+            continue
+        for key in MACRO_KEYS:
+            totals[key] += float(slot.skip_estimate.get(key) or 0.0)
+    return totals
+
+
+def set_skip_estimate(
+    spec: WeekSpec, target_id: str, estimate: Optional[Dict[str, float]]
+) -> WeekSpec:
+    """A copy of `spec` with `target_id`'s skip estimate set (or cleared).
+
+    Clearing is `estimate=None`, which is distinct from an all-zero estimate:
+    None means "this meal is not eaten at all" (the original skip semantics,
+    the doctor's-appointment case), zeros mean "eaten, and it cost nothing
+    measurable". Both are legitimate and they brief the day differently, so
+    the UI has to be able to express each.
+    """
+    updated = [
+        slot.model_copy(update={"skip_estimate": estimate})
+        if slot.id == target_id
+        else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
+def pin_recipe(spec: WeekSpec, target_id: str, recipe_id: Optional[str]) -> WeekSpec:
+    """A copy of `spec` with `target_id` set to cook a specific catalog recipe.
+
+    The counterpart to `pin_style`: that one narrows *what kind* of meal the
+    model invents, this one removes the invention entirely. `recipe_id=None`
+    clears the pin and hands the slot back to generation.
+
+    Only touches a slot already set to cook, for the reason `validate_week`
+    rejects the combination outright — a leftover eats whatever its source
+    cooked and a skip cooks nothing, so a recipe pinned to either is a
+    statement with nowhere to land.
+
+    **Pinning clears the slot's style and cuisine**, because a concrete dish
+    is a more specific answer than either and the two would otherwise
+    disagree on the card: `resolve_auto_choices` has already rolled a style
+    for every cook slot by the time this runs, so a scramble pinned onto a
+    slot that rolled `yoghurt_bowl` would render as "YOGHURT BOWL" above a
+    plate of eggs. It also keeps the pinned day out of style rotation in
+    `record_week_history`, which is right — nothing was rotated onto it.
+    """
+    updated = [
+        slot.model_copy(
+            update={"recipe_id": recipe_id, "style": None, "cuisine": None}
+            if recipe_id
+            else {"recipe_id": None}
+        )
+        if slot.id == target_id and slot.mode == MODE_COOK
+        else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
+def clear_recipe_pins(spec: WeekSpec) -> WeekSpec:
+    """Drop every pinned recipe, so the next run re-picks from the catalog.
+
+    Called unconditionally by `ui_generation.generate_week` alongside
+    `clear_styles`/`clear_cuisines`, and for exactly the same reason those two
+    are: once a week has been generated its slots carry whatever the *last*
+    run resolved, and `select_favorite_assignments` only ever fills an empty
+    slot. Without this, week two would re-pin week one's favourites forever
+    and the rotation window would never advance.
+    """
+    updated = [
+        slot.model_copy(update={"recipe_id": None}) if slot.mode == MODE_COOK else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
 
 
 def claim_counts(spec: WeekSpec) -> Dict[str, int]:
@@ -615,6 +911,62 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
 
         if slot.mode != MODE_COOK and slot.extra_portions:
             errors.append(f"{label}: extra portions only apply to a slot set to cook.")
+
+        if slot.recipe_id and slot.mode != MODE_COOK:
+            errors.append(
+                f"{label}: a pinned recipe only applies to a slot set to cook — "
+                "a leftover eats its source's recipe and a skip cooks nothing."
+            )
+
+        if slot.skip_estimate is not None:
+            if slot.mode != MODE_SKIP:
+                errors.append(
+                    f"{label}: an estimate only applies to a skipped meal — "
+                    "a cooked or leftover slot's macros come from its recipe."
+                )
+            else:
+                missing = [key for key in MACRO_KEYS if key not in slot.skip_estimate]
+                if missing:
+                    # All four or none: a partial estimate would be subtracted
+                    # from some macros and not others, leaving the day's
+                    # budget internally inconsistent (calories ~= 4p + 4c + 9f)
+                    # in exactly the way split_targets and the response
+                    # validator both assume it never is.
+                    errors.append(
+                        f"{label}: estimate is missing {', '.join(missing)} — "
+                        "give all four macros or none."
+                    )
+                negative = [
+                    key
+                    for key in MACRO_KEYS
+                    if key in slot.skip_estimate and float(slot.skip_estimate[key]) < 0
+                ]
+                if negative:
+                    errors.append(
+                        f"{label}: estimate has negative {', '.join(negative)}."
+                    )
+
+    # Food safety, as a backstop. `spread_batch` already refuses to plan a
+    # batch past this bound (`max_span_days`), so the toggles can't produce a
+    # breach — but a hand-built chain of "Link to next lunch" clicks never
+    # goes through `spread_batch`, and neither does an imported or hand-edited
+    # week_plan.json. Cooked food keeps 3-4 days refrigerated; a leftover
+    # planned beyond that is a meal you would have to throw away.
+    fridge_safe_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
+        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    )
+    for cook in spec.cook_slots():
+        span = span_days(spec, cook.id)
+        if span > fridge_safe_days:
+            last = max(
+                (value for value in eaten_on(spec).get(cook.id, [])),
+                key=lambda value: spec.day_index(parse_slot_id(value)[0]),
+            )
+            errors.append(
+                f"{cook.day} {cook.meal_type}: cooked {span} days before "
+                f"{slot_label(last)} eats it, past the {fridge_safe_days}-day "
+                "fridge limit — re-point that meal to a later cook."
+            )
 
     if not spec.cook_slots():
         errors.append("Nothing to cook: at least one slot must be set to cook.")

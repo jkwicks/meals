@@ -39,3 +39,9 @@ test_suite.md
 
 # macOS
 .DS_Store
+# A Google Takeout Keep export, dropped in for the once-off catalog bootstrap
+# (src/integrations/keep_import.py). 621 files of somebody's notes, including
+# images and shopping lists — the recipes worth keeping end up in
+# data/recipes_master.json, which is the tracked artefact. Delete the folder
+# once the import is done.
+Keep/

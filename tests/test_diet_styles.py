@@ -79,6 +79,7 @@ class TestBuildDietStyleRule(unittest.TestCase):
         )
         rules = planner.build_generation_rules(
             config,
+            days=["Monday"],
             style_rule=planner.DAY_STYLE_RULE,
             variety_rule=planner.DAY_VARIETY_RULE,
             budget_rule=planner.DAY_BUDGET_RULE,

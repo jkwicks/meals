@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from planner import (
     MACRO_KEYS,
+    NUTRIENT_KEYS,
     CookEvent,
     Recipe,
     WeekPlan,
@@ -47,6 +48,8 @@ from week import (
     MODE_LEFTOVER,
     MODE_SKIP,
     WeekSpec,
+    clear_cuisines,
+    clear_styles,
     default_week_spec,
     eaten_on,
     humanize,
@@ -55,6 +58,7 @@ from week import (
     meal_types,
     next_day_slot_id,
     portions_for,
+    set_skip_estimate,
     slot_id,
     slot_label,
     span_days,
@@ -96,6 +100,12 @@ class SlotView:
     feeds: List[str] = field(default_factory=list)  # cook cards: who eats this
     link_target: str = ""  # slot id "Link to next lunch" would point at us
     link_error: str = ""  # why that link isn't available, if it isn't
+
+    # Skipped slots only: the macros this meal is eaten out at, or None for a
+    # meal genuinely not eaten. Distinct from `macros`, which is always a
+    # recipe's — nothing was cooked here, so the two must not share a field or
+    # the card would render an estimate as though a recipe backed it.
+    skip_estimate: Optional[dict] = None
 
     @property
     def id(self) -> str:
@@ -160,6 +170,13 @@ class PlannerState:
     diet_style_override: List[str] = field(default_factory=list)
     bulk_prep_enabled: bool = False
     long_cook_enabled: bool = False
+    # The popup's slider on `planning_rules.min_baseline_cuisine_share` — a
+    # scalar, not a list, so unlike cuisine_override/diet_style_override there
+    # is no "empty means use the file" state: it always feeds
+    # `planning_config()`, the same way bulk_prep_enabled/long_cook_enabled
+    # do, and is seeded from the file's own value at load() so opening the
+    # popup previews the standing config rather than some other default.
+    baseline_cuisine_share: float = 0.5
     # Workout sessions ({day, time, type, duration_minutes, estimated_burn_kcal}).
     # Seeded from config's `training_schedule` and edited in the drawer; like
     # the pantry it is an input to the *next* run, folded into
@@ -241,6 +258,7 @@ class PlannerState:
             training_schedule=[dict(session) for session in config["training_schedule"]],
             bulk_prep_enabled=config["enable_sunday_prep"],
             long_cook_enabled=config["enable_sunday_prep"],
+            baseline_cuisine_share=config["planning_rules"]["min_baseline_cuisine_share"],
         )
         state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
@@ -420,27 +438,93 @@ class PlannerState:
         self.apply_spec(link_leftover(spec, target_id, source_id))
         return None
 
+    def default_skip_estimate(self, target_slot_id: str) -> dict:
+        """What a skipped meal would have been briefed at, had it been cooked.
+
+        The starting point for the estimate on a meal eaten out: "roughly what
+        this slot is normally worth". It runs the day through `split_targets`
+        with the skipped slot *added back* as a cook slot, so the number comes
+        from the same weight normalisation generation would have used rather
+        than from a flat quarter of the day — a snack and a dinner are not
+        the same guess.
+
+        It is only ever a default. `set_skip_estimate` takes whatever the user
+        actually types, because the two cases this feature exists for pull in
+        opposite directions: a restaurant dinner is usually well *above* the
+        weighted share, and a missed meal is 0.
+        """
+        spec = self.spec
+        slot = spec.by_id().get(target_slot_id)
+        if slot is None:
+            return {key: 0.0 for key in MACRO_KEYS}
+
+        config = self.planning_config()
+        # The skipped slot, temporarily a cook, so split_targets counts it in
+        # the weight normalisation instead of redistributing its share.
+        as_cook = slot.model_copy(update={"mode": MODE_COOK, "skip_estimate": None})
+        day_slots = [
+            as_cook if other.id == target_slot_id else other
+            for other in spec.slots
+            if other.day == slot.day
+            and (other.mode == MODE_COOK or other.id == target_slot_id)
+        ]
+        budgets = split_targets(
+            self.targets_for(slot.day),
+            day_slots,
+            day_multiplicity(spec, slot.day),
+            config,
+            meal_overrides_for(slot.day, config),
+        )
+        budget = budgets.get(target_slot_id)
+        return (
+            {key: round(float(budget[key]), 1) for key in MACRO_KEYS}
+            if budget
+            else {key: 0.0 for key in MACRO_KEYS}
+        )
+
+    def set_skip_estimate(
+        self, target_slot_id: str, estimate: Optional[dict]
+    ) -> Optional[str]:
+        """Record (or clear) the macros a skipped meal is eaten out at.
+
+        Returns why not, or None. Same shape as `link_to_next_lunch` and
+        `swap_slot_with_favorite`: one sentence about the one slot clicked,
+        state mutates only on success, and the caller repaints.
+        """
+        spec = self.spec
+        slot = spec.by_id().get(target_slot_id)
+        if slot is None:
+            return "That meal isn't part of this week."
+        if slot.mode != MODE_SKIP:
+            return (
+                f"{slot_label(target_slot_id)} isn't skipped — a cooked or "
+                "leftover meal's macros come from its recipe."
+            )
+        if estimate is not None:
+            missing = [key for key in MACRO_KEYS if key not in estimate]
+            if missing:
+                return f"Estimate is missing {', '.join(missing)}."
+            if any(float(estimate[key]) < 0 for key in MACRO_KEYS):
+                return "An estimate can't be negative."
+            estimate = {key: float(estimate[key]) for key in MACRO_KEYS}
+
+        self.apply_spec(set_skip_estimate(spec, target_slot_id, estimate))
+        return None
+
     def shuffle_styles(self) -> None:
         """Blank the style/cuisine on every cook slot so the next generation
         re-rolls them from scratch.
 
-        `resolve_auto_choices` only picks a fresh style/cuisine when a slot's
-        is empty (planner.py) — once a week has been generated once, its
-        slots carry the concrete values from that run and every later
-        "Generate" re-requests the exact same style/cuisine per slot forever,
-        varying only the dish the model composes inside it. This is the
-        explicit escape hatch: it touches only style/cuisine, not mode or
+        `week.clear_styles`/`week.clear_cuisines` are what `generate_week`
+        now also applies unconditionally on every full-week run, so this
+        manual drawer action is a preview of what the next Generate click
+        would already do — useful when you want to see the re-roll without
+        also spending an API call, or before a run that isn't going through
+        `generate_week` at all. Touches only style/cuisine, not mode or
         leftover links, so `apply_spec` can go through its normal rescale
         path unchanged.
         """
-        spec = self.spec
-        resolved = [
-            slot.model_copy(update={"style": None, "cuisine": None})
-            if slot.mode == MODE_COOK
-            else slot
-            for slot in spec.slots
-        ]
-        self.apply_spec(spec.model_copy(update={"slots": resolved}))
+        self.apply_spec(clear_cuisines(clear_styles(self.spec)))
 
     def swap_slot_with_favorite(self, target_slot_id: str, favorite_recipe: dict) -> Optional[str]:
         """Replace a cooked slot's recipe with a saved favorite. Returns why not, or None.
@@ -561,6 +645,17 @@ class PlannerState:
                 ),
                 bulk_prep_enabled=self.bulk_prep_enabled,
                 long_cook_enabled=self.long_cook_enabled,
+                # Same REPLACE-in-place approach as dietary_rules above: only
+                # this one key of planning_rules changes, so it's spread back
+                # in rather than rebuilt, and pick_cuisine_blocks reads it via
+                # planning_rule() exactly as it reads every other rule. `.get`
+                # rather than direct indexing — unlike dietary_rules above,
+                # not every hand-built config a test constructs carries this
+                # key, and planning_rule() already tolerates that same gap.
+                planning_rules=dict(
+                    self.config.get("planning_rules") or {},
+                    min_baseline_cuisine_share=self.baseline_cuisine_share,
+                ),
             )
         )
 
@@ -640,8 +735,11 @@ class PlannerState:
         return self.planned_targets(day)
 
     def totals_for(self, day: str) -> dict:
+        # NUTRIENT_KEYS so the empty-week shape matches what
+        # `day_slot_macros` returns once a week exists — a header reading
+        # fibre must not have to special-case the un-generated case.
         if not self.week_plan:
-            return {key: 0.0 for key in MACRO_KEYS}
+            return {key: 0.0 for key in NUTRIENT_KEYS}
         return self.week_plan.day_slot_macros(day)
 
     def slot_views(self) -> Dict[str, SlotView]:
@@ -666,12 +764,16 @@ class PlannerState:
 
         for slot in spec.slots:
             if slot.mode == MODE_SKIP:
+                estimate = slot.skip_estimate
                 views[slot.id] = SlotView(
                     day=slot.day,
                     meal_type=slot.meal_type,
                     status=STATUS_SKIP,
-                    title="Skipped",
+                    # An estimated skip is a meal that happened, so it says so
+                    # rather than reading "Skipped" beside a calorie figure.
+                    title="Eaten out" if estimate else "Skipped",
                     mode=slot.mode,
+                    skip_estimate=estimate,
                 )
                 continue
 
