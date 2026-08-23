@@ -312,8 +312,22 @@ async def planner_page() -> None:
     )
     refreshables.on("today", today.today_view)
     refreshables.on("telemetry", telemetry.telemetry)
-    refreshables.on("targets", drawer.targets_editor, telemetry.telemetry)
-    refreshables.on("training", drawer.training_editor, telemetry.telemetry, drawer.targets_editor)
+    # `today_view` joins both of these because it reads the same live numbers
+    # the header does — its calorie bar divides by `targets_for`, and its
+    # context strip and per-card workout badges come from `day_context`, which
+    # reads the drawer's training schedule through `planning_config()`. It is
+    # deliberately *not* in "telemetry": that topic exists to repaint the
+    # header on every keystroke of a focused target input without disturbing
+    # the drawer, and rebuilding four cards plus a `planning_config()` per
+    # keystroke is the cost this narrow topic was carved out to avoid.
+    refreshables.on("targets", drawer.targets_editor, telemetry.telemetry, today.today_view)
+    refreshables.on(
+        "training",
+        drawer.training_editor,
+        telemetry.telemetry,
+        drawer.targets_editor,
+        today.today_view,
+    )
     refreshables.on("catalog", drawer.favorites_list, cards.canvas)
     refreshables.on("favorites", drawer.favorites_list)
     refreshables.on("shopping", shopping.shopping_panel)
@@ -341,6 +355,11 @@ async def planner_page() -> None:
     with ui.tabs().classes("w-full") as tabs:
         week_tab = ui.tab("Week", icon="calendar_view_week")
         today_tab = ui.tab("Today", icon="today")
+        # The label becomes the day being browsed ("Today · Sun 23 Aug", or
+        # "Mon 24 Aug" once you step away). Injected rather than computed
+        # here: `build_today` owns which day is on screen, and it ran well
+        # before this tab existed.
+        today.bind_tab(today_tab)
 
     with ui.tab_panels(tabs, value=week_tab).classes("w-full bg-transparent p-0"):
         with ui.tab_panel(week_tab).classes("p-0"):

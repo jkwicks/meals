@@ -33,7 +33,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import ui_state  # noqa: E402
-from planner import CookEvent, Ingredient, Recipe, WeekPlan  # noqa: E402
+from ui_theme import format_day_label, training_icon  # noqa: E402
+from planner import (  # noqa: E402
+    LOCATION_RESTRICTION_PHRASES,
+    CookEvent,
+    Ingredient,
+    Recipe,
+    WeekPlan,
+)
 from week import (  # noqa: E402
     MODE_COOK,
     MODE_LEFTOVER,
@@ -334,6 +341,467 @@ class TestSlotViews(unittest.TestCase):
         state = make_state()
         state.link_to_next_lunch("Monday:dinner")
         self.assertTrue(state.slot_views()["Monday:dinner"].feeds)
+
+
+# `base_schedule`/`location_rules` shaped after the shipped `schedule.json`,
+# plus one unrecognised restriction tag that file doesn't have — a config
+# token with no `LOCATION_RESTRICTION_PHRASES` entry is exactly what the
+# tag/prose pairing has to survive.
+LOCATION_CONFIG = dict(
+    CONFIG,
+    base_schedule={"Monday": "Office", "Tuesday": "Home"},
+    location_rules={
+        "Office": {
+            "lunch_mode": "leftover",
+            "restrictions": ["mystery_tag", "portable", "no_long_prep"],
+            "max_prep_minutes": 0,
+        },
+    },
+)
+
+
+def make_context_state(training=(), config=LOCATION_CONFIG) -> ui_state.PlannerState:
+    """A state whose config names locations, with `training` in the drawer.
+
+    The schedule goes on the *state*, not the config, because that is where
+    `day_context` reads it — the drawer's live copy, so an unsaved session
+    shows on the Today tab the same way an unsaved target override already
+    shows in the header.
+    """
+    state = make_state()
+    state.config = dict(config)
+    state.training_schedule = [dict(session) for session in training]
+    return state
+
+
+class TestDayContextLocation(unittest.TestCase):
+    """Where a day is spent, as the Today tab reads it.
+
+    Pinned because this mirrors `planner.build_location_note`'s scope rule
+    rather than re-deciding it: a location constrains only the meals it
+    declares a `<meal_type>_mode` for. Getting that wrong renders as an
+    ordinary-looking card carrying a constraint the prompt never sent, which
+    is not a failure anything else would catch.
+    """
+
+    def test_a_scheduled_day_reports_where_it_is_spent(self):
+        location = ui_state.day_context(make_context_state(), "Monday").location
+        self.assertEqual(location.name, "Office")
+        self.assertEqual(location.max_prep_minutes, 0)
+
+    def test_a_day_the_schedule_does_not_name_has_no_location(self):
+        """The opt-in tolerance `week.location_for` already extends."""
+        self.assertIsNone(
+            ui_state.day_context(make_context_state(), "Wednesday").location
+        )
+
+    def test_a_config_without_base_schedule_has_no_location(self):
+        state = make_context_state(config=CONFIG)
+        self.assertIsNone(ui_state.day_context(state, "Monday").location)
+
+    def test_a_location_with_no_rule_still_says_where_you_are(self):
+        """"Home" is named by `base_schedule` and absent from `location_rules`.
+
+        Still worth a chip: it answers the question the strip asks, and an
+        empty rule simply constrains nothing.
+        """
+        location = ui_state.day_context(make_context_state(), "Tuesday").location
+        self.assertEqual(location.name, "Home")
+        self.assertEqual(location.meal_modes, {})
+        self.assertEqual(location.phrase_pairs, [])
+
+    def test_a_restriction_only_covers_the_meals_the_location_names(self):
+        """Office names `lunch_mode` and nothing else, so breakfast — eaten at
+        home before leaving — carries no "must travel in a container"."""
+        location = ui_state.day_context(make_context_state(), "Monday").location
+        self.assertTrue(location.constrains("lunch"))
+        self.assertFalse(location.constrains("breakfast"))
+        self.assertTrue(location.brief("lunch"))
+        self.assertEqual(location.brief("breakfast"), "")
+
+    def test_an_unrecognised_tag_does_not_shift_the_pairs(self):
+        """The chip's label and its tooltip have to describe the same tag.
+
+        `phrases` drops a tag with no prose, exactly as `build_location_note`
+        does, so zipping it against `restrictions` would have paired
+        "mystery_tag" with portable's sentence.
+        """
+        location = ui_state.day_context(make_context_state(), "Monday").location
+        self.assertEqual(
+            [tag for tag, _ in location.phrase_pairs], ["portable", "no_long_prep"]
+        )
+        for tag, phrase in location.phrase_pairs:
+            self.assertEqual(phrase, LOCATION_RESTRICTION_PHRASES[tag])
+
+
+class TestDayContextTraining(unittest.TestCase):
+    """A day's sessions, and which meal each one claims.
+
+    The note badges classify `training_notes` by `TRAINING_NOTE_PREFIXES`, a
+    constant `planner` owns and writes the notes with — these tests are what
+    stop a reworded prompt from silently dropping the badge, since a note that
+    fails to parse renders as no badge at all rather than as an error.
+    """
+
+    def test_sessions_are_ordered_by_clock_time(self):
+        """The drawer appends a new session, so config order is not time order."""
+        state = make_context_state(
+            training=[
+                {"day": "Monday", "time": "06:30", "type": "cardio_hiit",
+                 "duration_minutes": 30, "estimated_burn_kcal": 320},
+                {"day": "Monday", "time": "05:30", "type": "gym_hypertrophy",
+                 "duration_minutes": 60, "estimated_burn_kcal": 350},
+            ]
+        )
+        sessions = ui_state.day_context(state, "Monday").sessions
+        self.assertEqual([s.time for s in sessions], ["05:30", "06:30"])
+
+    def test_only_the_scheduled_day_is_reported(self):
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "05:30", "type": "cardio_easy",
+                       "duration_minutes": 25, "estimated_burn_kcal": 180}]
+        )
+        self.assertEqual(ui_state.day_context(state, "Tuesday").sessions, [])
+
+    def test_the_days_burn_is_totalled(self):
+        state = make_context_state(
+            training=[
+                {"day": "Monday", "time": "05:30", "type": "gym_hypertrophy",
+                 "duration_minutes": 60, "estimated_burn_kcal": 350},
+                {"day": "Monday", "time": "06:30", "type": "cardio_hiit",
+                 "duration_minutes": 30, "estimated_burn_kcal": 320},
+            ]
+        )
+        self.assertEqual(ui_state.day_context(state, "Monday").total_burn_kcal, 670)
+
+    def test_a_rest_day_is_not_a_workout(self):
+        """`apply_training_adjustments` skips a rest entry, so it buys no
+        calories — the chip must not imply it did."""
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "00:00", "type": "rest",
+                       "duration_minutes": 0, "estimated_burn_kcal": 0}]
+        )
+        context = ui_state.day_context(state, "Monday")
+        self.assertTrue(context.sessions[0].is_rest)
+        self.assertEqual(context.active_sessions, [])
+        self.assertEqual(context.total_burn_kcal, 0)
+
+    def test_a_zero_burn_session_reads_as_rest_too(self):
+        """Matches `apply_training_adjustments`' own filter, which drops a
+        zero-burn session as surely as a typed rest day."""
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "07:00", "type": "walk",
+                       "duration_minutes": 20, "estimated_burn_kcal": 0}]
+        )
+        self.assertTrue(ui_state.day_context(state, "Monday").sessions[0].is_rest)
+
+    def test_the_post_workout_meal_is_named(self):
+        """An evening session pins the meal after it; the badge says which."""
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+                       "duration_minutes": 60, "estimated_burn_kcal": 400}]
+        )
+        notes = ui_state.day_context(state, "Monday").meal_notes
+        self.assertEqual(notes["dinner"].kind, "post")
+        # The prefix and brackets are stripped: the badge already says
+        # POST-WORKOUT, so the tooltip carries only the reason.
+        self.assertNotIn("POST-WORKOUT MEAL:", notes["dinner"].text)
+        self.assertFalse(notes["dinner"].text.endswith("]"))
+        self.assertIn("glycogen", notes["dinner"].text)
+
+    def test_a_meal_within_digestion_range_is_flagged_pre_workout(self):
+        """Lunch at 12:30 with a 14:00 session — inside the 120-minute rule."""
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "14:00", "type": "cardio_hiit",
+                       "duration_minutes": 30, "estimated_burn_kcal": 320}]
+        )
+        notes = ui_state.day_context(state, "Monday").meal_notes
+        self.assertEqual(notes["lunch"].kind, "pre")
+        self.assertNotIn("PRE-WORKOUT MEAL:", notes["lunch"].text)
+        self.assertNotIn("breakfast", notes)
+
+    def test_an_untrained_day_carries_no_notes(self):
+        context = ui_state.day_context(make_context_state(), "Monday")
+        self.assertEqual(context.sessions, [])
+        self.assertEqual(context.meal_notes, {})
+
+    def test_the_drawers_schedule_is_what_is_shown(self):
+        """Not the file's — a session added in the drawer has to appear here,
+        the same "live preview of the next run" contract `targets_for` keeps.
+        """
+        state = make_context_state()
+        self.assertEqual(ui_state.day_context(state, "Monday").sessions, [])
+        state.add_training_session()
+        state.training_schedule[0]["day"] = "Monday"
+        self.assertEqual(len(ui_state.day_context(state, "Monday").sessions), 1)
+
+
+# A Monday five years back. `today_day()` reads the real clock — the only
+# thing in this suite that does — so every test below pins the plan's dates
+# rather than letting the fixture's happen to fall near the current date.
+# Left to itself, `make_plan`'s 2026-08-17 week covers some real dates and not
+# others, and these tests would pass or fail depending on the day they ran.
+STALE_WEEK_START = "2020-01-06"
+
+
+def make_stale_state() -> ui_state.PlannerState:
+    """A plan dated to a week that is definitively not the current one."""
+    state = make_state()
+    state.week_plan = state.week_plan.model_copy(
+        update={"week_start_date": STALE_WEEK_START}
+    )
+    return state
+
+
+def make_current_state() -> ui_state.PlannerState:
+    """A plan covering the real current week, whatever day the suite runs on.
+
+    `days` is widened to all seven weekday names — `today_in_week` returns the
+    real weekday, and the shared 3-day `CONFIG` could not contain it on four
+    days out of seven.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    monday = today - timedelta(days=today.weekday())
+    week = [(monday + timedelta(days=i)).strftime("%A") for i in range(7)]
+    state = make_state()
+    state.config = dict(
+        CONFIG,
+        weekly_schedule={day: dict(CONFIG["weekly_schedule"][DAYS[0]]) for day in week},
+    )
+    state.week_plan = state.week_plan.model_copy(
+        update={"week_start_date": monday.isoformat(), "days": week}
+    )
+    return state
+
+
+class TestViewedDay(unittest.TestCase):
+    """The Today tab's day picker — which day it lands on, and where it stops.
+
+    Before the picker existed, a week not covering today replaced the whole
+    panel with a message. It now has to resolve to a browsable day instead,
+    which is the behaviour change these pin.
+    """
+
+    def test_it_falls_back_to_the_first_day_when_today_is_not_in_the_week(self):
+        state = make_stale_state()
+        self.assertFalse(state.week_covers_today())
+        self.assertEqual(state.viewed_day(), "Monday")
+        self.assertFalse(state.viewing_today())
+
+    def test_it_lands_on_today_when_the_week_covers_it(self):
+        from datetime import date
+
+        state = make_current_state()
+        self.assertTrue(state.week_covers_today())
+        self.assertEqual(state.viewed_day(), date.today().strftime("%A"))
+        self.assertTrue(state.viewing_today())
+
+    def test_a_selected_day_wins(self):
+        state = make_stale_state()
+        state.select_day("Wednesday")
+        self.assertEqual(state.viewed_day(), "Wednesday")
+
+    def test_browsing_away_from_today_stops_being_today(self):
+        state = make_current_state()
+        state.select_day(state.days[0])
+        state.step_viewed_day(3)
+        self.assertFalse(state.viewing_today())
+        self.assertTrue(state.week_covers_today())
+
+    def test_selecting_a_day_outside_the_week_falls_back_to_following_today(self):
+        """A stale name — the drawer's week start moved under it, say — must
+        not pin the tab to a day the grid has no column for."""
+        state = make_stale_state()
+        state.select_day("Friday")
+        self.assertIsNone(state.selected_day)
+        self.assertEqual(state.viewed_day(), "Monday")
+
+    def test_no_plan_means_no_day(self):
+        """The one case with genuinely nothing to show."""
+        self.assertIsNone(make_state(with_plan=False).viewed_day())
+
+    def test_stepping_moves_through_the_week(self):
+        state = make_stale_state()
+        state.step_viewed_day(1)
+        self.assertEqual(state.viewed_day(), "Tuesday")
+        state.step_viewed_day(1)
+        self.assertEqual(state.viewed_day(), "Wednesday")
+        state.step_viewed_day(-2)
+        self.assertEqual(state.viewed_day(), "Monday")
+
+    def test_stepping_clamps_at_both_ends(self):
+        """Clamped, not wrapped: the loaded plan holds exactly these days, and
+        wrapping the last day round to the first would pretend it is a loop."""
+        state = make_stale_state()
+        state.step_viewed_day(-1)
+        self.assertEqual(state.viewed_day(), state.days[0])
+        state.step_viewed_day(99)
+        self.assertEqual(state.viewed_day(), state.days[-1])
+        state.step_viewed_day(1)
+        self.assertEqual(state.viewed_day(), state.days[-1])
+
+    def test_the_reset_clears_rather_than_repoints(self):
+        """`select_day(None)` restores "follow today" — storing today's *name*
+        would pin the tab to whichever day the page happened to load on."""
+        state = make_stale_state()
+        state.select_day("Wednesday")
+        state.select_day(None)
+        self.assertIsNone(state.selected_day)
+
+    def test_covering_today_is_about_the_columns_not_the_span(self):
+        """A grid narrower than seven days has a span wider than its columns.
+
+        `today_in_week` answers "is today inside this week's seven-day span",
+        which here is true while the grid has no column for it — and it is the
+        columns a picker can navigate to. Built so today's own weekday is
+        deliberately excluded, so the assertion holds on any day of the week.
+        """
+        from datetime import date, timedelta
+
+        today = date.today()
+        elsewhere = [(today + timedelta(days=i)).strftime("%A") for i in (1, 2, 3)]
+        monday = today - timedelta(days=today.weekday())
+        state = make_state()
+        state.config = dict(
+            CONFIG,
+            weekly_schedule={
+                day: dict(CONFIG["weekly_schedule"][DAYS[0]]) for day in elsewhere
+            },
+        )
+        state.week_plan = state.week_plan.model_copy(
+            update={"week_start_date": monday.isoformat(), "days": elsewhere}
+        )
+        self.assertIsNotNone(state.today_day())
+        self.assertFalse(state.week_covers_today())
+        self.assertEqual(state.viewed_day(), elsewhere[0])
+
+
+class TestDayDates(unittest.TestCase):
+    """Dating a day, and refusing to when the plan can't support it."""
+
+    def test_a_day_is_dated_from_the_weeks_real_start(self):
+        state = make_state()
+        self.assertEqual(state.day_date_iso("Monday"), "2026-08-17")
+        self.assertEqual(state.day_date_iso("Wednesday"), "2026-08-19")
+
+    def test_a_plan_without_a_start_date_is_not_dated(self):
+        """Pre-migration tolerance: `week.day_date` refuses a `generated_at`
+        anchor, because a plausible-looking wrong date in a tab title is worse
+        than no date at all."""
+        state = make_state()
+        state.week_plan = state.week_plan.model_copy(update={"week_start_date": None})
+        self.assertIsNone(state.day_date_iso("Monday"))
+
+    def test_an_unknown_day_is_not_dated(self):
+        self.assertIsNone(make_state().day_date_iso("Friday"))
+
+    def test_the_label_degrades_to_the_bare_weekday(self):
+        self.assertEqual(format_day_label("Thursday", None), "Thursday")
+        self.assertEqual(format_day_label("Thursday", None, short=True), "Thu")
+
+    def test_the_label_carries_the_date_when_there_is_one(self):
+        self.assertEqual(format_day_label("Monday", "2026-08-17"), "Monday 17 August")
+        self.assertEqual(
+            format_day_label("Monday", "2026-08-17", short=True), "Mon 17 Aug"
+        )
+
+    def test_the_day_name_comes_from_the_rotation_not_the_date(self):
+        """The long form labels with the plan's own weekday name, so a
+        mis-dated plan reads oddly rather than silently renaming the day."""
+        self.assertTrue(format_day_label("Monday", "2026-08-17").startswith("Monday"))
+
+
+class TestTrainingIcons(unittest.TestCase):
+    """Which glyph stands for a workout type.
+
+    Icon rather than colour is what separates the types — every hue in this UI
+    already means something — so this map is the whole distinction, and an
+    unresolved type silently collapsing two workouts into one mark is the
+    failure worth pinning.
+    """
+
+    def test_each_configured_type_has_its_own_icon(self):
+        """The six real types must not collide, or the day picker would show
+        the same mark for a gym session and a bike ride."""
+        from planner import TRAINING_INTENSITY_SPLIT
+
+        icons = {t: training_icon(t) for t in TRAINING_INTENSITY_SPLIT}
+        self.assertEqual(len(set(icons.values())), len(icons), icons)
+
+    def test_an_exact_match_beats_the_prefix(self):
+        self.assertEqual(training_icon("cardio_ride"), "directions_bike")
+        self.assertNotEqual(training_icon("cardio_ride"), training_icon("cardio"))
+
+    def test_an_unknown_type_widens_to_its_longest_prefix(self):
+        """A future `gym_strength`/`cardio_swim` should need no edit here."""
+        self.assertEqual(training_icon("gym_strength"), training_icon("gym_hypertrophy"))
+        self.assertEqual(training_icon("cardio_swim"), "monitor_heart")
+
+    def test_a_type_matching_nothing_still_renders_a_workout(self):
+        """A config typo shows a generic session rather than taking the picker
+        down — the strip prints the humanized name beside it anyway."""
+        self.assertEqual(training_icon("nonsense"), "fitness_center")
+        self.assertEqual(training_icon(""), "fitness_center")
+
+
+class TestTrainingForDay(unittest.TestCase):
+    """The per-day session lookup the day picker calls seven times a repaint.
+
+    Split out of `day_context` precisely so it costs a list scan: `day_context`
+    needs `planning_config()` for its per-meal notes, and marking all seven
+    pills through that would be seven `apply_training_adjustments` passes over
+    the week.
+    """
+
+    def test_it_reads_only_the_drawer_schedule(self):
+        """No config is consulted, so a state with an empty config still
+        answers — which is what makes it safe to call per pill."""
+        state = make_state()
+        state.config = {"weekly_schedule": {}, "meal_types": []}
+        state.training_schedule = [
+            {"day": "Monday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        ]
+        self.assertEqual(len(state.training_for("Monday")), 1)
+
+    def test_sessions_come_back_in_clock_order(self):
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Saturday", "time": "06:30", "type": "cardio_hiit",
+             "duration_minutes": 30, "estimated_burn_kcal": 320},
+            {"day": "Saturday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350},
+        ]
+        self.assertEqual(
+            [s.type for s in state.training_for("Saturday")],
+            ["gym_hypertrophy", "cardio_hiit"],
+        )
+
+    def test_two_sessions_on_one_day_keep_distinct_marks(self):
+        """Saturday's gym-plus-HIIT is the case the dedupe must not collapse."""
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Saturday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350},
+            {"day": "Saturday", "time": "06:30", "type": "cardio_hiit",
+             "duration_minutes": 30, "estimated_burn_kcal": 320},
+        ]
+        marks = {training_icon(s.type) for s in state.training_for("Saturday")}
+        self.assertEqual(len(marks), 2)
+
+    def test_day_context_and_the_picker_agree(self):
+        """Both read the same list, so the strip can never describe a day the
+        pill above it says has no training."""
+        state = make_context_state(
+            training=[{"day": "Monday", "time": "05:30", "type": "cardio_ride",
+                       "duration_minutes": 90, "estimated_burn_kcal": 650}]
+        )
+        self.assertEqual(
+            ui_state.day_context(state, "Monday").sessions,
+            state.training_for("Monday"),
+        )
 
 
 if __name__ == "__main__":

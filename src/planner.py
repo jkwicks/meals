@@ -1247,6 +1247,18 @@ MEAL_TIME_OF_DAY = {
 # meal, per the spec's "within 2 hours" rule for digestion constraints.
 TRAINING_PRE_WORKOUT_DIGESTION_MINUTES = 120
 
+# How each `training_notes` entry opens. Constants rather than literals inline
+# in `apply_training_adjustments` because the UI reads these notes back: the
+# Today tab classifies a meal as the day's post- or pre-workout one by testing
+# the prefix, and shows the rest of the sentence as the reason. Matching on a
+# shared constant is what stops a reworded prompt from silently dropping the
+# badge — the alternative is a second copy of this wording in `ui_state`,
+# free to fall out of step with the note it is meant to describe.
+TRAINING_NOTE_PREFIXES = {
+    "post": "[POST-WORKOUT MEAL:",
+    "pre": "[PRE-WORKOUT MEAL:",
+}
+
 # A session starting at or before this hour is one breakfast has to be built
 # around rather than merely budgeted for — see `morning_training_days`.
 MORNING_TRAINING_CUTOFF = "11:00"
@@ -1405,8 +1417,9 @@ def apply_training_adjustments(config: dict) -> dict:
                 # a deliberate fixed budget and must survive untouched.
                 pins.setdefault(day, []).append(nearest)
                 notes.setdefault(day, {})[nearest] = (
-                    "[POST-WORKOUT MEAL: high glycogen replenishment required — "
-                    f"carb-forward to refuel after {humanize(session.get('type'))}]"
+                    f"{TRAINING_NOTE_PREFIXES['post']} high glycogen "
+                    "replenishment required — carb-forward to refuel after "
+                    f"{humanize(session.get('type'))}]"
                 )
 
         for meal in day_meals:
@@ -1417,8 +1430,10 @@ def apply_training_adjustments(config: dict) -> dict:
             if 0 <= gap <= TRAINING_PRE_WORKOUT_DIGESTION_MINUTES:
                 notes.setdefault(day, {}).setdefault(
                     meal,
-                    "[PRE-WORKOUT MEAL: low-fibre, ultra-easily digestible, low-fat fuel — "
-                    f"a {humanize(session.get('type'))} session follows at {session.get('time')}]",
+                    f"{TRAINING_NOTE_PREFIXES['pre']} low-fibre, ultra-easily "
+                    "digestible, low-fat fuel — a "
+                    f"{humanize(session.get('type'))} session follows at "
+                    f"{session.get('time')}]",
                 )
 
     adjusted = dict(config, weekly_schedule=schedule)

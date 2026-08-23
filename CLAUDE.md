@@ -210,7 +210,7 @@ concerns:
 | `ui_shopping.py` | the shopping slide-over |
 | `ui_drawer.py` | the left drawer's targets/training/pantry/catalog/import sections |
 | `ui_prep_options.py` | the "Generate Current Week" options popup — cuisine picker, diet-style picker, bulk-prep and long-cook toggles, each a one-off for the *next* run only (see below) |
-| `ui_today.py` | the Today tab (see below) |
+| `ui_today.py` | the Today tab — one day's cards, its location/training context strip, and the day picker that moves between days (see below) |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
 (and, for `ui_shopping`, the drawer element) other modules or the shell
@@ -382,10 +382,147 @@ own anchor — the same pre-migration tolerance `history_styles()` already
 extends to old `meal_history.json` entries), it returns today's weekday name
 only if today's actual calendar date falls inside that week's span, else
 `None`. `PlannerState.today_day()` wraps it against whichever week is
-currently loaded; `ui_today.today_view` renders "no cached week covers
-today" rather than a day's cards when it comes back `None` — check the
-header's week selector, in that case, for whichever cached week (`current`
-or `next`) does cover today.
+currently loaded. It used to be the whole story — a `None` replaced the
+panel with "no cached week covers today" — but a tab with a day picker can
+show the week anyway, so that case is now a note beside the heading and
+`viewed_day()` falls back to day one (see below). Only "nothing generated at
+all" still replaces the panel.
+
+#### Where you are and what you trained
+
+The Today tab also carries a **day-context strip** above the calorie bar:
+where the day is spent, and the workouts scheduled for it. This is the one
+thing the tab can show that the Week tab structurally cannot — seven columns
+have room for an amber bolt saying *that* a day has a workout, and one day
+has room to say which session, at what time, for how many calories, and what
+the location does to lunch. So it lives here rather than in the shared header
+above both tabs.
+
+`ui_state.day_context` is the whole view model, built **once per repaint**
+rather than once per card: the per-meal training notes are only reachable
+through `planning_config()`, which runs `apply_training_adjustments` over the
+entire week, and four cards each asking for their own would be four copies of
+that work for one day's answer.
+
+It reads the config **the next run would use**, not the file on disk, which
+is what puts it under the same "live preview" contract `targets_for` already
+honours — a session added in the drawer changes the day's budget *and* its
+post-workout pin, so a strip still showing the file's schedule would
+contradict the calorie bar directly above it. `today_view` is registered on
+the `targets` and `training` refresh topics for that reason. It is
+deliberately **not** on `telemetry`: that topic exists so a keystroke in a
+focused target input can repaint the header without disturbing the drawer,
+and rebuilding four cards plus a `planning_config()` per keystroke is exactly
+the cost it was carved out to avoid.
+
+Four things in it are decisions rather than detail:
+
+- **A location badge appears on a card only if the location declares that
+  meal's `<meal_type>_mode`.** `LocationView.constrains`/`brief` mirror
+  `planner.build_location_note`'s scope rule rather than re-deciding it, so
+  "must travel in a container" reaches an Office *lunch* and never the
+  breakfast eaten at home before leaving. Getting this wrong renders as an
+  ordinary-looking card carrying a constraint the prompt never sent — nothing
+  else in the app would catch it, which is why `test_ui_state.py` pins it.
+- **The restriction chips are tag-labelled and prose-tooltipped, and the two
+  come from `LocationView.phrase_pairs` as pairs.** A tag with no
+  `LOCATION_RESTRICTION_PHRASES` entry is dropped exactly as
+  `build_location_note` drops it — so zipping `restrictions` against a
+  filtered `phrases` would silently pair the surviving tags with the wrong
+  sentences the moment one tag went unrecognised. Pairing at the source is
+  what makes that unrepresentable.
+- **The post/pre-workout badge classifies `training_notes` by
+  `planner.TRAINING_NOTE_PREFIXES`**, a constant `apply_training_adjustments`
+  now writes those notes *with*. Matching on the wording instead would mean a
+  reworded prompt silently dropping the badge, and a note that fails to parse
+  renders as no badge rather than as an error. The badge carries the kind and
+  the tooltip carries the model's own sentence with the prefix stripped, so
+  the two don't restate each other.
+- **A rest day, or any zero-burn session, is muted rather than amber.**
+  `apply_training_adjustments` skips both, so neither expands a budget or
+  pins a meal, and an amber chip would promise calories it never bought.
+  `TrainingView.is_rest` folds the two cases together for that reason — a
+  typed `rest` and a session logged at 0 kcal are the same thing downstream.
+
+Sessions are ordered by `planner._clock_minutes`, shared rather than
+reimplemented so the strip orders a day by the same tolerant clock reading
+that decides which meal gets the post-workout pin. Everything degrades to
+saying nothing: a config with no `base_schedule` yields no location, an
+untrained day yields no chips, and a day with neither renders no strip at
+all rather than an empty panel announcing the absence of a feature.
+
+#### Browsing to another day
+
+The tab is no longer pinned to today: a row of seven day pills with a chevron
+either side moves through the loaded week, and the **tab's own label becomes
+the day being viewed** — "Today · Sun 23 Aug" on today, "Fri 21 Aug" once you
+step away. Each pill carries an amber mark per workout that day, so the row
+doubles as a week-at-a-glance of the training schedule.
+
+**This was cheap because the panel was already day-parameterized.**
+`today_view` had exactly one line deciding the day, and everything under it —
+`targets_for`, `totals_for`, `day_context`, `slot_id` — already took a day
+argument. Adding the picker changed that one line; no plumbing followed.
+
+Four things in it are decisions:
+
+- **`selected_day = None` means "follow today", and is a distinct state from
+  storing today's name.** A tab left open overnight should be on the right day
+  in the morning, and the resolved name would pin it to whichever day the page
+  loaded on. The "Today" reset button clears the key rather than re-pointing
+  it — the same reasoning as `set_target` dropping an override that matches
+  the file.
+- **Stepping clamps at both ends rather than wrapping or spilling into the
+  next week.** The loaded `week_plan` holds exactly these seven days;
+  continuing past the last one would mean an async load of the other cached
+  plan (`current`/`next`) plus a second control free to disagree with the
+  header's week selector. The chevrons disable at the ends instead. Crossing
+  weeks is a real feature, and a bigger one than this.
+- **`week_covers_today()` is stricter than `today_day() is not None`, and the
+  gap is the point.** `today_in_week` answers "is today inside this week's
+  seven-day *span*" — a question about dates — while the grid is drawn from
+  `state.days`. A config whose `weekly_schedule` names fewer than seven days
+  has a span wider than its columns, and it is the columns a picker can
+  navigate to. Both the "doesn't cover today" note and the reset button's
+  visibility key off the columns for that reason.
+- **A plan with no `week_start_date` shows the bare weekday name.**
+  `day_date_iso` returns None for it and `ui_theme.format_day_label` degrades
+  accordingly, because `week.day_date` deliberately refuses a `generated_at`
+  fallback — and a tab title is the most visible possible place to print a
+  plausible-looking wrong date.
+- **The workout marks differ by icon, never by colour, and "today" gave up
+  its dot for them.** `ui_theme.TRAINING_TYPE_ICONS`/`training_icon` map a
+  type to a glyph — dumbbell, bolt, bike, runner, heart, walker — and every
+  one of them stays amber, because emerald, sky, slate, rose, indigo, amber,
+  violet and cyan already each mean something specific here (slot status,
+  prep column, training, location, freezer) and seven new hues would collide
+  with one of those long before they read as a scale. Today used to be a `•`
+  on the pill; it is now a ring, since two different dots on one pill would
+  be two meanings competing for the same glyph. The same map drives the
+  context strip's chips, so a day's mark and its chip can't disagree.
+
+  Matching is exact first, then **longest prefix** — the same widening
+  `WORKOUT_BREAKFAST_TYPES` uses — so a future `gym_strength` gets the
+  dumbbell and a `cardio_swim` the heart with no edit, and an unrecognised
+  type falls back to a generic workout rather than taking the picker down.
+  Marks are deduped per day by icon (two gym sessions, one dumbbell) while
+  Saturday's gym-plus-HIIT keeps two, and the pill reserves the mark row's
+  height whether or not the day trains so the row keeps one baseline.
+
+- **`PlannerState.training_for` exists so the picker can afford this.** It
+  reads `training_schedule` alone, no config, because the pills call it for
+  all seven days on every repaint — routing that through `day_context` (which
+  needs `planning_config()` for its per-meal notes) would have been seven
+  `apply_training_adjustments` passes over the week to draw one row of icons.
+  `day_context` calls the same method, so the strip and the pills are reading
+  one list.
+
+The label is kept in step by `today_view` calling `sync_tab_label()` on every
+repaint, rather than by a NiceGUI binding: the label depends on the plan and
+on today as well as on the browsed day, so a binding keyed to any one of them
+would go stale on the others. The shell injects its `ui.tab` through
+`TodayHandles.bind_tab` because `build_today` runs well before the tabs exist
+(see `planner_page`'s build order).
 
 ### Drawer inputs to the next run: targets and pantry
 
@@ -1784,7 +1921,7 @@ through one seam, and the tests substitute at that seam.
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views, and the Today tab's day picker and location/training context |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 

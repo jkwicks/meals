@@ -11,13 +11,15 @@ the monolith; this file just draws the module boundary where it already was.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
 from planner import (
+    LOCATION_RESTRICTION_PHRASES,
     MACRO_KEYS,
     NUTRIENT_KEYS,
+    TRAINING_NOTE_PREFIXES,
     CookEvent,
     Recipe,
     WeekPlan,
@@ -31,6 +33,13 @@ from planner import (
     split_targets,
     weeknight_prep_minutes,
 )
+# Private on purpose over there — it is the tolerant "HH:MM" parse a drawer's
+# free-text time field needs, and `apply_training_adjustments` is its real
+# owner. Shared rather than reimplemented so the Today tab orders a day's
+# sessions by the same clock reading that decides which meal gets the
+# post-workout pin; a second parser is a second answer to "what time is
+# `7:3o`?".
+from planner import _clock_minutes
 from repository import LocalJSONRepository
 from ui_theme import (
     LINK_COLOURS,
@@ -50,11 +59,14 @@ from week import (
     WeekSpec,
     clear_cuisines,
     clear_styles,
+    day_date,
     default_week_spec,
     eaten_on,
     humanize,
     leftover_link_error,
     link_leftover,
+    location_for,
+    location_rule,
     meal_types,
     next_day_slot_id,
     portions_for,
@@ -114,6 +126,135 @@ class SlotView:
     @property
     def chain_colour(self) -> str:
         return LINK_COLOURS[(self.chain or 0) % len(LINK_COLOURS)]
+
+
+@dataclass
+class TrainingView:
+    """One scheduled session, flattened for display.
+
+    Sourced from `PlannerState.training_schedule` — the drawer's live copy —
+    rather than from config, so a session added or retimed in the drawer shows
+    on the Today tab immediately, the same "live preview of the next run"
+    contract `targets_for` already honours for target edits.
+
+    `is_rest` is kept as its own flag rather than left for the caller to infer
+    from the type string, because a rest entry is genuinely different in kind:
+    `apply_training_adjustments` skips it, so it expands no budget and pins no
+    meal. It is worth showing (an explicitly scheduled rest day is
+    information) but it must not read as a session that bought calories back.
+    """
+
+    day: str
+    time: str
+    type: str
+    label: str
+    duration_minutes: int
+    burn_kcal: float
+    is_rest: bool
+
+
+@dataclass
+class LocationView:
+    """Where a day is spent and what that constrains.
+
+    `meal_modes` is the location's `<meal_type>_mode` keys, and it is also the
+    exact scope of `restrictions` — per `planner.build_location_note`, a
+    location only constrains the meals it declares a mode for. Reusing that
+    one key as the scope here, rather than deciding again in the UI which
+    meals a restriction covers, is what keeps the badge on a card and the
+    clause in the prompt from ever disagreeing about a Monday breakfast eaten
+    at home before leaving for the office.
+    """
+
+    name: str
+    restrictions: List[str] = field(default_factory=list)
+    notes: str = ""
+    max_prep_minutes: Optional[int] = None
+    meal_modes: Dict[str, str] = field(default_factory=dict)
+
+    def constrains(self, meal_type: str) -> bool:
+        return meal_type in self.meal_modes
+
+    @property
+    def phrase_pairs(self) -> List[Tuple[str, str]]:
+        """(tag, prose) for each restriction the model is actually told about.
+
+        `LOCATION_RESTRICTION_PHRASES` rather than a humanized tag: the tag is
+        a config token ("portable"), and the prose is what it actually means.
+        A tag with no phrase is dropped here exactly as `build_location_note`
+        drops it, so a tooltip can't claim a constraint the prompt never sent.
+
+        Paired rather than left as two parallel lists precisely *because* of
+        that drop: a caller wanting both — a chip labelled with the tag,
+        hovering to the prose — cannot zip `restrictions` against a filtered
+        `phrases` without silently pairing the wrong two the moment one tag
+        goes unrecognised.
+        """
+        return [
+            (tag, LOCATION_RESTRICTION_PHRASES[tag])
+            for tag in self.restrictions
+            if tag in LOCATION_RESTRICTION_PHRASES
+        ]
+
+    @property
+    def phrases(self) -> List[str]:
+        return [phrase for _, phrase in self.phrase_pairs]
+
+    def brief(self, meal_type: str) -> str:
+        """What `planner.build_location_note` tells the model about this meal.
+
+        The same three conditions and the same prose, minus the "[Eaten at X:
+        ...]" wrapper, since a card showing this already names the location
+        beside it. "" when the location says nothing about this meal type, or
+        says only that its mode changed — a mode already reshaped the grid in
+        `week.apply_location_modes`, and restating it would describe the card
+        back to the person looking at it.
+        """
+        if not self.constrains(meal_type):
+            return ""
+        return " ".join(
+            part for part in ["; ".join(self.phrases), self.notes] if part
+        )
+
+
+@dataclass
+class TrainingNote:
+    """A `training_notes` entry, split into what it is and what it says.
+
+    `kind` is "post" or "pre" and becomes the badge; `text` is the *reason*
+    with the prefix and brackets taken off, which is the model's own sentence
+    rather than a UI paraphrase of it. Splitting them is what stops a tooltip
+    reading "POST-WORKOUT MEAL: ..." under a badge already saying
+    POST-WORKOUT. The classification tests `planner.TRAINING_NOTE_PREFIXES`
+    instead of matching the wording, so rewording the prompt can't silently
+    drop the badge.
+    """
+
+    kind: str
+    text: str
+
+
+@dataclass
+class DayContext:
+    """Everything today's location and training say about a day's meals.
+
+    One object built once per repaint rather than three lookups per card:
+    `training_notes` is only reachable through `planning_config()`, which runs
+    `apply_training_adjustments` over the whole week, and calling that four
+    times to label four cards would be four copies of the same work.
+    """
+
+    location: Optional[LocationView]
+    sessions: List[TrainingView]
+    meal_notes: Dict[str, TrainingNote]
+
+    @property
+    def active_sessions(self) -> List[TrainingView]:
+        return [session for session in self.sessions if not session.is_rest]
+
+    @property
+    def total_burn_kcal(self) -> float:
+        return sum(session.burn_kcal for session in self.active_sessions)
 
 
 @dataclass
@@ -187,6 +328,13 @@ class PlannerState:
     # as `focus` is for the recipe detail dialog: one dialog reused for all
     # seven days, refreshable off this key rather than seven pre-built dialogs.
     pipeline_day: Optional[str] = None
+    # Which day the Today tab is showing, or None for "follow today". None is
+    # a distinct state rather than a copy of today's name: a tab left alone
+    # should still be on the right day tomorrow, and storing the resolved name
+    # would pin it to whichever day the page happened to load on. Cleared
+    # rather than re-pointed when the user clicks the "today" reset, for the
+    # same reason `target_overrides` drops a key that matches the file.
+    selected_day: Optional[str] = None
     # A run holds this client for 30s-3min per meal type. The loop stays free
     # (planner dispatches each call to a thread), so the browser is still live
     # and perfectly able to click Generate again — this is the flag that says
@@ -322,6 +470,75 @@ class PlannerState:
         return today_in_week(
             self.week_plan.week_start_date, self.week_plan.days, self.week_plan.generated_at
         )
+
+    def viewed_day(self) -> Optional[str]:
+        """Which day the Today tab renders — the browsed one, or today.
+
+        Falls back to the week's first day when today isn't in the loaded
+        span, rather than refusing to render as `today_day()` alone did. Once
+        the tab has a day picker, "this cached week doesn't cover today" is a
+        note to print above a browsable week, not a reason to show nothing —
+        the plan is still perfectly readable, it just isn't current.
+
+        None means there is no plan at all, which is the one case with
+        genuinely nothing to show.
+        """
+        if self.week_plan is None:
+            return None
+        days = self.days
+        if self.selected_day in days:
+            return self.selected_day
+        return self.today_day() if self.week_covers_today() else (days[0] if days else None)
+
+    def week_covers_today(self) -> bool:
+        """Whether the loaded week has a column for today's actual date.
+
+        Stricter than `today_day() is not None`, and deliberately so: that
+        answers "does this plan's seven-day *span* contain today", which is a
+        question about dates, while the grid is drawn from `self.days`. The
+        two can disagree — a config whose `weekly_schedule` names fewer than
+        seven days has a span wider than its columns — and it is the columns a
+        day picker can actually navigate to.
+        """
+        return self.today_day() in self.days
+
+    def viewing_today(self) -> bool:
+        """Whether the day on screen is actually today's — false both when
+        browsing away and when the loaded week has no today to be on."""
+        return self.week_covers_today() and self.viewed_day() == self.today_day()
+
+    def select_day(self, day: Optional[str]) -> None:
+        """Browse to `day`, or pass None to go back to following today."""
+        self.selected_day = day if day in self.days else None
+
+    def step_viewed_day(self, delta: int) -> None:
+        """Move `delta` days through the week, clamped at both ends.
+
+        Clamped rather than wrapped, and deliberately not spilling into the
+        other cached week: `week_plan` holds exactly these seven days, and
+        stepping past Sunday would mean an async load of the "next" plan plus
+        a second control able to disagree with the header's week selector.
+        The chevrons disable at the ends instead.
+        """
+        day = self.viewed_day()
+        days = self.days
+        if day is None or day not in days:
+            return
+        self.selected_day = days[min(max(days.index(day) + delta, 0), len(days) - 1)]
+
+    def day_date_iso(self, day: str) -> Optional[str]:
+        """The calendar date `day` falls on in the loaded week, or None.
+
+        None for a plan generated before `week_start_date` existed — the same
+        pre-migration tolerance `today_in_week` extends, and the reason
+        `week.day_date` refuses to guess an anchor of its own. A caller with
+        no date shows the weekday name alone rather than a plausible-looking
+        wrong one.
+        """
+        plan = self.week_plan
+        if plan is None or not plan.week_start_date or day not in plan.days:
+            return None
+        return day_date(plan.week_start_date, plan.days, day)
 
     def _shape(self) -> tuple:
         """What the spec is derived *from*; a change here invalidates edits.
@@ -714,6 +931,49 @@ class PlannerState:
     def has_training(self, day: str) -> bool:
         return any(session.get("day") == day for session in self.training_schedule)
 
+    def training_for(self, day: str) -> List["TrainingView"]:
+        """`day`'s sessions, earliest first.
+
+        Deliberately reads nothing but `training_schedule`, so it costs a list
+        scan rather than a `planning_config()`. `day_context` needs the whole
+        config for its per-meal notes and is therefore built once per repaint;
+        this is the half the Today tab's day picker calls for **all seven
+        days** on that same repaint, to mark which ones train. Folding the two
+        together would have made the picker seven `apply_training_adjustments`
+        passes over the week.
+
+        Ordered by `planner._clock_minutes` — the same tolerant "HH:MM" read
+        that decides which meal gets the post-workout pin, so the strip can't
+        order a day differently from the way its pin was chosen. The drawer
+        appends a new session to the end of the list, so file order is not
+        clock order.
+        """
+        return sorted(
+            (
+                TrainingView(
+                    day=day,
+                    time=str(session.get("time", "")),
+                    type=str(session.get("type", "")),
+                    label=TRAINING_TYPE_LABELS.get(
+                        session.get("type"), humanize(str(session.get("type", "")))
+                    ),
+                    duration_minutes=int(session.get("duration_minutes") or 0),
+                    burn_kcal=float(session.get("estimated_burn_kcal") or 0),
+                    # Matches `apply_training_adjustments`' own filter, which
+                    # drops a zero-burn session as surely as a typed rest day:
+                    # both expand nothing, so both must read as rest rather
+                    # than as a workout whose calories went missing.
+                    is_rest=(
+                        session.get("type") == "rest"
+                        or float(session.get("estimated_burn_kcal") or 0) <= 0
+                    ),
+                )
+                for session in self.training_schedule
+                if session.get("day") == day
+            ),
+            key=lambda session: _clock_minutes(session.time),
+        )
+
     def targets_for(self, day: str) -> dict:
         """The denominator the telemetry header measures a day against.
 
@@ -875,6 +1135,66 @@ class PlannerState:
             )
 
         return views
+
+
+def day_context(state: PlannerState, day: str) -> DayContext:
+    """Where `day` is spent and what is being trained that day.
+
+    Built from the config the *next run* would use (`planning_config()`), not
+    the file on disk, so the drawer's training edits reach this the same way
+    they already reach `targets_for` — a session added in the drawer changes
+    the day's budget and its post-workout pin, and a Today tab that kept
+    showing the file's schedule would contradict the calorie bar directly
+    above it. Location has no drawer control today and so is identical in
+    both, but reading one config rather than two is what keeps it that way if
+    one ever lands.
+
+    Everything here degrades to "say nothing": a config with no
+    `base_schedule` (every config predating that feature) yields
+    `location=None`, and a day nobody trains on yields no sessions and no
+    notes. That is the same opt-in tolerance `week.location_for` and
+    `apply_training_adjustments` already extend, kept rather than turned into
+    an empty-state the Today tab would have to render around.
+    """
+    config = state.planning_config()
+
+    where = location_for(config, day)
+    location = None
+    if where:
+        # A named location with no `location_rules` entry — "Home" in the
+        # shipped schedule — is still worth showing: it says where the day is
+        # spent, which is the question, and an empty rule simply constrains
+        # nothing. Returning None for it would make the strip flicker between
+        # days for no reason a reader could see.
+        rule = location_rule(config, day)
+        max_prep = rule.get("max_prep_minutes")
+        location = LocationView(
+            name=where,
+            restrictions=list(rule.get("restrictions") or []),
+            notes=str(rule.get("notes") or "").strip(),
+            max_prep_minutes=int(max_prep) if max_prep is not None else None,
+            meal_modes={
+                meal_type: rule[f"{meal_type}_mode"]
+                for meal_type in state.meal_types
+                if f"{meal_type}_mode" in rule
+            },
+        )
+
+    sessions = state.training_for(day)
+
+    notes = (config.get("training_notes") or {}).get(day) or {}
+    meal_notes = {}
+    for meal_type, note in notes.items():
+        for kind, prefix in TRAINING_NOTE_PREFIXES.items():
+            if note.startswith(prefix):
+                reason = note[len(prefix):]
+                meal_notes[meal_type] = TrainingNote(
+                    kind=kind,
+                    text=(reason[:-1] if reason.endswith("]") else reason).strip(),
+                )
+                break
+
+    return DayContext(location=location, sessions=sessions, meal_notes=meal_notes)
 
 
 def pipeline_value(state: PlannerState, day: str, key: str) -> Optional[str]:
