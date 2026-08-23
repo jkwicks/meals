@@ -9,6 +9,8 @@ its inputs as arguments and returns either a string or renders directly via
 """
 
 import re
+from datetime import datetime
+from typing import Optional
 
 from nicegui import ui
 
@@ -82,6 +84,98 @@ PREP_BADGE_STYLES = {
         "label": "❄️ From Freezer",
         "classes": "bg-cyan-400/15 text-cyan-200 ring-1 ring-inset ring-cyan-300/30",
     },
+}
+
+def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
+    """A day's name with its calendar date — "Thursday 28 August", "Thu 28 Aug".
+
+    `iso` is `PlannerState.day_date_iso`, which is None for a plan generated
+    before `week_start_date` existed. That case degrades to the bare weekday
+    name rather than inventing a date: the whole reason `week.day_date`
+    refuses a `generated_at` fallback is that a plausible-looking wrong date
+    is worse than no date, and printing one in a tab title would be the most
+    visible possible place to be wrong.
+
+    Pure so it can be tested without a plan and used by both the tab label
+    (short) and the panel heading (long) — the two must not drift into
+    describing the same day differently.
+    """
+    if iso is None:
+        return day[:3] if short else day
+    stamp = datetime.fromisoformat(iso)
+    # %-d rather than %d: "Thu 8 Aug", not "Thu 08 Aug". POSIX-only, which is
+    # every platform this app runs on.
+    return stamp.strftime("%a %-d %b") if short else stamp.strftime(f"{day} %-d %B")
+
+
+# The Today tab's day-context strip: where the day is spent, and what is being
+# trained. Two accents, deliberately outside the emerald/sky/slate/rose that
+# STATUS_STYLES spends on eating slots and the indigo PREP_COLUMN_ACCENT owns
+# — neither of these is a slot status, and a location chip that borrowed
+# "cook" green would read as a fifth one.
+#
+# Amber for training is not a new choice: the telemetry header's per-day
+# workout marker is already an amber bolt, and the generation dialog's is the
+# same icon in the same tint, so a session reads the same wherever it appears.
+# Violet is new, and only ever means "location".
+LOCATION_ACCENT = "bg-violet-400/10 text-violet-200 ring-1 ring-inset ring-violet-300/25"
+TRAINING_ACCENT = "bg-amber-400/10 text-amber-200 ring-1 ring-inset ring-amber-300/25"
+# A scheduled rest day. Explicitly muted rather than left in TRAINING_ACCENT:
+# `apply_training_adjustments` skips a rest entry, so it expands no budget and
+# pins no meal, and an amber chip would promise calories it never bought.
+REST_ACCENT = "bg-slate-700/30 text-slate-400 ring-1 ring-inset ring-slate-600/30"
+
+# Workout type -> the icon that stands for it. **Icon, not colour, is what
+# distinguishes the types**: emerald, sky, slate, rose, indigo, amber, violet
+# and cyan already each mean something specific in this UI (slot status, prep
+# column, training, location, freezer), so seven new hues would collide with
+# one of them long before they read as a scale. Every session stays amber —
+# training is amber everywhere, from the telemetry header's bolt onward — and
+# the glyph carries the type.
+#
+# Keys are matched by `training_icon` exactly first, then as a **prefix**, the
+# same widening `WORKOUT_BREAKFAST_TYPES` uses: a future `gym_strength` gets
+# the dumbbell and a `cardio_swim` the heart, with no edit here.
+TRAINING_TYPE_ICONS = {
+    "gym_hypertrophy": "fitness_center",
+    "cardio_hiit": "bolt",
+    "cardio_run": "directions_run",
+    "cardio_ride": "directions_bike",
+    "cardio_easy": "monitor_heart",
+    "walk": "directions_walk",
+    "rest": "bedtime",
+    # Prefix fallbacks, longest-first at match time.
+    "gym": "fitness_center",
+    "cardio": "monitor_heart",
+}
+# What an unrecognised type gets. `fitness_center` rather than a question mark:
+# a type this file hasn't heard of is still a workout, and the strip prints its
+# humanized name beside the icon anyway.
+TRAINING_ICON_FALLBACK = "fitness_center"
+
+
+def training_icon(training_type: str) -> str:
+    """The icon for a workout type — exact match, then longest prefix.
+
+    Longest prefix rather than first match, because `cardio_ride` and
+    `cardio` are both prefixes of the former and only the specific one is
+    right. Never raises: an unknown type resolves to
+    `TRAINING_ICON_FALLBACK`, since a config typo should render a generic
+    workout rather than take the day picker down.
+    """
+    if training_type in TRAINING_TYPE_ICONS:
+        return TRAINING_TYPE_ICONS[training_type]
+    matches = [key for key in TRAINING_TYPE_ICONS if training_type.startswith(key)]
+    return TRAINING_TYPE_ICONS[max(matches, key=len)] if matches else TRAINING_ICON_FALLBACK
+
+
+# `ui_state.TrainingNote.kind` -> the badge that goes on the meal the note is
+# about. Post- and pre-workout are opposite instructions (refuel vs. stay
+# light), so they get their own labels rather than one shared "training" chip
+# whose tooltip is the only thing distinguishing them.
+TRAINING_NOTE_BADGES = {
+    "post": {"label": "POST-WORKOUT", "icon": "bolt"},
+    "pre": {"label": "PRE-WORKOUT", "icon": "schedule"},
 }
 
 # (key, short label, unit suffix). Calories carry no suffix because their
