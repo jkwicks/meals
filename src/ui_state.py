@@ -34,13 +34,12 @@ from planner import (
     split_targets,
     weeknight_prep_minutes,
 )
-# Private on purpose over there — it is the tolerant "HH:MM" parse a drawer's
-# free-text time field needs, and `apply_training_adjustments` is its real
-# owner. Shared rather than reimplemented so the Today tab orders a day's
-# sessions by the same clock reading that decides which meal gets the
-# post-workout pin; a second parser is a second answer to "what time is
-# `7:3o`?".
-from planner import _clock_minutes
+# `apply_training_adjustments` is its real owner; it is the tolerant "HH:MM"
+# parse a drawer's free-text time field needs. Shared rather than
+# reimplemented so the Today tab orders a day's sessions by the same clock
+# reading that decides which meal gets the post-workout pin; a second parser
+# is a second answer to "what time is `7:3o`?".
+from planner import clock_minutes
 from repository import LocalJSONRepository
 from ui_theme import (
     LINK_COLOURS,
@@ -973,7 +972,7 @@ class PlannerState:
         together would have made the picker seven `apply_training_adjustments`
         passes over the week.
 
-        Ordered by `planner._clock_minutes` — the same tolerant "HH:MM" read
+        Ordered by `planner.clock_minutes` — the same tolerant "HH:MM" read
         that decides which meal gets the post-workout pin, so the strip can't
         order a day differently from the way its pin was chosen. The drawer
         appends a new session to the end of the list, so file order is not
@@ -1002,7 +1001,7 @@ class PlannerState:
                 for session in self.training_schedule
                 if session.get("day") == day
             ),
-            key=lambda session: _clock_minutes(session.time),
+            key=lambda session: clock_minutes(session.time),
         )
 
     def targets_for(self, day: str) -> dict:

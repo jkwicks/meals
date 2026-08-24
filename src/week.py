@@ -378,7 +378,32 @@ def apply_location_modes(spec: WeekSpec, config: dict) -> WeekSpec:
             # moving off leftover can't keep pointing at a cook it no longer
             # eats — `validate_week` allows a stale source, but the shopping
             # list and portion arithmetic would both still count the claim.
-            updated.append(slot.model_copy(update={"mode": mode, "source": None}))
+            #
+            # A location that skips a meal may say what is eaten instead —
+            # `<meal_type>_skip_estimate` on the rule, the same shape as
+            # `SlotSpec.skip_estimate`. The rule is the honest place for it:
+            # `Outing` means dining out, and a skip with no estimate
+            # contributes 0 to a day that was genuinely eaten on, which is
+            # exactly what strands the rest of the day's budget (see H-1 in
+            # the structural audit this fixed).
+            estimate = (
+                location_rule(config, slot.day).get(f"{slot.meal_type}_skip_estimate")
+                if mode == MODE_SKIP
+                else None
+            )
+            updated.append(
+                slot.model_copy(
+                    update={
+                        "mode": mode,
+                        "source": None,
+                        "skip_estimate": (
+                            {key: float(estimate[key]) for key in MACRO_KEYS}
+                            if estimate
+                            else None
+                        ),
+                    }
+                )
+            )
             continue
 
         index = spec.day_index(slot.day)

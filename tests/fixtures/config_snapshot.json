@@ -187,6 +187,12 @@
     "Outing": {
       "dinner_mode": "leftover",
       "lunch_mode": "skip",
+      "lunch_skip_estimate": {
+        "calories": 795,
+        "fat_g": 44,
+        "net_carbs_g": 62,
+        "protein_g": 36
+      },
       "notes": "Dining out or packed nutrition"
     },
     "WFH": {

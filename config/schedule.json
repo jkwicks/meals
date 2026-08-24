@@ -84,6 +84,12 @@
     },
     "Outing": {
       "lunch_mode": "skip",
+      "lunch_skip_estimate": {
+        "calories": 795,
+        "protein_g": 36,
+        "net_carbs_g": 62,
+        "fat_g": 44
+      },
       "dinner_mode": "leftover",
       "notes": "Dining out or packed nutrition"
     },
