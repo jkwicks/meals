@@ -36,9 +36,11 @@ import ui_state  # noqa: E402
 from ui_theme import format_day_label, training_icon  # noqa: E402
 from planner import (  # noqa: E402
     LOCATION_RESTRICTION_PHRASES,
+    SUNDAY_PREP_REHEAT_MINUTES,
     CookEvent,
     Ingredient,
     Recipe,
+    SundayPrepSession,
     WeekPlan,
 )
 from week import (  # noqa: E402
@@ -341,6 +343,120 @@ class TestSlotViews(unittest.TestCase):
         state = make_state()
         state.link_to_next_lunch("Monday:dinner")
         self.assertTrue(state.slot_views()["Monday:dinner"].feeds)
+
+
+class TestUnlinkSlot(unittest.TestCase):
+    """The inverse of `link_to_next_lunch`, and the only way to undo one —
+    clicking the link button again hits `leftover_link_error`'s repeat-click
+    guard rather than toggling. `ui_generation.generate_week`'s own "unlink
+    one, or turn off one of the two toggles" warning named an action the UI
+    did not offer until this existed.
+    """
+
+    def test_it_turns_a_leftover_back_into_a_cook(self):
+        state = make_state()
+        state.link_to_next_lunch("Monday:dinner")
+        self.assertIsNone(state.unlink_slot("Tuesday:lunch"))
+        self.assertEqual(state.spec.by_id()["Tuesday:lunch"].mode, MODE_COOK)
+
+    def test_it_shrinks_the_source_batch_back(self):
+        """Portions are derived, so dropping a claim rescales the cook event
+        by the same linear arithmetic that grew it."""
+        state = make_state()
+        state.link_to_next_lunch("Monday:dinner")
+        grown = state.week_plan.by_slot()["Monday:dinner"].portions
+        state.unlink_slot("Tuesday:lunch")
+        shrunk = state.week_plan.by_slot()["Monday:dinner"].portions
+        self.assertLess(shrunk, grown)
+
+    def test_unlinking_a_cook_slot_is_refused(self):
+        state = make_state()
+        self.assertIn("isn't a leftover", state.unlink_slot("Monday:dinner"))
+
+    def test_an_unknown_slot_is_refused(self):
+        self.assertIsNotNone(make_state().unlink_slot("Caturday:brunch"))
+
+    def test_the_view_carries_the_raw_source_id(self):
+        """The unlink notification reports what the source shrank to, and
+        re-parsing the humanized `source_label` to recover it would be a
+        second, lossy encoding of something already known."""
+        state = make_state()
+        state.link_to_next_lunch("Monday:dinner")
+        self.assertEqual(state.slot_views()["Tuesday:lunch"].source_id, "Monday:dinner")
+        self.assertEqual(state.slot_views()["Monday:dinner"].source_id, "")
+
+
+class TestSundayPrepBadges(unittest.TestCase):
+    """`is_sunday_prepped` covers the batch's own MODE_COOK anchor slot, not
+    just the MODE_LEFTOVER slots eating it — see `planner.is_sunday_prepped`'s
+    docstring for the live week this was written against, where a real
+    long-cook anchor rendered as a plain "cook" card because the badge logic
+    only ever looked at leftover slots. The shake candidate that rides along
+    in the same session is the other case: it gets the badge too, but must
+    keep its own prep time rather than collapsing to the dinner batches'
+    reheat estimate, since a shake morning genuinely blends fresh — only its
+    base was portioned ahead.
+    """
+
+    def make_state_with_session(self):
+        state = make_state()
+        state.link_to_next_lunch("Monday:dinner")
+        dinner_event = CookEvent(
+            slot_id="Monday:dinner", day="Monday", meal_type="dinner",
+            portions=4, eaten_by=["Monday:dinner", "Tuesday:lunch"], recipe=make_recipe(),
+        )
+        shake_event = CookEvent(
+            slot_id="Monday:breakfast", day="Monday", meal_type="breakfast",
+            portions=2, eaten_by=["Monday:breakfast"],
+            recipe=make_recipe(name="Protein Shake").model_copy(
+                update={"meal_type": "breakfast", "prep_time_minutes": 5}
+            ),
+        )
+        unrelated_event = CookEvent(
+            slot_id="Wednesday:dinner", day="Wednesday", meal_type="dinner",
+            portions=2, eaten_by=["Wednesday:dinner"],
+            recipe=make_recipe(name="Ordinary Dinner"),
+        )
+        state.week_plan = state.week_plan.model_copy(
+            update={
+                "cook_events": [dinner_event, shake_event, unrelated_event],
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=90,
+                    candidate_slot_ids=["Monday:dinner", "Monday:breakfast"],
+                ),
+            }
+        )
+        return state
+
+    def test_the_anchor_s_own_cook_slot_gets_the_badge(self):
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Monday:dinner"].prep_badge, "fridge")
+
+    def test_the_anchor_s_own_cook_slot_collapses_to_the_reheat_estimate(self):
+        """Nothing is actually cooked fresh on the anchor's calendar day
+        either — the whole batch was cooked Sunday — so its prep_minutes
+        should read the same reheat estimate a downstream leftover gets."""
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Monday:dinner"].prep_minutes, SUNDAY_PREP_REHEAT_MINUTES)
+
+    def test_a_downstream_leftover_still_gets_the_badge(self):
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Tuesday:lunch"].prep_badge, "fridge")
+
+    def test_the_shake_gets_the_badge(self):
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Monday:breakfast"].prep_badge, "fridge")
+
+    def test_the_shake_keeps_its_own_prep_time(self):
+        """Unlike the dinner batches, a shake morning genuinely blends fresh
+        — only its base was portioned ahead — so it must not collapse to the
+        reheat estimate the dinner anchor does."""
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Monday:breakfast"].prep_minutes, 5)
+
+    def test_an_unrelated_cook_gets_no_badge(self):
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Wednesday:dinner"].prep_badge, "")
 
 
 # `base_schedule`/`location_rules` shaped after the shipped `schedule.json`,

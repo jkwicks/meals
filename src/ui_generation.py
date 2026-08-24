@@ -17,7 +17,6 @@ from typing import Callable, Dict, Optional, Tuple
 from nicegui import ui
 
 from planner import (
-    WEEKEND_DAYS,
     api_key_error,
     generate_week_plan,
     meal_type_order,
@@ -35,11 +34,11 @@ from week import (
     DEFAULT_INVENTORY_RULES,
     MODE_COOK,
     WeekSpec,
+    clear_batch_links,
     clear_cuisines,
     clear_recipe_pins,
     clear_styles,
     humanize,
-    parse_slot_id,
     slot_label,
     spread_batch,
     validate_week,
@@ -49,82 +48,64 @@ from week import (
 def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict]:
     """Turn the popup's bulk-prep/long-cook toggles into leftover links.
 
-    Two independent `week.spread_batch` calls, both anchored on "dinner" (the
-    only meal type link rules let feed both another dinner and a lunch).
-    bulk_prep runs first and gets first claim on whatever room the grid has
-    — it is the priority batch, and everything else (long_cook, and the
-    ordinary per-day dinners) fills in around whatever it takes. long_cook
-    runs second, with a real day preference of its own (weekends), and its
-    search excludes bulk_prep's anchor day so a week with both toggles on
-    still gets two distinct batches rather than one dinner double-booked.
+    **Each batch takes one meal type, straight across the front of the week.**
+    Bulk prep claims the lunches, long cook claims the dinners, both starting
+    at day 1 and running as far as the fridge window allows — so with the
+    shipped config, Monday-Wednesday lunches are all one prepped dish and
+    Monday-Wednesday dinners are all another. Nothing is searched for and
+    nothing competes: the two batches cannot collide because they are on
+    different rows of the grid, and neither can drift late because both start
+    at the earliest day there is.
 
-    That weekend preference is now a preference in the literal sense: with
-    the week's last day off-limits as a target (`prep_stale_days` below),
-    Saturday has nowhere left to spread, so `spread_batch` skips both
-    weekend days and falls back to the earliest dinner that can actually
-    carry a batch. Which is the right answer anyway — the "weekends suit a
-    lazier cook" reasoning is about when you *cook*, and a batch folded into
-    the prep session is cooked on prep day regardless of which day eats it
-    first.
+    That pairing is not arbitrary. A soup/stew/curry (`BULK_PREP_RULE`'s own
+    candidates) is exactly the dish that reheats at a desk and travels in a
+    container, and an oven roast or braise (`BATCH_ROAST_ANCHOR_RULE`'s) is
+    dinner food. It also means Monday eats two *different* dishes rather than
+    the same one twice, which is what any arrangement filling all six slots
+    from a single row would have forced.
+
+    **The anchor is bookkeeping, not a choice.** Every recipe has to live on
+    some slot — that is what a cook slot is — and prep day has no slot of its
+    own in the grid, so the first day a batch is eaten holds the recipe and
+    the rest point back at it. Earlier versions *searched* for that day
+    (earliest dinner with room, weekends preferred, second toggle excluding
+    the first's day), and the search was the entire source of both the
+    late-week drift and the two toggles fighting over the same dinners. Day 1
+    is always a valid anchor and always the safest one, so there is nothing
+    left to search for.
 
     Returns the (possibly updated) spec and a dict of the two anchor slot ids
-    actually chosen (None where a toggle was off, no valid anchor existed, or
-    `spread_batch` couldn't grow that anchor past what an ordinary dinner
-    already gets — see its docstring) — merge straight into `config` so
+    actually chosen (None where a toggle was off, or where `spread_batch`
+    could not grow that anchor past what an ordinary meal already gets — see
+    its docstring) — merge straight into `config` so
     `generate_meal_type_week`/`generate_sunday_prep_session` can read
-    `long_cook_anchor`/`bulk_prep_anchor` off it.
-
-    On a week whose lunches are already linked to the previous day's dinner
-    (`autofill_leftovers`, or repeated "Link to next lunch" clicks), there is
-    often only one slot left anywhere for a batch to grow into — so with both
-    toggles on, whichever runs first claims it and the other gets nothing.
-    Running bulk_prep first means that scarcity falls on long_cook, not on
-    the priority batch. `generate_week` below checks for exactly that and
-    warns rather than generating a mislabeled dinner silently.
+    `long_cook_anchor`/`bulk_prep_anchor` off it. A grid whose lunches or
+    dinners are already claimed by the user leaves the corresponding batch
+    with nothing to grow into; `generate_week` below warns rather than
+    generating a mislabeled meal silently.
     """
     target_servings = planning_rule(config, "batch_target_servings")
-    # Cooked food keeps `fridge_safe_days`; a batch is not allowed to plan
-    # itself past that. Bounding the spread here rather than rejecting the
-    # result in `validate_week` is the difference between never creating the
-    # problem and refusing to generate a week the planner itself built.
-    max_span_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
+    fridge_safe_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
         "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
     )
-    # The batch-prep session runs the day *before* the week starts — that is
-    # what `ui_cards.prep_day_column` draws as an eighth column left of day 0
-    # — so the week's own last day sits a full 7 days after it. On a
-    # Monday-start week the Sunday the batch is cooked on and the Sunday at
-    # the end of the grid are not the same Sunday, and nothing prepped ahead
-    # is still food by then. It is ruled out as a batch *target* for both
-    # toggles; an anchor may still land there, and an ordinary "Link to next
-    # lunch" into it (cooked that Saturday, not on prep day) is untouched.
-    prep_stale_days = {spec.days[-1]} if spec.days else set()
+    # These batches are cooked on prep day — the day *before* `spec.days[0]`,
+    # the eighth column `ui_cards.prep_day_column` draws — not on the day
+    # their anchor slot happens to sit. So the bound that matters is measured
+    # from there: day index i is i+1 days out of the fridge, giving indices
+    # 0..fridge_safe_days-1. `max_span_days` (anchor-relative) is deliberately
+    # not passed as well; it can only ever be looser than this one here, since
+    # every anchor is day 0.
+    max_day_index = fridge_safe_days - 1
     anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
 
     if config.get("bulk_prep_enabled"):
         spec, anchors["bulk_prep_anchor"] = spread_batch(
-            spec,
-            "dinner",
-            target_servings,
-            max_span_days=max_span_days,
-            exclude_target_days=prep_stale_days,
+            spec, "lunch", target_servings, max_day_index=max_day_index
         )
 
     if config.get("long_cook_enabled"):
-        weekend_days = [day for day in spec.days if day in WEEKEND_DAYS]
-        exclude_days = (
-            {parse_slot_id(anchors["bulk_prep_anchor"])[0]}
-            if anchors["bulk_prep_anchor"]
-            else None
-        )
         spec, anchors["long_cook_anchor"] = spread_batch(
-            spec,
-            "dinner",
-            target_servings,
-            prefer_days=weekend_days,
-            exclude_days=exclude_days,
-            max_span_days=max_span_days,
-            exclude_target_days=prep_stale_days,
+            spec, "dinner", target_servings, max_day_index=max_day_index
         )
 
     return spec, anchors
@@ -217,15 +198,24 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         # already carries a concrete style from before the change. It also
         # covers the case where the popup's cuisine picker narrows
         # config["cuisines"] out from under a slot's previous concrete pick.
-        # Mode, leftover links and skips are untouched — those are structural
-        # edits the user made on purpose, not picks due for a re-roll.
+        # A *user's* mode changes, leftover links and skips are untouched —
+        # those are structural edits they made on purpose, not picks due for
+        # a re-roll.
         #
         # `clear_recipe_pins` for the same reason: a pinned favourite from the
         # previous run would still be sitting on its slot, and
         # `select_favorite_assignments` only ever fills an *empty* one — so
         # without this, week one's favourites would be re-served every week
         # forever and the reuse window would never get a chance to advance.
-        spec = clear_recipe_pins(clear_cuisines(clear_styles(spec)))
+        #
+        # `clear_batch_links` is the same rule applied to the one kind of
+        # leftover link the user did *not* make: `spread_batch`'s own. It only
+        # ever adds claims, counting what an anchor already has, so its
+        # previous output would satisfy this run's target — linking nothing,
+        # re-picking the same anchor, and freezing the batch shape and its
+        # day permanently. `SlotSpec.link_origin` is what tells the kinds
+        # of link apart.
+        spec = clear_batch_links(clear_recipe_pins(clear_cuisines(clear_styles(spec))))
         # Bulk-prep/long-cook are fully-automatic leftover links, applied
         # before validate_week (so that single pass checks the grid actually
         # being generated from) and before resolve_auto_choices below (so it

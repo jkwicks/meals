@@ -25,6 +25,23 @@ from pydantic import BaseModel, Field
 MODE_COOK = "cook"
 MODE_LEFTOVER = "leftover"
 MODE_SKIP = "skip"
+
+# Who made a leftover link — `SlotSpec.link_origin`. The three differ in what
+# is allowed to overwrite them, which is the whole reason the distinction is
+# stored rather than inferred:
+#
+#   user      a deliberate "Link to next lunch" click. Never touched by
+#             anything automatic. The conservative default, so a plan saved
+#             before this field existed keeps every link it has.
+#   location  `apply_location_modes` resolving `<meal_type>_mode: leftover`.
+#             The rule says an Office lunch *is* a leftover, never whose —
+#             "the previous day's dinner" is a resolution, not an intent — so
+#             `spread_batch` may re-point one at a batch instead.
+#   batch     `spread_batch`'s own. Dropped by `clear_batch_links` before
+#             every run, so the toggles re-spread instead of freezing.
+LINK_ORIGIN_USER = "user"
+LINK_ORIGIN_LOCATION = "location"
+LINK_ORIGIN_BATCH = "batch"
 MODES = [MODE_COOK, MODE_LEFTOVER, MODE_SKIP]
 
 # Sentinel used in the UI dropdowns for "let the planner decide". Stored as
@@ -227,6 +244,18 @@ class SlotSpec(BaseModel):
             "exactly as for a generated recipe."
         ),
     )
+    link_origin: str = Field(
+        default=LINK_ORIGIN_USER,
+        description=(
+            "Who made this leftover link — one of LINK_ORIGIN_USER / "
+            "_LOCATION / _BATCH (see their definitions for what each permits). "
+            "Meaningless on a slot that isn't MODE_LEFTOVER. Defaults to "
+            "'user' so a plan saved before this field existed keeps every "
+            "link it has: that is the conservative direction, preserving "
+            "links rather than discarding or re-pointing ones whose origin "
+            "cannot be proven."
+        ),
+    )
 
     @property
     def id(self) -> str:
@@ -367,7 +396,19 @@ def apply_location_modes(spec: WeekSpec, config: dict) -> WeekSpec:
             None,
         )
         updated.append(
-            slot.model_copy(update={"mode": MODE_LEFTOVER, "source": source})
+            slot.model_copy(
+                update={
+                    "mode": MODE_LEFTOVER,
+                    "source": source,
+                    # Tagged `location`, not `user`: the rule says this lunch
+                    # *is* a leftover, and "the previous day's dinner" is only
+                    # how that was resolved. `spread_batch` may therefore
+                    # re-point it at a prep batch — still a leftover, still
+                    # satisfying the location rule, just eating something
+                    # cooked on purpose to be eaten here.
+                    "link_origin": LINK_ORIGIN_LOCATION,
+                }
+            )
             if source
             else slot
         )
@@ -549,15 +590,30 @@ def leftover_link_error(spec: WeekSpec, target_id: str, source_id: str) -> Optio
     return None
 
 
-def link_leftover(spec: WeekSpec, target_id: str, source_id: str) -> WeekSpec:
+def link_leftover(
+    spec: WeekSpec,
+    target_id: str,
+    source_id: str,
+    origin: str = LINK_ORIGIN_USER,
+) -> WeekSpec:
     """A copy of `spec` with `target_id` set to eat `source_id`'s leftovers.
 
     Call `leftover_link_error` first — this applies the edit unconditionally.
     `extra_portions` is cleared because it only means anything on a cook slot.
+
+    `origin` records who made the link — see `SlotSpec.link_origin` and the
+    `LINK_ORIGIN_*` constants. It defaults to `user` so the UI's "Link to next
+    lunch" needs no argument and nothing automatic can claim a link by
+    omission; `apply_location_modes` and `spread_batch` pass their own.
     """
     updated = [
         slot.model_copy(
-            update={"mode": MODE_LEFTOVER, "source": source_id, "extra_portions": 0}
+            update={
+                "mode": MODE_LEFTOVER,
+                "source": source_id,
+                "extra_portions": 0,
+                "link_origin": origin,
+            }
         )
         if slot.id == target_id
         else slot
@@ -566,14 +622,135 @@ def link_leftover(spec: WeekSpec, target_id: str, source_id: str) -> WeekSpec:
     return spec.model_copy(update={"slots": updated})
 
 
+def unlink_leftover(spec: WeekSpec, target_id: str) -> WeekSpec:
+    """A copy of `spec` with `target_id` turned back into a cook slot.
+
+    The inverse of `link_leftover`, and the only way to undo one: clicking
+    "Link to next lunch" a second time hits `leftover_link_error`'s
+    repeat-click guard rather than toggling. Without this a grid could only
+    ever accumulate links, which is what let a batch chain from one run
+    survive into every later week (see `clear_batch_links`).
+
+    Resetting `link_origin` alongside `source` matters: the slot is a cook
+    again, and a stale `batch`/`location` origin would make the *next*
+    `clear_batch_links` or batch re-point treat a link the user has since made
+    by hand as automatic and free to discard.
+    """
+    updated = [
+        slot.model_copy(
+            update={
+                "mode": MODE_COOK,
+                "source": None,
+                "link_origin": LINK_ORIGIN_USER,
+            }
+        )
+        if slot.id == target_id
+        else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": updated})
+
+
+def clear_batch_links(spec: WeekSpec) -> WeekSpec:
+    """Drop every link `spread_batch` made, so the next run re-spreads freely.
+
+    Called unconditionally by `ui_generation.generate_week` alongside
+    `clear_styles`/`clear_cuisines`/`clear_recipe_pins`, and for exactly the
+    same reason those three are: a generated week's slots carry whatever the
+    *last* run decided, and `spread_batch` only ever *adds* claims — it counts
+    what an anchor already has (`existing_claims`) and tops up to
+    `target_claims`. So once a week has been batched, every later run on that
+    same grid finds the anchor already at target, links nothing, and returns
+    the same anchor: the batch shape, and the anchor day itself, freeze
+    permanently. That is the bug this exists to prevent, and it is invisible —
+    the toggles still report success, and the week still has batches on it,
+    just always the same ones in the same places.
+
+    Only `LINK_ORIGIN_BATCH` slots are dropped. A user's own "Link to next
+    lunch" is a structural edit they made on purpose (the same carve-out
+    `clear_styles` documents for mode/links/skips) and survives untouched,
+    which is also why `spread_batch` still counts *those* claims toward its
+    target. A `location` link survives too — it is re-derived from config, not
+    from a previous run, so there is nothing stale about it; `spread_batch`
+    may still re-point or release one, which is a different operation from
+    clearing it.
+    """
+    return spec.model_copy(
+        update={
+            "slots": [
+                slot.model_copy(
+                    update={
+                        "mode": MODE_COOK,
+                        "source": None,
+                        "link_origin": LINK_ORIGIN_USER,
+                    }
+                )
+                if slot.mode == MODE_LEFTOVER and slot.link_origin == LINK_ORIGIN_BATCH
+                else slot
+                for slot in spec.slots
+            ]
+        }
+    )
+
+
+def _releasable_dependants(spec: WeekSpec, target_id: str) -> Optional[List[str]]:
+    """Slots that must be freed for `target_id` to become a leftover itself.
+
+    `leftover_link_error` refuses to convert a cook that already feeds
+    something, because that would strand the other end of the chain. On the
+    shipped grid this is what puts **Wednesday's dinner out of reach**: an
+    Office rule has already pointed Thursday's lunch at it, so the one Mon-Wed
+    slot a second batch still wants is blocked by an auto-generated link
+    nobody chose.
+
+    Returns the dependants to release when every one of them is a
+    `LINK_ORIGIN_LOCATION` link — those are re-derived from config, and
+    `apply_location_modes` itself falls back to cooking whenever a day's
+    previous dinner isn't a cook, so a released Office lunch lands in a state
+    that rule already produces. Returns None when any dependant is a `user` or
+    `batch` link, which must not be silently undone: the batch skips the slot
+    instead. An empty list means nothing is in the way.
+    """
+    dependants = [
+        slot for slot in spec.slots if slot.mode == MODE_LEFTOVER and slot.source == target_id
+    ]
+    if any(slot.link_origin != LINK_ORIGIN_LOCATION for slot in dependants):
+        return None
+    return [slot.id for slot in dependants]
+
+
+def _claimable(target: SlotSpec, anchor_id: str) -> bool:
+    """Whether `spread_batch` may point `target` at `anchor_id`.
+
+    A cook slot, obviously. Also a leftover whose link came from
+    `apply_location_modes` (`LINK_ORIGIN_LOCATION`): that rule says the slot
+    *is* a leftover without saying whose, so re-pointing it at a batch honours
+    it exactly as well as the previous-day's-dinner default it resolved to.
+    Doing so is what lets a second batch exist at all on a grid whose Office
+    lunches have already spent the week's slack — see `spread_batch`.
+
+    A `user` link is never claimable: that one names a specific dinner on
+    purpose. Nor is a `batch` link, which would mean the two toggles fighting
+    over the same slot within a single run — `clear_batch_links` is how a
+    *previous* run's batch links get out of the way, before any of this.
+    """
+    if target.mode == MODE_COOK:
+        return True
+    return (
+        target.mode == MODE_LEFTOVER
+        and target.link_origin == LINK_ORIGIN_LOCATION
+        and target.source != anchor_id
+    )
+
+
 def spread_batch(
     spec: WeekSpec,
     anchor_meal_type: str,
     target_servings: int,
     exclude_days: Optional[Set[str]] = None,
-    prefer_days: Optional[List[str]] = None,
     max_span_days: Optional[int] = None,
     exclude_target_days: Optional[Set[str]] = None,
+    max_day_index: Optional[int] = None,
 ) -> Tuple[WeekSpec, Optional[str]]:
     """Pick one cook slot as a batch anchor and link enough forward slots to
     it to approximate `target_servings`, entirely via `link_leftover`.
@@ -588,25 +765,37 @@ def spread_batch(
     the week, which by definition has no day left to spread into and produces
     a "batch" of one. Reusing an already-linked day as the anchor and simply
     topping up its remaining claims is what makes this work on exactly the
-    grid this feature is for. `prefer_days`, when non-empty, narrows the pool
-    first — the long-cook caller passes the week's weekend days; bulk-prep
-    passes None. Within the (possibly narrowed) pool, the earliest day in
-    `spec.days` order wins — deterministic, and it leaves the most week left
-    to spread across.
+    grid this feature is for. The earliest day in `spec.days` order wins —
+    deterministic, and it leaves the most week left to spread across. It is
+    also, for a batch cooked ahead on prep day, always the safest: the anchor
+    slot is the first one to eat the batch, so the earliest anchor is the one
+    whose whole chain sits closest to the day it was cooked.
 
     Spreading: starting the day after the anchor, walks the rest of
     `spec.days` in order, trying that day's `anchor_meal_type` slot then its
     "lunch" slot — the only two links `leftover_meal_type_error` allows out of
-    a dinner anchor — at most one link per day. Links until the anchor's total
-    claims (existing plus new, via `claim_counts`) reach `target_claims` or
-    the week runs out, whichever first: a batch that can only reach fewer
-    days still generates, just smaller, and an anchor that already had enough
-    claims before this call adds none.
+    a dinner anchor, and deduped to one attempt for a lunch anchor — at most
+    one link per day. Links until the anchor's total claims (existing plus
+    new, via `claim_counts`) reach `target_claims` or the week runs out,
+    whichever first: a batch that can only reach fewer days still generates,
+    just smaller, and an anchor that already had enough claims before this
+    call adds none.
 
     `target_claims` = `max(2, min(3, ceil(target_servings /
     servings_per_meal)))` — at least 2 (a "batch" of one day isn't one) and
     at most 3, so a small household's arithmetic doesn't spread one dish
     across half the week.
+
+    **Existing claims count toward that target, which is why every link this
+    makes is tagged `LINK_ORIGIN_BATCH` and cleared before the next run** (see
+    `clear_batch_links`, called unconditionally by
+    `ui_generation.generate_week`). This function only ever *adds* claims, so
+    left in place its own previous output satisfies `target_claims` on the
+    next generation: it links nothing, returns the same anchor, and the
+    week's batch shape — including which day anchors it — never changes
+    again. Counting a *user's* links is the intended behaviour and is what
+    the already-linked-grid reasoning above is written against; counting its
+    own is the bug.
 
     `max_span_days` (`inventory_rules.fridge_safe_days`, threaded in by
     `ui_generation.apply_batch_selections`) stops the walk once it is that
@@ -617,6 +806,26 @@ def spread_batch(
     checks the same bound as a backstop, because a hand-made chain of "Link
     to next lunch" clicks never comes through here. None means unbounded,
     which is what every caller that has no config in scope passes.
+
+    **A target need not be a cook slot.** `_claimable` also accepts a leftover
+    whose link came from `apply_location_modes`, re-pointing it at this batch
+    — see its docstring. Without that, the shipped grid has room for exactly
+    one batch: `location_rules` links Thursday and Friday lunches and Saturday
+    dinner before either toggle runs, `leftover_link_error` then refuses every
+    dinner that feeds one of them, and the week's second toggle strands with
+    nowhere to go. A user's own link is still never taken.
+
+    `max_day_index` is the last day index a batch may touch — **anchor
+    included**, unlike every other bound here. It exists because
+    `max_span_days` counts from the anchor's own day, and a batch folded into
+    the Sunday prep session is not cooked on its anchor day at all: it is
+    cooked on prep day, the day *before* `days[0]`. So a Tuesday anchor
+    reaching Friday is 3 days by `max_span_days` and 5 days out of the fridge,
+    which is how food cooked on Sunday ended up planned for Friday's lunch.
+    Day index `i` is `i + 1` days after prep, so a `fridge_safe_days` of N
+    means `max_day_index = N - 1`; `ui_generation.apply_batch_selections` does
+    that arithmetic. None leaves the anchor-relative bound as the only one,
+    which is right for any caller whose batch really is cooked on its own day.
 
     `exclude_target_days` names days that may not *receive* a link; the
     anchor itself may still fall on one. `ui_generation.apply_batch_selections`
@@ -655,31 +864,47 @@ def spread_batch(
     candidates = [
         slot
         for slot in spec.cook_slots()
-        if slot.meal_type == anchor_meal_type and slot.day not in exclude_days
+        if slot.meal_type == anchor_meal_type
+        and slot.day not in exclude_days
+        and (max_day_index is None or spec.day_index(slot.day) <= max_day_index)
     ]
     if not candidates:
         return spec, None
 
     # An anchor with no eligible day left in front of it can never grow, so it
-    # returns None below having spent the pick — and `prefer_days` narrows the
-    # pool *before* the walk runs, so a doomed day is chosen ahead of a viable
-    # one rather than after it. Not hypothetical: the long-cook caller prefers
-    # the weekend, `exclude_target_days` holds the week's last day, and between
-    # them Saturday's only forward day is ruled out. Without this filter that
-    # toggle would strand on every run instead of falling back to the earliest
-    # dinner that can actually carry a batch.
-    reachable = [
-        slot
-        for slot in candidates
-        if any(
-            day not in exclude_target_days
-            for day in spec.days[spec.day_index(slot.day) + 1 :]
-        )
-    ]
+    # would return None below having spent the pick. Filtering first means a
+    # doomed day is passed over rather than chosen and then abandoned — the
+    # difference between a toggle that batches and one that reports "couldn't
+    # find a day with room".
+    # It mirrors the walk's own conditions rather than just asking whether an
+    # unexcluded day exists: a day can be perfectly eligible and still have
+    # nothing on it this anchor may take (both its slots already claimed, or
+    # a dinner that feeds something and so can't become a leftover itself).
+    # Asking the cheap question instead would keep a doomed anchor in the pool
+    # and strand the toggle anyway, which is the exact failure this prevents.
+    def can_reach_a_target(anchor: SlotSpec) -> bool:
+        by_id = spec.by_id()
+        for offset, day in enumerate(spec.days[spec.day_index(anchor.day) + 1 :], start=1):
+            if max_span_days is not None and offset > max_span_days:
+                break
+            if max_day_index is not None and spec.day_index(day) > max_day_index:
+                break
+            if day in exclude_target_days:
+                continue
+            for meal_type in (anchor_meal_type, "lunch"):
+                target_id = slot_id(day, meal_type)
+                target = by_id.get(target_id)
+                if target is None or not _claimable(target, anchor.id):
+                    continue
+                if leftover_link_error(spec, target_id, anchor.id):
+                    continue
+                return True
+        return False
+
+    reachable = [slot for slot in candidates if can_reach_a_target(slot)]
     candidates = reachable or candidates
 
-    pool = [slot for slot in candidates if slot.day in (prefer_days or [])] or candidates
-    anchor = min(pool, key=lambda slot: spec.day_index(slot.day))
+    anchor = min(candidates, key=lambda slot: spec.day_index(slot.day))
 
     target_claims = max(2, min(3, math.ceil(target_servings / spec.servings_per_meal)))
     existing_claims = claim_counts(spec).get(anchor.id, 1)
@@ -694,20 +919,47 @@ def spread_batch(
         # would be planned into food that isn't safe to eat by then.
         if max_span_days is not None and offset > max_span_days:
             break
+        # Past the food-safe window measured from *prep day* — see
+        # `max_day_index`. Distinct from `max_span_days` above, which counts
+        # from the anchor's own day.
+        if max_day_index is not None and spec.day_index(day) > max_day_index:
+            break
         # 7 days after prep day, not 0 — see `exclude_target_days` above.
         # `continue` rather than `break`: this rules out one day, not the
         # remainder of the walk.
         if day in exclude_target_days:
             continue
         by_id = spec.by_id()
-        for meal_type in (anchor_meal_type, "lunch"):
+        # dict.fromkeys dedupes while keeping order: a lunch-anchored batch
+        # would otherwise try "lunch" twice and never anything else.
+        for meal_type in dict.fromkeys((anchor_meal_type, "lunch")):
             target_id = slot_id(day, meal_type)
             target = by_id.get(target_id)
-            if target is None or target.mode != MODE_COOK:
+            if target is None or not _claimable(target, anchor.id):
                 continue
-            if leftover_link_error(spec, target_id, anchor.id):
+            # Free any location link standing in the way first — see
+            # `_releasable_dependants`. Applied to a trial copy so a slot is
+            # only ever released when the link that needed it actually goes
+            # through; `leftover_link_error` is then asked about the grid
+            # that would result, not the one before the release.
+            releasing = _releasable_dependants(spec, target_id)
+            if releasing is None:
                 continue
-            spec = link_leftover(spec, target_id, anchor.id)
+            trial = spec
+            for dependant_id in releasing:
+                trial = unlink_leftover(trial, dependant_id)
+            if leftover_link_error(trial, target_id, anchor.id):
+                continue
+            spec = trial
+            # Tagged `batch` so `clear_batch_links` can drop it again before
+            # the next run — otherwise `existing_claims` below counts it on
+            # every later generation, the anchor is permanently at target, and
+            # both the shape and the anchor day freeze forever. Note this also
+            # *overwrites* a location link's own origin when re-pointing one,
+            # which is correct: the batch owns the link now, and next run's
+            # clear returns the slot to a cook for `apply_location_modes` to
+            # resolve again from config.
+            spec = link_leftover(spec, target_id, anchor.id, origin=LINK_ORIGIN_BATCH)
             linked += 1
             break
 

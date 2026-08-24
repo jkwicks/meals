@@ -71,10 +71,12 @@ STATUS_STYLES = {
     },
 }
 
-# `SlotView.prep_badge` — set only on a leftover card eating a Sunday-prepped
-# batch (see `planner.is_sunday_prepped`). "fridge" vs. "freezer" mirrors the
-# same threshold `storage_note` used to write the cook's own storage note, so
-# the badge never disagrees with the text a user would see on the recipe.
+# `SlotView.prep_badge` — set on any card (cook or leftover) folded into a
+# Sunday prep session (see `planner.is_sunday_prepped`): the batch's own
+# anchor slot as well as the leftovers eating it. "fridge" vs. "freezer"
+# mirrors the same threshold `storage_note` used to write the cook's own
+# storage note, so the badge never disagrees with the text a user would see
+# on the recipe.
 PREP_BADGE_STYLES = {
     "fridge": {
         "label": "⚡ Prepped on Sun",

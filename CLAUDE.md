@@ -269,11 +269,18 @@ Things worth knowing about the generation path specifically:
   (see below), which is exactly why the button is still clickable and needs
   the flag: two tabs generating at once would race to overwrite the same file.
 
-The one edit it offers today is the **"Link to next lunch"** button on each
-dinner card: one click sets the following day's lunch to `MODE_LEFTOVER` with
+The main edit it offers is the **"Link to next lunch"** button on each dinner
+card: one click sets the following day's lunch to `MODE_LEFTOVER` with
 `source` pointing at that dinner. Because portions are derived, that single
-change is also what grows the batch — see `PlannerState.apply_spec`, which is
-where every future grid edit should land too:
+change is also what grows the batch. Its inverse is the **Unlink** button on
+every leftover card (`PlannerState.unlink_slot`), which is the *only* way to
+undo one — clicking the link button a second time hits
+`leftover_link_error`'s repeat-click guard rather than toggling, so before
+this existed a grid could only ever accumulate links, and
+`ui_generation.generate_week`'s stranding warning told users to "unlink one"
+with no control anywhere that did it. Both go through
+`PlannerState.apply_spec`, which is where every future grid edit should land
+too:
 
 - The spec is now **held** (`PlannerState._spec`) rather than re-derived per
   read, and rebuilt only when `_shape()` changes — re-deriving on read would
@@ -964,12 +971,13 @@ failure being fixed.
 
 ##### The shake's mandatory greens, and the rule that would have eaten them
 
-The base is not just powder/creatine/water: **20-30 g of raw leafy green and
-50-80 g of raw frozen vegetable are mandatory in every shake.** Together they
-cost ~25-30 kcal and return ~2.5 g protein and ~2 g fibre, which is the best
-nutrient-per-calorie trade anywhere in the template — there is no budget in
-which they don't fit, and that sentence is in the prompt for exactly that
-reason.
+The base is not just powder/creatine/water: **20-30 g of raw leafy green,
+50-80 g of raw frozen vegetable and one Fruit Fusion item are mandatory in
+every shake.** The green and vegetable cost ~25-30 kcal and return ~2.5 g
+protein and ~2 g fibre, which is the best nutrient-per-calorie trade anywhere
+in the template; the fruit is another ~25 kcal and is what makes the result
+drinkable. There is no budget in which the three don't fit, and that sentence
+is in the prompt for exactly that reason.
 
 **Making them mandatory took three coordinated edits, not one.**
 `SHAKE_ROTATION_RULE` (whole-week) and `SHAKE_SLOT_DIRECTIVE` (per-slot) both
@@ -981,8 +989,21 @@ differ. Naming them as mandatory in `meals.json` alone would have set the
 style text against the rotation rule, with the rotation rule winning on
 whichever morning it needed a difference. All three now name them as base.
 
-Which green and which vegetable may still vary between shakes; that is the
-part rotation is welcome to touch. Only their presence is fixed.
+**Fruit is the subtlest member of that base, and was added last.** It is the
+one base item the rotation rule *also* names as a thing to rotate — "no two
+may share the same combination of fruit, seeds, nuts and flavouring" is the
+clause immediately after. Listing fruit as base is what turns that into a rule
+about *which* fruit rather than *whether* one: left out of the base, dropping
+the fruit entirely is the single cheapest way to make two shakes differ, and
+the result is protein powder, spinach and frozen broccoli, which is barely
+drinkable. So it is the same three-way edit as the greens — `meals.json` base
+item (d), `SHAKE_ROTATION_RULE`'s never-drop list, `SHAKE_SLOT_DIRECTIVE` —
+with one extra step: the ingredient matrix says "choose 3-6 **further** items"
+and tier (7) is annotated as already-spent, so the fruit is not silently
+counted twice against a budget the shake has to hit.
+
+Which green, which vegetable and which fruit may still vary between shakes;
+that is the part rotation is welcome to touch. Only their presence is fixed.
 
 This is soft guidance, like every other style instruction — there is no
 validator rejecting a shake that arrives without spinach. That is the same
@@ -1314,14 +1335,35 @@ and links enough forward slots to it — via ordinary `link_leftover` calls, so
 portions stay derived and nothing new is invented — to approach
 `planning_rules.batch_target_servings`.
 
-Order matters and is deliberate (`ui_generation.apply_batch_selections`):
-bulk prep runs first and gets first claim on whatever room the grid has;
-long cook runs second, prefers weekend days, and excludes bulk prep's anchor
-day so both toggles produce two distinct batches rather than one
-double-booked dinner. On a week whose lunches are already linked to the
-previous day's dinner there is often only one slot left for a batch to grow
-into, so with both toggles on the second finds nothing — `generate_week`
-warns rather than silently generating a mislabeled dinner.
+**Each batch takes one meal type, straight across the front of the week**
+(`ui_generation.apply_batch_selections`): bulk prep claims the lunches, long
+cook claims the dinners, both starting at day 1 and running as far as the
+fridge window allows. On the shipped config that is Monday-Wednesday lunches
+from one prepped dish and Monday-Wednesday dinners from another — six meals,
+`batch_target_servings` (6) portions each, exactly.
+
+The pairing is not arbitrary: a soup/stew/curry (`BULK_PREP_RULE`'s
+candidates) is the dish that reheats at a desk and travels in a container, and
+an oven roast or braise (`BATCH_ROAST_ANCHOR_RULE`'s) is dinner food. It also
+gives Monday two *different* dishes rather than the same one twice, which any
+arrangement filling all six slots out of a single row would have forced.
+
+**The anchor is bookkeeping, not a decision.** Every recipe has to live on
+some slot — that is what a cook slot *is* — and prep day has no slot of its
+own in the grid, so the first day a batch is eaten holds the recipe and the
+rest point back at it. The anchor day is therefore always day 1, and nothing
+searches for it.
+
+That is worth stating plainly because earlier versions *did* search, and the
+search was the entire source of the trouble. Both toggles anchored on
+"dinner", so they competed for the same seven slots; the second was pushed
+later and later; a weekend preference dragged the long cook to Saturday; and
+because `spread_batch` only ever *adds* claims, whatever shape one run
+happened to land on was frozen into every run after it. The symptom was
+Sunday-prepped food scheduled for Thursday and Friday. None of that machinery
+survives — no `prefer_days`, no cross-toggle `exclude_days`, no
+lunch-versus-dinner preference — because two batches on two different rows,
+both starting at day 1, cannot collide and cannot drift.
 
 **Prep day is not the Sunday on the grid.** The batch-prep session runs the
 day *before* `spec.days[0]` — that is what `ui_cards.prep_day_column` draws as
@@ -1335,33 +1377,59 @@ Saturday dinner into Sunday lunch is untouched — that one is cooked on
 Saturday, not on prep day, so `validate_week` deliberately gets no matching
 backstop.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
-- **The weekend preference now gives way rather than stranding.** `prefer_days`
-  narrows the anchor pool *before* the forward walk runs, so a day whose only
-  eligible target has been excluded gets picked ahead of a viable one and then
-  returns `None`. With the last day off-limits that is exactly Saturday, whose
-  only forward day is it — so long cook would have warned "couldn't find a day
-  with room" on every single run. `spread_batch` now filters the pool to
-  anchors that can still reach *some* eligible day, which drops both weekend
-  days and falls back to the earliest dinner that can actually carry a batch.
-  That is the right answer regardless: "a weekend suits a lazier cook" is about
-  when you *cook*, and a batch in the prep session is cooked on prep day
-  whichever day eats it first.
-- **On the shipped default grid, long cook now strands.** `location_rules`
-  already links Thursday and Friday lunches and Saturday dinner backwards, so
-  once bulk prep claims Monday the only slot anywhere left to grow into is
-  Sunday — which is now ruled out. `generate_week`'s existing warning covers
-  it. Unlinking one of those lunches, or turning off bulk prep, gives it room.
+- **An anchor that cannot grow is passed over, not picked and abandoned.**
+  `spread_batch` filters its candidates to days that can still reach a slot
+  they are actually allowed to claim — mirroring the walk's own conditions
+  rather than just asking whether an unexcluded day exists, since a day can be
+  eligible and have nothing claimable on it. Choosing such a day spends the
+  pick and then returns `None`, which surfaces as "couldn't find a day with
+  room" on a week that had room all along.
 
-Two things this deliberately does **not** fix, both still measured from the
-anchor day rather than prep day: `storage_note`'s `keeps_for_days` (so a
-prep-session candidate's "eaten across N day(s)" line under-reports, and
-`generate_sunday_prep_session`'s prompt then says "do not recompute it"), and
-`is_sunday_prepped`, which tests the `long_oven_cook`/`bulk_prep_friendly`
-flags while the anchor path selects by slot_id — so every incidentally-flagged
-recipe in the week claims the 10-minute reheat time even though the session
-only ever contains the one or two anchors.
+- **A batch may re-point a location link.** `location_rules` claims slots
+  before either toggle runs — Thursday lunch eats Wednesday's dinner, Friday
+  lunch eats Thursday's, Saturday dinner eats Friday's. `_claimable` accepts a
+  `LINK_ORIGIN_LOCATION` leftover as a target and re-points it, which honours
+  the rule rather than overriding it: the rule says an Office lunch *is* a
+  leftover and never says whose — "the previous day's dinner" is how
+  `apply_location_modes` resolved it, not an intent — and the slot stays a
+  leftover throughout. A `LINK_ORIGIN_USER` link is never taken; that one
+  names a specific dinner deliberately.
+
+- **A location link that *blocks* a near slot is released, not walked past.**
+  Re-pointing alone still sent batches to the wrong end of the week, and this
+  is why. `leftover_link_error` refuses to convert a cook that already feeds
+  something, so with Thursday's lunch pointing at Wednesday's dinner, that
+  Wednesday dinner — an early-week slot the batch actually wanted — was
+  unavailable, and the forward walk simply carried on into Thursday and Friday
+  instead. `_releasable_dependants` frees a blocking dependant when *every* one
+  of them is a `location` link, returning it to a cook; that is the same state
+  `apply_location_modes` itself falls back to whenever a day's previous dinner
+  isn't a cook, so nothing invalid is being invented. A `user` or `batch`
+  dependant is never released — the batch skips the slot instead.
+
+- **`max_day_index` bounds the batch from prep day, and covers the anchor.**
+  `max_span_days` counts from the *anchor's* day, which cannot see that a
+  prep-session batch is cooked the day before the week starts: a Tuesday
+  anchor reaching Friday is 3 days by that bound and **5 days out of the
+  fridge**. Day index `i` is `i + 1` days after prep, so
+  `apply_batch_selections` passes `fridge_safe_days - 1`. It applies to the
+  anchor too, unlike every other bound here — an anchor outside the window is
+  already unsafe before it spreads anywhere. `inventory_rules.fridge_safe_days`
+  is therefore now **3**, not 4: 4 allowed a batch onto Thursday, which is 4
+  days out of the fridge and past what these batches should carry.
+
+  Measured on `default_week_spec` with the shipped `config/`, both toggles on:
+  bulk prep `Monday:lunch` → Tuesday and Wednesday lunches, long cook
+  `Monday:dinner` → Tuesday and Wednesday dinners. Six meals, 6 portions each,
+  nothing landing Thursday or later, `validate_week` clean and byte-identical
+  across repeated runs.
+
+One thing this deliberately does **not** fix, still measured from the anchor
+day rather than prep day: `storage_note`'s `keeps_for_days` (so a prep-session
+candidate's "eaten across N day(s)" line under-reports, and
+`generate_sunday_prep_session`'s prompt then says "do not recompute it").
 
 `spread_batch` returns `None` for an anchor that never grew past what an
 ordinary dinner already gets for free, which is the same "no batch happened"
@@ -1373,10 +1441,41 @@ per-slot anchor directive instead of the whole-week rule, and how
 
 `Recipe.long_oven_cook` and `Recipe.bulk_prep_friendly` are the model's own
 answers about a dish, and they are separate fields on purpose — a dish can be
-either, both or neither. `is_sunday_prepped` tests them rather than
-`prep_notes`, which is set on *any* cook outliving its own day (including the
-ordinary "link to next lunch") and so once marked every multi-day dinner in
-the week as Sunday-prepped.
+either, both or neither. **`is_sunday_prepped` used to test them directly, and
+that was a bug in both directions**: a stray, unprompted flag on some other
+dinner claimed the reheat badge it never earned, and — the one that actually
+bit, on a real week — the anchor itself came back with both flags `False`
+despite `LONG_COOK_ANCHOR_SLOT_DIRECTIVE`/`BULK_PREP_ANCHOR_SLOT_DIRECTIVE`
+telling the model to set one, so a genuine Sunday-prepped batch (a "Korean
+Beef Bulgogi Rice Tray Bake" anchor, in the wild) rendered as an ordinary
+from-scratch cook eaten late in the week, with no "prepped on Sunday" badge on
+the leftovers eating it. `generate_sunday_prep_session`'s own candidate
+selection already matches by slot_id rather than by flag, for exactly this
+reason, and already knew the exact slot_ids it folded into the session before
+the model was ever called — that fact just wasn't being kept.
+`SundayPrepSession.candidate_slot_ids` now carries it: stamped onto the
+response after the call returns (Python-only, not something the model fills
+in), and `is_sunday_prepped` matches an event against it by slot_id instead of
+trusting the recipe's self-report. A session saved before this field existed
+has an empty list and falls back to the old flag check — same pre-migration
+tolerance `history_styles()` extends to old `meal_history.json` entries.
+
+**A second, separate bug sat on top of that one: `ui_state.py` only ever
+called `is_sunday_prepped` for `MODE_LEFTOVER` slots**, so even a correctly
+recognised session never reached the batch's own anchor card (a MODE_COOK
+slot on the day it first appears) or the shake candidate — both cook events
+that are genuinely part of the session, not leftovers of it. The anchor's own
+recipe was actually cooked in the Sunday session too; its grid day is only
+where the leftover chain has to start, so it needs the "prepped ahead" badge
+exactly as much as the leftovers eating it do, and its `prep_minutes` should
+collapse to `SUNDAY_PREP_REHEAT_MINUTES` the same way — nothing is cooked
+fresh on that calendar day either. The shake is different: `find_shake_
+candidate` rides along in the same session, but it is never leftover-linked
+because each training morning genuinely blends its own shake fresh — only the
+shared base is portioned ahead. So it gets the badge (its base *was* prepped
+Sunday) but keeps its own `prep_time_minutes`; `event.meal_type == "dinner"`
+is what tells the two cases apart, since both are MODE_COOK and both test
+`is_sunday_prepped` true.
 
 ### Buying what the shops actually stock
 
@@ -1538,6 +1637,46 @@ The rules, and why each is shaped that way:
   shipped config, so there is usually no snack slot to claim — and a rule
   whose slots don't exist is one that can't be seen to be wrong.
 
+**A `long_oven_cook` favourite may only take a weekend slot**
+(`favorite_fits_day`), and the rule cuts across all three meal types —
+breakfast, which covers two mornings from one record, has to suit both.
+Nothing else in the app was going to stop a long cook landing on a Tuesday,
+which is worth spelling out because all three plausible candidates look like
+they should have: `BATCH_ROAST_RULE` tells the *model* to put the week's long
+cook on a weekend and a favourite is never generated, so that rule never sees
+it; the placement rule above is about protecting cuisine blocks and says
+nothing about the day having the hours in it; and `prep_limit_for`'s
+30-minute weeknight ceiling counts **active** minutes, which a braise
+honestly reports as the 20 that are hands-on rather than the 8-10 hours it
+then sits in the oven. A "Slow Cooked Beef Cheeks" imported from Keep was
+scheduled for a Thursday exactly this way. Eight of the 36 dinner favourites
+in the shipped catalog are long cooks, so this is a shape rather than one bad
+record.
+
+Two consequences of *how* it declines are worth knowing. A weeknight run end
+takes the next eligible favourite instead of being left empty, so a long cook
+is deferred rather than dropped — it waits for a run end that lands on a
+weekend. And the dinner cap counts **pins made, not run ends looked at**:
+slicing the run ends first, which is what this used to do, spends both of
+them on declined weeknights and pins nothing at all on a week whose Saturday
+was free the whole time.
+
+It keys on the weekend rather than on `base_schedule`, which does know that
+Tuesday is a WFH day and that a slow cooker started at 8am on one is
+perfectly fine. Weeknight-versus-weekend is the split `prep_limit_for` and
+`BATCH_ROAST_RULE` already draw, and a second, subtler notion of "a day with
+room to cook" is one more thing to keep in agreement with them. Widening it
+to the days you are actually home is a real improvement and belongs in
+`favorite_fits_day` when it happens.
+
+**It deliberately does not touch the generated side**, where the day choice
+is still soft — `BATCH_ROAST_RULE` states a preference for a weekend and
+nothing rejects a model that puts a 4-hour braise on a Tuesday while
+truthfully reporting 25 minutes of active prep. Making that hard needs an
+elapsed-time field on `Recipe` that no saved recipe carries, which is a
+schema change, a prompt change and a validator change; the favourite path is
+where the failure actually happened and is fixed on its own terms.
+
 **A pinned dinner has to be visible to the model generating the same stage.**
 `avoid_proteins` is extended from `stage_events` only *after* a stage
 finishes, so pins built moments earlier in the same stage aren't in it yet.
@@ -1645,11 +1784,16 @@ that actually is checked.
 
 ### Leftovers can't outlive the fridge
 
-`inventory_rules.fridge_safe_days` (4) was config that only ever flavoured a
-storage note. It is now enforced twice, and the split matters:
+`inventory_rules.fridge_safe_days` (3) was config that only ever flavoured a
+storage note. It is now enforced three times, and the split matters:
 
-- **Prevention.** `week.spread_batch` takes `max_span_days` and stops its
-  forward walk there, so neither batch toggle can plan food past the window.
+- **Prevention, from the anchor.** `week.spread_batch` takes `max_span_days`
+  and stops its forward walk there, so neither batch toggle can plan food more
+  than that many days past the day it was cooked.
+- **Prevention, from prep day.** `max_day_index` bounds the same window for a
+  batch that is *not* cooked on its anchor day — every prep-session batch, see
+  "Batch cooking on purpose". `max_span_days` alone let Sunday-cooked food
+  reach Friday, because from a Tuesday anchor that is only 3 days.
 - **Backstop.** `validate_week` checks `span_days` against the same number.
   A chain built by hand out of "Link to next lunch" clicks never goes through
   `spread_batch`, and neither does an imported or hand-edited `week_plan.json`.

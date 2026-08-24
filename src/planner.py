@@ -323,12 +323,14 @@ LONG_COOK_ANCHOR_SLOT_DIRECTIVE = (
 # or regeneration (bulk_prep didn't exist before this feature, so there is no
 # prior CLI behaviour to preserve here).
 BULK_PREP_RULE = (
-    "- One dinner below is already marked as this week's bulk-prep batch "
+    "- One meal below is already marked as this week's bulk-prep batch "
     "(see its own line for the [BULK PREP] directive) — make THAT one, and "
     "only that one, well suited to big-batch cooking and multi-day storage "
     "(a soup, stew, curry, chilli, casserole or similar — it does not need "
     "to be a long or hands-off cook) and set its bulk_prep_friendly to true. "
-    "Every other dinner must NOT be marked bulk_prep_friendly.\n"
+    "It is cooked once ahead of the week and reheated on each day that eats "
+    "it, so it must hold up to several days refrigerated and travel well in "
+    "a container. Every other meal must NOT be marked bulk_prep_friendly.\n"
 )
 
 BULK_PREP_ANCHOR_SLOT_DIRECTIVE = (
@@ -343,24 +345,32 @@ BULK_PREP_ANCHOR_SLOT_DIRECTIVE = (
 # evenly" rather than "every ingredient must be unique" because the pools are
 # small (three fruits, three seeds) and a rule that can't be satisfied is one
 # the model resolves by ignoring the constraint entirely.
-# Note what counts as "the base" here, and what doesn't. The leafy green and
-# the frozen vegetable are named as part of it alongside the powder, because
-# the shake style makes them mandatory in every shake — and a rotation rule
-# whose job is to make two drinks differ will reach for whatever it is allowed
-# to drop. Left in the "secondary components" pool they would be exactly that:
-# the cheapest thing to remove from one of the two shakes, which is the one
-# outcome making them mandatory was meant to prevent.
+# Note what counts as "the base" here, and what doesn't. The leafy green, the
+# frozen vegetable and the fruit are named as part of it alongside the powder,
+# because the shake style makes all three mandatory in every shake — and a
+# rotation rule whose job is to make two drinks differ will reach for whatever
+# it is allowed to drop. Left in the "secondary components" pool they would be
+# exactly that: the cheapest thing to remove from one of the two shakes, which
+# is the one outcome making them mandatory was meant to prevent.
+# The fruit is the subtlest of the three, because it is *also* the first thing
+# the very next clause tells the model to rotate ("no two may share the same
+# combination of fruit, seeds, nuts and flavouring"). Naming it as base is
+# what makes that a rule about WHICH fruit rather than WHETHER one — without
+# it, dropping the fruit entirely is the single easiest way to satisfy the
+# rotation clause, and a shake with a leafy green and frozen broccoli in it
+# and no fruit at all is barely drinkable.
 SHAKE_ROTATION_RULE = (
     "- More than one breakfast below is a protein shake. Keep the mandatory "
-    "base in every one — protein powder, creatine, water, a leafy green and a "
-    "frozen vegetable, none of which may ever be dropped to make two shakes "
-    "differ — and rotate the secondary components so no two shakes this week "
-    "are the same drink: no two may share the same combination of fruit, "
-    "seeds, nuts and flavouring, and the listed options must be spread as "
-    "evenly as possible across the week rather than one favourite repeating. "
-    "Varying WHICH green or WHICH vegetable between shakes is encouraged; "
-    "omitting either is not. Give each shake its own distinct name — a "
-    "reworded name over identical ingredients is a repeat.\n"
+    "base in every one — protein powder, creatine, water, a leafy green, a "
+    "frozen vegetable and a fruit, none of which may ever be dropped to make "
+    "two shakes differ — and rotate the secondary components so no two shakes "
+    "this week are the same drink: no two may share the same combination of "
+    "fruit, seeds, nuts and flavouring, and the listed options must be spread "
+    "as evenly as possible across the week rather than one favourite "
+    "repeating. Varying WHICH green, WHICH vegetable or WHICH fruit between "
+    "shakes is encouraged; omitting any of the three is not. Give each shake "
+    "its own distinct name — a reworded name over identical ingredients is a "
+    "repeat.\n"
 )
 
 # The per-slot half of the same rule, sent by both generation axes (a single
@@ -369,11 +379,12 @@ SHAKE_ROTATION_RULE = (
 SHAKE_SLOT_DIRECTIVE = (
     "[Protein shake: keep the base exactly at its fixed gram amounts (protein "
     "powder, creatine, water) — never scale the protein powder up to hit the "
-    "budget; add a Protein Boost ingredient instead. A leafy green (20-30g) "
-    "and a raw frozen vegetable (50-80g) are also mandatory and must appear "
-    "in this shake: together they cost about 25-30 kcal, so there is no "
-    "budget in which they don't fit. Vary only the secondary components — "
-    "pick a fruit/seed/nut/spice combination no other shake this week uses.]"
+    "budget; add a Protein Boost ingredient instead. A leafy green (20-30g), "
+    "a raw frozen vegetable (50-80g) and one Fruit Fusion item are also "
+    "mandatory and must appear in this shake: together they cost about 50-55 "
+    "kcal, so there is no budget in which they don't fit. Vary only the "
+    "secondary components — pick a fruit/seed/nut/spice combination no other "
+    "shake this week uses.]"
 )
 
 # Standing rule for both axes. Variety (above) is about *foods*; this is about
@@ -2081,6 +2092,40 @@ def eligible_favorites(
     return [record for _, record in sorted(candidates, key=lambda pair: pair[0])]
 
 
+def favorite_fits_day(record: dict, day: str) -> bool:
+    """False for a `long_oven_cook` favourite on a weeknight.
+
+    A *generated* dinner is asked to put the week's one long cook on a
+    weekend (`BATCH_ROAST_RULE`), but a favourite never passes through that
+    prompt: `select_favorite_assignments` places dinners at cuisine run ends,
+    which is a rule about protecting blocks and says nothing about the day
+    having the hours in it. Nothing downstream catches it either —
+    `prep_limit_for`'s 30-minute weeknight ceiling counts *active* minutes,
+    and a braise honestly reports the 20 that are hands-on rather than the
+    8-10 hours it then sits in the oven, so it clears the cap it ought to
+    fail. That is how a "Slow Cooked Beef Cheeks" imported from Keep came to
+    be cooked on a Thursday. Eight of the 36 dinner favourites in the shipped
+    catalog are long cooks, so this is a recurring shape rather than one bad
+    record.
+
+    Weekend rather than a `base_schedule` check, even though that config
+    knows Tuesday is WFH and a slow cooker started at 8am on a
+    work-from-home day is genuinely fine: weeknight-versus-weekend is the
+    split `prep_limit_for` and `BATCH_ROAST_RULE` already draw, and a second,
+    subtler notion of "a day with room to cook" is one more thing to keep in
+    agreement with them. Widening this to the days you are actually home is a
+    real improvement, and belongs here when it happens.
+
+    Reads the catalog record's raw dict rather than a validated `Recipe`
+    because selection runs before anything is validated — `generate_week_plan`
+    skips a record too broken to load, and until then an absent flag reads as
+    False exactly as `Recipe.long_oven_cook`'s own default does.
+    """
+    if day in WEEKEND_DAYS:
+        return True
+    return not (record.get("recipe") or {}).get("long_oven_cook")
+
+
 def cuisine_run_ends(slots: List[SlotSpec]) -> List[SlotSpec]:
     """The last slot of each contiguous same-cuisine run, in week order.
 
@@ -2136,7 +2181,8 @@ def select_favorite_assignments(
       cook slot at all. The ones that reach here are the days you actually
       cook lunch.
     - **Dinner.** Up to `favorite_dinner_slots` (2) *distinct* favourites —
-      a count of dishes, not of days one dish covers, because dinner is where
+      a count of dishes, not of days one dish covers, and counted as pins
+      made rather than run ends looked at, because dinner is where
       repetition shows and `DINNER_VARIETY_RULE` says so out loud. Capped
       rather than lunch's one-per-slot because dinner is the only meal type
       `pick_cuisine_blocks` lays contiguous blocks over and `pin_recipe`
@@ -2158,6 +2204,14 @@ def select_favorite_assignments(
       shipped config (see "The floor and the day have to be affordable
       together"), so there is usually no snack slot to claim — and a rule
       whose slots do not exist is one that cannot be seen to be wrong.
+
+    Cutting across all three: a favourite marked `long_oven_cook` is only
+    ever offered a weekend slot (`favorite_fits_day`, which explains why).
+    On a weeknight it is passed over and the next eligible favourite takes
+    that day instead — so the day still gets a dish, and the long cook waits
+    for a day with the hours in it rather than being dropped for the week.
+    Breakfast is the one case with no per-day choice left to make, since a
+    single record covers both claimed mornings, so it has to suit both.
 
     A slot the user has already pinned by hand keeps its pin — the same
     precedence `pin_style` gives a hand-picked style, checked here by only
@@ -2186,13 +2240,22 @@ def select_favorite_assignments(
 
     breakfasts = sorted(open_slots("breakfast"), key=lambda slot: spec.day_index(slot.day))
     if breakfasts and breakfast_slots > 0:
-        pick = eligible_favorites(
-            favorites, "breakfast", reuse_days.get("breakfast", 7), last_scheduled, today, used
-        )
+        # One record covers every claimed morning, so it has to suit all of
+        # them — unlike lunch and dinner below, there is no per-day choice
+        # left to make once the pick is made.
+        claimed = breakfasts[:breakfast_slots]
+        pick = [
+            record
+            for record in eligible_favorites(
+                favorites, "breakfast", reuse_days.get("breakfast", 7),
+                last_scheduled, today, used,
+            )
+            if all(favorite_fits_day(record, slot.day) for slot in claimed)
+        ]
         if pick:
             record = pick[0]
             used.add(record["recipe"]["name"])
-            for slot in breakfasts[:breakfast_slots]:
+            for slot in claimed:
                 assignments[slot.id] = record
 
     lunches = sorted(open_slots("lunch"), key=lambda slot: spec.day_index(slot.day))
@@ -2202,20 +2265,37 @@ def select_favorite_assignments(
         )
         if not pick:
             break
-        record = pick[0]
+        fits = [record for record in pick if favorite_fits_day(record, slot.day)]
+        # `continue`, not `break`: nothing eligible suits *this* day, but a
+        # later slot may be a weekend one that it does suit. Only an empty
+        # `pick` means the favourites are actually spent.
+        if not fits:
+            continue
+        record = fits[0]
         used.add(record["recipe"]["name"])
         assignments[slot.id] = record
 
     dinners = sorted(open_slots("dinner"), key=lambda slot: spec.day_index(slot.day))
-    for slot in cuisine_run_ends(dinners)[: max(0, dinner_slots)]:
+    # The cap counts pins *made*, not run ends considered, so a run end passed
+    # over by `favorite_fits_day` doesn't quietly cost the week a favourite —
+    # it moves the pin to the next run end, which is still a run end and still
+    # leaves its block contiguous.
+    pinned = 0
+    for slot in cuisine_run_ends(dinners):
+        if pinned >= dinner_slots:
+            break
         pick = eligible_favorites(
             favorites, "dinner", reuse_days.get("dinner", 21), last_scheduled, today, used
         )
         if not pick:
             break
-        record = pick[0]
+        fits = [record for record in pick if favorite_fits_day(record, slot.day)]
+        if not fits:
+            continue
+        record = fits[0]
         used.add(record["recipe"]["name"])
         assignments[slot.id] = record
+        pinned += 1
 
     return assignments
 
@@ -2742,6 +2822,19 @@ class SundayPrepSession(BaseModel):
         default_factory=list,
         description="Names of the dishes this prep session covers",
     )
+    candidate_slot_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Internal — not part of the model's response. "
+            "generate_sunday_prep_session overwrites this with the slot_ids "
+            "it actually folded in, so is_sunday_prepped can match an event "
+            "against the session by slot_id rather than by trusting the "
+            "recipe's own self-reported long_oven_cook/bulk_prep_friendly "
+            "flags, which the model doesn't always set even when directed "
+            "to mark the anchor. Empty on a session saved before this field "
+            "existed — is_sunday_prepped falls back to the flag check then."
+        ),
+    )
 
     @model_validator(mode="after")
     def enforce_active_minutes_cap(self, info: ValidationInfo) -> "SundayPrepSession":
@@ -2899,17 +2992,30 @@ SUNDAY_PREP_REHEAT_MINUTES = 10
 def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
     """Whether `event` was folded into `week_plan`'s Sunday prep session.
 
-    Mirrors `generate_sunday_prep_session`'s own candidate filter
-    (`long_oven_cook` or `bulk_prep_friendly`) rather than testing
-    `prep_notes` alone. `prep_notes` is set on *any* cook that outlives its
-    own day — which includes the ordinary "link to next lunch" pattern, not
-    just a Sunday-prepped batch — so a week with a real prep session (for one
-    dish) used to mark every other multi-day-claimed dinner in the week as
-    "prepped on Sunday" too, regardless of whether it actually qualified.
+    Matches by `event.slot_id` against `SundayPrepSession.candidate_slot_ids`
+    — the same slot_ids `generate_sunday_prep_session` picked *before* the
+    model was ever called, whether via the anchor-matched path or the legacy
+    flag-matched one. That is the ground truth of what the session covers.
+
+    Testing `event.recipe.long_oven_cook`/`bulk_prep_friendly` instead (the
+    original approach) is wrong in both directions: the flags are the
+    model's own self-reported answer about the dish, not a record of what
+    the session actually aggregated, so a stray flag on some other dinner
+    claimed a reheat badge it never earned, and — the bug this replaced —
+    the anchor itself not reliably setting its own flag even when the
+    per-slot directive told it to (see LONG_COOK_ANCHOR_SLOT_DIRECTIVE /
+    BULK_PREP_ANCHOR_SLOT_DIRECTIVE) left the real anchor unlabelled.
+
+    A session saved before `candidate_slot_ids` existed has an empty list —
+    same pre-migration tolerance `history_styles()` extends to old
+    `meal_history.json` entries — so it falls back to the flag check alone.
     """
-    return bool(event.recipe.long_oven_cook or event.recipe.bulk_prep_friendly) and (
-        week_plan.sunday_prep_session is not None
-    )
+    session = week_plan.sunday_prep_session
+    if session is None:
+        return False
+    if session.candidate_slot_ids:
+        return event.slot_id in session.candidate_slot_ids
+    return bool(event.recipe.long_oven_cook or event.recipe.bulk_prep_friendly)
 
 
 def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
@@ -4014,16 +4120,26 @@ def generate_meal_type_week(
     )
     long_cook_anchor = config.get("long_cook_anchor")
     bulk_prep_anchor = config.get("bulk_prep_anchor")
+
+    # Each whole-week batch rule goes to the axis its own anchor sits on,
+    # rather than to "dinner" on the assumption that both batches are dinners.
+    # They are not: bulk prep anchors a *lunch* (see
+    # ui_generation.apply_batch_selections) so the week's Monday-Wednesday
+    # lunches can all eat one prepped dish, and sending its rule to the dinner
+    # call would brief the wrong meal entirely — the lunch call would never
+    # hear that one of its slots is a batch, and the dinner call would be told
+    # to mark a bulk-prep dish it isn't cooking.
+    def anchors_this_axis(anchor: Optional[str]) -> bool:
+        return bool(anchor) and parse_slot_id(anchor)[1] == meal_type
+
     batch_roast_instruction = (
         BATCH_ROAST_ANCHOR_RULE
-        if meal_type == "dinner" and long_cook_anchor
+        if anchors_this_axis(long_cook_anchor)
         else BATCH_ROAST_RULE
         if meal_type == "dinner" and config["enable_sunday_prep"]
         else ""
     )
-    bulk_prep_instruction = (
-        BULK_PREP_RULE if meal_type == "dinner" and bulk_prep_anchor else ""
-    )
+    bulk_prep_instruction = BULK_PREP_RULE if anchors_this_axis(bulk_prep_anchor) else ""
     # Both are whole-week facts a single slot's brief cannot state: which days
     # share a cuisine, and which other breakfasts are also shakes. This call is
     # the only place in the app that can see either.
@@ -4403,7 +4519,16 @@ def generate_sunday_prep_session(
         ],
     )
     log_completion("sunday_prep", completion, started)
-    return session
+    # `candidates` (plus the shake, if any) is the ground truth of what this
+    # session covers — Python picked it, either by slot_id (the anchor path)
+    # or by flag (the legacy enable_sunday_prep path) before the model was
+    # ever called. Stamping it onto the response is what lets is_sunday_prepped
+    # match by slot_id afterwards instead of re-trusting the recipe's own
+    # long_oven_cook/bulk_prep_friendly flags for a fact Python already knows.
+    covered_ids = [event.slot_id for event in candidates]
+    if shake_event is not None:
+        covered_ids.append(shake_event.slot_id)
+    return session.model_copy(update={"candidate_slot_ids": covered_ids})
 
 
 def on_calling_loop(callback):

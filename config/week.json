@@ -13,7 +13,7 @@
   "max_prep_active_mins": 120,
   "inventory_to_clear": [],
   "inventory_rules": {
-    "fridge_safe_days": 4,
+    "fridge_safe_days": 3,
     "perishable_day_gap": 3
   }
 }
