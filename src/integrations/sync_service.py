@@ -51,7 +51,7 @@ just imports and calls it directly — no sidecar interpreter involved.
 import argparse
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 # See the module docstring: `src/integrations/` is one level below the flat
@@ -536,6 +536,56 @@ def _daily_summary_row(rows: List[dict], day: str) -> dict:
     return entry
 
 
+def get_sync_date_range(
+    repository: LocalJSONRepository,
+    target_end_date: str,
+    max_lookback_days: int = 14,
+) -> List[str]:
+    """Missing ISO dates between the latest recorded biometric and `target_end_date`.
+
+    A sync that only ever runs on demand misses days: a missed Monday and
+    Tuesday, run on Wednesday, must not silently leave Monday and Tuesday
+    empty forever just because nobody ran it on time. This looks at both
+    `weigh_ins` and `daily_actuals` for the latest `date` either holds — not
+    just `get_latest_biometrics`, which only reads `weigh_ins` — because a
+    checkout that syncs Cronometer daily but Garmin only occasionally must
+    still catch Garmin up from Garmin's own last date, not from whichever
+    list happens to have a more recent Cronometer row.
+
+    No prior data at all (a fresh `biometrics.json`) has nothing to walk
+    back from, so the range is just `target_end_date` alone — the same
+    single-day sync this module always did before catchup existed.
+
+    Capped at `max_lookback_days` so a database that hasn't synced in months
+    doesn't queue hundreds of sequential API calls against a rate-limited
+    account; the cap keeps the days closest to `target_end_date` and drops
+    the older ones, since the most recent gap is the one actually missing
+    from a meal plan's targets right now.
+    """
+    end_date = datetime.strptime(_iso(target_end_date), "%Y-%m-%d").date()
+
+    biometrics = run_sync(repository.load_biometrics())
+    recorded_dates = [
+        row["date"]
+        for section in ("weigh_ins", "daily_actuals")
+        for row in biometrics.get(section, [])
+        if row.get("date")
+    ]
+    if not recorded_dates:
+        return [end_date.isoformat()]
+
+    latest = datetime.strptime(max(recorded_dates), "%Y-%m-%d").date()
+    start_date = latest + timedelta(days=1)
+    if start_date > end_date:
+        return []
+
+    if (end_date - start_date).days + 1 > max_lookback_days:
+        start_date = end_date - timedelta(days=max_lookback_days - 1)
+
+    span = (end_date - start_date).days + 1
+    return [(start_date + timedelta(days=offset)).isoformat() for offset in range(span)]
+
+
 def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     """Fetch a day from Garmin and persist what it found.
 
@@ -565,6 +615,32 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     return {"weigh_in": weigh_in, "cardio": cardio, "readiness": readiness}
 
 
+def sync_garmin_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
+    """`sync_garmin` for every date in `dates`, in order.
+
+    Sequential, not concurrent — the same reasoning `GarminSyncService`
+    already gives for reusing a cached login rather than re-authenticating:
+    a burst of concurrent requests against a rate-limited account is the
+    reliable way to turn a working catchup into a wall of failures partway
+    through.
+
+    One date's exception is caught here and reported as
+    `{"date": ..., "error": ...}` rather than raised, the same "a failed
+    meal must not fail the week" policy `generate_week_plan` already applies
+    to a bad meal type — a network blip on Tuesday must not cost Wednesday
+    through Friday the rest of a backfill.
+    """
+    results = []
+    for target_date in dates:
+        try:
+            outcome = sync_garmin(target_date, repository)
+            outcome["date"] = target_date
+            results.append(outcome)
+        except Exception as exc:
+            results.append({"date": target_date, "error": str(exc)})
+    return results
+
+
 def sync_cronometer(target_date: str, repository: LocalJSONRepository) -> dict:
     """Fetch a day from Cronometer and persist it to `daily_actuals`."""
     service = CronometerSyncService()
@@ -574,6 +650,19 @@ def sync_cronometer(target_date: str, repository: LocalJSONRepository) -> dict:
         run_sync(repository.save_daily_actuals(actuals))
 
     return {"daily_actuals": actuals}
+
+
+def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
+    """`sync_cronometer` for every date in `dates`, in order. See `sync_garmin_range`."""
+    results = []
+    for target_date in dates:
+        try:
+            outcome = sync_cronometer(target_date, repository)
+            outcome["date"] = target_date
+            results.append(outcome)
+        except Exception as exc:
+            results.append({"date": target_date, "error": str(exc)})
+    return results
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -595,6 +684,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=date.today().isoformat(),
         help="Day to sync, ISO YYYY-MM-DD. Defaults to today.",
     )
+    parser.add_argument(
+        "--catchup",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Backfill every day missing between the latest recorded "
+            "biometric and --date, not just --date itself. On by default; "
+            "pass --no-catchup to sync only --date, as before."
+        ),
+    )
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=14,
+        help="Cap on how many days a --catchup run will walk back. Default 14.",
+    )
     args = parser.parse_args(argv)
 
     if not (args.sync_garmin or args.sync_cronometer):
@@ -602,49 +707,64 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     repository = LocalJSONRepository()
     target = _iso(args.date)
+    dates = (
+        get_sync_date_range(repository, target, args.lookback_days)
+        if args.catchup
+        else [target]
+    )
     failed = False
 
+    if not dates:
+        print(f"Nothing to sync: already up to date through {target}.")
+        return 0
+    if len(dates) > 1:
+        print(f"Catching up {len(dates)} missing day(s): {dates[0]} through {dates[-1]}")
+
     if args.sync_garmin:
-        try:
-            result = sync_garmin(target, repository)
-            weigh_in = result["weigh_in"]
+        for outcome in sync_garmin_range(dates, repository):
+            day = outcome["date"]
+            if "error" in outcome:
+                # Each source is reported independently: a Garmin outage must
+                # not cost the Cronometer sync that would have worked, on the
+                # same reasoning as "a failed meal must not fail the week" —
+                # and one bad day must not cost the rest of a catchup either.
+                print(f"Garmin sync failed for {day}: {outcome['error']}", file=sys.stderr)
+                failed = True
+                continue
+            weigh_in = outcome["weigh_in"]
             if has_measurements(weigh_in):
-                print(f"Garmin weigh-in {target}: {weigh_in.get('weight_kg')} kg")
+                print(f"Garmin weigh-in {day}: {weigh_in.get('weight_kg')} kg")
             else:
-                print(f"Garmin weigh-in {target}: no reading")
-            for session in result["cardio"]:
+                print(f"Garmin weigh-in {day}: no reading")
+            for session in outcome["cardio"]:
                 print(
                     f"  cardio {session['type']}: {session['duration_min']} min, "
                     f"{session['gross_calories']} kcal gross -> "
                     f"{session['net_calories']} kcal net"
                 )
-            readiness = result["readiness"]
+            readiness = outcome["readiness"]
             if readiness.get("sleep_score") is not None:
                 print(
                     f"  readiness: {readiness['readiness']} "
                     f"(sleep score {readiness['sleep_score']:.0f}) - not counted as energy"
                 )
-        except Exception as exc:
-            # Each source is reported independently: a Garmin outage must not
-            # cost the Cronometer sync that would have worked, on the same
-            # reasoning as "a failed meal must not fail the week".
-            print(f"Garmin sync failed: {exc}", file=sys.stderr)
-            failed = True
 
     if args.sync_cronometer:
-        try:
-            actuals = sync_cronometer(target, repository)["daily_actuals"]
+        for outcome in sync_cronometer_range(dates, repository):
+            day = outcome["date"]
+            if "error" in outcome:
+                print(f"Cronometer sync failed for {day}: {outcome['error']}", file=sys.stderr)
+                failed = True
+                continue
+            actuals = outcome["daily_actuals"]
             if has_measurements(actuals):
                 print(
-                    f"Cronometer {target}: {actuals.get('calories')} kcal, "
+                    f"Cronometer {day}: {actuals.get('calories')} kcal, "
                     f"P{actuals.get('protein_g')} / C{actuals.get('net_carbs_g')} / "
                     f"F{actuals.get('fat_g')}"
                 )
             else:
-                print(f"Cronometer {target}: nothing logged")
-        except Exception as exc:
-            print(f"Cronometer sync failed: {exc}", file=sys.stderr)
-            failed = True
+                print(f"Cronometer {day}: nothing logged")
 
     return 1 if failed else 0
 
