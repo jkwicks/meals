@@ -344,9 +344,157 @@ class TestLocationShapesTheGrid(unittest.TestCase):
             self.assertEqual(planner.build_location_note(slot, self.CONFIG), "")
 
 
+class TestLocationSkipCarriesAnEstimate(unittest.TestCase):
+    """A location that skips a meal (`Outing`'s lunch, on the shipped config)
+    used to contribute nothing to the day at all — no flexible slot was left
+    to absorb the gap between the weighted share a downstream leftover
+    reserved and what its source day actually delivered, so a day like
+    Saturday (breakfast pinned, lunch skipped, dinner a leftover, snack
+    skipped by default) was structurally incapable of reconciling, every
+    week, deterministically. `<meal_type>_skip_estimate` on the rule is what
+    lets a location say what was actually eaten instead of nothing."""
+
+    CONFIG = dict(
+        BASE_CONFIG,
+        base_schedule={"Saturday": "Outing"},
+        location_rules={
+            "Outing": {
+                "lunch_mode": "skip",
+                "lunch_skip_estimate": {
+                    "calories": 795, "protein_g": 36, "net_carbs_g": 62, "fat_g": 44,
+                },
+                "dinner_mode": "leftover",
+            },
+        },
+    )
+
+    def test_a_skip_with_an_estimate_carries_it_onto_the_slot(self):
+        spec = wk.apply_location_modes(spec_with(), self.CONFIG)
+        slot = spec.by_id()["Saturday:lunch"]
+        self.assertEqual(slot.mode, MODE_SKIP)
+        self.assertEqual(
+            slot.skip_estimate,
+            {"calories": 795.0, "protein_g": 36.0, "net_carbs_g": 62.0, "fat_g": 44.0},
+        )
+
+    def test_a_skip_with_no_estimate_carries_none(self):
+        """The common case (Holiday, or Outing before this feature) — a skip
+        with nothing declared must still mean "nothing eaten", not a made-up
+        number."""
+        config = dict(
+            self.CONFIG,
+            location_rules={"Outing": {"lunch_mode": "skip", "dinner_mode": "leftover"}},
+        )
+        spec = wk.apply_location_modes(spec_with(), config)
+        self.assertIsNone(spec.by_id()["Saturday:lunch"].skip_estimate)
+
+    def test_a_leftover_mode_never_picks_up_a_skip_estimate(self):
+        """Only a genuine MODE_SKIP transition reads `_skip_estimate` — a
+        `lunch_skip_estimate` key sitting on a rule that also sets
+        `dinner_mode: leftover` must not leak onto the leftover slot."""
+        spec = wk.apply_location_modes(spec_with(), self.CONFIG)
+        self.assertIsNone(spec.by_id()["Saturday:dinner"].skip_estimate)
+
+    def test_the_estimate_reaches_the_days_plannable_budget(self):
+        """The whole point: `skip_estimate_totals` (planner.py) is what feeds
+        this into `generate_week_plan`'s plannable-target subtraction and
+        `WeekPlan.day_slot_macros`'s numerator — so a day with an estimated
+        skip is no longer structurally incapable of reconciling."""
+        spec = wk.apply_location_modes(spec_with(), self.CONFIG)
+        totals = wk.skip_estimate_totals(spec.slots, "Saturday")
+        self.assertEqual(totals["calories"], 795.0)
+
+
 # ---------------------------------------------------------------------------
 # Fridge safety
 # ---------------------------------------------------------------------------
+
+
+class TestReconciliationGapIsReported(unittest.IsolatedAsyncioTestCase):
+    """`generate_week_plan`'s post-loop check (H-1 part B): a day whose
+    remaining slots are all skipped or fed by another day's cook has no
+    flexible slot left to absorb the gap between what a cross-day leftover
+    reserves during earlier stages and what its source day actually
+    delivers — the mechanism that stranded a real Saturday at 55% of target,
+    silently, on the shipped config. A stub model that returns exactly what
+    it is briefed (no drift at all) still reproduces the shortfall, because
+    the gap is structural, not a model error.
+    """
+
+    async def asyncSetUp(self):
+        self._real = planner._generate_meal_type_events
+
+        async def stub_exact_brief(
+            meal_type, spec, config, day_budgets, portions, claims,
+            carried_descriptions_by_day, pinned_days, avoid_proteins,
+            avoid_recipe_names, note_callback=None, seafood_used=0,
+        ):
+            events = {}
+            for day, budget in day_budgets.items():
+                slot = spec.by_id()[wk.slot_id(day, meal_type)]
+                events[slot.id] = planner.build_cook_event(
+                    slot, recipe(f"{meal_type} {day}", meal_type, **budget),
+                    spec, portions, claims, config,
+                )
+            return events
+
+        planner._generate_meal_type_events = stub_exact_brief
+
+    async def asyncTearDown(self):
+        planner._generate_meal_type_events = self._real
+
+    def _spec(self, tuesday_lunch_estimate=None):
+        return spec_with(
+            {
+                "Tuesday:lunch": {"mode": MODE_SKIP, "skip_estimate": tuesday_lunch_estimate},
+                "Tuesday:dinner": {"mode": MODE_LEFTOVER, "source": "Monday:dinner"},
+                "Tuesday:snack": {"mode": MODE_SKIP},
+            },
+            days=["Monday", "Tuesday"],
+        )
+
+    def _config(self):
+        return dict(
+            BASE_CONFIG,
+            weekly_schedule={
+                day: {"calories": 2000, "protein_g": 150, "net_carbs_g": 150, "fat_g": 78}
+                for day in ["Monday", "Tuesday"]
+            },
+        )
+
+    async def test_a_stranded_day_is_warned_about(self):
+        """Tuesday: breakfast cooked, lunch skipped with no estimate, dinner a
+        cross-day leftover of Monday's dinner, snack skipped — no flexible
+        slot survives to close the gap between its share and the actual
+        target, so the day lands far short and a note must say so."""
+        notes = []
+        with self.assertLogs("meals", level="WARNING"):
+            plan = await planner.generate_week_plan(
+                self._spec(), self._config(), history=[],
+                note_callback=notes.append, repository=_FakeRepository([]),
+            )
+        planned = plan.day_slot_macros("Tuesday")["calories"]
+        goal = plan.targets["Tuesday"]["calories"]
+        self.assertLess(planned, goal * planner.UNDER_TARGET_NOTE_THRESHOLD)
+        self.assertTrue(any("Tuesday" in n and "is planned" in n for n in notes))
+
+    async def test_an_estimated_skip_closes_the_gap_and_the_note_stops(self):
+        """Same grid, but the skipped lunch now carries what it would have
+        been briefed at (what a location rule's `_skip_estimate`, or the
+        card's "Eaten out?" button, supplies) — the day reconciles and the
+        warning must not fire."""
+        notes = []
+        plan = await planner.generate_week_plan(
+            self._spec(tuesday_lunch_estimate={
+                "calories": 600.0, "protein_g": 45.0, "net_carbs_g": 45.0, "fat_g": 23.0,
+            }),
+            self._config(), history=[],
+            note_callback=notes.append, repository=_FakeRepository([]),
+        )
+        planned = plan.day_slot_macros("Tuesday")["calories"]
+        goal = plan.targets["Tuesday"]["calories"]
+        self.assertGreaterEqual(planned, goal * planner.UNDER_TARGET_NOTE_THRESHOLD)
+        self.assertFalse(any("Tuesday" in n and "is planned" in n for n in notes))
 
 
 class TestFridgeSafety(unittest.TestCase):
@@ -539,6 +687,90 @@ class TestSundayPrepLabelling(unittest.TestCase):
         event = cook_event("Monday:dinner", "Monday", "dinner", ordinary)
         plan = week_plan_with([event], sunday_prep_session=None)
         self.assertFalse(planner.is_sunday_prepped(event, plan))
+
+
+class TestSundayPrepStalenessGuardUsesGroundTruth(unittest.IsolatedAsyncioTestCase):
+    """`regenerate_single_day`/`regenerate_single_meal` decide whether a saved
+    `SundayPrepSession` is now stale by testing `event.recipe.prep_notes` for
+    truthiness — the same proxy `is_sunday_prepped` (above) was rewritten to
+    stop trusting. The bug that actually corrupts a plan: the shake candidate
+    has `portions == 1`, so `storage_note()` returns "" and `prep_notes` is
+    None even though its slot_id *is* in `candidate_slot_ids`. Regenerating
+    that breakfast used to leave the stale session in place, still naming a
+    "Berry Shake" that no longer exists on the grid.
+    """
+
+    async def asyncSetUp(self):
+        self._real_generate_day = planner.generate_day
+
+        def stub_generate_day(day, targets, cook_slots, **kwargs):
+            # No LLM call: one recipe per requested slot, carrying no
+            # prep_notes of its own — mirrors a freshly generated single
+            # serving, same as the real shake this bug was found on.
+            return {slot.meal_type: recipe(f"New {slot.meal_type}", slot.meal_type)
+                    for slot in cook_slots}
+
+        planner.generate_day = stub_generate_day
+
+    async def asyncTearDown(self):
+        planner.generate_day = self._real_generate_day
+
+    def _config(self):
+        return dict(
+            BASE_CONFIG,
+            weekly_schedule={
+                day: {"calories": 2000, "protein_g": 150, "net_carbs_g": 150, "fat_g": 78}
+                for day in DAYS
+            },
+        )
+
+    def _week_plan_with_shake_session(self):
+        shake = cook_event(
+            "Monday:breakfast", "Monday", "breakfast",
+            recipe("Berry Shake", "breakfast"), portions=1,
+        )
+        anchor = cook_event(
+            "Monday:dinner", "Monday", "dinner",
+            recipe("Beef Bulgogi", "dinner"), portions=6,
+        )
+        session = planner.SundayPrepSession(
+            total_active_minutes=90,
+            meals_included=["Beef Bulgogi", "Berry Shake"],
+            candidate_slot_ids=["Monday:dinner", "Monday:breakfast"],
+        )
+        return week_plan_with([shake, anchor], sunday_prep_session=session)
+
+    async def test_regenerating_the_shake_drops_the_stale_session(self):
+        week_plan = self._week_plan_with_shake_session()
+        shake_event = week_plan.by_slot()["Monday:breakfast"]
+        # The proxy the old guard used says "not a candidate" — the whole bug.
+        self.assertIsNone(shake_event.recipe.prep_notes)
+        self.assertTrue(planner.is_sunday_prepped(shake_event, week_plan))
+
+        result = await planner.regenerate_single_meal(
+            "Monday:breakfast", spec_with(), self._config(), week_plan,
+            history=[], repository=_FakeRepository([]),
+        )
+        self.assertIsNone(result.sunday_prep_session)
+
+    async def test_regenerating_the_shakes_day_drops_the_stale_session(self):
+        """Same fix, the `regenerate_single_day` call site."""
+        week_plan = self._week_plan_with_shake_session()
+        result = await planner.regenerate_single_day(
+            "Monday", spec_with(), self._config(), week_plan,
+            history=[], repository=_FakeRepository([]),
+        )
+        self.assertIsNone(result.sunday_prep_session)
+
+    async def test_regenerating_an_unrelated_day_leaves_the_session(self):
+        """Wednesday touches no candidate slot, so a session that never
+        covered it must survive untouched."""
+        week_plan = self._week_plan_with_shake_session()
+        result = await planner.regenerate_single_day(
+            "Wednesday", spec_with(), self._config(), week_plan,
+            history=[], repository=_FakeRepository([]),
+        )
+        self.assertIsNotNone(result.sunday_prep_session)
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from typing import Callable, Optional
 
 from nicegui import ui
 
-from planner import MACRO_KEYS, Recipe, derive_fat_g
+from planner import Recipe, derive_fat_g
 from shopping import format_quantity
 from ui_catalog import favorited_catalog, is_favorited, toggle_favorite
 from ui_context import UIContext

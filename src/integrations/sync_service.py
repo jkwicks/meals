@@ -62,7 +62,7 @@ _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from repository import LocalJSONRepository, run_sync  # noqa: E402
+from repository import PROJECT_ROOT, LocalJSONRepository, run_sync  # noqa: E402
 
 try:
     from dotenv import load_dotenv
@@ -104,8 +104,6 @@ CARDIO_ACTIVITY_KEYS = (
 # Where garth caches its OAuth tokens. Overridable so a test never writes to
 # the real one; the default matches garminconnect's own documented location.
 GARMIN_TOKEN_DIR = os.path.expanduser(os.environ.get("GARMINTOKENS", "~/.garminconnect"))
-
-PROJECT_ROOT = os.path.dirname(_SRC_DIR)
 
 # Cronometer's daily-summary CSV column headers, mapped to the keys
 # `daily_actuals` rows use. Several spellings per macro because the export has

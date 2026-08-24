@@ -50,7 +50,6 @@ from week import (  # noqa: E402
     SlotSpec,
     WeekSpec,
     link_leftover,
-    slot_id,
 )
 
 DAYS = ["Monday", "Tuesday", "Wednesday"]

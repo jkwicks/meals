@@ -23,6 +23,7 @@ from pydantic import (
 
 from nutrition_engine import (
     ADAPTIVE_TDEE_TOLERANCE,
+    DEFAULT_NET_CARBS_G,
     calculate_adaptive_tdee,
     calculate_macro_targets,
 )
@@ -860,12 +861,15 @@ class PlanningRules(BaseModel):
 
     # 28 entries = 4 weeks of daily history, so recipe-name/style/protein
     # rotation has a full 4-week non-repeat window rather than 3.
-    history_max_entries: int = 28
-    protein_lookback_entries: int = 3
+    history_max_entries: int = Field(default=28, ge=1)
+    protein_lookback_entries: int = Field(default=3, ge=0)
     # How many recent main proteins to name in the prompt. Long enough to
     # stop a week of chicken, short enough that a 7-day plan doesn't end up
     # banning everything the model knows by Friday.
-    protein_avoid_window: int = 6
+    # ge=1, not ge=0: this is a negative slice bound (avoid_proteins[-window:])
+    # and [-0:] is the whole list — "avoid nothing" would silently become
+    # "avoid everything".
+    protein_avoid_window: int = Field(default=6, ge=1)
     # Models compose plausible meals but size them badly, so portions are
     # corrected after the fact by scaling every quantity linearly. The clamp
     # stops a trim producing an absurd portion (a 30g breakfast, a 900g
@@ -913,7 +917,7 @@ class PlanningRules(BaseModel):
     # How many breakfasts one favourite covers. The point of a standing
     # breakfast is that it's the same one two mornings running, not a
     # different favourite each day — and it means one shop covers both.
-    favorite_breakfast_slots: int = 2
+    favorite_breakfast_slots: int = Field(default=2, ge=0)
     # How many dinners a week may be claimed by saved favourites. Unlike
     # breakfast this is a count of *distinct* favourites, not of days one
     # favourite covers — a standing dinner every Tuesday is not the point,
@@ -928,7 +932,7 @@ class PlanningRules(BaseModel):
     # exist for would go with it. Two leaves five generated dinners, which a
     # 4/3 `cuisine_block_pattern` can still do something with. Raise it if
     # you would rather cook the catalog than shop it cheaply.
-    favorite_dinner_slots: int = 2
+    favorite_dinner_slots: int = Field(default=2, ge=0)
     # Ceiling `spread_batch` (week.py) spreads a bulk-prep/long-cook anchor
     # toward — not a promise: a batch that runs into the end of the week or an
     # already-claimed day settles for fewer servings.
@@ -1230,6 +1234,18 @@ def planning_rule(config: Optional[dict], key: str):
         return DEFAULT_PLANNING_RULES[key]
     return rules[key]
 
+
+def inventory_rule(config: Optional[dict], key: str):
+    """Read one `inventory_rules` value out of `config`. Same contract as
+    `planning_rule`, for the same reason: `inventory_rules` is one of the
+    five core config files merged and validated at load, so a config that has
+    actually been loaded is guaranteed to carry it."""
+    rules = DEFAULT_INVENTORY_RULES if config is None else config["inventory_rules"]
+    if key not in rules:
+        return DEFAULT_INVENTORY_RULES[key]
+    return rules[key]
+
+
 # Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
 # glycogen-heavy cardio skews carb, resistance work skews protein. Shares sum
 # to 1 per type so the whole burn is accounted for and fat_g (derived from
@@ -1286,7 +1302,7 @@ WORKOUT_BREAKFAST_TYPES = ("gym",)
 WORKOUT_BREAKFAST_STYLE = "custom_shake"
 
 
-def _clock_minutes(value: str) -> int:
+def clock_minutes(value: str) -> int:
     hours, _, minutes = str(value).partition(":")
     try:
         return int(hours or 0) * 60 + int(minutes or 0)
@@ -1412,12 +1428,12 @@ def apply_training_adjustments(config: dict) -> dict:
 
         if not day_meals:
             continue
-        workout_minutes = _clock_minutes(session.get("time", "00:00"))
+        workout_minutes = clock_minutes(session.get("time", "00:00"))
         nearest = min(
-            day_meals, key=lambda meal: abs(_clock_minutes(MEAL_TIME_OF_DAY[meal]) - workout_minutes)
+            day_meals, key=lambda meal: abs(clock_minutes(MEAL_TIME_OF_DAY[meal]) - workout_minutes)
         )
 
-        if _clock_minutes(MEAL_TIME_OF_DAY[nearest]) >= workout_minutes:
+        if clock_minutes(MEAL_TIME_OF_DAY[nearest]) >= workout_minutes:
             overrides = dict(day_targets.get("meal_overrides") or {})
             if nearest not in overrides:
                 overrides[nearest] = training_pin_budget(day_targets, nearest, weights)
@@ -1434,7 +1450,7 @@ def apply_training_adjustments(config: dict) -> dict:
                 )
 
         for meal in day_meals:
-            gap = workout_minutes - _clock_minutes(MEAL_TIME_OF_DAY[meal])
+            gap = workout_minutes - clock_minutes(MEAL_TIME_OF_DAY[meal])
             # A meal at the exact workout minute (gap 0) already has the
             # post-workout note from the pin above if it was the nearest one
             # — setdefault leaves that in place rather than overwriting it.
@@ -1649,19 +1665,30 @@ def hydrate_dynamic_targets(
         )
 
     schedule: Dict[str, dict] = {}
-    basis = None
+    # BMR, TDEE, the adaptive reconciliation, the deficit ramp and the locked
+    # protein figure depend on the body and the adaptive estimate, never on
+    # the day — only net_carbs_g (and the fat_g it derives) varies per day.
+    # Computed once rather than once per weekday so `basis` is a single value
+    # rather than whatever the loop's last iteration happened to leave behind.
+    try:
+        base = calculate_macro_targets(
+            profile, latest_biometrics, adaptive_tdee=adaptive_tdee
+        )
+    except (ValueError, TypeError) as exc:
+        message = short_error(exc)
+        logger.warning("dynamic targets unavailable, using config.json targets — %s", message)
+        if note_callback:
+            note_callback(f"Using config.json targets — {message}")
+        return config
+    basis = base["basis"]
     try:
         for day, day_targets in config["weekly_schedule"].items():
-            dynamic = calculate_macro_targets(
-                profile,
-                latest_biometrics,
-                net_carbs_g=day_targets.get("net_carbs_g"),
-                adaptive_tdee=adaptive_tdee,
+            calories = base["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
+            protein_g = base["protein_g"]
+            day_carbs = day_targets.get("net_carbs_g")
+            net_carbs_g = round(
+                DEFAULT_NET_CARBS_G if day_carbs is None else day_carbs, 1
             )
-            basis = dynamic["basis"]
-            calories = dynamic["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
-            protein_g = dynamic["protein_g"]
-            net_carbs_g = dynamic["net_carbs_g"]
             hydrated = dict(
                 day_targets,
                 calories=round(calories),
@@ -1693,10 +1720,10 @@ def hydrate_dynamic_targets(
 
     if not schedule:
         # An empty `weekly_schedule` never enters the loop, so nothing raises
-        # into the fallback above — but `basis` is still None and there is no
-        # day to read a protein figure off, which the log line below would
-        # dereference. Nothing to hydrate is the file's own state, not a
-        # failure, so hand back what we were given.
+        # into the fallback above — but there is no day to read a protein
+        # figure off, which the log line below would dereference via
+        # `next(iter(schedule))`. Nothing to hydrate is the file's own state,
+        # not a failure, so hand back what we were given.
         return config
 
     logger.info(
@@ -2017,12 +2044,12 @@ def morning_training_days(config: dict) -> List[str]:
     fuel. Pinning a *style* is only warranted when the session lands before
     the meal has any time to settle.
     """
-    cutoff = _clock_minutes(MORNING_TRAINING_CUTOFF)
+    cutoff = clock_minutes(MORNING_TRAINING_CUTOFF)
     days: List[str] = []
     for session in config.get("training_schedule") or []:
         if not str(session.get("type") or "").startswith(WORKOUT_BREAKFAST_TYPES):
             continue
-        if _clock_minutes(session.get("time") or "00:00") > cutoff:
+        if clock_minutes(session.get("time") or "00:00") > cutoff:
             continue
         day = session.get("day")
         if day and day not in days:
@@ -2968,9 +2995,7 @@ def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = No
     """
     if portions <= 1 or keeps_for_days <= 0:
         return ""
-    fridge_safe_days = (config or {}).get("inventory_rules", {}).get(
-        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
-    )
+    fridge_safe_days = inventory_rule(config, "fridge_safe_days")
     storage = (
         "refrigerate in airtight containers"
         if keeps_for_days < fridge_safe_days
@@ -3064,11 +3089,12 @@ def day_multiplicity(spec: WeekSpec, day: str) -> Dict[str, int]:
     return counts
 
 
-def carried_macros(
+def _carried_leftovers(
     spec: WeekSpec, day: str, events: Dict[str, CookEvent]
-) -> Tuple[dict, List[str]]:
-    """Macros already locked in for `day` by leftovers cooked on earlier days,
-    plus human-readable descriptions of those meals for the prompt."""
+) -> List[Tuple[SlotSpec, CookEvent]]:
+    """`day`'s leftover slots paired with the cook event each one eats,
+    skipping any whose source hasn't been generated yet (a not-yet-resolved
+    same-stage leftover, or an earlier stage that failed)."""
     carried = []
     for slot in spec.slots:
         if slot.day != day or slot.mode != MODE_LEFTOVER or not slot.source:
@@ -3077,17 +3103,39 @@ def carried_macros(
         if event is None:
             continue
         carried.append((slot, event))
+    return carried
 
-    descriptions = []
-    for slot, event in carried:
-        serving = event.recipe.per_serving_macros
-        descriptions.append(
-            f"{slot.meal_type}: leftovers of \"{event.recipe.name}\" "
-            f"(cooked {event.day}) — {serving['calories']:.0f} kcal, "
-            f"{serving['protein_g']:.0f}g protein, {serving['net_carbs_g']:.0f}g net carbs, "
-            f"{serving['fat_g']:.0f}g fat"
-        )
+
+def _leftover_description(slot: SlotSpec, event: CookEvent) -> str:
+    serving = event.recipe.per_serving_macros
+    return (
+        f"{slot.meal_type}: leftovers of \"{event.recipe.name}\" "
+        f"(cooked {event.day}) — {serving['calories']:.0f} kcal, "
+        f"{serving['protein_g']:.0f}g protein, {serving['net_carbs_g']:.0f}g net carbs, "
+        f"{serving['fat_g']:.0f}g fat"
+    )
+
+
+def carried_macros(
+    spec: WeekSpec, day: str, events: Dict[str, CookEvent]
+) -> Tuple[dict, List[str]]:
+    """Macros already locked in for `day` by leftovers cooked on earlier days,
+    plus human-readable descriptions of those meals for the prompt."""
+    carried = _carried_leftovers(spec, day, events)
+    descriptions = [_leftover_description(slot, event) for slot, event in carried]
     return sum_serving_macros(event for _, event in carried), descriptions
+
+
+def carried_descriptions(spec: WeekSpec, day: str, events: Dict[str, CookEvent]) -> List[str]:
+    """Just the prompt lines `carried_macros` builds, for the meal-type axis
+    (`_generate_meal_type_events`), which has no use for the totals — it
+    tracks the day's remaining budget in `daily_macro_budgets` instead, so the
+    macro half of `carried_macros` was a full `NUTRIENT_KEYS` walk computed
+    and thrown away on every call."""
+    return [
+        _leftover_description(slot, event)
+        for slot, event in _carried_leftovers(spec, day, events)
+    ]
 
 
 def logged_intake_for(
@@ -4737,6 +4785,15 @@ async def _generate_meal_type_events(
     }
 
 
+# Below this share of a day's calorie target, generate_week_plan's post-loop
+# reconciliation check warns rather than staying silent. Set loose enough that
+# ordinary portion-trim rounding (Thursday/Friday on the shipped config land
+# at 95-105%) never fires it — this is for a day that is *structurally*
+# incapable of reconciling (every remaining slot pinned, skipped or fed by
+# another day's cook), not day-to-day noise.
+UNDER_TARGET_NOTE_THRESHOLD = 0.85
+
+
 async def generate_week_plan(
     spec: WeekSpec,
     config: dict,
@@ -4970,7 +5027,7 @@ async def generate_week_plan(
                 day_budgets[day] = budget
 
             carried_descriptions_by_day = {
-                day: carried_macros(spec, day, events)[1] for day in cook_days
+                day: carried_descriptions(spec, day, events) for day in cook_days
             }
 
             # Pinned favourites first, and outside the try: they cannot raise
@@ -5125,7 +5182,7 @@ async def generate_week_plan(
             note_callback(f"Sunday prep session generation failed — {message}")
 
     generated_at = datetime.now().isoformat()
-    return WeekPlan(
+    plan = WeekPlan(
         days=spec.days,
         servings_per_meal=spec.servings_per_meal,
         generated_at=generated_at,
@@ -5139,6 +5196,32 @@ async def generate_week_plan(
         sunday_prep_session=sunday_prep_session,
         unique_plants=collect_unique_plants(ordered_events),
     )
+
+    # The cascade above cannot reconcile a day whose every slot is pinned,
+    # skipped or fed by another day's cook — there is no flexible slot left
+    # to absorb the gap between what a leftover slot's weighted share
+    # reserved and what its source recipe actually delivers. Same policy as
+    # `cap_to_weighted_share`/`apply_protein_floor`: land under target and say
+    # so, rather than silently swallowing the shortfall. Reuses
+    # `day_slot_macros` — the same walk the telemetry header renders — so this
+    # can never disagree with what the UI shows for the same day.
+    for day in plan.days:
+        goal = targets[day]["calories"]
+        if goal <= 0:
+            continue
+        planned = plan.day_slot_macros(day)["calories"]
+        if planned < goal * UNDER_TARGET_NOTE_THRESHOLD:
+            logger.warning(
+                "%s plans %.0f of %.0f kcal — no flexible slot to absorb the "
+                "difference", day, planned, goal,
+            )
+            if note_callback:
+                note_callback(
+                    f"{day}: only {planned:.0f} of {goal:.0f} kcal is planned — "
+                    "its remaining meals are skipped, pinned or leftovers"
+                )
+
+    return plan
 
 
 async def regenerate_single_day(
@@ -5223,7 +5306,8 @@ async def regenerate_single_day(
     sunday_prep_session = week_plan.sunday_prep_session
     if sunday_prep_session is not None:
         was_candidate = any(
-            event.day == day and event.recipe.prep_notes for event in week_plan.cook_events
+            event.day == day and is_sunday_prepped(event, week_plan)
+            for event in week_plan.cook_events
         )
         now_candidate = any(event.recipe.prep_notes for event in day_events.values())
         if was_candidate or now_candidate:
@@ -5294,6 +5378,10 @@ async def regenerate_single_meal(
     portions = portions_for(spec)
     claims = eaten_on(spec)
     by_slot = dict(week_plan.by_slot())
+    # Captured before `by_slot[slot_id]` is overwritten below with the new
+    # event, so the sunday_prep_session check further down can ask what this
+    # slot used to hold without a second `week_plan.by_slot()` rebuild.
+    old_event = by_slot.get(slot_id)
     multiplicity = day_multiplicity(spec, day)
 
     other: List[Tuple[SlotSpec, CookEvent]] = []
@@ -5316,11 +5404,11 @@ async def regenerate_single_meal(
         # siblings' *planned* macros must not be subtracted a second time —
         # double-counting breakfast would shrink dinner by a whole meal. Slots
         # later in the day are still ahead of you and keep their reservation.
-        this_meal_at = _clock_minutes(MEAL_TIME_OF_DAY.get(slot.meal_type, "12:00"))
+        this_meal_at = clock_minutes(MEAL_TIME_OF_DAY.get(slot.meal_type, "12:00"))
         other = [
             pair
             for pair in other
-            if _clock_minutes(MEAL_TIME_OF_DAY.get(pair[0].meal_type, "12:00")) > this_meal_at
+            if clock_minutes(MEAL_TIME_OF_DAY.get(pair[0].meal_type, "12:00")) > this_meal_at
         ]
 
     other_totals = sum_serving_macros(event for _, event in other)
@@ -5395,8 +5483,7 @@ async def regenerate_single_meal(
     # left the batch-prep candidate set — drop rather than risk a stale plan.
     sunday_prep_session = week_plan.sunday_prep_session
     if sunday_prep_session is not None:
-        old_event = week_plan.by_slot().get(slot_id)
-        was_candidate = bool(old_event and old_event.recipe.prep_notes)
+        was_candidate = bool(old_event and is_sunday_prepped(old_event, week_plan))
         now_candidate = bool(new_event.recipe.prep_notes)
         if was_candidate or now_candidate:
             sunday_prep_session = None

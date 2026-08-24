@@ -15,6 +15,7 @@ import sys
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -97,6 +98,35 @@ class TestHydrateDynamicTargets(unittest.TestCase):
         basis = self.hydrated["dynamic_basis"]
         self.assertEqual(basis["bmr_method"], "katch_mcardle")
         self.assertEqual(basis["current_weight_kg"], 98.4)
+
+
+class TestHydrationCallsEngineOnce(unittest.TestCase):
+    """BMR/TDEE/deficit/protein depend on the body, never the day, so the
+    engine must run once per hydration rather than once per weekday. Added
+    after an audit found the call hoisted out of the loop by hand but with
+    nothing pinning the invariant — a future per-day input (a training-day
+    activity factor, say) could silently reintroduce the per-day call with no
+    test catching it."""
+
+    def test_seven_day_schedule_calls_the_engine_once(self):
+        schedule = {
+            day: {"calories": 2000, "protein_g": 140, "net_carbs_g": carbs, "fat_g": 60}
+            for day, carbs in zip(
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                [130, 130, 60, 130, 60, 130, 60],
+            )
+        }
+        config = config_with(weekly_schedule=schedule)
+        with mock.patch(
+            "planner.calculate_macro_targets", wraps=planner.calculate_macro_targets
+        ) as spy:
+            hydrated = planner.hydrate_dynamic_targets(config, WEIGH_IN)
+        self.assertEqual(spy.call_count, 1)
+        # Each day's own net_carbs_g still reaches fat_g despite the shared call.
+        self.assertNotEqual(
+            hydrated["weekly_schedule"]["Monday"]["fat_g"],
+            hydrated["weekly_schedule"]["Wednesday"]["fat_g"],
+        )
 
 
 class TestHydrationFallsBack(unittest.TestCase):

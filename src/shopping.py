@@ -1,4 +1,5 @@
 import re
+from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
@@ -166,6 +167,11 @@ class ShoppingList(BaseModel):
         return [item for department in sorted(self.categories) for item in self.categories[department]]
 
 
+# The functions below are pure name -> name/bool lookups over module-constant
+# tables (DEPARTMENT_KEYWORDS, CANONICAL_INGREDIENTS, ...), called several
+# times per ingredient by aggregation, the plant count and every rescale. The
+# tables never change within a process, so an lru_cache can never go stale.
+@lru_cache(maxsize=4096)
 def strip_parentheticals(name: str) -> str:
     """Remove bracketed asides, including an unclosed trailing one.
 
@@ -180,6 +186,7 @@ def strip_parentheticals(name: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+@lru_cache(maxsize=4096)
 def ingredient_head(name: str) -> str:
     """The part before the first comma — the thing itself, minus preparation.
 
@@ -267,6 +274,7 @@ CANONICAL_INGREDIENTS = [
 ]
 
 
+@lru_cache(maxsize=4096)
 def singularize(word: str) -> str:
     """Crude plural stripper, used only to build combining keys.
 
@@ -317,6 +325,7 @@ def key_words(name: str) -> List[str]:
     ]
 
 
+@lru_cache(maxsize=4096)
 def canonical_ingredient(name: str) -> Optional[str]:
     """The single canonical purchase `name` is a variant of, or None.
 
@@ -350,6 +359,7 @@ def canonical_ingredient(name: str) -> Optional[str]:
     return matched
 
 
+@lru_cache(maxsize=4096)
 def resolve_ingredient(name: str) -> Tuple[str, List[str]]:
     """`(the name to key and display on, the state qualifiers that apply)`.
 
@@ -369,6 +379,7 @@ def resolve_ingredient(name: str) -> Tuple[str, List[str]]:
     return name, states_in(name)
 
 
+@lru_cache(maxsize=4096)
 def normalize_name(name: str) -> str:
     """Combining key: head minus cut words, word-sorted, plus any state words.
 
@@ -383,6 +394,7 @@ def normalize_name(name: str) -> str:
     return f"{base} [{' '.join(states)}]" if states else base
 
 
+@lru_cache(maxsize=4096)
 def display_name(name: str) -> str:
     """What the shopper reads: head minus cut words, state kept in parentheses."""
     base_name, states = resolve_ingredient(name)
@@ -400,6 +412,7 @@ def display_name(name: str) -> str:
     return f"{cleaned} ({', '.join(states)})" if states else cleaned
 
 
+@lru_cache(maxsize=4096)
 def categorize_department(ingredient_name: str) -> str:
     """Department of the longest matching keyword, not the first one found.
 
