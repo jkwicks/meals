@@ -19,6 +19,7 @@ from planner import (
     LOCATION_RESTRICTION_PHRASES,
     MACRO_KEYS,
     NUTRIENT_KEYS,
+    SUNDAY_PREP_REHEAT_MINUTES,
     TRAINING_NOTE_PREFIXES,
     CookEvent,
     Recipe,
@@ -75,6 +76,7 @@ from week import (
     slot_label,
     span_days,
     today_in_week,
+    unlink_leftover,
     week_days,
 )
 
@@ -100,6 +102,11 @@ class SlotView:
     prep_minutes: Optional[int] = None
     macros: Optional[dict] = None
     source_label: str = ""
+    # The raw slot_id behind `source_label`, which is a display string ("Mon
+    # dinner"). The unlink action needs the real id to report what the source
+    # batch shrank to, and re-parsing a humanized label to get it back would
+    # be a second, lossy encoding of something already known here.
+    source_id: str = ""
     prep_badge: str = ""  # "fridge" | "freezer" | "" — see PREP_BADGE_STYLES
     prep_origin: str = ""  # tooltip: where in the Sunday prep timeline this came from
     recipe: object = None  # planner.Recipe, kept loose to avoid a hard import cycle
@@ -655,6 +662,30 @@ class PlannerState:
         self.apply_spec(link_leftover(spec, target_id, source_id))
         return None
 
+    def unlink_slot(self, target_id: str) -> Optional[str]:
+        """Turn a leftover slot back into a cook. Returns why not, or None.
+
+        The inverse of `link_to_next_lunch`, and the only way to undo one:
+        clicking the link button again hits `leftover_link_error`'s
+        repeat-click guard rather than toggling. Without this the grid could
+        only ever accumulate links — `ui_generation.generate_week`'s own
+        "unlink one, or turn off one of the two toggles" warning named an
+        action the UI did not actually offer.
+
+        `apply_spec` does the rest: portions are derived, so dropping a claim
+        shrinks the source batch and rescales its cook event by the same
+        linear arithmetic that grew it.
+        """
+        spec = self.spec
+        slot = spec.by_id().get(target_id)
+        if slot is None:
+            return "That meal isn't part of this week."
+        if slot.mode != MODE_LEFTOVER:
+            return f"{slot_label(target_id)} isn't a leftover."
+
+        self.apply_spec(unlink_leftover(spec, target_id))
+        return None
+
     def default_skip_estimate(self, target_slot_id: str) -> dict:
         """What a skipped meal would have been briefed at, had it been cooked.
 
@@ -1061,6 +1092,7 @@ class PlannerState:
                 cuisine=humanize(slot.cuisine),
                 portions=portions.get(source_id or "", 0),
                 source_label=source_label if slot.mode == MODE_LEFTOVER else "",
+                source_id=(slot.source or "") if slot.mode == MODE_LEFTOVER else "",
                 chain=chains.get(source_id or ""),
                 feeds=(
                     [slot_label(value, short=True) for value in claims.get(slot.id, [])[1:]]
@@ -1091,13 +1123,20 @@ class PlannerState:
                 )
                 continue
 
-            # A leftover eating a Sunday-prepped batch gets a badge and a
-            # reheat/assemble estimate instead of the cook's from-scratch
-            # prep time — see `planner.is_sunday_prepped`. "fridge" vs.
-            # "freezer" mirrors the same span-vs-fridge-safe-days threshold
-            # `storage_note` used to write the batch's own storage note.
+            # A slot eating a Sunday-prepped batch gets a badge — see
+            # `planner.is_sunday_prepped`. That includes the batch's own
+            # anchor slot (MODE_COOK), not just the leftovers eating it:
+            # the anchor's own recipe was actually cooked in the Sunday
+            # session too (its grid day is just where the leftover chain
+            # has to start), so it needs the same "prepped ahead" signal a
+            # downstream leftover gets, not just the from-scratch cook it
+            # would otherwise look like. "fridge" vs. "freezer" mirrors the
+            # same span-vs-fridge-safe-days threshold `storage_note` used to
+            # write the batch's own storage note — always "fridge" for the
+            # anchor's own slot, since days_since_cook is 0 there.
             prep_badge, prep_origin = "", ""
-            if slot.mode == MODE_LEFTOVER and is_sunday_prepped(event, self.week_plan):
+            sunday_prepped = is_sunday_prepped(event, self.week_plan)
+            if sunday_prepped:
                 fridge_safe_days = self.config["inventory_rules"]["fridge_safe_days"]
                 # Per-slot distance from its cook day, not `span_days`'s
                 # whole-batch span to its *farthest* eater — a Tuesday
@@ -1106,10 +1145,17 @@ class PlannerState:
                 days_since_cook = spec.day_index(slot.day) - spec.day_index(event.day)
                 frozen = days_since_cook >= fridge_safe_days
                 prep_badge = "freezer" if frozen else "fridge"
+                storage_suffix = (
+                    " — frozen, thaw ahead of eating" if frozen else " — kept refrigerated"
+                )
                 prep_origin = (
                     f"From the Sunday prep session: {event.recipe.name} "
-                    f"({event.portions} portions, cooked {event.day})"
-                    + (" — frozen, thaw ahead of eating" if frozen else " — kept refrigerated")
+                    f"({event.portions} portions, cooked {event.day})" + storage_suffix
+                    if slot.mode == MODE_LEFTOVER
+                    # The anchor's own slot: "cooked {event.day}" would name
+                    # itself, which reads as circular rather than informative.
+                    else f"Prepped ahead in the Sunday prep session ({event.portions} portions)"
+                    + storage_suffix
                 )
 
             # Style and cuisine come off the event, which recorded whatever
@@ -1121,7 +1167,17 @@ class PlannerState:
                 prep_minutes=(
                     weeknight_prep_minutes(event, self.week_plan)
                     if slot.mode == MODE_LEFTOVER
-                    else event.recipe.prep_time_minutes
+                    # The shake candidate rides along in the same session
+                    # (`find_shake_candidate`) but is never cooked ahead —
+                    # each morning genuinely blends it fresh — so only the
+                    # dinner-axis anchors (bulk-prep/long-cook) collapse to
+                    # the reheat estimate here; meal_type is what tells the
+                    # two apart, since both are MODE_COOK and sunday_prepped.
+                    else (
+                        SUNDAY_PREP_REHEAT_MINUTES
+                        if sunday_prepped and event.meal_type == "dinner"
+                        else event.recipe.prep_time_minutes
+                    )
                 ),
                 macros=event.recipe.per_serving_macros,
                 recipe=event.recipe,

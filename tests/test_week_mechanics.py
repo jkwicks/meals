@@ -220,16 +220,6 @@ class TestSpreadBatch(unittest.TestCase):
         _, anchor = wk.spread_batch(spec_with(), "dinner", 6, exclude_days={"Monday"})
         self.assertNotEqual(wk.parse_slot_id(anchor)[0], "Monday")
 
-    def test_preferred_days_narrow_the_pool_first(self):
-        _, anchor = wk.spread_batch(
-            spec_with(), "dinner", 6, prefer_days=["Saturday", "Sunday"]
-        )
-        self.assertIn(wk.parse_slot_id(anchor)[0], {"Saturday", "Sunday"})
-
-    def test_a_preference_nothing_satisfies_falls_back_to_the_whole_pool(self):
-        _, anchor = wk.spread_batch(spec_with(), "dinner", 6, prefer_days=["Caturday"])
-        self.assertIsNotNone(anchor)
-
     def test_no_eligible_anchor_returns_none_rather_than_raising(self):
         """Callers treat it as "nothing to do this run", not an error."""
         spec = spec_with({
@@ -252,6 +242,220 @@ class TestSpreadBatch(unittest.TestCase):
         self.assertEqual(
             wk.validate_week(spec, TestValidateWeek.CONFIG), []
         )
+
+    def test_a_lunch_anchor_claims_only_lunches(self):
+        """The shape the batch toggles actually use: one meal type straight
+        across the front of the week. The (anchor_meal_type, "lunch") pair
+        dedupes, so a lunch anchor never falls through to dinners."""
+        spec, anchor = wk.spread_batch(spec_with(), "lunch", 6)
+        self.assertEqual(anchor, "Monday:lunch")
+        self.assertEqual(
+            wk.eaten_on(spec)[anchor],
+            ["Monday:lunch", "Tuesday:lunch", "Wednesday:lunch"],
+        )
+        self.assertEqual(spec.by_id()["Tuesday:dinner"].mode, MODE_COOK)
+
+    def test_its_own_links_are_marked_so_they_can_be_cleared(self):
+        """`clear_batch_links` needs to tell a toggle's link from a user's."""
+        spec, anchor = wk.spread_batch(spec_with(), "dinner", 6)
+        linked = [s for s in spec.slots if s.mode == MODE_LEFTOVER]
+        self.assertTrue(linked)
+        self.assertTrue(all(s.link_origin == wk.LINK_ORIGIN_BATCH for s in linked))
+
+    def test_a_second_run_on_its_own_output_re_spreads_rather_than_freezing(self):
+        """The bug this was written for. `spread_batch` only ever *adds*
+        claims and counts what the anchor already has, so its own previous
+        output satisfies the next run's target: it links nothing, returns the
+        same anchor, and the batch shape plus its anchor day freeze forever.
+        A real week reproduced this exactly — Monday:dinner anchored every
+        run, spread to Tuesday and Wednesday *dinners*, and `prefer_lunch_
+        links` could never take effect because there was nothing left to
+        link. Clearing between runs is what makes the preference reachable."""
+        first, anchor = wk.spread_batch(spec_with(), "dinner", 6)
+        self.assertEqual(wk.eaten_on(first)[anchor], [
+            "Monday:dinner", "Tuesday:dinner", "Wednesday:dinner",
+        ])
+
+        # Re-running on the un-cleared grid: nothing moves, whatever we ask for.
+        frozen, frozen_anchor = wk.spread_batch(first, "dinner", 6)
+        self.assertEqual(frozen_anchor, anchor)
+        self.assertEqual(wk.eaten_on(frozen), wk.eaten_on(first))
+
+        # Cleared first, the same call genuinely re-spreads: the anchor is
+        # free to move again, which the frozen grid above cannot do.
+        cleared = wk.clear_batch_links(first)
+        second, second_anchor = wk.spread_batch(
+            cleared, "dinner", 6, exclude_days={"Monday"}
+        )
+        self.assertEqual(second_anchor, "Tuesday:dinner")
+        self.assertEqual(wk.eaten_on(second)[second_anchor], [
+            "Tuesday:dinner", "Wednesday:dinner", "Thursday:dinner",
+        ])
+
+    def test_clearing_leaves_a_users_own_link_alone(self):
+        """A hand-made "Link to next lunch" is a structural edit the user made
+        on purpose — the same carve-out `clear_styles` documents."""
+        spec = wk.link_leftover(spec_with(), "Tuesday:lunch", "Monday:dinner")
+        cleared = wk.clear_batch_links(spec)
+        self.assertEqual(cleared.by_id()["Tuesday:lunch"].mode, MODE_LEFTOVER)
+        self.assertEqual(cleared.by_id()["Tuesday:lunch"].source, "Monday:dinner")
+
+    def test_clearing_a_batch_leaves_the_grid_generatable(self):
+        """Cleared slots go back to MODE_COOK, not to a leftover with no
+        source — which `validate_week` rejects outright."""
+        spec, _ = wk.spread_batch(spec_with(), "dinner", 6)
+        cleared = wk.clear_batch_links(spec)
+        self.assertEqual(wk.validate_week(cleared, TestValidateWeek.CONFIG), [])
+
+    def test_unlink_turns_a_leftover_back_into_a_cook(self):
+        spec = wk.link_leftover(spec_with(), "Tuesday:lunch", "Monday:dinner")
+        out = wk.unlink_leftover(spec, "Tuesday:lunch")
+        slot = out.by_id()["Tuesday:lunch"]
+        self.assertEqual(slot.mode, MODE_COOK)
+        self.assertIsNone(slot.source)
+
+    def test_unlink_clears_the_batch_marker(self):
+        """A stale True would make the next `clear_batch_links` discard a link
+        the user has since made by hand on that slot."""
+        spec, _ = wk.spread_batch(spec_with(), "dinner", 6)
+        target = next(s.id for s in spec.slots if s.link_origin == wk.LINK_ORIGIN_BATCH)
+        out = wk.unlink_leftover(spec, target)
+        self.assertEqual(out.by_id()[target].link_origin, wk.LINK_ORIGIN_USER)
+        relinked = wk.link_leftover(out, target, "Monday:dinner")
+        self.assertEqual(wk.clear_batch_links(relinked).by_id()[target].mode, MODE_LEFTOVER)
+
+    def location_linked(self):
+        """A grid whose Tuesday lunch eats Monday's dinner by location rule —
+        the shipped Office-lunch shape, in miniature, sitting in the middle of
+        the row the lunch batch wants."""
+        return wk.link_leftover(
+            spec_with(), "Tuesday:lunch", "Monday:dinner",
+            origin=wk.LINK_ORIGIN_LOCATION,
+        )
+
+    def test_a_batch_may_repoint_a_location_link(self):
+        """`apply_location_modes` says an Office lunch *is* a leftover without
+        saying whose — "the previous day's dinner" is how that was resolved,
+        not an intent — so a batch may take it. Without this the shipped grid
+        has room for exactly one batch: the location rules link Thursday and
+        Friday lunches before either toggle runs, and `leftover_link_error`
+        then refuses every dinner that feeds one of them."""
+        out, anchor = wk.spread_batch(self.location_linked(), "lunch", 6)
+        self.assertEqual(anchor, "Monday:lunch")
+        self.assertEqual(
+            wk.eaten_on(out)[anchor],
+            ["Monday:lunch", "Tuesday:lunch", "Wednesday:lunch"],
+        )
+        self.assertEqual(out.by_id()["Tuesday:lunch"].link_origin, wk.LINK_ORIGIN_BATCH)
+
+    def test_a_repointed_slot_stays_a_leftover(self):
+        """Re-pointing must still satisfy the location rule that made it one —
+        it changes whose leftovers, never whether."""
+        out, _ = wk.spread_batch(self.location_linked(), "lunch", 6)
+        self.assertEqual(out.by_id()["Tuesday:lunch"].mode, MODE_LEFTOVER)
+        self.assertEqual(wk.validate_week(out, TestValidateWeek.CONFIG), [])
+
+    def test_a_batch_never_repoints_a_users_link(self):
+        """That one names a specific dinner on purpose, so the batch skips it
+        and grows past it instead."""
+        spec = wk.link_leftover(spec_with(), "Tuesday:lunch", "Monday:dinner")
+        out, anchor = wk.spread_batch(spec, "lunch", 6)
+        self.assertEqual(out.by_id()["Tuesday:lunch"].source, "Monday:dinner")
+        self.assertEqual(out.by_id()["Tuesday:lunch"].link_origin, wk.LINK_ORIGIN_USER)
+        self.assertNotIn("Tuesday:lunch", wk.eaten_on(out)[anchor])
+
+    def test_an_anchor_that_cannot_claim_anything_is_passed_over(self):
+        """The reachability filter asks whether a target this anchor may
+        actually take exists, not merely whether an unexcluded day does — a
+        day can be eligible and have nothing claimable on it, and choosing it
+        strands the toggle."""
+        # Monday is excluded, so Tuesday is the earliest candidate — but the
+        # only two days within its reach (Wednesday, Thursday) are skipped, so
+        # it can claim nothing. Without the filter it would be picked and the
+        # call would return None instead of batching on Saturday.
+        modes = {wk.slot_id(day, "lunch"): {"mode": MODE_SKIP} for day in DAYS}
+        modes.update({
+            wk.slot_id(day, "dinner"): {"mode": MODE_SKIP} for day in DAYS[2:5]
+        })
+        out, anchor = wk.spread_batch(
+            spec_with(modes), "dinner", 6, exclude_days={"Monday"}, max_span_days=2
+        )
+        self.assertEqual(anchor, "Saturday:dinner")
+        self.assertIn("Sunday:dinner", wk.eaten_on(out)[anchor])
+
+    def test_a_blocking_location_link_is_released_rather_than_walked_past(self):
+        """The bug behind "prep meals keep landing on Thursday and Friday".
+        `leftover_link_error` refuses a cook that already feeds something, so
+        an Office rule pointing Thursday's lunch at Wednesday's dinner put
+        that Wednesday dinner — an early-week slot the batch wanted — out of
+        reach, and the walk carried on forward into Thursday and Friday
+        instead. The location link is released so the near slot can be taken."""
+        spec = wk.link_leftover(
+            spec_with(), "Thursday:lunch", "Wednesday:dinner",
+            origin=wk.LINK_ORIGIN_LOCATION,
+        )
+        out, anchor = wk.spread_batch(
+            spec, "dinner", 6, exclude_days={"Monday"}, max_day_index=2
+        )
+        self.assertEqual(anchor, "Tuesday:dinner")
+        self.assertIn("Wednesday:dinner", wk.eaten_on(out)[anchor])
+        # Released, so it cooks — the same state apply_location_modes itself
+        # falls back to when a day's previous dinner isn't a cook.
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertEqual(wk.validate_week(out, TestValidateWeek.CONFIG), [])
+
+    def test_a_blocking_user_link_is_never_released(self):
+        """A user's link names that dinner on purpose, so the batch leaves
+        both it and the slot it protects alone."""
+        spec = wk.link_leftover(spec_with(), "Thursday:lunch", "Wednesday:dinner")
+        out, anchor = wk.spread_batch(
+            spec, "dinner", 6, exclude_days={"Monday"}, max_day_index=2
+        )
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_LEFTOVER)
+        self.assertNotIn("Wednesday:dinner", wk.eaten_on(out).get(anchor, []))
+
+    def test_max_day_index_bounds_the_batch_from_prep_day(self):
+        """`max_span_days` counts from the anchor's own day, but a prep-session
+        batch is cooked the day *before* the week starts — so a Tuesday anchor
+        reaching Friday is 3 days by that bound and 5 days out of the fridge.
+        This is the bound that actually keeps Sunday-cooked food off Friday."""
+        modes = {wk.slot_id(day, "lunch"): {"mode": MODE_SKIP} for day in DAYS}
+        out, anchor = wk.spread_batch(spec_with(modes), "dinner", 6, max_day_index=2)
+        claimed = wk.eaten_on(out)[anchor]
+        self.assertTrue(all(DAYS.index(wk.parse_slot_id(c)[0]) <= 2 for c in claimed), claimed)
+
+    def test_the_anchor_itself_respects_the_prep_day_bound(self):
+        """Unlike every other bound here, this one covers the anchor: the
+        anchor's own eating day is also days-since-prep, so an anchor outside
+        the window is already unsafe before it spreads anywhere. With every
+        in-window dinner excluded it reports no batch rather than reaching
+        past the window for somewhere to anchor."""
+        _, anchor = wk.spread_batch(
+            spec_with(), "dinner", 6,
+            exclude_days={"Monday", "Tuesday", "Wednesday"}, max_day_index=2,
+        )
+        self.assertIsNone(anchor)
+
+    def test_two_toggles_together_take_one_row_each(self):
+        """What `ui_generation.apply_batch_selections` actually does: bulk prep
+        takes the lunches, long cook the dinners, both from day 1. They cannot
+        collide (different rows) and neither can drift late (both start at the
+        earliest day), so no exclusion, preference or ordering dance is needed
+        between them at all."""
+        spec, bulk_prep_anchor = wk.spread_batch(spec_with(), "lunch", 6, max_day_index=2)
+        spec, long_cook_anchor = wk.spread_batch(spec, "dinner", 6, max_day_index=2)
+        self.assertEqual(bulk_prep_anchor, "Monday:lunch")
+        self.assertEqual(long_cook_anchor, "Monday:dinner")
+        self.assertEqual(wk.eaten_on(spec)[bulk_prep_anchor], [
+            "Monday:lunch", "Tuesday:lunch", "Wednesday:lunch",
+        ])
+        self.assertEqual(wk.eaten_on(spec)[long_cook_anchor], [
+            "Monday:dinner", "Tuesday:dinner", "Wednesday:dinner",
+        ])
+        # Exactly batch_target_servings each, and nothing past Wednesday.
+        portions = wk.portions_for(spec)
+        self.assertEqual(portions[bulk_prep_anchor], 6)
+        self.assertEqual(portions[long_cook_anchor], 6)
 
 
 class TestDayMultiplicityAndCarriedMacros(unittest.TestCase):

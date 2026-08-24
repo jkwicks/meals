@@ -560,6 +560,31 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             type="positive",
         )
 
+    def on_unlink(view: SlotView) -> None:
+        """Undo a leftover link, then repaint — same "plan" topic as linking.
+
+        The source is read *before* the edit: afterwards this slot no longer
+        has one, and its former source's new portion count is exactly what
+        the notification needs to report.
+        """
+        source_id = view.source_id
+        error = state.unlink_slot(view.id)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        refreshables.refresh("plan")
+        portions = portions_for(state.spec)
+        ui.notify(
+            f"{slot_label(view.id)} cooks its own meal again"
+            + (
+                f" — {slot_label(source_id)} drops to "
+                f"{portions.get(source_id, 0)} portions"
+                if source_id
+                else ""
+            ),
+            type="positive",
+        )
+
     def meal_card(view: Optional[SlotView], meal_type: str) -> None:
         if view is None:
             view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
@@ -768,6 +793,26 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                         view.link_error
                         or f"{slot_label(view.link_target)} eats this instead of "
                         "cooking — the batch grows to match."
+                    )
+
+            if view.mode == MODE_LEFTOVER:
+                # The inverse action, and the only way to undo a link: the
+                # link button's own repeat-click hits `leftover_link_error`'s
+                # guard rather than toggling. Deliberately quieter than the
+                # link pill above (flat, slate) — undoing is the rarer half of
+                # the pair, and two filled pills of equal weight would read as
+                # a choice rather than an action and its undo.
+                unlink_button = ui.button(
+                    "Unlink", icon="link_off", on_click=lambda v=view: on_unlink(v)
+                )
+                unlink_button.props("flat dense no-caps size=sm").classes(
+                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    "text-slate-500 hover:text-rose-200"
+                )
+                with unlink_button:
+                    ui.tooltip(
+                        "Cook this meal instead of eating leftovers — the "
+                        "batch it came from shrinks to match."
                     )
 
     # ---- prep day: Sunday batch-prep column --------------------------------

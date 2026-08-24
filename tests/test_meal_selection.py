@@ -60,7 +60,9 @@ def spec_with(modes=None, days=None, servings_per_meal=2) -> WeekSpec:
     return WeekSpec(days=days, slots=slots, servings_per_meal=servings_per_meal)
 
 
-def recipe(name, meal_type="breakfast", servings=1, fiber_g=0.0, **macros) -> Recipe:
+def recipe(
+    name, meal_type="breakfast", servings=1, fiber_g=0.0, long_oven_cook=False, **macros
+) -> Recipe:
     """A one-ingredient recipe carrying exactly the macros asked for.
 
     One ingredient rather than several because every rule under test reads
@@ -72,6 +74,7 @@ def recipe(name, meal_type="breakfast", servings=1, fiber_g=0.0, **macros) -> Re
         meal_type=meal_type,
         servings=servings,
         prep_time_minutes=10,
+        long_oven_cook=long_oven_cook,
         instructions=["Cook it."],
         ingredients=[
             Ingredient(
@@ -88,12 +91,16 @@ def recipe(name, meal_type="breakfast", servings=1, fiber_g=0.0, **macros) -> Re
     )
 
 
-def favourite(name, meal_type, recipe_id=None, servings=1, **macros) -> dict:
+def favourite(
+    name, meal_type, recipe_id=None, servings=1, long_oven_cook=False, **macros
+) -> dict:
     """One `recipes_master.json` catalog record."""
     return {
         "id": recipe_id or f"id-{name}",
         "content_key": f"key-{name}",
-        "recipe": recipe(name, meal_type, servings=servings, **macros).model_dump(),
+        "recipe": recipe(
+            name, meal_type, servings=servings, long_oven_cook=long_oven_cook, **macros
+        ).model_dump(),
         "is_favorite": True,
         "source": "favorited",
     }
@@ -430,22 +437,6 @@ class TestPrepDayStaleTargets(unittest.TestCase):
         self.assertEqual(anchor, "Friday:dinner")
         self.assertEqual(wk.eaten_on(spec)[anchor], ["Friday:dinner", "Saturday:dinner"])
 
-    def test_the_weekend_preference_gives_way_rather_than_stranding(self):
-        """`prefer_days` narrows the pool *before* the walk runs, so without
-        the reachability filter long_cook would pick Saturday — whose only
-        forward day is the excluded Sunday — return None, and warn "couldn't
-        find a day with room" on every single run instead of batching."""
-        weekend = ["Saturday", "Sunday"]
-        spec, anchor = wk.spread_batch(
-            spec_with(),
-            "dinner",
-            target_servings=6,
-            prefer_days=weekend,
-            exclude_target_days=self.LAST_DAY,
-        )
-        self.assertIsNotNone(anchor)
-        self.assertNotIn(wk.parse_slot_id(anchor)[0], weekend)
-
     def test_an_unexcluded_week_is_unchanged(self):
         """Default is the empty set, so a caller with no prep session in scope
         gets byte-identical behaviour to before this existed."""
@@ -456,6 +447,98 @@ class TestPrepDayStaleTargets(unittest.TestCase):
         )
         self.assertEqual(anchor_before, anchor_after)
         self.assertEqual(wk.eaten_on(before), wk.eaten_on(after))
+
+
+# ---------------------------------------------------------------------------
+# is_sunday_prepped matches by slot_id, not by the recipe's own flags
+# ---------------------------------------------------------------------------
+
+
+def cook_event(slot_id, day, meal_type, recipe_obj, portions=6) -> planner.CookEvent:
+    return planner.CookEvent(
+        slot_id=slot_id, day=day, meal_type=meal_type, portions=portions, recipe=recipe_obj
+    )
+
+
+def week_plan_with(cook_events, sunday_prep_session=None) -> planner.WeekPlan:
+    """Minimal WeekPlan — only what `is_sunday_prepped` reads matters here."""
+    slots = [
+        SlotSpec(day=day, meal_type=meal_type, mode=MODE_COOK)
+        for day in DAYS
+        for meal_type in MEAL_TYPES
+    ]
+    return planner.WeekPlan(
+        days=DAYS,
+        servings_per_meal=2,
+        generated_at="2026-08-24T00:00:00",
+        cook_events=cook_events,
+        slots=slots,
+        targets={},
+        sunday_prep_session=sunday_prep_session,
+    )
+
+
+class TestSundayPrepLabelling(unittest.TestCase):
+    """Written against a live plan: a real "Korean Beef Bulgogi Rice Tray
+    Bake" was `spread_batch`'s long-cook anchor — baked in the oven as part
+    of the actual Sunday prep session — but the model came back with both
+    `long_oven_cook` and `bulk_prep_friendly` False despite
+    `LONG_COOK_ANCHOR_SLOT_DIRECTIVE` telling it to set one. `is_sunday_
+    prepped` used to trust those flags alone, so the anchor's own leftover
+    slots (its Friday dinner, its Saturday lunch) lost the "prepped on
+    Sunday" badge and the 10-minute reheat estimate, and read as an ordinary
+    from-scratch cook eaten late in the week instead.
+
+    It now matches by slot_id against `SundayPrepSession.candidate_slot_ids`
+    — the same ground truth `generate_sunday_prep_session` already used to
+    pick its candidates before the model was ever called.
+    """
+
+    def test_the_anchor_is_recognised_even_with_both_flags_false(self):
+        bulgogi = recipe("Korean Beef Bulgogi Rice Tray Bake", "dinner", servings=6)
+        self.assertFalse(bulgogi.long_oven_cook)
+        self.assertFalse(bulgogi.bulk_prep_friendly)
+        event = cook_event("Thursday:dinner", "Thursday", "dinner", bulgogi)
+        session = planner.SundayPrepSession(
+            total_active_minutes=90,
+            candidate_slot_ids=["Monday:dinner", "Thursday:dinner"],
+        )
+        plan = week_plan_with([event], sunday_prep_session=session)
+        self.assertTrue(planner.is_sunday_prepped(event, plan))
+        self.assertEqual(
+            planner.weeknight_prep_minutes(event, plan), planner.SUNDAY_PREP_REHEAT_MINUTES
+        )
+
+    def test_a_stray_flag_off_the_session_is_not_credited(self):
+        """The failure mode the flag-based check had in the other direction:
+        an unrelated dinner the model happened to flag must not borrow the
+        badge just because a session exists somewhere in the week."""
+        stray = recipe("Stray Slow-Cooker Chilli", "dinner").model_copy(
+            update={"long_oven_cook": True}
+        )
+        event = cook_event("Saturday:dinner", "Saturday", "dinner", stray)
+        session = planner.SundayPrepSession(
+            total_active_minutes=90, candidate_slot_ids=["Monday:dinner"]
+        )
+        plan = week_plan_with([event], sunday_prep_session=session)
+        self.assertFalse(planner.is_sunday_prepped(event, plan))
+
+    def test_a_pre_migration_session_falls_back_to_the_flags(self):
+        """A session saved before `candidate_slot_ids` existed has an empty
+        list — same tolerance `history_styles()` extends to old history."""
+        bake = recipe("Old Saved Bake", "dinner", servings=6).model_copy(
+            update={"long_oven_cook": True}
+        )
+        event = cook_event("Thursday:dinner", "Thursday", "dinner", bake)
+        session = planner.SundayPrepSession(total_active_minutes=90)
+        plan = week_plan_with([event], sunday_prep_session=session)
+        self.assertTrue(planner.is_sunday_prepped(event, plan))
+
+    def test_no_session_means_nothing_is_prepped(self):
+        ordinary = recipe("Ordinary Dinner", "dinner")
+        event = cook_event("Monday:dinner", "Monday", "dinner", ordinary)
+        plan = week_plan_with([event], sunday_prep_session=None)
+        self.assertFalse(planner.is_sunday_prepped(event, plan))
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +686,95 @@ class TestFavouriteSelection(unittest.TestCase):
 
     def test_no_favourites_means_no_assignments(self):
         self.assertEqual(self.pick(spec_with(), favourites=[]), {})
+
+
+class TestALongCookNeedsADayWithTheHours(unittest.TestCase):
+    """A `long_oven_cook` favourite may only claim a weekend slot.
+
+    Written against a live failure: "Slow Cooked Beef Cheeks", an 8-10 hour
+    braise imported from Google Keep, was pinned to a Thursday dinner. Every
+    part of the app was correct by its own lights, which is why nothing
+    caught it — `BATCH_ROAST_RULE` asks the *model* to put the week's long
+    cook on a weekend and a favourite is never generated, so that rule never
+    saw it; `select_favorite_assignments` placed it at a cuisine run end, a
+    rule about protecting blocks that says nothing about the day; and
+    `prep_limit_for`'s 30-minute weeknight ceiling counts active minutes,
+    which a braise honestly reports as the 20 that are hands-on.
+    """
+
+    FAVOURITES = [
+        favourite("Beef Cheeks", "dinner", long_oven_cook=True),
+        favourite("Quick Stir Fry", "dinner"),
+        favourite("Second Stir Fry", "dinner"),
+    ]
+
+    def pick(self, spec, favourites=None, today=date(2026, 8, 23)):
+        return planner.select_favorite_assignments(
+            spec,
+            BASE_CONFIG,
+            [],
+            self.FAVOURITES if favourites is None else favourites,
+            today=today,
+        )
+
+    def dinners(self, picks):
+        return {
+            sid: rec["recipe"]["name"] for sid, rec in picks.items() if "dinner" in sid
+        }
+
+    def test_a_long_cook_never_takes_a_weeknight(self):
+        """The regression itself. Monday and Tuesday are the earliest run
+        ends on a cuisine-less week, and neither may have the braise."""
+        self.assertEqual(
+            self.dinners(self.pick(spec_with())),
+            {"Monday:dinner": "Quick Stir Fry", "Tuesday:dinner": "Second Stir Fry"},
+        )
+
+    def test_a_long_cook_waits_for_the_weekend_rather_than_being_dropped(self):
+        """Passing it over on a weeknight is not the same as refusing to
+        serve it: the weeknight takes an ordinary dish and the braise takes
+        the run end that lands on a Sunday."""
+        cuisines = dict(
+            [(wk.slot_id(d, "dinner"), {"cuisine": "greek"}) for d in DAYS[:4]]
+            + [(wk.slot_id(d, "dinner"), {"cuisine": "thai"}) for d in DAYS[4:]]
+        )
+        self.assertEqual(
+            self.dinners(self.pick(spec_with(cuisines))),
+            {"Thursday:dinner": "Quick Stir Fry", "Sunday:dinner": "Beef Cheeks"},
+        )
+
+    def test_a_declined_run_end_does_not_spend_the_cap(self):
+        """`favorite_dinner_slots` counts pins made, not run ends looked at.
+        Slicing the run ends first — which is what this used to do — spends
+        the cap on Monday and Tuesday, both declined, and pins nothing at all
+        on a week whose Saturday was available the whole time."""
+        only_long = [favourite("Beef Cheeks", "dinner", long_oven_cook=True)]
+        self.assertEqual(
+            self.dinners(self.pick(spec_with(), favourites=only_long)),
+            {"Saturday:dinner": "Beef Cheeks"},
+        )
+
+    def test_a_weeknight_lunch_is_skipped_without_ending_the_loop(self):
+        """Lunch stops at the first slot with nothing eligible left, so the
+        two cases have to stay distinct: "nothing suits today" continues to
+        the next day, "the favourites are spent" breaks."""
+        only_long = [favourite("All Day Ragu", "lunch", long_oven_cook=True)]
+        self.assertEqual(
+            list(self.pick(spec_with(), favourites=only_long)), ["Saturday:lunch"]
+        )
+
+    def test_a_breakfast_has_to_suit_both_mornings_it_covers(self):
+        """One record covers `favorite_breakfast_slots` days at once, so
+        there is no per-day choice left to make after the pick — a long cook
+        is only eligible if every morning it claims can take one."""
+        favourites = [
+            favourite("Slow Baked Beans", "breakfast", long_oven_cook=True),
+            favourite("Standing Scramble", "breakfast"),
+        ]
+        picks = self.pick(spec_with(), favourites=favourites)
+        self.assertEqual(
+            {rec["recipe"]["name"] for rec in picks.values()}, {"Standing Scramble"}
+        )
 
 
 class TestPinningClearsTheRolledStyle(unittest.TestCase):
@@ -759,8 +931,9 @@ class _FakeRepository:
 
 
 class TestShakeMandatoryVegetables(unittest.TestCase):
-    """The leafy green and the frozen vegetable are mandatory in every shake,
-    which only works if all three places that describe a shake agree."""
+    """The leafy green, the frozen vegetable and the fruit are mandatory in
+    every shake, which only works if all three places that describe a shake
+    agree."""
 
     def setUp(self):
         config = asyncio.run(_load_shipped_config())
@@ -768,10 +941,11 @@ class TestShakeMandatoryVegetables(unittest.TestCase):
             planner.WORKOUT_BREAKFAST_STYLE
         ]
 
-    def test_the_style_names_both_as_mandatory_with_quantities(self):
+    def test_the_style_names_all_three_as_mandatory_with_quantities(self):
         self.assertIn("MANDATORY BASE", self.style)
         self.assertIn("20-30g raw leafy green", self.style)
         self.assertIn("50-80g raw frozen vegetable", self.style)
+        self.assertIn("one Fruit Fusion item", self.style)
 
     def test_the_rotation_rule_protects_them_from_being_dropped(self):
         """The interaction that makes this non-trivial: a rule whose job is to
@@ -782,11 +956,23 @@ class TestShakeMandatoryVegetables(unittest.TestCase):
         self.assertIn("frozen vegetable", planner.SHAKE_ROTATION_RULE)
         self.assertIn("none of which may ever be dropped", planner.SHAKE_ROTATION_RULE)
 
+    def test_the_rotation_rule_names_fruit_as_base_not_only_as_rotatable(self):
+        """Fruit is the subtlest of the three, because the very next clause
+        tells the model to rotate "the same combination of fruit, seeds, nuts
+        and flavouring". Naming it as base is what makes that a rule about
+        WHICH fruit rather than WHETHER one — otherwise dropping the fruit
+        entirely is the easiest way to make two shakes differ, and a shake of
+        protein powder, spinach and frozen broccoli is barely drinkable."""
+        base_clause = planner.SHAKE_ROTATION_RULE.split("and rotate the secondary")[0]
+        self.assertIn("fruit", base_clause)
+        self.assertIn("omitting any of the three is not", planner.SHAKE_ROTATION_RULE)
+
     def test_the_per_slot_directive_says_it_too(self):
         """`generate_meal_type_week` sends the rotation rule, but a single
         regenerated shake only ever sees this."""
         self.assertIn("mandatory", planner.SHAKE_SLOT_DIRECTIVE)
         self.assertIn("leafy green", planner.SHAKE_SLOT_DIRECTIVE)
+        self.assertIn("Fruit Fusion", planner.SHAKE_SLOT_DIRECTIVE)
 
     def test_none_of_the_named_vegetables_is_banned(self):
         """`mustard greens` is on the shipped blocklist and `Ingredient.
