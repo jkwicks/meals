@@ -355,6 +355,64 @@ class TestCoercion(unittest.TestCase):
         self.assertFalse(sync._is_cardio("walking"))
 
 
+class TestSyncDateRange(unittest.TestCase):
+    """`get_sync_date_range` — the missing-days-between-last-sync-and-target walk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "biometrics.json")
+        self.repo = LocalJSONRepository(biometrics_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_empty_biometrics_falls_back_to_the_target_date_alone(self):
+        """A fresh checkout has nothing to walk back from."""
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-21"), ["2026-08-21"]
+        )
+
+    def test_missing_days_are_filled_in_between(self):
+        """A missed Monday and Tuesday, run on Wednesday, backfills both."""
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-18", "weight_kg": 90.0}))
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-21"),
+            ["2026-08-19", "2026-08-20", "2026-08-21"],
+        )
+
+    def test_the_latest_date_is_taken_across_both_lists(self):
+        """A Garmin-stale, Cronometer-fresh database still catches Garmin up.
+
+        `get_latest_biometrics` only reads `weigh_ins`; this has to read both,
+        or a checkout that syncs Cronometer daily and Garmin occasionally
+        would compute Garmin's gap from Cronometer's more recent date.
+        """
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-15", "weight_kg": 90.0}))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-18", "calories": 2000.0}))
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-20"),
+            ["2026-08-19", "2026-08-20"],
+        )
+
+    def test_already_up_to_date_returns_an_empty_range(self):
+        """The latest record equalling the target means nothing is missing."""
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-21", "weight_kg": 90.0}))
+        self.assertEqual(sync.get_sync_date_range(self.repo, "2026-08-21"), [])
+
+    def test_a_stale_database_is_capped_at_max_lookback_days(self):
+        """A months-old database doesn't queue hundreds of sequential calls."""
+        run_sync(self.repo.save_biometric_entry({"date": "2026-01-01", "weight_kg": 90.0}))
+        result = sync.get_sync_date_range(self.repo, "2026-08-21", max_lookback_days=5)
+        self.assertEqual(
+            result,
+            ["2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"],
+        )
+
+    def test_malformed_target_date_is_rejected(self):
+        with self.assertRaises(ValueError):
+            sync.get_sync_date_range(self.repo, "21/08/2026")
+
+
 class TestPersistence(unittest.TestCase):
     """The round trip through a real `LocalJSONRepository` on a temp file."""
 
@@ -427,6 +485,153 @@ class TestPersistence(unittest.TestCase):
         row = self.stored()["weigh_ins"][0]
         self.assertEqual(row["weight_kg"], 98.1)
         self.assertEqual(row["body_fat_pct"], 27.5)
+
+
+class CountingGarminClient(FakeGarminClient):
+    """A `FakeGarminClient` that records which dates it was asked for."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.body_composition_calls = []
+
+    def get_body_composition(self, startdate, enddate=None):
+        self.body_composition_calls.append(startdate)
+        return super().get_body_composition(startdate, enddate)
+
+
+class FlakyGarminClient(FakeGarminClient):
+    """A `FakeGarminClient` that raises for one specific date, as a bad API
+    call on one day of a multi-day catchup would."""
+
+    def __init__(self, fail_on, **kwargs):
+        super().__init__(**kwargs)
+        self.fail_on = fail_on
+
+    def get_body_composition(self, startdate, enddate=None):
+        if startdate == self.fail_on:
+            raise RuntimeError("garmin unavailable")
+        return super().get_body_composition(startdate, enddate)
+
+
+@contextlib.contextmanager
+def replace_cronometer_service(fake_fetch):
+    """Make `sync_cronometer` build a service whose `fetch_daily_summary` is `fake_fetch`.
+
+    Same reasoning as `replace_garmin_client`: `sync_cronometer` constructs
+    its own `CronometerSyncService`, so the seam has to be the class, not an
+    injected instance. `fake_fetch` takes the ISO date string and returns the
+    `daily_actuals` row `fetch_daily_summary` would have.
+    """
+    original = sync.CronometerSyncService
+
+    class Patched(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(username="user@example.com", password="pw")
+
+        def fetch_daily_summary(self, target_date):
+            return fake_fetch(target_date)
+
+    sync.CronometerSyncService = Patched
+    try:
+        yield
+    finally:
+        sync.CronometerSyncService = original
+
+
+class TestGarminRangeSync(unittest.TestCase):
+    """`sync_garmin_range` — the sequential per-date catchup walk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "biometrics.json")
+        self.repo = LocalJSONRepository(biometrics_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_each_missing_date_is_fetched_and_persisted(self):
+        fake = CountingGarminClient(weight_list=[FULL_READING])
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
+
+        with replace_garmin_client(fake):
+            results = sync.sync_garmin_range(dates, self.repo)
+
+        self.assertEqual(fake.body_composition_calls, dates)
+        self.assertEqual([r["date"] for r in results], dates)
+        weigh_ins = run_sync(self.repo.load_biometrics())["weigh_ins"]
+        self.assertEqual(sorted(row["date"] for row in weigh_ins), dates)
+
+    def test_one_days_failure_does_not_abort_the_rest_of_the_range(self):
+        """A network blip on one date must not cost the days around it."""
+        fake = FlakyGarminClient(fail_on="2026-08-20", weight_list=[FULL_READING])
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
+
+        with replace_garmin_client(fake):
+            results = sync.sync_garmin_range(dates, self.repo)
+
+        self.assertNotIn("error", results[0])
+        self.assertIn("error", results[1])
+        self.assertEqual(results[1]["date"], "2026-08-20")
+        self.assertNotIn("error", results[2])
+
+        weigh_ins = run_sync(self.repo.load_biometrics())["weigh_ins"]
+        self.assertEqual(
+            sorted(row["date"] for row in weigh_ins), ["2026-08-19", "2026-08-21"]
+        )
+
+
+class TestCronometerRangeSync(unittest.TestCase):
+    """`sync_cronometer_range` — the sequential per-date catchup walk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "biometrics.json")
+        self.repo = LocalJSONRepository(biometrics_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_each_missing_date_is_fetched_and_persisted(self):
+        calls = []
+
+        def fake_fetch(day):
+            calls.append(day)
+            return {
+                "date": day,
+                "calories": 2000.0,
+                "protein_g": 150.0,
+                "net_carbs_g": 100.0,
+                "fat_g": 70.0,
+                "source": "cronometer",
+            }
+
+        dates = ["2026-08-19", "2026-08-20"]
+        with replace_cronometer_service(fake_fetch):
+            results = sync.sync_cronometer_range(dates, self.repo)
+
+        self.assertEqual(calls, dates)
+        self.assertEqual([r["date"] for r in results], dates)
+        actuals = run_sync(self.repo.load_biometrics())["daily_actuals"]
+        self.assertEqual(sorted(row["date"] for row in actuals), dates)
+
+    def test_one_days_failure_does_not_abort_the_rest_of_the_range(self):
+        def fake_fetch(day):
+            if day == "2026-08-20":
+                raise RuntimeError("cronometer unavailable")
+            return {"date": day, "calories": 2000.0, "source": "cronometer"}
+
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
+        with replace_cronometer_service(fake_fetch):
+            results = sync.sync_cronometer_range(dates, self.repo)
+
+        self.assertNotIn("error", results[0])
+        self.assertIn("error", results[1])
+        self.assertNotIn("error", results[2])
+
+        actuals = run_sync(self.repo.load_biometrics())["daily_actuals"]
+        self.assertEqual(
+            sorted(row["date"] for row in actuals), ["2026-08-19", "2026-08-21"]
+        )
 
 
 class TestCredentialGuards(unittest.TestCase):
