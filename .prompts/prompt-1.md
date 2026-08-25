@@ -30,9 +30,21 @@ Map old to new deterministically:
 | `text-[11px]`, `text-[12px]`, `text-xs` | `TEXT_BODY` |
 | `text-[13px]`, `text-sm` | `TEXT_HEAD` |
 | `text-base` | `TEXT_DISPLAY` |
-| `gap-1.5`, `px-1.5`, `p-1.5` | the nearest step in the scale |
-| `mt-*`, `mb-*` between siblings | delete; use the parent's `gap` |
+| `gap-1.5`, `px-1.5`, `py-1.5`, `p-1.5` | `SPACE_TIGHT` (the `1` step) — always, see below |
+| every other `gap-*`, `p-*`, `px-*`, `py-*` | the matching `SPACE_*` constant, same value |
 | `rounded-md`, `rounded-xl` | `rounded` or `rounded-lg`, whichever the element is |
+
+**`1.5` always resolves down to `SPACE_TIGHT`, never up.** Tailwind's `1.5`
+is 6px, exactly halfway between the `1` (4px) and `2` (8px) steps, so
+"nearest" is undefined and would be resolved inconsistently across the 24
+call sites that use it. Down, because the type sizes are simultaneously
+getting larger and the dense card interiors where `1.5` appears cannot absorb
+growth from both directions at once. Put that reasoning in the code comment.
+
+**Leave `mt-*`, `mb-*` and `mx-*` exactly as they are.** Converting margins to
+parent `gap` is a layout change, and this phase's premise is that no layout
+moves. It belongs in phase 2, which is already restructuring containers. Note
+any margin that looks wrong and move on.
 
 Files in scope: every `src/ui_*.py`. Note `props()` strings carry sizes too
 (e.g. `header-class='text-xs px-0'`) — those must stay **quoted** inside the
