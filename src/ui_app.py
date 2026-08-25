@@ -89,6 +89,8 @@ from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
 from shopping import aggregate_cook_events
 from ui_cards import build_cards
+from ui_catalog import build_rename_dialog
+from ui_catalog_browser import build_catalog_browser
 from ui_context import Refreshables, UIContext
 from ui_drawer import build_drawer
 from ui_generation import build_generation
@@ -140,16 +142,21 @@ async def planner_page() -> None:
     # into it), generation before prep_options (its "Generate" button starts
     # a run via generation.run_generation), prep_options before drawer (the
     # drawer's sticky Generate button opens this dialog rather than running
-    # the week directly), cards before today (a Today card's click opens
-    # cards' own recipe detail dialog), everything before the refresh-topic
-    # registration at the bottom (every topic there names a section some
-    # `build_*` returned).
+    # the week directly), cards before today and before catalog_browser (both
+    # open cards' own recipe detail dialog), rename_dialog before drawer and
+    # before catalog_browser (both offer a per-row edit icon into the one
+    # shared dialog), catalog_browser before drawer (the drawer's "Browse
+    # all" button opens it), everything before the refresh-topic registration
+    # at the bottom (every topic there names a section some `build_*`
+    # returned).
     generation = build_generation(ctx)
     prep_options = build_prep_options(ctx, generation)
     cards = build_cards(ctx, generation)
     telemetry = build_telemetry(ctx)
     shopping = build_shopping(ctx)
     today = build_today(ctx, cards)
+    rename_dialog = build_rename_dialog(ctx)
+    catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
 
     with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
         with ui.element("div").classes("flex flex-row items-baseline gap-3"):
@@ -280,7 +287,7 @@ async def planner_page() -> None:
         telemetry.context_pipeline()
         telemetry.telemetry()
 
-    drawer = build_drawer(ctx, generation, prep_options)
+    drawer = build_drawer(ctx, generation, prep_options, rename_dialog, catalog_browser)
 
     # ---- refresh topics ----------------------------------------------------
     # Registered here, last, once every section named below actually exists —
@@ -328,8 +335,9 @@ async def planner_page() -> None:
         drawer.targets_editor,
         today.today_view,
     )
-    refreshables.on("catalog", drawer.favorites_list, cards.canvas)
-    refreshables.on("favorites", drawer.favorites_list)
+    refreshables.on("catalog", drawer.favorites_list, cards.canvas, catalog_browser.catalog_grid)
+    refreshables.on("favorites", drawer.favorites_list, catalog_browser.catalog_grid)
+    refreshables.on("catalog_browser", catalog_browser.catalog_grid)
     refreshables.on("shopping", shopping.shopping_panel)
     refreshables.on("shopping_days", drawer.week_summary, shopping.shopping_panel)
     refreshables.on("swap_matches", cards.swap_matches)

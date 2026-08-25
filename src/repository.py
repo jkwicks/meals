@@ -299,7 +299,8 @@ class PlanRepository(abc.ABC):
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
         """Measured body composition and logged macro actuals, as
-        `{"weigh_ins": [...], "daily_actuals": [...]}`, each list oldest first.
+        `{"weigh_ins": [...], "daily_actuals": [...], "sync_checkpoints": {...}}`,
+        each list oldest first.
 
         The measured counterpart to `config.json`'s `user_profile`: the profile
         says what the body is aiming at, this says where it actually is, and an
@@ -309,10 +310,13 @@ class PlanRepository(abc.ABC):
         `water_pct`, `bmi`), `daily_actuals` what was really eaten
         (`calories`, `protein_g`, `net_carbs_g`, `fat_g`).
 
+        `sync_checkpoints` (`{"garmin": "2026-08-25", ...}`) is not a
+        measurement at all — see `save_sync_checkpoint`.
+
         A missing file is an empty result, not an error — the same cold-start
         tolerance `load_history` extends, and for the same reason: no weigh-ins
-        yet is the normal state of a fresh install, not a failure. Both keys
-        are always present in the returned dict, so callers index them
+        yet is the normal state of a fresh install, not a failure. All three
+        keys are always present in the returned dict, so callers index them
         directly.
         """
 
@@ -348,6 +352,25 @@ class PlanRepository(abc.ABC):
         every call site: "latest" is a question about dates, not list order,
         and a backend that returns rows in insertion order — or a file someone
         hand-edited — would make the index answer confidently wrong.
+        """
+
+    @abc.abstractmethod
+    async def save_sync_checkpoint(self, source: str, checked_date: str) -> None:
+        """Record that `source` (e.g. `"garmin"`, `"cronometer"`) was checked
+        through `checked_date`, independent of whether anything was found.
+
+        `weigh_ins`/`daily_actuals` only ever hold a *measured* day — a
+        forgotten weigh-in or an unlogged day writes no row at all, by design
+        (see `save_biometric_entry`). That is correct for the two lists, and
+        wrong for `sync_service.get_sync_date_range`'s gap-finding: without a
+        separate record of what was actually *looked at*, a genuinely empty
+        day is indistinguishable from one nobody ever checked, and the
+        catchup walk re-requests it forever.
+
+        Monotonic — never moves `source`'s checkpoint backward. A manual
+        `--date` re-sync of an older day, or a catchup run that resolves an
+        earlier date after a later one already landed, must not un-teach the
+        process what it already confirmed about a more recent day.
         """
 
     @abc.abstractmethod
@@ -553,6 +576,9 @@ class LocalJSONRepository(PlanRepository):
             return None
         return max(weigh_ins, key=lambda row: row.get("date") or "")
 
+    async def save_sync_checkpoint(self, source: str, checked_date: str) -> None:
+        await asyncio.to_thread(self._save_sync_checkpoint, source, checked_date)
+
     async def load_week_plan(self, week_identifier: str = "current") -> Optional[dict]:
         return await asyncio.to_thread(
             self._read_json, self._week_plan_path(week_identifier)
@@ -680,11 +706,15 @@ class LocalJSONRepository(PlanRepository):
         Every section is coerced to a list even when the file is missing, was
         written before that section existed, or has a null where a list
         belongs — callers index `["weigh_ins"]` unguarded, so this is the one
-        place that can be wrong about it.
+        place that can be wrong about it. `sync_checkpoints` gets the same
+        treatment, coerced to a dict rather than a list — a checkout written
+        before checkpoints existed has none, and that must read as "nothing
+        checked yet", not as a missing key.
         """
         stored = self._read_json(self.paths.biometrics) or {}
         return {
-            section: list(stored.get(section) or []) for section in BIOMETRIC_SECTIONS
+            **{section: list(stored.get(section) or []) for section in BIOMETRIC_SECTIONS},
+            "sync_checkpoints": dict(stored.get("sync_checkpoints") or {}),
         }
 
     def _upsert_dated_entry(self, section: str, entry: dict) -> None:
@@ -710,6 +740,20 @@ class LocalJSONRepository(PlanRepository):
             rows.append(dict(entry))
         rows.sort(key=lambda row: row.get("date") or "")
         self._write_json(self.paths.biometrics, biometrics)
+
+    def _save_sync_checkpoint(self, source: str, checked_date: str) -> None:
+        """Advance `source`'s entry in `sync_checkpoints`, never backward.
+
+        String comparison rather than a `date` parse: every checkpoint and
+        every caller here already deals in ISO `YYYY-MM-DD`, which sorts
+        lexically identically to chronologically — the same shortcut
+        `_upsert_dated_entry`'s sort takes.
+        """
+        biometrics = self._read_biometrics()
+        checkpoints = biometrics["sync_checkpoints"]
+        if checked_date > (checkpoints.get(source) or ""):
+            checkpoints[source] = checked_date
+            self._write_json(self.paths.biometrics, biometrics)
 
     def _delete_catalog_recipe(self, recipe_id: str) -> None:
         catalog = self._read_json(self.paths.recipe_catalog) or []

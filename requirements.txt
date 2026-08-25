@@ -4,6 +4,13 @@ openai
 python-dotenv
 nicegui
 reportlab
+requests
+
+# OneNote sync (src/integrations/onenote_graph_import.py). msal drives the
+# device-code login against Microsoft Graph; beautifulsoup4 strips a fetched
+# page's layout HTML down to the plain text import_external_recipe expects.
+msal
+beautifulsoup4
 
 # Biometric sync (src/integrations/sync_service.py).
 #

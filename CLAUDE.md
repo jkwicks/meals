@@ -45,8 +45,12 @@ Flat inside each, with two deliberate exceptions: `src/integrations/` (see
 "Biometric sync", which explains the `sys.path` insert that buys the
 subdirectory back) and `tests/fixtures/`.
 
-Root holds README.md, CLAUDE.md, future-ideas.md, .env, .gitignore and
-requirements.txt. It also accumulates four **gitignored** AI-assistant bundles
+Root holds README.md, CLAUDE.md, future-ideas.md, ui-redesign.md, .env,
+.gitignore and requirements.txt. The two planning documents are split by
+whether the work is *blocked*: `future-ideas.md` is scoped work waiting on a
+product decision or on weeks of runtime data, `ui-redesign.md` is scoped work
+waiting on nothing. Keeping them apart is what stops the second being read as
+a wishlist. It also accumulates four **gitignored** AI-assistant bundles
 — `python_codebase.md`, `project_context.md`, `data_schemas.md` (written by
 `./scripts/prepare.sh`) and `test_suite.md` (written by `./scripts/upload.sh`).
 They are generated, never edited: a change belongs in the source they
@@ -218,6 +222,14 @@ need — `ui_cards.build_cards`, for instance, needs `ui_generation`'s
 handles passed in, because a card's regenerate icon calls into it. This is
 why build order matters in `planner_page()`: `ui_generation` before
 `ui_cards`, everything before the refresh-topic registration at the bottom.
+
+The presentation contract — the type/spacing/radius scales, which colours are
+structural vs. semantic vs. categorical, and the NiceGUI traps that have each
+cost a debugging session (`props()` dropping bracketed values, `bind_value`
+firing at build time, refresh stealing input focus, Quasar's `.flex` wrapping)
+— is in `.claude/rules/ui.md`, which loads automatically when working on any
+`ui_*.py`, the same arrangement `shopping.py` has with
+`.claude/rules/shopping.md`.
 
 **The `Refreshables` registry replaces a hand-maintained `refresh_all()`.**
 A call site says *what changed* — `refreshables.refresh("plan")`,

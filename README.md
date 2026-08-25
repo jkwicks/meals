@@ -203,6 +203,52 @@ budget-expanded target is being shown. Like targets and pantry, training
 sessions are drawer-only input — they apply to the next generation and are
 never written to any file in `config/`.
 
+### Biometric Sync — Garmin & Cronometer
+
+`src/integrations/sync_service.py` pulls two things into `data/biometrics.json`,
+with no phone-side app involved: body-weight readings from Garmin Connect and
+logged food intake from Cronometer. Once that file holds a few weeks of both,
+day targets stop coming purely from `config/profile.json` and start reflecting
+your actual measured TDEE — see "Target Tuning & Training Plans" above and
+`CLAUDE.md`'s "Targets come from the body" section for the full mechanics.
+
+**One-time setup** — add credentials to `.env` (alongside `OPENROUTER_API_KEY`):
+
+```
+GARMIN_EMAIL=you@example.com
+GARMIN_PASSWORD=...
+CRONOMETER_USERNAME=you@example.com
+CRONOMETER_PASSWORD=...
+```
+
+Cronometer needs a paid tier that supports web login — there's no public API
+for personal accounts, so the sync drives the same protocol the web app does.
+
+**Run a sync** (from the project root, venv active):
+
+```bash
+./venv/bin/python src/integrations/sync_service.py --sync-garmin
+./venv/bin/python src/integrations/sync_service.py --sync-cronometer --date 2026-08-24
+./venv/bin/python src/integrations/sync_service.py --sync-garmin --sync-cronometer --date 2026-08-24
+```
+
+- `--sync-garmin` writes the latest weigh-in(s) to `weigh_ins`. The first run
+  logs in with your password and caches a token under `~/.garminconnect`;
+  later runs reuse the cached token and only fall back to the password if it's
+  expired, since Garmin rate-limits and MFA-challenges repeated password
+  logins.
+- `--sync-cronometer --date YYYY-MM-DD` writes that day's logged
+  calories/protein/carbs/fat to `daily_actuals`. Omit `--date` to sync today.
+- The two flags fail independently — a Garmin outage doesn't cost you a
+  working Cronometer sync, and vice versa — and each prints its own
+  success/failure line.
+
+Both write by upsert-on-date, so re-running for the same day overwrites rather
+than duplicates. There's no schedule to set up: run either command whenever
+you want fresher numbers. `data/biometrics.json` ships empty, so skipping this
+entirely just leaves targets on `config/profile.json`'s numbers, with a
+warning logged rather than a failure.
+
 ### Pantry Clearing (`inventory_to_clear`)
 
 The drawer's **"Pantry Clear"** section is a free-text list of things
@@ -415,6 +461,7 @@ shopping. Each item names the surface to look at and what "working" means.
 | Prioritize using up pantry items | `config/week.json` `inventory_to_clear` | Drawer → **Pantry Clear** |
 | Print shopping lists to the terminal | Always, after generation | — (use the shopping drawer) |
 | Monitor per-call generation timing/failures | `logs/meals.log` | Progress dialog (live) + warning toast on completion |
+| Sync weigh-ins / logged intake | `src/integrations/sync_service.py --sync-garmin` / `--sync-cronometer --date YYYY-MM-DD` | — (not in UI) |
 
 CLI-only and UI-only differences are structural, not accidental: the CLI is
 the batch/scriptable path and is the only one that writes `data/shopping_list.md`
@@ -488,6 +535,7 @@ anywhere in the schema.
 | `src/shopping.py` | Ingredient aggregation, normalisation, Keep/Markdown formatting |
 | `src/export_menu.py` | Week → printable PDF menu (`reportlab`) and its Markdown equivalent |
 | `src/repository.py` | The storage boundary — nothing else reads or writes a stored file |
+| `src/integrations/sync_service.py` | Garmin weigh-in and Cronometer intake sync (see Section 3) |
 | `config/profile.json` | Body, per-day targets, meal weights, dietary rules |
 | `config/meals.json` | Meal types, styles, cuisines and affinities |
 | `config/week.json` | Week shape, shopping days, prep and pantry |
@@ -500,6 +548,7 @@ anywhere in the schema.
 | `data/week_plan.json` | The current generated week (regenerable) |
 | `data/week_plan_next.json` | The "Next Week" slot — the app keeps two cached weeks at once |
 | `data/meal_history.json` | Style/cuisine rotation history (**not** regenerable) |
+| `data/biometrics.json` | Garmin weigh-ins and Cronometer daily intake, from the sync above (ships empty) |
 | `logs/meals.log` | Per-call generation timing, finish reason, token counts |
 
 Bundles for pasting into an AI assistant — `python_codebase.md`,
