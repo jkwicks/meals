@@ -10,7 +10,7 @@ storage of its own:
     weigh_ins     <- GarminSyncService.fetch_body_composition
     daily_actuals <- CronometerSyncService.fetch_daily_summary
 
-Five things here are decisions rather than detail, and each is load-bearing.
+Six things here are decisions rather than detail, and each is load-bearing.
 
 **This file lives in a subdirectory, which the rest of `src/` deliberately
 does not.** CLAUDE.md's flat-sibling rule works because `python src/planner.py`
@@ -46,13 +46,28 @@ the next caller nicely.
 **Cronometer runs in-process.** `cronometer-mcp` requires Python >= 3.11,
 which this project's Homebrew 3.14 venv satisfies, so `CronometerSyncService`
 just imports and calls it directly — no sidecar interpreter involved.
+
+**A day with nothing to report is still a day that was checked.** Neither
+list gets a row when the scale wasn't stepped on or nothing was logged (a day
+of zero calories would drag every average that reads the series), but
+`get_sync_date_range`'s catchup walk works by finding the latest recorded
+date — so without a separate record of what was actually *asked about*, an
+empty day looks identical to one nobody has synced yet, and every run after
+it would re-request the exact same date forever. `PlanRepository.
+save_sync_checkpoint` is that separate record: `sync_garmin`/`sync_cronometer`
+advance it on every date the source genuinely answered, whether or not the
+answer was "nothing", and `get_sync_date_range` folds it into each source's
+own latest date. See `save_sync_checkpoint` and `get_sync_date_range`.
 """
 
 import argparse
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
+
+import requests
 
 # See the module docstring: `src/integrations/` is one level below the flat
 # module layout the rest of the app relies on, so `src/` has to be put on the
@@ -536,25 +551,66 @@ def _daily_summary_row(rows: List[dict], day: str) -> dict:
     return entry
 
 
+SECTION_SOURCES = {"weigh_ins": "garmin", "daily_actuals": "cronometer"}
+
+
 def get_sync_date_range(
     repository: LocalJSONRepository,
     target_end_date: str,
     max_lookback_days: int = 14,
+    sources: Optional[List[str]] = None,
 ) -> List[str]:
     """Missing ISO dates between the latest recorded biometric and `target_end_date`.
 
     A sync that only ever runs on demand misses days: a missed Monday and
     Tuesday, run on Wednesday, must not silently leave Monday and Tuesday
     empty forever just because nobody ran it on time. This looks at both
-    `weigh_ins` and `daily_actuals` for the latest `date` either holds — not
-    just `get_latest_biometrics`, which only reads `weigh_ins` — because a
-    checkout that syncs Cronometer daily but Garmin only occasionally must
-    still catch Garmin up from Garmin's own last date, not from whichever
-    list happens to have a more recent Cronometer row.
+    `weigh_ins` and `daily_actuals` for their own latest `date` — not just
+    `get_latest_biometrics`, which only reads `weigh_ins`.
 
-    No prior data at all (a fresh `biometrics.json`) has nothing to walk
-    back from, so the range is just `target_end_date` alone — the same
-    single-day sync this module always did before catchup existed.
+    **`sources` scopes that lookup to the sync(es) actually about to run, and
+    is the reason a genuinely caught-up Garmin doesn't get dragged back into a
+    14-day re-fetch by a Cronometer nobody has synced.** Pass `["garmin"]` for
+    a `--sync-garmin`-only run and only `weigh_ins` is consulted; the default,
+    `None`, means "every known source", for a combined run. This was a real
+    bug, not a hypothetical: Garmin was fully caught up (checkpoint at today)
+    while Cronometer had gone three weeks unsynced (nobody had ever passed
+    `--sync-cronometer`, so it had neither data nor a checkpoint past
+    2026-08-09). Every unscoped call anchored on `min(garmin_latest,
+    cronometer_latest)` — Cronometer's stale date — so a `--sync-garmin`-only
+    run kept computing the same capped 14-day range and re-fetching 14 already
+    -current days from Garmin on every single run, forever, since nothing run
+    was ever going to advance Cronometer's side of that `min`.
+
+    Anchoring on whichever *requested* source is further behind is still
+    right for a combined run: a checkout that syncs Cronometer daily but
+    Garmin only occasionally must still catch Garmin up from Garmin's own
+    last date, not from Cronometer's more recent one. The reverse failed for
+    real too, before `sources` existed: Garmin succeeded through today while
+    Cronometer was rate-limited for four days straight, and anchoring on
+    Garmin's fresher date (the max of the two, an even older version of this
+    function) made every source — including a `--sync-cronometer` run on its
+    own — believe there was nothing left to catch up, silently stranding
+    Cronometer's actual gap. `sources=["cronometer"]` fixes that case more
+    directly than the old min-anchor did: a Cronometer-only run now never
+    looks at Garmin's date at all.
+
+    **A genuinely empty day is not a gap.** `weigh_ins`/`daily_actuals` only
+    ever hold a *measured* day (see `save_biometric_entry`), so a forgotten
+    weigh-in or an unlogged day never becomes a row — and without more
+    information, the date this function's own latest-date scan would compute
+    never advances past it either, so every run after would re-request that
+    same date forever, on the same reasoning `_is_rate_limited` already
+    applies to a throttled account: retrying something guaranteed not to
+    change wastes a real call for no gain. `sync_checkpoints` (see
+    `save_sync_checkpoint`) is folded into each section's latest date for
+    that reason — it advances on every date a source was actually asked
+    about, whether or not the answer was "nothing".
+
+    No prior data at all for any requested source (a fresh `biometrics.json`,
+    or the first-ever run of a source) has nothing to walk back from, so the
+    range is just `target_end_date` alone — the same single-day sync this
+    module always did before catchup existed.
 
     Capped at `max_lookback_days` so a database that hasn't synced in months
     doesn't queue hundreds of sequential API calls against a rate-limited
@@ -563,18 +619,24 @@ def get_sync_date_range(
     from a meal plan's targets right now.
     """
     end_date = datetime.strptime(_iso(target_end_date), "%Y-%m-%d").date()
+    requested = set(sources) if sources else set(SECTION_SOURCES.values())
 
     biometrics = run_sync(repository.load_biometrics())
-    recorded_dates = [
-        row["date"]
-        for section in ("weigh_ins", "daily_actuals")
-        for row in biometrics.get(section, [])
-        if row.get("date")
-    ]
-    if not recorded_dates:
+    checkpoints = biometrics.get("sync_checkpoints") or {}
+    section_latest_dates = []
+    for section, source in SECTION_SOURCES.items():
+        if source not in requested:
+            continue
+        dates = [row["date"] for row in biometrics.get(section, []) if row.get("date")]
+        checkpoint = checkpoints.get(source)
+        if checkpoint:
+            dates.append(checkpoint)
+        if dates:
+            section_latest_dates.append(max(dates))
+    if not section_latest_dates:
         return [end_date.isoformat()]
 
-    latest = datetime.strptime(max(recorded_dates), "%Y-%m-%d").date()
+    latest = datetime.strptime(min(section_latest_dates), "%Y-%m-%d").date()
     start_date = latest + timedelta(days=1)
     if start_date > end_date:
         return []
@@ -612,6 +674,13 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     if has_measurements(weigh_in):
         run_sync(repository.save_biometric_entry(weigh_in))
 
+    # Checkpointed regardless of whether the scale reported anything.
+    # `target_date` reaching this line at all means Garmin was genuinely
+    # asked and answered — a forgotten weigh-in is a real, checked outcome,
+    # and get_sync_date_range needs to be able to tell it apart from a date
+    # nobody has asked about yet. See `save_sync_checkpoint`.
+    run_sync(repository.save_sync_checkpoint("garmin", target_date))
+
     return {"weigh_in": weigh_in, "cardio": cardio, "readiness": readiness}
 
 
@@ -642,18 +711,95 @@ def sync_garmin_range(dates: List[str], repository: LocalJSONRepository) -> List
 
 
 def sync_cronometer(target_date: str, repository: LocalJSONRepository) -> dict:
-    """Fetch a day from Cronometer and persist it to `daily_actuals`."""
+    """Fetch a day from Cronometer and persist it to `daily_actuals`.
+
+    Checkpointed the same way `sync_garmin` is, and for the same reason: a
+    day with nothing logged is a genuine, checked outcome, and only reaching
+    this line at all (rather than raising out of `fetch_daily_summary`) means
+    Cronometer was actually asked. See `save_sync_checkpoint`.
+    """
     service = CronometerSyncService()
     actuals = service.fetch_daily_summary(target_date)
 
     if has_measurements(actuals):
         run_sync(repository.save_daily_actuals(actuals))
 
+    run_sync(repository.save_sync_checkpoint("cronometer", target_date))
+
     return {"daily_actuals": actuals}
 
 
+def _is_rate_limited(exc: Exception) -> bool:
+    """Whether `exc` is the `requests.HTTPError` from a Cronometer 429.
+
+    A 429 means the *account* is throttled, not that this one day's export
+    is bad — unlike every other exception `sync_cronometer_range` catches,
+    which really is independent per date (a network blip, a malformed CSV).
+    Treating a 429 the same way and moving on to retry the next date is how
+    one throttle hit became fourteen in a single real run: every date after
+    the first was guaranteed to fail identically, against an endpoint that
+    was already refusing the account's requests.
+    """
+    return (
+        isinstance(exc, requests.exceptions.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code == 429
+    )
+
+
+def _rate_limit_wait_hint(response: "requests.Response") -> str:
+    """A concrete retry ETA from a 429 response's `Retry-After` header, or an
+    honest admission there isn't one.
+
+    `Retry-After` (RFC 7231 s7.1.3) is standard HTTP and comes in one of two
+    shapes — a delta in seconds, or an HTTP-date — so both are tried. But
+    Cronometer's export endpoint is reverse-engineered and undocumented,
+    with no guarantee it sends the header at all: the 429s that prompted
+    this carried no reason phrase either (`requests`'s default message
+    renders as "429 Client Error:  for url: ..." with the reason blank),
+    which already suggests this account isn't getting a considered error
+    payload back. When there's genuinely nothing to parse, say so rather
+    than inventing a wait time — a fabricated ETA is worse than none,
+    because it reads as Cronometer's own answer rather than a guess.
+    """
+    retry_after = (response.headers.get("Retry-After") if response is not None else None) or ""
+    retry_after = retry_after.strip()
+
+    if not retry_after:
+        return (
+            "Cronometer sent no Retry-After header, so there's no reliable ETA. "
+            "The failures so far read as a sustained account-level throttle "
+            "rather than a brief burst limit — wait at least an hour before "
+            "syncing again; retrying sooner risks extending it further."
+        )
+
+    if retry_after.isdigit():
+        eta = datetime.now(timezone.utc) + timedelta(seconds=int(retry_after))
+        return (
+            f"Cronometer says retry after {retry_after}s "
+            f"(around {eta.strftime('%Y-%m-%d %H:%M UTC')})."
+        )
+
+    try:
+        eta = parsedate_to_datetime(retry_after)
+    except (TypeError, ValueError):
+        return f"Cronometer sent Retry-After: {retry_after!r} (unrecognised format)."
+    return f"Cronometer says retry after {eta.strftime('%Y-%m-%d %H:%M UTC')}."
+
+
 def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
-    """`sync_cronometer` for every date in `dates`, in order. See `sync_garmin_range`."""
+    """`sync_cronometer` for every date in `dates`, in order.
+
+    Mirrors `sync_garmin_range`'s "one bad day must not cost the rest of the
+    range" policy, with one deliberate exception: a 429 stops the walk
+    outright instead of moving on to the next date. See `_is_rate_limited`
+    for why treating it as an ordinary per-day failure is what turned one
+    throttle into fourteen. The dates never reached are simply absent from
+    the result — no separate tracking needed, because a date that was never
+    written to `daily_actuals` is exactly what `get_sync_date_range` finds
+    missing and retries on the next run, once the throttle has had a chance
+    to clear.
+    """
     results = []
     for target_date in dates:
         try:
@@ -661,6 +807,16 @@ def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> 
             outcome["date"] = target_date
             results.append(outcome)
         except Exception as exc:
+            if _is_rate_limited(exc):
+                results.append(
+                    {
+                        "date": target_date,
+                        "error": str(exc),
+                        "rate_limited": True,
+                        "wait_hint": _rate_limit_wait_hint(exc.response),
+                    }
+                )
+                break
             results.append({"date": target_date, "error": str(exc)})
     return results
 
@@ -707,8 +863,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     repository = LocalJSONRepository()
     target = _iso(args.date)
+    # Scoped to the sync(es) actually requested — see get_sync_date_range's
+    # docstring for why an unscoped call let a stale, never-run Cronometer
+    # drag an already-caught-up Garmin back into a 14-day re-fetch every run.
+    sources = [
+        source
+        for source, flag in (("garmin", args.sync_garmin), ("cronometer", args.sync_cronometer))
+        if flag
+    ]
     dates = (
-        get_sync_date_range(repository, target, args.lookback_days)
+        get_sync_date_range(repository, target, args.lookback_days, sources=sources)
         if args.catchup
         else [target]
     )
@@ -750,8 +914,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
 
     if args.sync_cronometer:
-        for outcome in sync_cronometer_range(dates, repository):
+        cronometer_results = sync_cronometer_range(dates, repository)
+        for outcome in cronometer_results:
             day = outcome["date"]
+            if outcome.get("rate_limited"):
+                print(f"Cronometer sync failed for {day}: {outcome['error']}", file=sys.stderr)
+                print(f"  {outcome['wait_hint']}", file=sys.stderr)
+                failed = True
+                continue
             if "error" in outcome:
                 print(f"Cronometer sync failed for {day}: {outcome['error']}", file=sys.stderr)
                 failed = True
@@ -765,6 +935,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             else:
                 print(f"Cronometer {day}: nothing logged")
+
+        # A rate limit stops sync_cronometer_range early — see _is_rate_limited
+        # — so the tail of `dates` was never attempted. It isn't a second
+        # failure; get_sync_date_range will find those days still missing and
+        # retry them on the next run, once the throttle clears.
+        skipped = dates[len(cronometer_results):]
+        if skipped:
+            print(
+                f"Stopped after the rate limit; {len(skipped)} more day(s) "
+                f"({skipped[0]} through {skipped[-1]}) were not attempted and "
+                "will be picked up on the next run.",
+                file=sys.stderr,
+            )
 
     return 1 if failed else 0
 

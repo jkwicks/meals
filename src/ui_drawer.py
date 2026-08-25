@@ -1,10 +1,15 @@
 """The left drawer: the generate/shuffle/reload buttons, global controls
 (week start, servings, shopping days, model), per-day macro targets, pantry
 clear, training schedule, and the recipe catalog (search, favorites list,
-rename/delete, import).
+rename/delete, import, and a link into the full-screen browser).
 
-`build_drawer(ctx, generation)` needs `generation` (see `ui_generation`) for
-the "Generate" and "Reload from disk" buttons at the top.
+`build_drawer(ctx, generation, prep_options, rename_dialog, catalog_browser)`
+needs `generation` (see `ui_generation`) for the "Generate" and "Reload from
+disk" buttons at the top, `rename_dialog` (see `ui_catalog`) so this list's
+own edit icon can open the one shared rename dialog rather than owning a
+second copy of it, and `catalog_browser` (see `ui_catalog_browser`) for the
+"Browse all" button — this list stays a quick 7-row search, the browser is
+where you actually review the whole catalog.
 """
 
 from dataclasses import dataclass
@@ -13,7 +18,8 @@ from typing import Callable, Dict
 from nicegui import ui
 
 from planner import api_key_error, import_external_recipe, selectable_models, short_error
-from ui_catalog import toggle_favorite
+from ui_catalog import RenameDialogHandles, delete_recipe, toggle_favorite
+from ui_catalog_browser import CatalogBrowserHandles
 from ui_context import UIContext
 from ui_generation import GenerationHandles
 from ui_prep_options import PrepOptionsHandles
@@ -30,7 +36,11 @@ class DrawerHandles:
 
 
 def build_drawer(
-    ctx: UIContext, generation: GenerationHandles, prep_options: PrepOptionsHandles
+    ctx: UIContext,
+    generation: GenerationHandles,
+    prep_options: PrepOptionsHandles,
+    rename_dialog: RenameDialogHandles,
+    catalog_browser: CatalogBrowserHandles,
 ) -> DrawerHandles:
     state = ctx.state
     REPOSITORY = ctx.repository
@@ -247,48 +257,6 @@ def build_drawer(
         ).classes("text-slate-400 mt-1")
 
     # ---- recipe catalog & import --------------------------------------------
-
-    async def delete_catalog_entry(recipe_id: str) -> None:
-        await REPOSITORY.delete_catalog_recipe(recipe_id)
-        state.recipe_catalog = [r for r in state.recipe_catalog if r["id"] != recipe_id]
-        refreshables.refresh("catalog")
-        ui.notify("Removed from catalog", type="positive")
-
-    def open_edit_catalog_entry(entry: dict) -> None:
-        state.edit_catalog_id = entry["id"]
-        state.edit_catalog_name = entry["recipe"]["name"]
-        edit_favorite_dialog.open()
-
-    async def save_catalog_rename() -> None:
-        entry = next(
-            (r for r in state.recipe_catalog if r["id"] == state.edit_catalog_id), None
-        )
-        if entry is None:
-            return
-        new_name = (state.edit_catalog_name or "").strip()
-        if not new_name:
-            ui.notify("Name can't be empty.", type="warning")
-            return
-        record = await REPOSITORY.rename_catalog_recipe(entry["id"], new_name)
-        if record:
-            entry["recipe"] = record["recipe"]
-        refreshables.refresh("favorites")
-        edit_favorite_dialog.close()
-        ui.notify("Recipe renamed", type="positive")
-
-    with ui.dialog() as edit_favorite_dialog:
-        with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-96 max-w-full flex flex-col gap-2"
-        ):
-            ui.label("Rename recipe").classes("text-sm font-semibold")
-            ui.input(label="Name").bind_value(state, "edit_catalog_name").props(
-                "dense outlined"
-            ).classes("w-full text-xs")
-            with ui.row().classes("justify-end gap-2 mt-2"):
-                ui.button("Cancel", on_click=edit_favorite_dialog.close).props(
-                    "dense flat no-caps"
-                )
-                ui.button("Save", on_click=save_catalog_rename).props("dense no-caps")
 
     async def on_import() -> None:
         text = (state.import_text or "").strip()
@@ -532,6 +500,16 @@ def build_drawer(
             "w-full"
         ).props("dense header-class='text-xs px-0'"):
 
+            with ui.row().classes("w-full items-center justify-between gap-2 mb-1"):
+                ui.label().classes("text-[10px] text-slate-500").bind_text_from(
+                    state,
+                    "recipe_catalog",
+                    backward=lambda catalog: f"{len(catalog)} recipe(s)",
+                )
+                ui.button(
+                    "Browse all", icon="open_in_full", on_click=catalog_browser.open
+                ).props("dense flat no-caps size=sm").classes("text-slate-300")
+
             def on_catalog_search(event) -> None:
                 state.catalog_search = (event.value or "").strip()
                 refreshables.refresh("favorites")
@@ -591,13 +569,13 @@ def build_drawer(
                                 )
                                 ui.button(
                                     icon="edit",
-                                    on_click=lambda e=entry: open_edit_catalog_entry(e),
+                                    on_click=lambda e=entry: rename_dialog.open(e),
                                 ).props("dense flat round size=xs").classes(
                                     "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
                                 )
                                 ui.button(
                                     icon="delete",
-                                    on_click=lambda rid=entry["id"]: delete_catalog_entry(rid),
+                                    on_click=lambda rid=entry["id"]: delete_recipe(ctx, rid),
                                 ).props("dense flat round size=xs").classes(
                                     "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
                                 )

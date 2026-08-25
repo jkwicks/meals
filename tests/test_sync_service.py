@@ -23,6 +23,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import requests
+
 _SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(_SRC))
 sys.path.insert(0, str(_SRC / "integrations"))
@@ -380,24 +382,50 @@ class TestSyncDateRange(unittest.TestCase):
             ["2026-08-19", "2026-08-20", "2026-08-21"],
         )
 
-    def test_the_latest_date_is_taken_across_both_lists(self):
+    def test_the_more_behind_lists_own_latest_date_anchors_the_range(self):
         """A Garmin-stale, Cronometer-fresh database still catches Garmin up.
 
-        `get_latest_biometrics` only reads `weigh_ins`; this has to read both,
-        or a checkout that syncs Cronometer daily and Garmin occasionally
-        would compute Garmin's gap from Cronometer's more recent date.
+        `get_latest_biometrics` only reads `weigh_ins`; this has to read both
+        lists' own latest dates and anchor on the earlier (more behind) of
+        the two — anchoring on the fresher one, as an earlier version of this
+        function did by taking the max across both lists combined, would
+        compute Garmin's gap from Cronometer's more recent date and silently
+        conclude there was nothing left to catch up.
         """
         run_sync(self.repo.save_biometric_entry({"date": "2026-08-15", "weight_kg": 90.0}))
         run_sync(self.repo.save_daily_actuals({"date": "2026-08-18", "calories": 2000.0}))
         self.assertEqual(
             sync.get_sync_date_range(self.repo, "2026-08-20"),
-            ["2026-08-19", "2026-08-20"],
+            ["2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20"],
         )
 
     def test_already_up_to_date_returns_an_empty_range(self):
         """The latest record equalling the target means nothing is missing."""
         run_sync(self.repo.save_biometric_entry({"date": "2026-08-21", "weight_kg": 90.0}))
         self.assertEqual(sync.get_sync_date_range(self.repo, "2026-08-21"), [])
+
+    def test_a_source_stuck_behind_by_repeated_failures_is_still_caught_up(self):
+        """Regression: real 429s left Cronometer days behind a caught-up Garmin.
+
+        Garmin synced clean through today; Cronometer failed four days in a
+        row with 429s and never wrote anything past 2026-08-09 — a failed
+        sync never calls `save_daily_actuals`, so those days simply never
+        landed. With the old max-across-both-lists anchor, Garmin's fresh
+        date made `get_sync_date_range` report nothing missing at all, and
+        `--sync-cronometer` on its own printed "Nothing to sync" despite
+        16 real days unlogged.
+        """
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-11", "weight_kg": 99.12}))
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-24", "weight_kg": 99.71}))
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-25", "weight_kg": 99.60}))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-09", "calories": 341.0}))
+
+        result = sync.get_sync_date_range(self.repo, "2026-08-25", max_lookback_days=14)
+
+        self.assertIn("2026-08-22", result)
+        self.assertIn("2026-08-23", result)
+        self.assertIn("2026-08-24", result)
+        self.assertIn("2026-08-25", result)
 
     def test_a_stale_database_is_capped_at_max_lookback_days(self):
         """A months-old database doesn't queue hundreds of sequential calls."""
@@ -411,6 +439,91 @@ class TestSyncDateRange(unittest.TestCase):
     def test_malformed_target_date_is_rejected(self):
         with self.assertRaises(ValueError):
             sync.get_sync_date_range(self.repo, "21/08/2026")
+
+    def test_a_checked_but_empty_day_is_not_re_requested(self):
+        """The bug this module was written to fix: a forgotten weigh-in or
+        an unlogged day must not be retried forever.
+
+        Neither `weigh_ins` nor `daily_actuals` gets a row for a day with
+        nothing to report — that is the correct, longstanding behaviour (see
+        `test_sync_garmin_stores_nothing_when_the_scale_was_not_used`). Before
+        `sync_checkpoints` existed, that meant `get_sync_date_range`'s
+        latest-date scan could never advance past such a day, so every run
+        after it re-included the same already-checked date. A checkpoint with
+        no matching data row is exactly what a real "nothing to report" sync
+        leaves behind, and the range must treat it as done.
+        """
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-20"))
+        run_sync(self.repo.save_sync_checkpoint("cronometer", "2026-08-20"))
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-20"), []
+        )
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-22"),
+            ["2026-08-21", "2026-08-22"],
+        )
+
+    def test_a_checked_but_empty_source_still_anchors_the_range(self):
+        """A checkpoint alone (no data ever recorded for that source) must
+        still count as that source's own latest date, the same way a real
+        measurement does — otherwise a source that has never once found data
+        would look permanently unsynced and re-walk from scratch every run.
+        """
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-18"))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-20", "calories": 2000.0}))
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-20"),
+            ["2026-08-19", "2026-08-20"],
+        )
+
+    def test_a_caught_up_source_is_not_dragged_back_by_a_stale_unrequested_one(self):
+        """Regression: a real `--sync-garmin` run kept re-fetching the same
+        capped 14-day window on every single invocation.
+
+        Garmin was fully caught up (checkpoint at today); Cronometer had
+        never once been synced with `--sync-cronometer`, so it had no
+        checkpoint and no data past three weeks prior. Every unscoped call
+        anchored on `min(garmin_latest, cronometer_latest)` — Cronometer's
+        stale date — which a `--sync-garmin`-only run has no way to advance,
+        so the same 14-day range kept coming back forever. Scoping to
+        `sources=["garmin"]` is the fix: Garmin's own gap is empty, and
+        Cronometer's staleness must not be this call's problem.
+        """
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-11", "weight_kg": 99.12}))
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-26"))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-09", "calories": 341.0}))
+
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-26", sources=["garmin"]), []
+        )
+
+    def test_an_unrequested_source_is_ignored_even_when_it_is_the_more_behind_one(self):
+        """The other half: a Cronometer-only run must see Cronometer's own
+        real gap, not an empty range borrowed from Garmin's freshness, and
+        must not need Garmin's date at all to compute it."""
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-18", "weight_kg": 99.12}))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-15", "calories": 341.0}))
+
+        result = sync.get_sync_date_range(self.repo, "2026-08-18", sources=["cronometer"])
+
+        self.assertEqual(result, ["2026-08-16", "2026-08-17", "2026-08-18"])
+
+    def test_omitting_sources_still_anchors_on_whichever_requested_source_is_behind(self):
+        """`sources=None` (the default) is unchanged: every known source is
+        considered, so a combined `--sync-garmin --sync-cronometer` run keeps
+        catching up whichever one is further behind — the same case
+        `test_the_more_behind_lists_own_latest_date_anchors_the_range` covers
+        without the parameter at all.
+        """
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-18", "weight_kg": 99.12}))
+        run_sync(self.repo.save_daily_actuals({"date": "2026-08-15", "calories": 341.0}))
+
+        with_default = sync.get_sync_date_range(self.repo, "2026-08-18")
+        with_both = sync.get_sync_date_range(
+            self.repo, "2026-08-18", sources=["garmin", "cronometer"]
+        )
+        self.assertEqual(with_default, with_both)
+        self.assertEqual(with_default, ["2026-08-16", "2026-08-17", "2026-08-18"])
 
 
 class TestPersistence(unittest.TestCase):
@@ -464,6 +577,18 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(result["weigh_in"], {"date": "2026-08-16"})
         self.assertEqual(run_sync(self.repo.load_biometrics())["weigh_ins"], [])
 
+    def test_sync_garmin_checkpoints_a_day_with_no_reading(self):
+        """The other half of the fix above: an empty day is still a *checked*
+        day, so it must not be indistinguishable from one nobody asked about.
+        """
+        with replace_garmin_client(FakeGarminClient(weight_list=None)):
+            sync.sync_garmin("2026-08-16", self.repo)
+
+        self.assertEqual(
+            run_sync(self.repo.load_biometrics())["sync_checkpoints"]["garmin"],
+            "2026-08-16",
+        )
+
     def test_sync_garmin_stores_a_real_reading(self):
         """The other half of the guard: a real weigh-in must still land."""
         with replace_garmin_client(FakeGarminClient(weight_list=[FULL_READING])):
@@ -485,6 +610,61 @@ class TestPersistence(unittest.TestCase):
         row = self.stored()["weigh_ins"][0]
         self.assertEqual(row["weight_kg"], 98.1)
         self.assertEqual(row["body_fat_pct"], 27.5)
+
+    def test_sync_cronometer_checkpoints_a_day_with_nothing_logged(self):
+        """Same fix, Cronometer side: a day nobody logged is still a day
+        that was genuinely checked, not one still owed a retry."""
+        with replace_cronometer_service(lambda day: {"date": day}):
+            sync.sync_cronometer("2026-08-16", self.repo)
+
+        self.assertEqual(
+            run_sync(self.repo.load_biometrics())["sync_checkpoints"]["cronometer"],
+            "2026-08-16",
+        )
+        self.assertEqual(run_sync(self.repo.load_biometrics())["daily_actuals"], [])
+
+
+class TestSyncCheckpoints(unittest.TestCase):
+    """`save_sync_checkpoint` — the bookkeeping `get_sync_date_range` reads to
+    tell a genuinely empty day apart from one nobody has checked yet."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "biometrics.json")
+        self.repo = LocalJSONRepository(biometrics_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_later_date_advances_the_checkpoint(self):
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-16"))
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-18"))
+        self.assertEqual(
+            run_sync(self.repo.load_biometrics())["sync_checkpoints"]["garmin"],
+            "2026-08-18",
+        )
+
+    def test_an_earlier_date_does_not_move_the_checkpoint_backward(self):
+        """A manual `--date` re-sync of an older day must not un-teach the
+        process what it already confirmed about a more recent one."""
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-18"))
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-16"))
+        self.assertEqual(
+            run_sync(self.repo.load_biometrics())["sync_checkpoints"]["garmin"],
+            "2026-08-18",
+        )
+
+    def test_sources_are_tracked_independently(self):
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-18"))
+        run_sync(self.repo.save_sync_checkpoint("cronometer", "2026-08-10"))
+        checkpoints = run_sync(self.repo.load_biometrics())["sync_checkpoints"]
+        self.assertEqual(checkpoints["garmin"], "2026-08-18")
+        self.assertEqual(checkpoints["cronometer"], "2026-08-10")
+
+    def test_a_fresh_repository_has_no_checkpoints(self):
+        """Same cold-start tolerance as `weigh_ins`/`daily_actuals`: a
+        checkout that has never synced must not error, just read as empty."""
+        self.assertEqual(run_sync(self.repo.load_biometrics())["sync_checkpoints"], {})
 
 
 class CountingGarminClient(FakeGarminClient):
@@ -580,6 +760,43 @@ class TestGarminRangeSync(unittest.TestCase):
         )
 
 
+def make_429(retry_after=None):
+    """A real `requests.exceptions.HTTPError` shaped like Cronometer's 429.
+
+    `requests.Response()` is a plain constructible object — no network
+    involved — so this stays as self-contained as every other fake in this
+    file. The real failure carried no reason phrase (`requests`'s default
+    message renders with a blank reason), which `_rate_limit_wait_hint`'s
+    docstring leans on, so that shape is reproduced here rather than a
+    generic error string.
+    """
+    response = requests.Response()
+    response.status_code = 429
+    if retry_after is not None:
+        response.headers["Retry-After"] = retry_after
+    return requests.exceptions.HTTPError("429 Client Error:  for url: ...", response=response)
+
+
+class TestRateLimitWaitHint(unittest.TestCase):
+    """`_rate_limit_wait_hint` — turning a 429's `Retry-After` into an ETA."""
+
+    def test_numeric_retry_after_yields_a_concrete_eta(self):
+        hint = sync._rate_limit_wait_hint(make_429(retry_after="120").response)
+        self.assertIn("120s", hint)
+
+    def test_http_date_retry_after_yields_a_concrete_eta(self):
+        hint = sync._rate_limit_wait_hint(
+            make_429(retry_after="Wed, 21 Oct 2026 07:28:00 GMT").response
+        )
+        self.assertIn("2026-10-21", hint)
+
+    def test_missing_retry_after_is_reported_honestly_not_guessed(self):
+        """No header means no ETA — the message must not invent one."""
+        hint = sync._rate_limit_wait_hint(make_429().response)
+        self.assertIn("no reliable ETA", hint)
+        self.assertNotRegex(hint, r"\d{4}-\d{2}-\d{2}")
+
+
 class TestCronometerRangeSync(unittest.TestCase):
     """`sync_cronometer_range` — the sequential per-date catchup walk."""
 
@@ -632,6 +849,56 @@ class TestCronometerRangeSync(unittest.TestCase):
         self.assertEqual(
             sorted(row["date"] for row in actuals), ["2026-08-19", "2026-08-21"]
         )
+
+    def test_a_429_stops_the_walk_instead_of_retrying_every_remaining_date(self):
+        """Regression: a real run turned one 429 into fourteen.
+
+        Unlike the generic-failure case above, a 429 means the whole account
+        is throttled — every date after it is guaranteed to fail the same
+        way, so `sync_cronometer_range` must stop rather than burn through
+        the rest of the range against an endpoint already refusing it.
+        """
+        calls = []
+
+        def fake_fetch(day):
+            calls.append(day)
+            if day == "2026-08-20":
+                raise make_429(retry_after="60")
+            return {"date": day, "calories": 2000.0, "source": "cronometer"}
+
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"]
+        with replace_cronometer_service(fake_fetch):
+            results = sync.sync_cronometer_range(dates, self.repo)
+
+        # 08-21 and 08-22 must never even be attempted.
+        self.assertEqual(calls, ["2026-08-19", "2026-08-20"])
+        self.assertEqual([r["date"] for r in results], ["2026-08-19", "2026-08-20"])
+        self.assertTrue(results[-1]["rate_limited"])
+        self.assertIn("60s", results[-1]["wait_hint"])
+
+    def test_a_non_rate_limit_http_error_still_continues_past_it(self):
+        """Only a 429 short-circuits; every other failure keeps its old
+        "one bad day must not cost the rest" behaviour."""
+
+        def _server_error():
+            response = requests.Response()
+            response.status_code = 500
+            return requests.exceptions.HTTPError("500 Server Error", response=response)
+
+        def fake_fetch(day):
+            if day == "2026-08-20":
+                raise _server_error()
+            return {"date": day, "calories": 2000.0, "source": "cronometer"}
+
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
+        with replace_cronometer_service(fake_fetch):
+            results = sync.sync_cronometer_range(dates, self.repo)
+
+        self.assertEqual([r["date"] for r in results], dates)
+        self.assertNotIn("error", results[0])
+        self.assertIn("error", results[1])
+        self.assertNotIn("rate_limited", results[1])
+        self.assertNotIn("error", results[2])
 
 
 class TestCredentialGuards(unittest.TestCase):

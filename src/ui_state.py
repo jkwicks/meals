@@ -369,6 +369,13 @@ class PlannerState:
     # card the user is mid-click on.
     recipe_catalog: List[dict] = field(default_factory=list)
     catalog_search: str = ""
+    # The full-screen catalog browser's own filters — separate from
+    # catalog_search above so typing in one surface doesn't silently refilter
+    # the other. "All" means no meal-type filter, matching the select's own
+    # placeholder option.
+    catalog_browser_search: str = ""
+    catalog_browser_meal_type: str = "All"
+    catalog_browser_favorites_only: bool = False
     # Which card the swap modal is open for, and its in-progress filter/pick.
     # Held on state rather than as dialog-local variables so `swap_dialog_body`
     # can be a plain `@ui.refreshable` that reads state, the same pattern

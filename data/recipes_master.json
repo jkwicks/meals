@@ -8614,5 +8614,4704 @@
     "source": "imported",
     "added_at": "2026-08-23T07:48:35+00:00",
     "updated_at": "2026-08-23T07:48:35+00:00"
+  },
+  {
+    "id": "9293818b62904338825e2bdac77a577b",
+    "content_key": "e5d4a36da5bd4352",
+    "recipe": {
+      "name": "Fast Pork Dumplings",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "lime",
+          "quantity_g": 67.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 4.2,
+          "fat_g": 0.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "aioli mayonnaise",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 340.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.5,
+          "fat_g": 37.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "sesame oil",
+          "quantity_g": 9.2,
+          "nova_group": 2,
+          "calories": 81.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 9.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "toasted sesame seeds",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 57.0,
+          "protein_g": 1.8,
+          "net_carbs_g": 1.0,
+          "fat_g": 5.0,
+          "fiber_g": 1.2
+        },
+        {
+          "name": "celery stalk",
+          "quantity_g": 40.0,
+          "nova_group": 1,
+          "calories": 6.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.6,
+          "fat_g": 0.1,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "spring onion",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "stir-fry vegetable mix",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 70.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 10.0,
+          "fat_g": 0.4,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "pork and ginger dumplings",
+          "quantity_g": 300.0,
+          "nova_group": 3,
+          "calories": 600.0,
+          "protein_g": 22.0,
+          "net_carbs_g": 65.0,
+          "fat_g": 28.0,
+          "fiber_g": 3.0
+        },
+        {
+          "name": "shichimi togarashi",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 8.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.3,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "soy sauce",
+          "quantity_g": 15.0,
+          "nova_group": 2,
+          "calories": 8.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "sugar",
+          "quantity_g": 2.1,
+          "nova_group": 2,
+          "calories": 8.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 2.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "avocado oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 120.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Finely grate the zest of half the lime, then juice the lime. Combine the lime zest, lime juice, aioli, sesame oil, sesame seeds, 3 tsp soy sauce and \u00bd tsp sugar in a bowl.",
+        "Thinly slice the celery and spring onion on an angle.",
+        "Heat a drizzle of oil in a medium frypan over high heat. Stir-fry the celery, spring onion and vegetable mix for 5 mins or until just tender. Season with salt and pepper.",
+        "Meanwhile, heat a generous drizzle of oil in a separate medium frypan over medium-high heat. Cook the dumplings, without turning, for 2-3 mins until golden on one side.",
+        "Carefully add 60ml (\u00bc cup) water to the dumplings (take extra care adding water to the hot pan as the oil can spit and the steam created is very hot). Cover and steam for 3 mins or until the dumplings are tender.",
+        "Divide the vegetables and dumplings among bowls. Drizzle with the dressing and scatter with a pinch of shichimi togarashi to serve."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:57:37+00:00",
+    "updated_at": "2026-08-25T03:57:37+00:00"
+  },
+  {
+    "id": "79bc9265d0004d0abb9634c2cf0f4ff8",
+    "content_key": "c81615ca4be43ed3",
+    "recipe": {
+      "name": "Easy Asian Barbecue Chicken with Udon Noodles and Rainbow Veggies",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Chicken thigh fillets",
+          "quantity_g": 350.0,
+          "nova_group": 1,
+          "calories": 420.0,
+          "protein_g": 70.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Udon noodles",
+          "quantity_g": 180.0,
+          "nova_group": 3,
+          "calories": 630.0,
+          "protein_g": 21.0,
+          "net_carbs_g": 126.0,
+          "fat_g": 2.0,
+          "fiber_g": 3.6
+        },
+        {
+          "name": "Red cabbage",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 47.0,
+          "protein_g": 2.1,
+          "net_carbs_g": 8.0,
+          "fat_g": 0.2,
+          "fiber_g": 3.2
+        },
+        {
+          "name": "Carrot",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 41.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 6.8,
+          "fat_g": 0.2,
+          "fiber_g": 2.8
+        },
+        {
+          "name": "Baby spinach leaves",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 11.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.2,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "Spring onion",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "Kecap manis",
+          "quantity_g": 40.0,
+          "nova_group": 3,
+          "calories": 132.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 32.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Chinese barbecue seasoning",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 30.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 6.5,
+          "fat_g": 0.2,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "Cornflour",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 36.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 8.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Avocado oil",
+          "quantity_g": 28.0,
+          "nova_group": 2,
+          "calories": 248.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 28.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "White vinegar",
+          "quantity_g": 15.0,
+          "nova_group": 2,
+          "calories": 3.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Soy sauce",
+          "quantity_g": 15.0,
+          "nova_group": 3,
+          "calories": 8.0,
+          "protein_g": 1.3,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Sugar",
+          "quantity_g": 8.0,
+          "nova_group": 2,
+          "calories": 31.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 8.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Bring a medium saucepan of water to the boil for the noodles. Thinly slice the cabbage. Halve the carrot lengthwise and thinly slice. Thinly slice the spring onion, keeping the white and green parts separate.",
+        "Combine the cornflour and Chinese barbecue seasoning in a bowl and season with salt and pepper. Dust the chicken with the cornflour mixture and shake off the excess. Heat 1 tbs oil in a medium deep frypan over medium-high heat. Cook the chicken for 5-6 mins each side until cooked through. Remove from the pan, reserving the pan. (Wipe the pan clean if there are burnt pieces.)",
+        "While the chicken is cooking, combine the kecap manis, 1 tbs white vinegar, 1 tbs soy sauce and 2 tsp sugar in a bowl.",
+        "Cook the noodles in the pan of boiling water for 8 mins or until tender. Drain, then rinse under cold water to prevent the noodles from sticking.",
+        "Heat 1 tbs oil in the reserved pan over high heat. Stir-fry the cabbage and carrot for 3 mins or until just tender. Add the white part of the spring onion and stir-fry for 1 min.",
+        "Add the noodles, sauce and spinach to the vegetables and cook, stirring, for 1-2 mins until heated through. Remove from the heat. Slice the chicken. Divide the noodle stir-fry and chicken among bowls. Scatter with the remaining spring onion to serve."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:58:01+00:00",
+    "updated_at": "2026-08-25T03:58:01+00:00"
+  },
+  {
+    "id": "9d981a36bf6b489eb5c1aa3f55589654",
+    "content_key": "1ddcc281c0f2b4de",
+    "recipe": {
+      "name": "Spiced Lamb and Couscous with Mint-Cucumber Yoghurt",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "garlic cloves",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "onion",
+          "quantity_g": 110.0,
+          "nova_group": 1,
+          "calories": 44.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 8.6,
+          "fat_g": 0.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "carrot",
+          "quantity_g": 75.0,
+          "nova_group": 1,
+          "calories": 31.0,
+          "protein_g": 0.7,
+          "net_carbs_g": 5.4,
+          "fat_g": 0.2,
+          "fiber_g": 2.1
+        },
+        {
+          "name": "tomato",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 3.5,
+          "fat_g": 0.2,
+          "fiber_g": 1.4
+        },
+        {
+          "name": "Lebanese cucumber",
+          "quantity_g": 130.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.7
+        },
+        {
+          "name": "coriander",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "mint",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.8
+        },
+        {
+          "name": "lamb mince",
+          "quantity_g": 250.0,
+          "nova_group": 1,
+          "calories": 535.0,
+          "protein_g": 43.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 39.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Moroccan seasoning",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 25.0,
+          "protein_g": 1.0,
+          "net_carbs_g": 4.0,
+          "fat_g": 0.6,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "chicken-style stock cube",
+          "quantity_g": 5.0,
+          "nova_group": 3,
+          "calories": 12.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "couscous",
+          "quantity_g": 150.0,
+          "nova_group": 3,
+          "calories": 564.0,
+          "protein_g": 19.2,
+          "net_carbs_g": 108.5,
+          "fat_g": 0.9,
+          "fiber_g": 7.5
+        },
+        {
+          "name": "natural yoghurt",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 61.0,
+          "protein_g": 3.5,
+          "net_carbs_g": 4.7,
+          "fat_g": 3.3,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 88.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 10.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 44.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 5.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "boiling water",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Crush or finely chop the garlic. Finely chop the onion, carrot and tomato. Coarsely grate the cucumber, then put in a sieve over a bowl to drain until required (discard any liquid). Pick half the coriander leaves. Finely chop the remaining coriander, keeping the leaves and stems separate. Finely chop the mint leaves, discarding the stems.",
+        "Heat 2 tsp olive oil in a medium frypan over medium heat. Cook the garlic, onion and carrot, stirring regularly, for 4-5 mins until the carrot is slightly softened. Add the lamb mince and Moroccan seasoning and cook, breaking up the lumps with a spoon, for 5 mins or until well browned.",
+        "Meanwhile, crumble 1 stock cube into a heatproof jug, add 200ml boiling water and stir to dissolve. Put the couscous in a large heatproof bowl, add 1 tsp extra virgin olive oil, pour over the stock and cover with a plate. Stand for 5 mins or until the stock is absorbed.",
+        "Stir the tomato and chopped coriander into the mince mixture. Reduce the heat to medium-low and cook, stirring, for a further 5 mins or until the tomato is softened. Taste, then season with salt and pepper.",
+        "Fluff the couscous with a fork, then add half the cucumber and half the mint and stir to combine. Taste, then season with salt and pepper.",
+        "Combine the yoghurt, remaining cucumber and remaining mint in a bowl. Season with salt and pepper. Divide the couscous and lamb mixture among plates. Spoon over the mint-cucumber yoghurt and scatter with the coriander leaves to serve."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:58:36+00:00",
+    "updated_at": "2026-08-25T03:58:36+00:00"
+  },
+  {
+    "id": "cc1f74ad53d34bb5908e07ece242bb2a",
+    "content_key": "dd067ef10989f1eb",
+    "recipe": {
+      "name": "Spicy Chicken Rendang Curry",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Jasmine rice",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 532.0,
+          "protein_g": 10.7,
+          "net_carbs_g": 116.1,
+          "fat_g": 0.9,
+          "fiber_g": 1.8
+        },
+        {
+          "name": "Chicken breast fillet",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 495.0,
+          "protein_g": 93.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 10.8,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Coconut milk",
+          "quantity_g": 200.0,
+          "nova_group": 2,
+          "calories": 394.0,
+          "protein_g": 4.0,
+          "net_carbs_g": 5.6,
+          "fat_g": 41.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Green peas",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 122.0,
+          "protein_g": 8.1,
+          "net_carbs_g": 14.4,
+          "fat_g": 0.6,
+          "fiber_g": 8.6
+        },
+        {
+          "name": "Rendang curry paste",
+          "quantity_g": 35.0,
+          "nova_group": 3,
+          "calories": 80.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 6.0,
+          "fat_g": 5.5,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "Fried shallots",
+          "quantity_g": 10.0,
+          "nova_group": 3,
+          "calories": 58.0,
+          "protein_g": 0.7,
+          "net_carbs_g": 5.0,
+          "fat_g": 4.0,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "Cooking oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 124.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Tomato",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.2,
+          "fiber_g": 1.4
+        },
+        {
+          "name": "Lebanese cucumber",
+          "quantity_g": 130.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.7
+        },
+        {
+          "name": "Garlic",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Chicken stock cube",
+          "quantity_g": 4.0,
+          "nova_group": 3,
+          "calories": 10.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.4,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "White vinegar",
+          "quantity_g": 20.0,
+          "nova_group": 2,
+          "calories": 4.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Rinse the rice until the water runs clear. Put in a small saucepan with 250ml water, cover and bring to a simmer over medium heat. Reduce the heat to low and cook for 12 mins or until tender and the water is absorbed. Turn off the heat and stand, covered, for at least 5 mins.",
+        "While the rice is cooking, crush or finely chop the garlic. Coarsely chop the tomato. Coarsely chop the cucumber. Crumble 1 stock cube into a heatproof jug, add 125ml boiling water and stir to dissolve.",
+        "Thinly slice the chicken into strips. Heat 1 tbs oil in a medium deep frypan over high heat. Cook the chicken, stirring, for 2 mins or until browned (the chicken won't be cooked through). Remove from the pan.",
+        "Reduce the heat to medium-high. Cook the garlic and curry paste, stirring, for 1-2 mins until fragrant and the curry paste splits. Stir in the stock and coconut milk and bring to a gentle simmer. Cook, stirring occasionally, for 4-5 mins to develop the flavour.",
+        "Add the chicken and peas to the curry sauce and return to a gentle simmer. Reduce the heat to medium and cook, stirring, for 2 mins or until tender and the sauce is slightly thickened. Stir in 2 tsp white vinegar. Taste, then season with salt and pepper.",
+        "Put the tomato, cucumber and 2 tsp white vinegar in a bowl, season with salt and pepper and stir to combine. Fluff the rice with a fork. Divide the rice and curry among bowls. Scatter with the fried shallots and serve with the salsa."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:59:01+00:00",
+    "updated_at": "2026-08-25T03:59:01+00:00"
+  },
+  {
+    "id": "9f07e5a79b454e9eaa7e4f9bfda0526f",
+    "content_key": "29b5a0f327f04003",
+    "recipe": {
+      "name": "Low-Cal Greek-Style Chicken",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Chicken breast fillet",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 330.0,
+          "protein_g": 63.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 7.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Four mixed beans (canned)",
+          "quantity_g": 400.0,
+          "nova_group": 3,
+          "calories": 320.0,
+          "protein_g": 20.0,
+          "net_carbs_g": 40.0,
+          "fat_g": 2.0,
+          "fiber_g": 16.0
+        },
+        {
+          "name": "Feta cheese",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 132.0,
+          "protein_g": 7.1,
+          "net_carbs_g": 2.0,
+          "fat_g": 10.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 20.0,
+          "nova_group": 2,
+          "calories": 177.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 20.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Carrot",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 41.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 6.8,
+          "fat_g": 0.2,
+          "fiber_g": 2.8
+        },
+        {
+          "name": "Zucchini",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 34.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 4.2,
+          "fat_g": 0.6,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "Baby spinach leaves",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.2,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "Lemon",
+          "quantity_g": 80.0,
+          "nova_group": 1,
+          "calories": 23.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 5.2,
+          "fat_g": 0.2,
+          "fiber_g": 2.2
+        },
+        {
+          "name": "Garlic clove",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.5,
+          "protein_g": 0.2,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Mint and garlic seasoning",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 12.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.2,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "Fresh dill",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.2
+        }
+      ],
+      "instructions": [
+        "Halve the carrot and zucchini lengthwise, then slice on an angle. Crush or finely chop the garlic. Finely grate the zest of half the lemon, then juice the half. Cut the remaining lemon into wedges. Drain and rinse the beans. Pick the dill sprigs, discarding the stems.",
+        "Put half the mint and garlic seasoning and 2 tsp olive oil in a large bowl. Put the chicken flat on a board, put your hand on top and halve horizontally into fillets. Add the chicken to the seasoned oil and turn to coat.",
+        "Heat a medium frypan over medium-high heat. Cook the chicken, turning regularly, for 4-8 mins until golden and cooked through. Remove from the pan and rest for 3 mins.",
+        "Meanwhile, heat 1 tbs olive oil in a large frypan over medium-high heat. Add the carrot, garlic and lemon zest and cook, stirring occasionally, for 4-6 mins until the carrot is slightly softened. Add the zucchini and beans and cook, stirring, for 1-2 mins until heated through.",
+        "Add the spinach, remaining mint and garlic seasoning and 1 tbs water to the bean mixture, cover and cook for 2 mins or until the spinach is just wilted. Remove the pan from the heat. Add half the dill and 2 tsp lemon juice, season with pepper and stir well to combine.",
+        "Slice the chicken. Divide the chicken and bean mixture among plates. Crumble over the feta, scatter with the remaining dill and drizzle with a little extra virgin olive oil, if desired. Serve with the lemon wedges."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:59:23+00:00",
+    "updated_at": "2026-08-25T03:59:23+00:00"
+  },
+  {
+    "id": "9f273355d1e3477ba4a0c467ae6bcd10",
+    "content_key": "61c6cc3bd9445013",
+    "recipe": {
+      "name": "Easy Beef and Sweet Soy Stir-Fry",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Jasmine rice",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 530.0,
+          "protein_g": 10.5,
+          "net_carbs_g": 117.0,
+          "fat_g": 0.9,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "Beef stir-fry strips",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 540.0,
+          "protein_g": 66.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 30.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Carrot",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 41.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 6.8,
+          "fat_g": 0.2,
+          "fiber_g": 2.8
+        },
+        {
+          "name": "Zucchini",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 25.0,
+          "protein_g": 1.8,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.5,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "Garlic",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 7.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 1.5,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Oyster sauce",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 60.0,
+          "protein_g": 0.7,
+          "net_carbs_g": 14.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Kecap manis",
+          "quantity_g": 20.0,
+          "nova_group": 3,
+          "calories": 66.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 16.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Soy sauce",
+          "quantity_g": 18.0,
+          "nova_group": 3,
+          "calories": 10.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.1,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Sugar",
+          "quantity_g": 4.0,
+          "nova_group": 2,
+          "calories": 16.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 4.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Cornflour",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 38.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 9.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Roasted cashews",
+          "quantity_g": 40.0,
+          "nova_group": 2,
+          "calories": 232.0,
+          "protein_g": 7.2,
+          "net_carbs_g": 8.8,
+          "fat_g": 17.5,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "Baby spinach leaves",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.2,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "Avocado oil",
+          "quantity_g": 21.0,
+          "nova_group": 2,
+          "calories": 186.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 21.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Rinse the jasmine rice until the water runs clear. Put in a small saucepan with 250ml (1 cup) water, cover and bring to a simmer over medium heat. Reduce the heat to low and cook for 12 minutes or until tender and the water is absorbed. Turn off the heat and stand, covered, for at least 5 minutes.",
+        "Halve the carrot and zucchini lengthwise and thinly slice on an angle. Crush or finely chop the garlic.",
+        "Combine the oyster sauce, half the kecap manis (20g), 2 tbsp water, 1 tbsp soy sauce, and 1 tsp sugar in a bowl.",
+        "Separate the beef stir-fry. Dust the beef with half the cornflour (10g) and shake off any excess. Heat 1 tbsp oil in a large deep frypan over high heat until hot. Stir-fry the beef for 1-2 minutes until browned. Remove from the pan.",
+        "Heat 2 tsp oil in the same pan over high heat. Stir-fry the carrot for 1 minute or until starting to soften. Add the zucchini and stir-fry for a further 2-3 minutes until just tender.",
+        "Add the garlic, sauce, cashews, spinach, beef, and any resting juices to the vegetables. Cook, stirring, for a further 1-2 minutes until the spinach is wilted and the sauce is slightly thickened. Fluff the rice with a fork and serve with the stir-fry."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T03:59:45+00:00",
+    "updated_at": "2026-08-25T03:59:45+00:00"
+  },
+  {
+    "id": "f067c5cc5cfc4a42a68196fc849e4bdb",
+    "content_key": "61e4c288b40bd85e",
+    "recipe": {
+      "name": "Beef Rump Steak Bowl - 15-Min Cheesy",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "onion",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 60.0,
+          "protein_g": 1.7,
+          "net_carbs_g": 11.5,
+          "fat_g": 0.2,
+          "fiber_g": 2.6
+        },
+        {
+          "name": "capsicum",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 30.0,
+          "protein_g": 1.3,
+          "net_carbs_g": 5.8,
+          "fat_g": 0.3,
+          "fiber_g": 2.6
+        },
+        {
+          "name": "cheddar cheese",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 200.0,
+          "protein_g": 11.5,
+          "net_carbs_g": 1.1,
+          "fat_g": 16.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "beef rump steaks",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 450.0,
+          "protein_g": 63.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 22.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "teriyaki sauce",
+          "quantity_g": 55.0,
+          "nova_group": 3,
+          "calories": 85.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 18.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "microwave basmati rice",
+          "quantity_g": 250.0,
+          "nova_group": 3,
+          "calories": 360.0,
+          "protein_g": 8.0,
+          "net_carbs_g": 72.0,
+          "fat_g": 3.5,
+          "fiber_g": 2.5
+        },
+        {
+          "name": "kaleslaw mix",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 50.0,
+          "protein_g": 2.5,
+          "net_carbs_g": 7.0,
+          "fat_g": 0.5,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "aioli mayonnaise",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 340.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.5,
+          "fat_g": 37.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 120.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "red wine vinegar",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 2.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Thinly slice the onion. Coarsely chop the capsicum. Coarsely grate half the cheese. Put the steaks and half the teriyaki sauce in a bowl and turn to coat. Season with pepper.",
+        "Heat a medium frypan over high heat until hot. Reduce the heat to medium-high and cook the steaks, turning regularly, for 4-6 mins for medium-rare, or until cooked to your liking. Remove from the pan and rest for 3 mins.",
+        "While the steaks are resting, heat a drizzle of olive oil in the same pan over high heat. Cook the onion and capsicum, stirring occasionally, for 2-3 mins until lightly charred. Massage the packet of rice to loosen and add to the vegetables. Cook, stirring occasionally, for 2-3 mins until heated through.",
+        "Put the steaks on top of the rice mixture and scatter over the cheese. Cook, covered, for 1-2 mins until the cheese is melted. Combine the kaleslaw mix, aioli and 2 tsp red wine vinegar in a large bowl. Slice the steaks. Divide the rice mixture, kaleslaw and steak among bowls to serve."
+      ],
+      "prep_time_minutes": 15,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:00:01+00:00",
+    "updated_at": "2026-08-25T04:00:01+00:00"
+  },
+  {
+    "id": "0077baa66957475fb80de1b7f79dae9f",
+    "content_key": "63a5bf929145b331",
+    "recipe": {
+      "name": "Hoisin-Glazed Chicken and Coconut Rice",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "jasmine rice",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 525.0,
+          "protein_g": 10.5,
+          "net_carbs_g": 115.5,
+          "fat_g": 1.0,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "coconut milk",
+          "quantity_g": 100.0,
+          "nova_group": 3,
+          "calories": 190.0,
+          "protein_g": 2.0,
+          "net_carbs_g": 3.0,
+          "fat_g": 19.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "green beans",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 46.0,
+          "protein_g": 2.8,
+          "net_carbs_g": 6.5,
+          "fat_g": 0.3,
+          "fiber_g": 4.1
+        },
+        {
+          "name": "carrot",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 41.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 6.8,
+          "fat_g": 0.2,
+          "fiber_g": 2.8
+        },
+        {
+          "name": "lime",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 18.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 5.0,
+          "fat_g": 0.1,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "hoisin sauce",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 130.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 28.0,
+          "fat_g": 1.5,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "Chinese barbecue seasoning",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 15.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.2,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "free-range chicken thigh fillets",
+          "quantity_g": 270.0,
+          "nova_group": 1,
+          "calories": 432.0,
+          "protein_g": 54.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 21.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Lebanese cucumber",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 18.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "neutral cooking oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 120.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Rinse the rice until the water runs clear. Put the rice, 100ml coconut milk and 200ml water in a small saucepan, season with salt and bring to the boil. Reduce the heat to low and cook for 12 mins or until tender and the liquid is absorbed. Turn off the heat and stand, covered, for at least 5 mins.",
+        "Meanwhile, trim the beans and cut to 1.5cm lengths. Halve the carrot lengthwise, then thinly slice on an angle. Finely grate the zest of half the lime, then cut the half into wedges.",
+        "Combine the hoisin sauce and Chinese barbecue seasoning in a large bowl. Thinly slice the chicken into strips. Add the chicken to the hoisin sauce mixture and stir to coat.",
+        "Heat 2 tsp oil in a medium deep frypan over high heat. Stir-fry the chicken for 4 mins or until cooked through. Remove the chicken from the pan and cover to keep warm.",
+        "Heat 2 tsp oil in the same pan over high heat. Stir-fry the beans and carrot for 3-4 mins until just tender. Add 2 tbs water and cook, scraping the base to incorporate the flavour. Remove the pan from the heat.",
+        "Meanwhile, thinly slice the cucumber on an angle and season lightly with salt. Fluff the rice with a fork, add the lime zest and stir to combine. Divide the rice, chicken and stir-fried vegetables among plates. Serve with the cucumber and lime wedges."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:00:26+00:00",
+    "updated_at": "2026-08-25T04:00:26+00:00"
+  },
+  {
+    "id": "572d40407ad04e9d94e82227cee409fb",
+    "content_key": "4e843de1d619c773",
+    "recipe": {
+      "name": "Low-Carb Spicy Mexican Chicken",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Chicken breast fillet",
+          "quantity_g": 280.0,
+          "nova_group": 1,
+          "calories": 462.0,
+          "protein_g": 75.6,
+          "net_carbs_g": 0.0,
+          "fat_g": 10.1,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Red cabbage",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 46.5,
+          "protein_g": 2.1,
+          "net_carbs_g": 6.0,
+          "fat_g": 0.2,
+          "fiber_g": 3.1
+        },
+        {
+          "name": "Zucchini",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 25.5,
+          "protein_g": 1.8,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.5,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "Lebanese cucumber",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 18.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "Pepitas",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 168.0,
+          "protein_g": 9.0,
+          "net_carbs_g": 1.4,
+          "fat_g": 14.7,
+          "fiber_g": 1.8
+        },
+        {
+          "name": "Aioli mayonnaise",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 340.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.5,
+          "fat_g": 37.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 124.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Honey",
+          "quantity_g": 7.0,
+          "nova_group": 2,
+          "calories": 21.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 5.7,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Mexican spice blend",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 15.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 1.5,
+          "fat_g": 0.5,
+          "fiber_g": 1.2
+        },
+        {
+          "name": "Fresh coriander",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 3.5,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "Garlic clove",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.5,
+          "protein_g": 0.2,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "White wine vinegar",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 2.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Crush or finely chop the garlic. Coarsely chop the coriander leaves and finely chop the stems. Thinly slice the cabbage with a sharp knife or mandoline. Shred the zucchini using a julienne peeler or coarsely grate with a box grater. Halve the cucumber lengthwise, scrape out the seeds using a teaspoon, then thinly slice.",
+        "Put the garlic, 1\u00bd tsp Mexican spice blend, 1 tbs olive oil and 1 tsp honey in a shallow dish, season with salt and pepper and stir to combine. Put the chicken flat on a board, put your hand on top and halve horizontally into fillets. Add the chicken to the marinade and turn to coat.",
+        "Cook the pepitas in a cold medium frypan over medium heat, tossing, for 3-4 mins until toasted. Remove from the pan. Increase the heat to medium-high. Cook the chicken, turning regularly, for 4-8 mins until golden and cooked through. Remove from the pan and rest for 3 mins.",
+        "Meanwhile, combine the aioli, half the coriander, \u00bd tsp Mexican spice blend, 2 tsp white wine vinegar and 2 tsp water in a large bowl.",
+        "Add the cabbage, zucchini, cucumber, pepitas and remaining coriander to the dressing and gently toss to combine. Taste, then season with salt and pepper.",
+        "Slice the chicken. Divide the slaw and chicken among plates. Drizzle the chicken with any resting juices to serve."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:00:54+00:00",
+    "updated_at": "2026-08-25T04:00:54+00:00"
+  },
+  {
+    "id": "550f4c3b43694e1997e6fc9c5e94e586",
+    "content_key": "8fbde68a56760ad3",
+    "recipe": {
+      "name": "Seared Tex-Mex Chicken with Cheesy Sweet Potato and Tomato Salsa",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Chicken breast fillet",
+          "quantity_g": 320.0,
+          "nova_group": 1,
+          "calories": 384.0,
+          "protein_g": 73.6,
+          "net_carbs_g": 0.0,
+          "fat_g": 8.3,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Sweet potatoes",
+          "quantity_g": 250.0,
+          "nova_group": 1,
+          "calories": 215.0,
+          "protein_g": 4.0,
+          "net_carbs_g": 43.0,
+          "fat_g": 0.2,
+          "fiber_g": 7.5
+        },
+        {
+          "name": "Parmesan cheese",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 196.0,
+          "protein_g": 18.0,
+          "net_carbs_g": 1.5,
+          "fat_g": 13.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Baby spinach leaves",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.2,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "Tomato",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.2,
+          "fiber_g": 1.4
+        },
+        {
+          "name": "Garlic",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Fresh coriander",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "Tex-Mex seasoning",
+          "quantity_g": 10.0,
+          "nova_group": 2,
+          "calories": 30.0,
+          "protein_g": 1.0,
+          "net_carbs_g": 5.0,
+          "fat_g": 0.5,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 20.0,
+          "nova_group": 2,
+          "calories": 177.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 20.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Extra virgin olive oil",
+          "quantity_g": 13.5,
+          "nova_group": 2,
+          "calories": 119.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "White wine vinegar",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 1.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Preheat the oven to 220C, fan-forced. Line a large oven tray with baking paper. Cut the unpeeled sweet potatoes into 1cm-thick slices. Crush or finely chop the garlic.",
+        "Put the sweet potato on the lined tray, drizzle with 2 tsp olive oil, scatter with the garlic and \u00bd tsp Tex-Mex seasoning and season with salt and pepper. Toss to coat, then roast for 20 mins or until golden and tender.",
+        "Meanwhile, finely chop the tomato. Finely chop the coriander, discarding the stems. Combine the tomato, coriander, 2 tsp extra virgin olive oil and 1 tsp white wine vinegar in a bowl. Taste, then season with salt and pepper.",
+        "Put the chicken flat on a board, put your hand on top and halve horizontally into fillets. Put the chicken in a shallow dish, scatter with the remaining Tex-Mex seasoning, drizzle with 1 tsp olive oil and turn to coat.",
+        "Heat 1 tsp olive oil in a medium frypan over medium-high heat. Cook the chicken for 2-4 mins each side until golden and cooked through. Remove from the pan and rest for 3 mins.",
+        "Finely grate the parmesan, then scatter over the roasted sweet potato. Roast for a further 5 mins or until the parmesan is melted and golden. Put the spinach and 1 tsp extra virgin olive oil in a bowl, season with salt and pepper and toss to combine. Divide the sweet potato, spinach and chicken among plates. Serve with the tomato salsa."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:01:15+00:00",
+    "updated_at": "2026-08-25T04:01:15+00:00"
+  },
+  {
+    "id": "8982ee1f58444c6f9eea1c79a31e360f",
+    "content_key": "844bd0c63eee0d2f",
+    "recipe": {
+      "name": "Low-Carb Chicken and Avocado Salad",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "chicken breast fillet",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 330.0,
+          "protein_g": 63.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 7.8,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "avocado",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 240.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 2.7,
+          "fat_g": 22.0,
+          "fiber_g": 10.0
+        },
+        {
+          "name": "baby spinach leaves",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 23.0,
+          "protein_g": 2.9,
+          "net_carbs_g": 1.4,
+          "fat_g": 0.4,
+          "fiber_g": 2.2
+        },
+        {
+          "name": "carrot",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 25.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 4.1,
+          "fat_g": 0.1,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "radish",
+          "quantity_g": 40.0,
+          "nova_group": 1,
+          "calories": 6.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "lime",
+          "quantity_g": 45.0,
+          "nova_group": 1,
+          "calories": 14.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.1,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "sunflower seeds",
+          "quantity_g": 20.0,
+          "nova_group": 1,
+          "calories": 117.0,
+          "protein_g": 4.2,
+          "net_carbs_g": 2.2,
+          "fat_g": 10.3,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "spring onion",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 119.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "olive oil",
+          "quantity_g": 9.0,
+          "nova_group": 2,
+          "calories": 80.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 9.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "honey",
+          "quantity_g": 3.5,
+          "nova_group": 2,
+          "calories": 11.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 2.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "wholegrain mustard",
+          "quantity_g": 2.5,
+          "nova_group": 3,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.2,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "dried mint",
+          "quantity_g": 2.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 0.5,
+          "fat_g": 0.1,
+          "fiber_g": 0.6
+        }
+      ],
+      "instructions": [
+        "Check your avocado is ripe before starting this recipe. Shred the carrot using a julienne peeler or coarsely grate with a box grater. Thinly slice the radish. Thinly slice the spring onion. Slice the avocado.",
+        "Put 1 tsp dried mint and 2 tsp olive oil in a large bowl, season with salt and pepper and stir to combine. Put the chicken flat on a board, put your hand on top and halve horizontally into fillets. Add the chicken to the seasoned oil and turn to coat.",
+        "Put the sunflower seeds in a cold medium frypan over medium heat. Toast, tossing, for 2-3 mins until evenly golden. Remove from the pan.",
+        "Heat the same pan over medium-high heat. Cook the chicken for 2-4 mins each side until golden and cooked through. Remove from the pan and rest for 3 mins.",
+        "Meanwhile, juice the lime. Put 1 tbs lime juice, 1 tsp dried mint, 1 tbs extra virgin olive oil, \u00bd tsp wholegrain mustard and \u00bd tsp honey in a large bowl, season with salt and pepper and whisk to combine.",
+        "Slice the chicken. Add the carrot, radish, onion, avocado and spinach to the dressing and gently toss to combine. Divide the salad and chicken among bowls. Scatter with the sunflower seeds to serve."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:01:34+00:00",
+    "updated_at": "2026-08-25T04:01:34+00:00"
+  },
+  {
+    "id": "e2776438ab6e4983a6026c951e420492",
+    "content_key": "e9a97c0216b5de92",
+    "recipe": {
+      "name": "Low-Cal Caribbean Steak with Sweet Potato Mash and Veggies",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Garlic clove",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Corn cob",
+          "quantity_g": 90.0,
+          "nova_group": 1,
+          "calories": 77.0,
+          "protein_g": 2.9,
+          "net_carbs_g": 14.3,
+          "fat_g": 1.1,
+          "fiber_g": 2.4
+        },
+        {
+          "name": "Silverbeet",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 19.0,
+          "protein_g": 1.8,
+          "net_carbs_g": 2.1,
+          "fat_g": 0.2,
+          "fiber_g": 1.6
+        },
+        {
+          "name": "Tomato",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.2,
+          "fiber_g": 1.4
+        },
+        {
+          "name": "Sweet potatoes",
+          "quantity_g": 260.0,
+          "nova_group": 1,
+          "calories": 224.0,
+          "protein_g": 4.2,
+          "net_carbs_g": 44.7,
+          "fat_g": 0.3,
+          "fiber_g": 7.8
+        },
+        {
+          "name": "Caribbean seasoning",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 13.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 1.8,
+          "fat_g": 0.3,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "Beef rump steaks",
+          "quantity_g": 320.0,
+          "nova_group": 1,
+          "calories": 448.0,
+          "protein_g": 67.2,
+          "net_carbs_g": 0.0,
+          "fat_g": 19.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Lime",
+          "quantity_g": 45.0,
+          "nova_group": 1,
+          "calories": 14.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 3.5,
+          "fat_g": 0.1,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 21.0,
+          "nova_group": 2,
+          "calories": 186.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 21.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Red wine vinegar",
+          "quantity_g": 2.5,
+          "nova_group": 2,
+          "calories": 1.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Crush or finely chop the garlic. Discard the husk and silks from the corn, then slice the kernels from the cob. Thinly slice the silverbeet. Finely chop the tomato. Peel the sweet potatoes and cut into 3cm chunks.",
+        "Put the sweet potato in a medium saucepan, cover with cold salted water and bring to the boil. Reduce the heat to medium and cook for 12-14 mins until tender. Drain, return to the pan and cover to keep warm.",
+        "Meanwhile, put \u00bd tsp Caribbean seasoning and 2 tsp olive oil in a shallow dish, season with salt and pepper and stir to combine. Add the steaks and turn to coat.",
+        "Heat a medium deep frypan over high heat until hot. Reduce the heat to medium-high and cook the steaks for 2-3 mins each side for medium-rare, or until cooked to your liking. Remove from the pan and rest for 3 mins.",
+        "While the steaks are resting, heat 2 tsp olive oil in the same pan over medium-high heat. Cook the garlic, corn and silverbeet, stirring, for 3-4 mins until softened. Stir in the tomato and \u00bd tsp red wine vinegar and season with salt and pepper. Remove from the heat.",
+        "Mash the sweet potato until smooth. Stir in remaining Caribbean seasoning and 2 tsp olive oil. Taste, then season with salt and pepper. Cut the lime into wedges. Slice the steaks against the grain. Divide mash, vegetables and steak among plates and drizzle the steak with any resting juices. Serve with lime wedges."
+      ],
+      "prep_time_minutes": 25,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:01:52+00:00",
+    "updated_at": "2026-08-25T04:01:52+00:00"
+  },
+  {
+    "id": "7f6d712888c24cf39d4c858c2a37bac1",
+    "content_key": "7dc272902352f258",
+    "recipe": {
+      "name": "Easy One-Pan Mediterranean Chicken",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Onion",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 60.0,
+          "protein_g": 1.7,
+          "net_carbs_g": 11.5,
+          "fat_g": 0.2,
+          "fiber_g": 2.6
+        },
+        {
+          "name": "Capsicum",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 39.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 6.9,
+          "fat_g": 0.3,
+          "fiber_g": 3.2
+        },
+        {
+          "name": "Chat potatoes",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 230.0,
+          "protein_g": 6.0,
+          "net_carbs_g": 47.0,
+          "fat_g": 0.3,
+          "fiber_g": 4.5
+        },
+        {
+          "name": "Silverbeet",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 19.0,
+          "protein_g": 1.8,
+          "net_carbs_g": 2.1,
+          "fat_g": 0.2,
+          "fiber_g": 1.6
+        },
+        {
+          "name": "Chicken thigh fillets",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 360.0,
+          "protein_g": 58.5,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Diced tomatoes",
+          "quantity_g": 400.0,
+          "nova_group": 3,
+          "calories": 120.0,
+          "protein_g": 4.8,
+          "net_carbs_g": 18.0,
+          "fat_g": 0.8,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "Italian seasoning",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 13.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 1.4,
+          "fat_g": 0.4,
+          "fiber_g": 1.8
+        },
+        {
+          "name": "Pitted kalamata olives",
+          "quantity_g": 30.0,
+          "nova_group": 3,
+          "calories": 70.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 1.0,
+          "fat_g": 7.5,
+          "fiber_g": 0.9
+        },
+        {
+          "name": "Capers",
+          "quantity_g": 10.0,
+          "nova_group": 3,
+          "calories": 2.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 120.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Sugar",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 8.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Thinly slice the onion. Cut the capsicum into 1cm-thick strips. Quarter the unpeeled potatoes. Thinly slice the silverbeet stems, then coarsely chop the leaves, keeping the stems and leaves separate.",
+        "Cut the chicken into 4cm chunks and season with salt and pepper.",
+        "Heat 1 tbs olive oil in a medium deep frypan over medium-high heat. Add the onion, capsicum and chicken and cook, stirring, for 4-5 mins until the chicken is browned.",
+        "Add the tomatoes, potato, silverbeet stems, 1\u00bd tsp Italian seasoning, \u00bd tsp sugar and 80ml (\u2153 cup) water to the chicken mixture and bring to a simmer. Reduce the heat to medium and cook, stirring occasionally, for 15 mins or until the potato is almost tender.",
+        "Stir the silverbeet leaves into the chicken mixture. Cook, covered, for 5-6 mins until the potato and silverbeet are tender and the sauce is thickened.",
+        "Stir the olives and capers into the chicken and vegetable mixture. Remove from the heat. Taste, then season with salt and pepper. Divide the chicken and vegetables among plates to serve."
+      ],
+      "prep_time_minutes": 15,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:02:15+00:00",
+    "updated_at": "2026-08-25T04:02:15+00:00"
+  },
+  {
+    "id": "a6c0c5d576934adfa6739ac19df68019",
+    "content_key": "16c115abce3fb846",
+    "recipe": {
+      "name": "Ginger Beef and Broccoli",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "Sesame oil",
+          "quantity_g": 18.0,
+          "nova_group": 2,
+          "calories": 159.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 18.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Beef rump steak, trimmed of fat and cut into strips",
+          "quantity_g": 480.0,
+          "nova_group": 1,
+          "calories": 624.0,
+          "protein_g": 105.6,
+          "net_carbs_g": 0.0,
+          "fat_g": 21.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Broccoli florets",
+          "quantity_g": 600.0,
+          "nova_group": 1,
+          "calories": 204.0,
+          "protein_g": 16.8,
+          "net_carbs_g": 24.0,
+          "fat_g": 2.4,
+          "fiber_g": 15.6
+        },
+        {
+          "name": "Grated root ginger",
+          "quantity_g": 48.0,
+          "nova_group": 1,
+          "calories": 38.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 7.5,
+          "fat_g": 0.4,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "Tamari sauce",
+          "quantity_g": 40.0,
+          "nova_group": 3,
+          "calories": 40.0,
+          "protein_g": 4.2,
+          "net_carbs_g": 2.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Sweet chilli sauce",
+          "quantity_g": 24.0,
+          "nova_group": 3,
+          "calories": 45.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 11.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "Water",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Spring onions, finely sliced",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 19.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 2.6,
+          "fat_g": 0.1,
+          "fiber_g": 1.6
+        }
+      ],
+      "instructions": [
+        "Heat oil in a frypan and brown the beef over a medium high heat - it doesn\u2019t need to be cooked all the way through. Remove from pan.",
+        "Turn down the temperature and into the pan, add ginger, tamari, sweet chilli and water - stir to make a sauce.",
+        "Add the broccoli and cook through for 4-5 minutes, stirring regularly. Put a lid on between stirring to help steam the broccoli.",
+        "Add beef back into the pan and stir to coat in the sauce.",
+        "Serve topped with the spring onion."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:02:40+00:00",
+    "updated_at": "2026-08-25T04:02:40+00:00"
+  },
+  {
+    "id": "50770e019c2c4483b9ebacb29068e917",
+    "content_key": "2306611e95c7f75a",
+    "recipe": {
+      "name": "Beef Bolognese",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 28.0,
+          "nova_group": 2,
+          "calories": 248.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 28.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onion",
+          "quantity_g": 110.0,
+          "nova_group": 1,
+          "calories": 44.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 8.6,
+          "fat_g": 0.1,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "lean minced beef",
+          "quantity_g": 600.0,
+          "nova_group": 1,
+          "calories": 840.0,
+          "protein_g": 130.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 32.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "button mushrooms",
+          "quantity_g": 240.0,
+          "nova_group": 1,
+          "calories": 53.0,
+          "protein_g": 7.4,
+          "net_carbs_g": 5.5,
+          "fat_g": 0.8,
+          "fiber_g": 2.4
+        },
+        {
+          "name": "chopped tomatoes",
+          "quantity_g": 800.0,
+          "nova_group": 3,
+          "calories": 192.0,
+          "protein_g": 9.6,
+          "net_carbs_g": 24.0,
+          "fat_g": 1.6,
+          "fiber_g": 8.0
+        },
+        {
+          "name": "vegetable stock",
+          "quantity_g": 400.0,
+          "nova_group": 3,
+          "calories": 20.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.4,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "tomato paste",
+          "quantity_g": 32.0,
+          "nova_group": 3,
+          "calories": 26.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 4.5,
+          "fat_g": 0.2,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "dried oregano",
+          "quantity_g": 2.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.1,
+          "fiber_g": 0.8
+        },
+        {
+          "name": "parmesan cheese",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 235.0,
+          "protein_g": 21.5,
+          "net_carbs_g": 1.9,
+          "fat_g": 15.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "zucchinis",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 51.0,
+          "protein_g": 3.6,
+          "net_carbs_g": 6.3,
+          "fat_g": 0.9,
+          "fiber_g": 3.0
+        }
+      ],
+      "instructions": [
+        "Heat oil in a pan over medium heat and saute onions and mushrooms for 5 minutes, until onion is translucent and soft.",
+        "Add beef mince and fry off for 4-5 minutes until browned.",
+        "Add the tinned tomatoes, tomato paste, stock and oregano - stir through and simmer for 5-10 minutes, stirring regularly. Taste and adjust seasoning.",
+        "Arrange raw spiralised zucchini on your plate, top with bolognese and parmesan."
+      ],
+      "prep_time_minutes": 15,
+      "servings": 4,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 3 days. Freeze in portions for up to 2 months. Defrost and reheat before serving.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:02:56+00:00",
+    "updated_at": "2026-08-25T04:02:56+00:00"
+  },
+  {
+    "id": "86cb8b1be8b441808e6d6e623971c1c3",
+    "content_key": "d563dc39d8a32c8e",
+    "recipe": {
+      "name": "Meatloaf",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "lean minced beef",
+          "quantity_g": 400.0,
+          "nova_group": 1,
+          "calories": 548.0,
+          "protein_g": 85.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 18.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "almond meal",
+          "quantity_g": 40.0,
+          "nova_group": 1,
+          "calories": 236.0,
+          "protein_g": 8.4,
+          "net_carbs_g": 4.0,
+          "fat_g": 20.0,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "onion",
+          "quantity_g": 110.0,
+          "nova_group": 1,
+          "calories": 44.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 8.4,
+          "fat_g": 0.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "red capsicum",
+          "quantity_g": 75.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.7,
+          "net_carbs_g": 3.0,
+          "fat_g": 0.2,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "garlic cloves",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "tomato paste",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 49.0,
+          "protein_g": 2.6,
+          "net_carbs_g": 8.8,
+          "fat_g": 0.3,
+          "fiber_g": 2.5
+        },
+        {
+          "name": "Dijon mustard",
+          "quantity_g": 30.0,
+          "nova_group": 3,
+          "calories": 30.0,
+          "protein_g": 1.8,
+          "net_carbs_g": 0.8,
+          "fat_g": 1.8,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "large free range eggs",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 143.0,
+          "protein_g": 12.6,
+          "net_carbs_g": 0.7,
+          "fat_g": 9.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "dried oregano",
+          "quantity_g": 4.0,
+          "nova_group": 1,
+          "calories": 10.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.6,
+          "fat_g": 0.2,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        }
+      ],
+      "instructions": [
+        "Preheat oven to fan forced 180\u00ba C/200\u00ba C/350\u00ba F/Gas mark 4 and line an appropriate sized loaf tin with baking paper.",
+        "In a small bowl mix together the tomato paste and half the oregano for the topping. Set aside.",
+        "In a larger bowl, combine remaining ingredients. Season with salt and pepper. Transfer mixture into loaf tin.",
+        "Smooth over the tomato paste topping and bake for 25 mins.",
+        "Remove loaf from oven and rest for at least 10 minutes to allow juices to reabsorb before slicing with a serrated bread knife and serving."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 4,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 2 days. Batch cook and freeze in portions for up to 2 months. Defrost and reheat before serving.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:03:24+00:00",
+    "updated_at": "2026-08-25T04:03:24+00:00"
+  },
+  {
+    "id": "801fc92d21f94fa6a819ab80f5d64af9",
+    "content_key": "f60f31824d2abd74",
+    "recipe": {
+      "name": "Tuna and Chickpea Salad",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "red onion",
+          "quantity_g": 110.0,
+          "nova_group": 1,
+          "calories": 44.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 8.6,
+          "fat_g": 0.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "red capsicum",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 78.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 11.7,
+          "fat_g": 0.9,
+          "fiber_g": 6.3
+        },
+        {
+          "name": "fresh parsley",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 90.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 5.4,
+          "fat_g": 0.2,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "spinach leaves",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 46.0,
+          "protein_g": 5.7,
+          "net_carbs_g": 2.8,
+          "fat_g": 0.8,
+          "fiber_g": 4.4
+        },
+        {
+          "name": "tuna in olive oil",
+          "quantity_g": 240.0,
+          "nova_group": 3,
+          "calories": 640.0,
+          "protein_g": 58.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 45.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "canned chickpeas (drained)",
+          "quantity_g": 480.0,
+          "nova_group": 3,
+          "calories": 552.0,
+          "protein_g": 28.8,
+          "net_carbs_g": 43.2,
+          "fat_g": 9.6,
+          "fiber_g": 24.7
+        }
+      ],
+      "instructions": [
+        "Drain the tuna and reserve the oil. Put the tuna into a large bowl and break it into flakes with a fork.",
+        "Add the chickpeas, red onion, red capsicum and parsley to the bowl and mix.",
+        "Whisk together the lemon juice and reserved tuna oil to create a dressing. Season well.",
+        "Pour the dressing over your salad mix, add the spinach leaves and lightly toss everything together. Serve immediately and enjoy!"
+      ],
+      "prep_time_minutes": 10,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:03:46+00:00",
+    "updated_at": "2026-08-25T04:03:46+00:00"
+  },
+  {
+    "id": "22852e9918f9485d8d993844f22acffe",
+    "content_key": "19298997e7a63017",
+    "recipe": {
+      "name": "Peanut Butter Oat Smoothie",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "Full fat milk",
+          "quantity_g": 124.0,
+          "nova_group": 1,
+          "calories": 77.0,
+          "protein_g": 3.9,
+          "net_carbs_g": 6.0,
+          "fat_g": 4.1,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Peanut butter",
+          "quantity_g": 32.0,
+          "nova_group": 3,
+          "calories": 188.0,
+          "protein_g": 7.7,
+          "net_carbs_g": 4.3,
+          "fat_g": 16.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "Ground cinnamon",
+          "quantity_g": 2.6,
+          "nova_group": 1,
+          "calories": 6.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.0,
+          "fiber_g": 1.4
+        },
+        {
+          "name": "Plain full fat Greek yogurt",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 48.0,
+          "protein_g": 4.5,
+          "net_carbs_g": 1.9,
+          "fat_g": 2.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Whole rolled oats",
+          "quantity_g": 35.0,
+          "nova_group": 1,
+          "calories": 133.0,
+          "protein_g": 4.6,
+          "net_carbs_g": 20.2,
+          "fat_g": 2.4,
+          "fiber_g": 3.6
+        }
+      ],
+      "instructions": [
+        "Add all ingredients to a blender and blitz for 60 seconds.",
+        "Pour the smoothie into a glass and add ice-cubes. Serve immediately or place in the refrigerator until ready to drink."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:04:08+00:00",
+    "updated_at": "2026-08-25T04:04:08+00:00"
+  },
+  {
+    "id": "e847319dd4f845dda00935ed31d03ae6",
+    "content_key": "d88f7b89b7c790be",
+    "recipe": {
+      "name": "Italian Lentil Salad",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 81.0,
+          "nova_group": 2,
+          "calories": 733.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 83.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "lemon (zest and juice)",
+          "quantity_g": 58.0,
+          "nova_group": 1,
+          "calories": 17.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 3.7,
+          "fat_g": 0.1,
+          "fiber_g": 0.7
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "hazelnuts, chopped",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 628.0,
+          "protein_g": 15.0,
+          "net_carbs_g": 7.0,
+          "fat_g": 61.0,
+          "fiber_g": 9.7
+        },
+        {
+          "name": "spring onions, trimmed and chopped",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 19.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 2.6,
+          "fat_g": 0.1,
+          "fiber_g": 1.6
+        },
+        {
+          "name": "cucumber, diced",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 45.0,
+          "protein_g": 2.0,
+          "net_carbs_g": 9.0,
+          "fat_g": 0.3,
+          "fiber_g": 1.5
+        },
+        {
+          "name": "red capsicums, deseeded and diced",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 78.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 14.0,
+          "fat_g": 0.9,
+          "fiber_g": 6.0
+        },
+        {
+          "name": "fresh basil, chopped",
+          "quantity_g": 20.0,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "canned lentils, drained and rinsed",
+          "quantity_g": 960.0,
+          "nova_group": 3,
+          "calories": 1114.0,
+          "protein_g": 86.4,
+          "net_carbs_g": 115.2,
+          "fat_g": 3.8,
+          "fiber_g": 76.8
+        }
+      ],
+      "instructions": [
+        "Whisk together the olive oil and lemon juice. Season with salt and pepper.",
+        "Place all the ingredients for the salad into a bowl with the lentils, pour over the lemon dressing and toss together to serve."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:04:29+00:00",
+    "updated_at": "2026-08-25T04:04:29+00:00"
+  },
+  {
+    "id": "78389d2fb909481f8b402a07159448f9",
+    "content_key": "0f7916901f47d31f",
+    "recipe": {
+      "name": "Turkey Chilli with Broccoli",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 28.0,
+          "nova_group": 2,
+          "calories": 248.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 28.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onions",
+          "quantity_g": 220.0,
+          "nova_group": 1,
+          "calories": 88.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 17.0,
+          "fat_g": 0.2,
+          "fiber_g": 3.7
+        },
+        {
+          "name": "garlic cloves",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "lean minced turkey",
+          "quantity_g": 500.0,
+          "nova_group": 1,
+          "calories": 740.0,
+          "protein_g": 98.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 38.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "tinned chopped tomatoes",
+          "quantity_g": 400.0,
+          "nova_group": 3,
+          "calories": 72.0,
+          "protein_g": 3.6,
+          "net_carbs_g": 12.0,
+          "fat_g": 0.8,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "red kidney beans (drained)",
+          "quantity_g": 240.0,
+          "nova_group": 3,
+          "calories": 240.0,
+          "protein_g": 18.0,
+          "net_carbs_g": 28.0,
+          "fat_g": 1.0,
+          "fiber_g": 12.0
+        },
+        {
+          "name": "water",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "broccoli",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 102.0,
+          "protein_g": 8.4,
+          "net_carbs_g": 12.0,
+          "fat_g": 1.1,
+          "fiber_g": 7.8
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "dried chilli flakes",
+          "quantity_g": 1.8,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.5,
+          "fat_g": 0.3,
+          "fiber_g": 0.6
+        }
+      ],
+      "instructions": [
+        "Heat the oil in a pan and saut\u00e9 the onion and garlic for 4-5 minutes, until soft.",
+        "Add the turkey mince and cook, stirring frequently, until browned.",
+        "Stir in the chilli flakes, chopped tomatoes and kidney beans and pour over water. Season well.",
+        "Bring to the boil and then simmer for 20-25 minutes, adding a little more water if necessary.",
+        "Meanwhile, steam the broccoli until tender.",
+        "Serve the chilli with the broccoli."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:04:56+00:00",
+    "updated_at": "2026-08-25T04:04:56+00:00"
+  },
+  {
+    "id": "beb87f63a22f457186b4440d52efaa69",
+    "content_key": "904a1a0c15f23843",
+    "recipe": {
+      "name": "Chicken Curry",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "ground coriander",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 15.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 0.6,
+          "fat_g": 0.9,
+          "fiber_g": 2.1
+        },
+        {
+          "name": "ground cumin",
+          "quantity_g": 5.0,
+          "nova_group": 2,
+          "calories": 19.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 1.7,
+          "fat_g": 1.1,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "ground turmeric",
+          "quantity_g": 3.0,
+          "nova_group": 2,
+          "calories": 9.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 1.3,
+          "fat_g": 0.3,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 9.0,
+          "nova_group": 2,
+          "calories": 80.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 9.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onion, diced",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 4.0,
+          "fat_g": 0.1,
+          "fiber_g": 0.9
+        },
+        {
+          "name": "garlic clove, minced",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "root ginger, sliced",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 8.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 1.5,
+          "fat_g": 0.1,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "skinless chicken breast, chopped",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 330.0,
+          "protein_g": 69.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "red capsicum, sliced",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 31.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 4.7,
+          "fat_g": 0.4,
+          "fiber_g": 2.5
+        },
+        {
+          "name": "vegetable stock",
+          "quantity_g": 200.0,
+          "nova_group": 3,
+          "calories": 12.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 2.0,
+          "fat_g": 0.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "tomato paste",
+          "quantity_g": 32.0,
+          "nova_group": 3,
+          "calories": 26.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 4.3,
+          "fat_g": 0.1,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "red chilli, sliced",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.1,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "spinach leaves",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 23.0,
+          "protein_g": 2.9,
+          "net_carbs_g": 1.4,
+          "fat_g": 0.4,
+          "fiber_g": 2.2
+        },
+        {
+          "name": "fresh coriander",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 1.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 0.5,
+          "nova_group": 2,
+          "calories": 1.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 30.0,
+          "nova_group": 3,
+          "calories": 29.0,
+          "protein_g": 2.7,
+          "net_carbs_g": 1.1,
+          "fat_g": 1.5,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "In a frying pan over low-medium heat, dry-fry the ground coriander, cumin, and turmeric until fragrant. Add a dash of water and cook into a paste.",
+        "Turn the heat to medium, add the olive oil and saut\u00e9 the onion, garlic, and ginger in the spices for 3 minutes.",
+        "Add the chicken and brown it all over, cooking for approximately 5 minutes. Add in the capsicum and cook for a further 2 minutes.",
+        "Add the vegetable stock and tomato paste along with the chilli. Bring to a fast simmer and cook for 15 minutes with the lid off, or until chicken is cooked through. Season to taste with sea salt and black pepper.",
+        "Stir in the spinach until just wilted. Serve topped with Greek yogurt and fresh coriander."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:05:25+00:00",
+    "updated_at": "2026-08-25T04:05:25+00:00"
+  },
+  {
+    "id": "d25c13f6987247ce9ca32c4dd9384f74",
+    "content_key": "34cf3e5776129ec8",
+    "recipe": {
+      "name": "Greek Salad",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "Red wine vinegar",
+          "quantity_g": 15.0,
+          "nova_group": 2,
+          "calories": 3.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Extra virgin olive oil",
+          "quantity_g": 18.0,
+          "nova_group": 2,
+          "calories": 159.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 18.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Dried oregano",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "Sea salt",
+          "quantity_g": 1.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Black pepper",
+          "quantity_g": 0.5,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Cherry tomatoes",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.4,
+          "fat_g": 0.1,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "Black pitted olives",
+          "quantity_g": 10.0,
+          "nova_group": 3,
+          "calories": 12.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.3,
+          "fat_g": 1.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "Capers",
+          "quantity_g": 20.0,
+          "nova_group": 3,
+          "calories": 5.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.2,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "Baby cos lettuce",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 17.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 1.2,
+          "fat_g": 0.3,
+          "fiber_g": 2.1
+        },
+        {
+          "name": "Cucumber",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 30.0,
+          "protein_g": 1.3,
+          "net_carbs_g": 5.3,
+          "fat_g": 0.2,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "Red capsicum",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 39.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 6.0,
+          "fat_g": 0.5,
+          "fiber_g": 3.2
+        },
+        {
+          "name": "Goats cheese",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 134.0,
+          "protein_g": 9.3,
+          "net_carbs_g": 0.5,
+          "fat_g": 10.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Red onion",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 20.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 3.8,
+          "fat_g": 0.1,
+          "fiber_g": 0.9
+        },
+        {
+          "name": "Dried basil",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        }
+      ],
+      "instructions": [
+        "Add the tomatoes, olives, capers, lettuce, cucumber, red capsicum, and red onion to a large bowl. Crumble in the goats cheese and toss.",
+        "In a small bowl or jar, mix the vinegar, olive oil, basil and oregano. Season to taste.",
+        "Pour the dressing evenly over the salad and enjoy!"
+      ],
+      "prep_time_minutes": 10,
+      "servings": 2,
+      "prep_notes": "Store dressing and salad leftovers separately in the refrigerator for up to 2 days. Mix and serve.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:05:40+00:00",
+    "updated_at": "2026-08-25T04:05:40+00:00"
+  },
+  {
+    "id": "d2c5198b4c2e4c609a42a1b6fdac8615",
+    "content_key": "e2163369452f3b69",
+    "recipe": {
+      "name": "Blueberry Yogurt with Nuts and Seeds",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 115.0,
+          "protein_g": 8.0,
+          "net_carbs_g": 3.8,
+          "fat_g": 7.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "blueberries",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 17.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 3.6,
+          "fat_g": 0.1,
+          "fiber_g": 0.7
+        },
+        {
+          "name": "almonds, roughly chopped",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 29.0,
+          "protein_g": 1.1,
+          "net_carbs_g": 0.5,
+          "fat_g": 2.5,
+          "fiber_g": 0.6
+        },
+        {
+          "name": "pepitas",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 28.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 0.7,
+          "fat_g": 2.5,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "chia seeds",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 24.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 0.4,
+          "fat_g": 1.5,
+          "fiber_g": 1.7
+        }
+      ],
+      "instructions": [
+        "Blend or mix yogurt and berries together.",
+        "Serve topped with mixed nuts and seeds. Enjoy!"
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:05:53+00:00",
+    "updated_at": "2026-08-25T04:05:53+00:00"
+  },
+  {
+    "id": "e6b317a3fa9d42c78bd6b47668f5c44b",
+    "content_key": "7f9c32d353f0ec83",
+    "recipe": {
+      "name": "Green Breakfast Smoothie",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 119.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "blueberries",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 29.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 6.0,
+          "fat_g": 0.2,
+          "fiber_g": 1.2
+        },
+        {
+          "name": "spinach leaves",
+          "quantity_g": 75.0,
+          "nova_group": 1,
+          "calories": 17.0,
+          "protein_g": 2.2,
+          "net_carbs_g": 1.1,
+          "fat_g": 0.3,
+          "fiber_g": 1.6
+        },
+        {
+          "name": "full fat milk",
+          "quantity_g": 124.0,
+          "nova_group": 1,
+          "calories": 77.0,
+          "protein_g": 4.0,
+          "net_carbs_g": 5.9,
+          "fat_g": 4.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 49.0,
+          "protein_g": 4.5,
+          "net_carbs_g": 1.9,
+          "fat_g": 2.5,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Place all of the ingredients into a blender and blend until you have reached a texture that you are happy with.",
+        "Pour the smoothie into a glass, add ice cubes and enjoy!"
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 3 days.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:06:05+00:00",
+    "updated_at": "2026-08-25T04:06:05+00:00"
+  },
+  {
+    "id": "fafa25f6c2894f1ba138b776bcdd52e1",
+    "content_key": "234f4de654ee5346",
+    "recipe": {
+      "name": "Apple Pear and Hazelnut Yogurt",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "pear",
+          "quantity_g": 90.0,
+          "nova_group": 1,
+          "calories": 51.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 11.0,
+          "fat_g": 0.1,
+          "fiber_g": 2.8
+        },
+        {
+          "name": "hazelnuts",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 63.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 0.7,
+          "fat_g": 6.1,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 97.0,
+          "protein_g": 9.0,
+          "net_carbs_g": 3.6,
+          "fat_g": 5.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "apple",
+          "quantity_g": 90.0,
+          "nova_group": 1,
+          "calories": 47.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 10.3,
+          "fat_g": 0.2,
+          "fiber_g": 2.1
+        }
+      ],
+      "instructions": [
+        "Place the pear and hazelnuts into a food processor and pulse a few times to form a rough paste.",
+        "Place the paste at the bottom of a dish, add the yogurt and mix in the chunks of apple."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:12:14+00:00",
+    "updated_at": "2026-08-25T04:12:14+00:00"
+  },
+  {
+    "id": "43f538e36c4047dd8eebc0efe0f55a64",
+    "content_key": "9a11d49e24131173",
+    "recipe": {
+      "name": "Pizza Courgette",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 4.5,
+          "nova_group": 2,
+          "calories": 40.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 4.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "zucchini",
+          "quantity_g": 200.0,
+          "nova_group": 1,
+          "calories": 34.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 4.2,
+          "fat_g": 0.6,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "tomato paste",
+          "quantity_g": 32.0,
+          "nova_group": 2,
+          "calories": 26.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 5.1,
+          "fat_g": 0.2,
+          "fiber_g": 1.3
+        },
+        {
+          "name": "dried oregano",
+          "quantity_g": 0.5,
+          "nova_group": 1,
+          "calories": 1.3,
+          "protein_g": 0.05,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.02,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "dried chilli flakes",
+          "quantity_g": 0.25,
+          "nova_group": 1,
+          "calories": 0.7,
+          "protein_g": 0.03,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.04,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "black pitted olives",
+          "quantity_g": 30.0,
+          "nova_group": 3,
+          "calories": 35.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 1.0,
+          "fat_g": 3.2,
+          "fiber_g": 0.9
+        },
+        {
+          "name": "halloumi cheese",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 190.0,
+          "protein_g": 13.0,
+          "net_carbs_g": 1.2,
+          "fat_g": 15.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "parmesan cheese",
+          "quantity_g": 10.0,
+          "nova_group": 3,
+          "calories": 43.0,
+          "protein_g": 3.8,
+          "net_carbs_g": 0.4,
+          "fat_g": 2.9,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Preheat the oven to 200\u00b0C/400\u00b0F/Gas mark 6.",
+        "Brush the open side of the courgette with oil and place open face up on a lined baking tray - bake for 20 minutes.",
+        "Mix the oregano and chilli flakes with the tomato paste.",
+        "When courgette has had about 20 minutes in the oven, remove and spread the tomato mix over the open halves, topping with olives and cheeses.",
+        "Return to the oven for 10-15 minutes until the cheese is starting to golden.",
+        "Serve immediately."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:12:33+00:00",
+    "updated_at": "2026-08-25T04:12:33+00:00"
+  },
+  {
+    "id": "6d9b27345b814ffc8756625593ceb5f3",
+    "content_key": "ceca2a6df6dcaf22",
+    "recipe": {
+      "name": "Pumpkin and Pancetta Soup",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 28.0,
+          "nova_group": 2,
+          "calories": 248.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 28.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onion",
+          "quantity_g": 110.0,
+          "nova_group": 1,
+          "calories": 44.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 8.4,
+          "fat_g": 0.1,
+          "fiber_g": 1.9
+        },
+        {
+          "name": "garlic cloves",
+          "quantity_g": 12.0,
+          "nova_group": 1,
+          "calories": 18.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "pancetta",
+          "quantity_g": 80.0,
+          "nova_group": 3,
+          "calories": 260.0,
+          "protein_g": 16.0,
+          "net_carbs_g": 0.8,
+          "fat_g": 21.6,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "vegetable stock",
+          "quantity_g": 800.0,
+          "nova_group": 2,
+          "calories": 40.0,
+          "protein_g": 1.6,
+          "net_carbs_g": 6.4,
+          "fat_g": 0.8,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "butternut pumpkin",
+          "quantity_g": 400.0,
+          "nova_group": 1,
+          "calories": 160.0,
+          "protein_g": 4.0,
+          "net_carbs_g": 34.0,
+          "fat_g": 0.4,
+          "fiber_g": 8.0
+        },
+        {
+          "name": "chopped canned tomatoes",
+          "quantity_g": 800.0,
+          "nova_group": 3,
+          "calories": 200.0,
+          "protein_g": 9.6,
+          "net_carbs_g": 28.8,
+          "fat_g": 1.6,
+          "fiber_g": 12.0
+        },
+        {
+          "name": "canned lentils (drained)",
+          "quantity_g": 240.0,
+          "nova_group": 3,
+          "calories": 248.0,
+          "protein_g": 18.0,
+          "net_carbs_g": 28.8,
+          "fat_g": 0.9,
+          "fiber_g": 12.0
+        },
+        {
+          "name": "broccoli",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 102.0,
+          "protein_g": 8.4,
+          "net_carbs_g": 12.0,
+          "fat_g": 1.1,
+          "fiber_g": 7.8
+        },
+        {
+          "name": "fresh parsley",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        }
+      ],
+      "instructions": [
+        "Heat a saucepan over medium heat. Add the olive oil, onion, garlic and pancetta. Cook until the onion starts to soften, approx. 5 minutes.",
+        "Add the stock, pumpkin, tomatoes and the lentils and bring to the boil. Reduce heat and simmer for 15 minutes, or until pumpkin is tender, stirring occasionally.",
+        "Add the broccoli and simmer for an additional 5 minutes. You may choose to blitz soup with a hand blender until smooth or leave chunky.",
+        "Serve in a warm bowl, season with sea salt and black pepper, and top with parsley."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:12:56+00:00",
+    "updated_at": "2026-08-25T04:12:56+00:00"
+  },
+  {
+    "id": "833e5a47cdee4a2d96c099a1fca0e7f4",
+    "content_key": "af29dcdfe8d3f3c9",
+    "recipe": {
+      "name": "Cottage Cheese Cucumber and Salmon Salad",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "cucumber",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 22.5,
+          "protein_g": 1.0,
+          "net_carbs_g": 3.2,
+          "fat_g": 0.2,
+          "fiber_g": 0.8
+        },
+        {
+          "name": "full fat cottage cheese",
+          "quantity_g": 100.0,
+          "nova_group": 3,
+          "calories": 98.0,
+          "protein_g": 11.1,
+          "net_carbs_g": 3.4,
+          "fat_g": 4.3,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "fresh dill",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 2.2,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "spring onion",
+          "quantity_g": 15.0,
+          "nova_group": 1,
+          "calories": 4.8,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 12.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 1.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 0.5,
+          "nova_group": 1,
+          "calories": 1.3,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "smoked salmon",
+          "quantity_g": 75.0,
+          "nova_group": 3,
+          "calories": 87.8,
+          "protein_g": 13.7,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.3,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Slice cucumber lengthways and chop into small cubes and put into a medium sized bowl.",
+        "Add the cottage cheese, dill, spring onion and lemon juice then mix well to combine.",
+        "On a small plate, serve the cottage cheese mixture and season with sea salt and black pepper. Add the smoked salmon to the top of the salad."
+      ],
+      "prep_time_minutes": 8,
+      "servings": 1,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 2 days. Serve cold.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:13:12+00:00",
+    "updated_at": "2026-08-25T04:13:12+00:00"
+  },
+  {
+    "id": "dd38fd90be9a4cb59d7f1fb9cb5f84d0",
+    "content_key": "a1ae771914814065",
+    "recipe": {
+      "name": "Lentil Spinach Dhal",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 4.5,
+          "nova_group": 2,
+          "calories": 40.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 4.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onion",
+          "quantity_g": 55.0,
+          "nova_group": 1,
+          "calories": 22.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 4.2,
+          "fat_g": 0.1,
+          "fiber_g": 0.9
+        },
+        {
+          "name": "red chilli",
+          "quantity_g": 7.5,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.5,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "ground cumin",
+          "quantity_g": 1.3,
+          "nova_group": 1,
+          "calories": 5.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.3,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "ground turmeric",
+          "quantity_g": 0.7,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "dry red split lentils",
+          "quantity_g": 40.0,
+          "nova_group": 1,
+          "calories": 136.0,
+          "protein_g": 9.6,
+          "net_carbs_g": 20.0,
+          "fat_g": 0.6,
+          "fiber_g": 4.0
+        },
+        {
+          "name": "vegetable stock",
+          "quantity_g": 125.0,
+          "nova_group": 3,
+          "calories": 10.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 1.5,
+          "fat_g": 0.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "spinach leaves",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 1.4,
+          "net_carbs_g": 0.7,
+          "fat_g": 0.2,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "lemon juice",
+          "quantity_g": 12.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.8,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "fresh coriander",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 10.0,
+          "protein_g": 0.9,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.5,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Heat the olive oil in a frying pan over a low heat. Add onion and cook for 4-5 minutes, or until the onion is soft. Add the chilli, cumin and turmeric and cook for a further 2 minutes, stirring.",
+        "Add the lentils to the pan and turn up the heat. Fry the lentils for a few minutes and then pour in the vegetable stock. Turn the heat down and leave the lentils to simmer for approximately 15 minutes, or until the lentils are swollen and the stock has been absorbed, stir occasionally.",
+        "Add the spinach and cook, stirring, for a further 2 minutes. Season to taste.",
+        "Serve topped with yogurt, and lemon juice, then sprinkle with coriander and enjoy!"
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 3 days. Freeze for up to 2 months.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:13:27+00:00",
+    "updated_at": "2026-08-25T04:13:27+00:00"
+  },
+  {
+    "id": "0b7fc15d00ed4391bef6100be8d02d1b",
+    "content_key": "868c3f5d6a6f4741",
+    "recipe": {
+      "name": "Tuna and Veggie Patties",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "carrot",
+          "quantity_g": 61.0,
+          "nova_group": 1,
+          "calories": 25.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 4.2,
+          "fat_g": 0.1,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "zucchini",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 8.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 1.1,
+          "fat_g": 0.1,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "large free range eggs",
+          "quantity_g": 100.0,
+          "nova_group": 1,
+          "calories": 143.0,
+          "protein_g": 12.6,
+          "net_carbs_g": 0.7,
+          "fat_g": 9.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "tuna in olive oil, drained weight",
+          "quantity_g": 160.0,
+          "nova_group": 3,
+          "calories": 310.0,
+          "protein_g": 42.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 15.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "parmesan cheese",
+          "quantity_g": 20.0,
+          "nova_group": 3,
+          "calories": 86.0,
+          "protein_g": 7.6,
+          "net_carbs_g": 0.8,
+          "fat_g": 5.7,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "fresh multigrain breadcrumbs",
+          "quantity_g": 20.0,
+          "nova_group": 3,
+          "calories": 53.0,
+          "protein_g": 2.2,
+          "net_carbs_g": 8.5,
+          "fat_g": 0.8,
+          "fiber_g": 1.1
+        },
+        {
+          "name": "spring onions",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 10.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 1.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.8
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 1.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 0.5,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 119.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 13.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "lemon",
+          "quantity_g": 84.0,
+          "nova_group": 1,
+          "calories": 17.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 2.5,
+          "fat_g": 0.2,
+          "fiber_g": 2.4
+        }
+      ],
+      "instructions": [
+        "Squeeze out the excess water from the grated zucchini and carrot (you may want to leave it to drain in a colander for a while, or alternatively pat dry with a paper towel).",
+        "In a bowl, whisk the egg with a fork. Add the tuna, parmesan and bread crumbs and mix well. Next stir in the carrot, zucchini and spring onion. Season with salt and pepper.",
+        "Divide mixture into 2 patties per serve. Place a fry pan over medium heat and add the olive oil. Add the patties to the frypan and flatten them with a spatula. Cook for 2 minutes on each side, or until patties have turned a golden brown and are cooked through.",
+        "Serve on a plate and squeeze over lemon juice. Enjoy!"
+      ],
+      "prep_time_minutes": 15,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:13:47+00:00",
+    "updated_at": "2026-08-25T04:13:47+00:00"
+  },
+  {
+    "id": "549ef87265e842ba852b771cef461802",
+    "content_key": "70072e09673a330b",
+    "recipe": {
+      "name": "Lemon tuna patties",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "Tuna in water",
+          "quantity_g": 300.0,
+          "nova_group": 3,
+          "calories": 348.0,
+          "protein_g": 76.5,
+          "net_carbs_g": 0.0,
+          "fat_g": 3.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Red onion",
+          "quantity_g": 70.0,
+          "nova_group": 1,
+          "calories": 28.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 4.8,
+          "fat_g": 0.1,
+          "fiber_g": 1.2
+        },
+        {
+          "name": "Fresh coriander",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 1.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "Lemon zest",
+          "quantity_g": 4.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.0,
+          "fiber_g": 0.4
+        },
+        {
+          "name": "Eggs",
+          "quantity_g": 120.0,
+          "nova_group": 1,
+          "calories": 172.0,
+          "protein_g": 15.1,
+          "net_carbs_g": 0.9,
+          "fat_g": 11.4,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Wholemeal plain flour",
+          "quantity_g": 20.0,
+          "nova_group": 2,
+          "calories": 68.0,
+          "protein_g": 2.6,
+          "net_carbs_g": 12.0,
+          "fat_g": 0.4,
+          "fiber_g": 2.2
+        },
+        {
+          "name": "Olive oil",
+          "quantity_g": 27.0,
+          "nova_group": 2,
+          "calories": 240.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 27.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Place tuna, onion, coriander and lemon zest in a bowl and mix lightly with a fork. Add egg yolks (reserving whites for later) and continue to mix. Season lightly. Sift flour into mixture, and gently fold through.",
+        "Place the egg whites in a clean bowl and whisk until soft peaks form. Spoon the whites into the tuna mixture and gently fold through. With slightly wet hands, form the mixture into 8 patties.",
+        "Heat oil in a large non-stick frying pan over medium heat. Add patties and cook for 5 minutes each side, or until golden brown. Drain on paper towels. Serve tuna patties with a mixed-leaf salad tossed with an oil-free dressing."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 4,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:14:11+00:00",
+    "updated_at": "2026-08-25T04:14:11+00:00"
+  },
+  {
+    "id": "602a52d7a37d4b72b685ed9863d55b80",
+    "content_key": "33c33fba4b0de314",
+    "recipe": {
+      "name": "Dark choc raspberry bliss balls",
+      "meal_type": "snack",
+      "ingredients": [
+        {
+          "name": "Dark chocolate",
+          "quantity_g": 130.0,
+          "nova_group": 3,
+          "calories": 754.0,
+          "protein_g": 10.1,
+          "net_carbs_g": 46.8,
+          "fat_g": 55.9,
+          "fiber_g": 14.3
+        },
+        {
+          "name": "Coconut oil",
+          "quantity_g": 54.0,
+          "nova_group": 2,
+          "calories": 477.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 54.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Fresh dates, pitted",
+          "quantity_g": 250.0,
+          "nova_group": 1,
+          "calories": 693.0,
+          "protein_g": 4.5,
+          "net_carbs_g": 167.5,
+          "fat_g": 0.5,
+          "fiber_g": 16.8
+        },
+        {
+          "name": "Almond meal",
+          "quantity_g": 84.0,
+          "nova_group": 1,
+          "calories": 496.0,
+          "protein_g": 17.6,
+          "net_carbs_g": 8.4,
+          "fat_g": 42.0,
+          "fiber_g": 8.4
+        },
+        {
+          "name": "Desiccated coconut",
+          "quantity_g": 45.0,
+          "nova_group": 1,
+          "calories": 297.0,
+          "protein_g": 3.1,
+          "net_carbs_g": 3.3,
+          "fat_g": 29.3,
+          "fiber_g": 7.3
+        },
+        {
+          "name": "Cacao powder",
+          "quantity_g": 18.0,
+          "nova_group": 1,
+          "calories": 41.0,
+          "protein_g": 3.6,
+          "net_carbs_g": 3.6,
+          "fat_g": 2.0,
+          "fiber_g": 5.9
+        },
+        {
+          "name": "Raspberries",
+          "quantity_g": 125.0,
+          "nova_group": 1,
+          "calories": 65.0,
+          "protein_g": 1.5,
+          "net_carbs_g": 6.8,
+          "fat_g": 0.9,
+          "fiber_g": 8.1
+        }
+      ],
+      "instructions": [
+        "Place the dark chocolate and coconut oil into a microwave-safe bowl. Microwave uncovered in 1-minute bursts on High (100%), stirring every minute with a metal spoon until melted and smooth. Set aside for 5 minutes to cool.",
+        "Place the pitted dates, almond meal, desiccated coconut, and cacao powder into a food processor. Pulse until the dates are finely chopped.",
+        "Add the raspberries and melted chocolate mixture to the food processor and pulse until the mixture almost comes together.",
+        "Transfer the mixture to a bowl and refrigerate for 1 hour, or until firm enough to roll.",
+        "Roll the mixture into 36 small balls (approximately 20 g each) and place onto a tray.",
+        "Refrigerate for 30 minutes or until firm. Dust with extra cacao powder before serving (3 chilled bliss balls per serve)."
+      ],
+      "prep_time_minutes": 20,
+      "servings": 12,
+      "prep_notes": "Bliss balls will keep for 10 days in an airtight container in the fridge, or can be frozen for up to 3 months. Dust with extra cacao powder before serving if needed.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:14:27+00:00",
+    "updated_at": "2026-08-25T04:14:27+00:00"
+  },
+  {
+    "id": "149e7d05f3f148b7ad6790eb569f9bf1",
+    "content_key": "1f95097601990fff",
+    "recipe": {
+      "name": "Black Bean and Dark Chocolate Brownies",
+      "meal_type": "snack",
+      "ingredients": [
+        {
+          "name": "Canned black beans, drained",
+          "quantity_g": 400.0,
+          "nova_group": 3,
+          "calories": 520.0,
+          "protein_g": 35.6,
+          "net_carbs_g": 60.0,
+          "fat_g": 2.0,
+          "fiber_g": 20.0
+        },
+        {
+          "name": "Rolled oats",
+          "quantity_g": 80.0,
+          "nova_group": 1,
+          "calories": 303.0,
+          "protein_g": 10.7,
+          "net_carbs_g": 45.6,
+          "fat_g": 5.5,
+          "fiber_g": 8.4
+        },
+        {
+          "name": "Dark chocolate chips",
+          "quantity_g": 90.0,
+          "nova_group": 3,
+          "calories": 450.0,
+          "protein_g": 4.5,
+          "net_carbs_g": 45.0,
+          "fat_g": 27.0,
+          "fiber_g": 9.0
+        },
+        {
+          "name": "Egg",
+          "quantity_g": 60.0,
+          "nova_group": 1,
+          "calories": 86.0,
+          "protein_g": 7.5,
+          "net_carbs_g": 0.4,
+          "fat_g": 5.7,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Extra virgin olive oil",
+          "quantity_g": 42.0,
+          "nova_group": 2,
+          "calories": 371.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 42.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Reduced-fat milk (2%)",
+          "quantity_g": 122.0,
+          "nova_group": 1,
+          "calories": 61.0,
+          "protein_g": 4.1,
+          "net_carbs_g": 5.9,
+          "fat_g": 2.4,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Cocoa powder",
+          "quantity_g": 21.0,
+          "nova_group": 1,
+          "calories": 48.0,
+          "protein_g": 4.2,
+          "net_carbs_g": 2.7,
+          "fat_g": 2.9,
+          "fiber_g": 7.0
+        },
+        {
+          "name": "Brown sugar",
+          "quantity_g": 27.0,
+          "nova_group": 2,
+          "calories": 103.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 26.5,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Vanilla extract",
+          "quantity_g": 8.4,
+          "nova_group": 1,
+          "calories": 24.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 1.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Baking powder",
+          "quantity_g": 4.0,
+          "nova_group": 2,
+          "calories": 2.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 1.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Sea salt",
+          "quantity_g": 0.5,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Preheat a fan forced oven to 180\u00b0C.",
+        "In a food processor or blender, process the oats into a flour. Place to one side.",
+        "Combine the black beans and olive oil in the food processor or blender, and process until it forms a paste with no chunks remaining.",
+        "Return the oat flour to the food processor, along with the bean paste, baking powder, sea salt, cocoa powder, brown sugar, egg and vanilla extract. Process, slowly pouring the milk in until it forms a batter.",
+        "Create a double boiler by placing a glass bowl over a saucepan with a little boiling water. Add 60 g of the dark chocolate chips to the bowl and stir regularly until melted. Slowly pour the melted chocolate into the batter and mix through.",
+        "Pour into a 20 cm x 20 cm square baking tray lined with baking paper. Top with the remaining 30 g of dark chocolate chips.",
+        "Bake for 20 to 25 minutes or until cooked through. Leave to cool before slicing into six even portions."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 6,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:14:46+00:00",
+    "updated_at": "2026-08-25T04:14:46+00:00"
+  },
+  {
+    "id": "e84bf9bfdce04306ac505db5cd751ce0",
+    "content_key": "d1646d6642e3dcb7",
+    "recipe": {
+      "name": "White Bean and Cauliflower Soup",
+      "meal_type": "lunch",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 4.5,
+          "nova_group": 2,
+          "calories": 36.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 5.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "cauliflower",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 38.0,
+          "protein_g": 2.9,
+          "net_carbs_g": 4.5,
+          "fat_g": 0.4,
+          "fiber_g": 3.0
+        },
+        {
+          "name": "cannellini beans",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 59.0,
+          "protein_g": 4.4,
+          "net_carbs_g": 4.5,
+          "fat_g": 0.4,
+          "fiber_g": 3.8
+        },
+        {
+          "name": "onion",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 12.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 2.3,
+          "fat_g": 0.0,
+          "fiber_g": 0.5
+        },
+        {
+          "name": "garlic",
+          "quantity_g": 3.0,
+          "nova_group": 1,
+          "calories": 4.5,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "vegetable stock",
+          "quantity_g": 300.0,
+          "nova_group": 3,
+          "calories": 15.0,
+          "protein_g": 0.5,
+          "net_carbs_g": 2.5,
+          "fat_g": 0.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "parmesan cheese",
+          "quantity_g": 10.0,
+          "nova_group": 3,
+          "calories": 43.0,
+          "protein_g": 3.8,
+          "net_carbs_g": 0.4,
+          "fat_g": 2.9,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "pepitas",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 57.0,
+          "protein_g": 3.0,
+          "net_carbs_g": 1.1,
+          "fat_g": 4.9,
+          "fiber_g": 0.6
+        }
+      ],
+      "instructions": [
+        "In a pot, saute onion and garlic for a few minutes before adding the cauliflower. Cook for 5 minutes.",
+        "Add the beans and stock and bring up to a simmer - cook for another 10 minutes - until cauliflower is softened.",
+        "Remove from heat and blitz with a stick blender until smooth. Taste and adjust seasoning to your liking.",
+        "Serve topped with parmesan and pumpkin seeds."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 1,
+      "prep_notes": "Store leftovers in an airtight container in the refrigerator for up to 3 days. Reheat and serve. Batch cook and freeze in portions for up to 2 months. Defrost and reheat before serving.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:15:02+00:00",
+    "updated_at": "2026-08-25T04:15:02+00:00"
+  },
+  {
+    "id": "b5c1b208aaf6482b8436430c75e88021",
+    "content_key": "639b15d9d474bee2",
+    "recipe": {
+      "name": "Steak with Creamy Beans",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "extra virgin olive oil (for leeks)",
+          "quantity_g": 14.0,
+          "nova_group": 2,
+          "calories": 124.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 14.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "leeks, trimmed and finely sliced",
+          "quantity_g": 150.0,
+          "nova_group": 1,
+          "calories": 91.0,
+          "protein_g": 2.3,
+          "net_carbs_g": 14.7,
+          "fat_g": 0.5,
+          "fiber_g": 2.7
+        },
+        {
+          "name": "garlic cloves, minced",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 9.0,
+          "protein_g": 0.4,
+          "net_carbs_g": 1.9,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "tinned butter beans, drained and rinsed",
+          "quantity_g": 250.0,
+          "nova_group": 3,
+          "calories": 190.0,
+          "protein_g": 14.0,
+          "net_carbs_g": 13.0,
+          "fat_g": 0.8,
+          "fiber_g": 12.0
+        },
+        {
+          "name": "fresh parsley, chopped",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 2.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 0.1,
+          "fat_g": 0.0,
+          "fiber_g": 0.1
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.2
+        },
+        {
+          "name": "beef sirloin steak",
+          "quantity_g": 360.0,
+          "nova_group": 1,
+          "calories": 490.0,
+          "protein_g": 74.5,
+          "net_carbs_g": 0.0,
+          "fat_g": 21.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "plain full fat Greek yogurt",
+          "quantity_g": 30.0,
+          "nova_group": 1,
+          "calories": 29.0,
+          "protein_g": 2.7,
+          "net_carbs_g": 1.1,
+          "fat_g": 1.5,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "extra virgin olive oil (for yogurt)",
+          "quantity_g": 27.0,
+          "nova_group": 2,
+          "calories": 239.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 27.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Heat the oil in a pan and saut\u00e9 the leeks and garlic over a low heat for 12-15 minutes, until soft.",
+        "Add the beans and enough water just to cover then simmer for 8-10 minutes, until the beans are very soft.",
+        "Meanwhile, heat a griddle until very hot and cook the steaks to your liking.",
+        "Stir the parsley, yogurt, extra virgin olive oil, salt, and pepper into the beans.",
+        "Slice the steak into large chunks and serve on a bed of creamy beans."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 2,
+      "prep_notes": null,
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:15:28+00:00",
+    "updated_at": "2026-08-25T04:15:28+00:00"
+  },
+  {
+    "id": "e2127dc37566453e8d6355fb16bacd22",
+    "content_key": "87fd9d73b9a887b1",
+    "recipe": {
+      "name": "Chicken Cacciatore",
+      "meal_type": "dinner",
+      "ingredients": [
+        {
+          "name": "dry couscous",
+          "quantity_g": 300.0,
+          "nova_group": 1,
+          "calories": 1128.0,
+          "protein_g": 38.4,
+          "net_carbs_g": 216.0,
+          "fat_g": 1.8,
+          "fiber_g": 15.0
+        },
+        {
+          "name": "extra virgin olive oil",
+          "quantity_g": 56.0,
+          "nova_group": 2,
+          "calories": 495.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 56.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "skinless chicken breast",
+          "quantity_g": 600.0,
+          "nova_group": 1,
+          "calories": 660.0,
+          "protein_g": 138.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 12.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "onions",
+          "quantity_g": 220.0,
+          "nova_group": 1,
+          "calories": 88.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 17.6,
+          "fat_g": 0.2,
+          "fiber_g": 3.7
+        },
+        {
+          "name": "garlic cloves",
+          "quantity_g": 12.0,
+          "nova_group": 1,
+          "calories": 18.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 3.6,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "red capsicums",
+          "quantity_g": 240.0,
+          "nova_group": 1,
+          "calories": 62.0,
+          "protein_g": 2.4,
+          "net_carbs_g": 9.4,
+          "fat_g": 0.7,
+          "fiber_g": 5.0
+        },
+        {
+          "name": "green capsicums",
+          "quantity_g": 240.0,
+          "nova_group": 1,
+          "calories": 48.0,
+          "protein_g": 2.1,
+          "net_carbs_g": 7.0,
+          "fat_g": 0.4,
+          "fiber_g": 4.1
+        },
+        {
+          "name": "red wine",
+          "quantity_g": 200.0,
+          "nova_group": 3,
+          "calories": 170.0,
+          "protein_g": 0.2,
+          "net_carbs_g": 5.2,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "canned chopped tomatoes",
+          "quantity_g": 800.0,
+          "nova_group": 3,
+          "calories": 200.0,
+          "protein_g": 9.6,
+          "net_carbs_g": 28.0,
+          "fat_g": 1.6,
+          "fiber_g": 8.0
+        },
+        {
+          "name": "green pitted olives",
+          "quantity_g": 60.0,
+          "nova_group": 3,
+          "calories": 90.0,
+          "protein_g": 0.6,
+          "net_carbs_g": 0.6,
+          "fat_g": 9.2,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "fresh parsley",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 4.0,
+          "protein_g": 0.3,
+          "net_carbs_g": 0.3,
+          "fat_g": 0.1,
+          "fiber_g": 0.3
+        },
+        {
+          "name": "sea salt",
+          "quantity_g": 2.0,
+          "nova_group": 2,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "black pepper",
+          "quantity_g": 1.0,
+          "nova_group": 1,
+          "calories": 3.0,
+          "protein_g": 0.1,
+          "net_carbs_g": 0.4,
+          "fat_g": 0.0,
+          "fiber_g": 0.3
+        }
+      ],
+      "instructions": [
+        "Cook the couscous according to package instructions.",
+        "Heat half the olive oil in a frying pan over medium-high heat. Add the chicken and cook for 4 minutes on each side, or until browned and cooked through. Set aside.",
+        "Reduce heat to medium and add the remaining olive oil and onion. Cook for 4 minutes, or until softened. Add the garlic and capsicums and cook for a further 2 minutes.",
+        "Stir in the olives and red wine, and cook for 2 minutes to reduce the red wine slightly. Add the tomatoes, bring to a simmer and return the chicken to the pan. Reduce the heat to low and simmer for 10 minutes, stirring occasionally.",
+        "Top couscous with the chicken mixture. Season with salt and pepper then sprinkle with the parsley."
+      ],
+      "prep_time_minutes": 10,
+      "servings": 4,
+      "prep_notes": "Store leftovers in an airtight container in the fridge for up to 3 days, or freeze in portions for up to 2 months.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": true
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:15:53+00:00",
+    "updated_at": "2026-08-25T04:15:53+00:00"
+  },
+  {
+    "id": "208f5e3ba8d64388967e435dd5cd9f36",
+    "content_key": "d95c38d5e7e5acbe",
+    "recipe": {
+      "name": "Peanut Butter and Choc Smoothie",
+      "meal_type": "breakfast",
+      "ingredients": [
+        {
+          "name": "Natural crunchy peanut butter",
+          "quantity_g": 32.0,
+          "nova_group": 1,
+          "calories": 190.0,
+          "protein_g": 8.0,
+          "net_carbs_g": 4.0,
+          "fat_g": 16.0,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "Full fat milk",
+          "quantity_g": 258.0,
+          "nova_group": 1,
+          "calories": 155.0,
+          "protein_g": 8.3,
+          "net_carbs_g": 12.4,
+          "fat_g": 8.3,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Whole rolled oats",
+          "quantity_g": 10.0,
+          "nova_group": 1,
+          "calories": 38.0,
+          "protein_g": 1.3,
+          "net_carbs_g": 5.6,
+          "fat_g": 0.7,
+          "fiber_g": 1.0
+        },
+        {
+          "name": "Cacao powder",
+          "quantity_g": 6.0,
+          "nova_group": 1,
+          "calories": 14.0,
+          "protein_g": 1.2,
+          "net_carbs_g": 1.0,
+          "fat_g": 0.7,
+          "fiber_g": 2.0
+        },
+        {
+          "name": "Full fat cottage cheese",
+          "quantity_g": 50.0,
+          "nova_group": 3,
+          "calories": 49.0,
+          "protein_g": 5.8,
+          "net_carbs_g": 1.7,
+          "fat_g": 2.2,
+          "fiber_g": 0.0
+        },
+        {
+          "name": "Chia seeds",
+          "quantity_g": 5.0,
+          "nova_group": 1,
+          "calories": 24.0,
+          "protein_g": 0.8,
+          "net_carbs_g": 0.4,
+          "fat_g": 1.5,
+          "fiber_g": 1.7
+        },
+        {
+          "name": "Ice cubes",
+          "quantity_g": 50.0,
+          "nova_group": 1,
+          "calories": 0.0,
+          "protein_g": 0.0,
+          "net_carbs_g": 0.0,
+          "fat_g": 0.0,
+          "fiber_g": 0.0
+        }
+      ],
+      "instructions": [
+        "Place all ingredients, including ice, into a blender.",
+        "Blitz until completely smooth.",
+        "Pour into a tall glass and enjoy immediately, or store in the fridge overnight and shake well before drinking."
+      ],
+      "prep_time_minutes": 5,
+      "servings": 1,
+      "prep_notes": "Can be made the night before for an easy grab-and-go breakfast. Shake well before drinking.",
+      "long_oven_cook": false,
+      "bulk_prep_friendly": false
+    },
+    "is_favorite": true,
+    "source": "imported",
+    "added_at": "2026-08-25T04:16:09+00:00",
+    "updated_at": "2026-08-25T04:16:09+00:00"
   }
 ]
