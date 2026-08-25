@@ -49,10 +49,19 @@ size.
 | `SPACE_SECTION` | `3` (12px) | between sections in a panel or dialog |
 | `SPACE_PAGE` | `4` (16px) | dialog padding, page gutters |
 
-**Space siblings with the parent's `gap`, not per-element margins.** The
-scattered `mt-1`/`mt-2`/`mb-1`/`mt-0.5` in the current code is what this
-replaces: margins collapse and double in ways a gap does not, and they put
-the spacing decision on the child rather than on the layout that owns it.
+**Space siblings with the parent's `gap`, not per-element margins.** Margins
+collapse and double in ways a gap does not, and they put the spacing decision
+on the child rather than on the layout that owns it. Write new code this way.
+
+The scattered `mt-1`/`mt-2`/`mb-1`/`mt-0.5` still in the current code is
+legacy, and is **deliberately not phase 1's job** — converting a margin to a
+parent gap moves layout, and phase 1's premise is that nothing moves. Phase 2
+handles it, while it is restructuring containers anyway.
+
+`1.5` is not a step. Where it appears in legacy code it resolves **down** to
+`SPACE_TIGHT`: it is 6px, exactly halfway between the `1` and `2` steps, so
+"nearest" is undefined, and the dense card interiors where it appears cannot
+absorb growth from both a larger type scale and a wider gap at once.
 
 ## Radius — three values
 
