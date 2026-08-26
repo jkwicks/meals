@@ -99,3 +99,5 @@ that is the reasoning a future reader will otherwise undo.
 
 Report at the end: which files changed, how many call sites moved, any card
 you trimmed, and anything you found that belongs in a later phase.
+
+Publish a release in github. 

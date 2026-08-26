@@ -17,6 +17,43 @@ from nicegui import ui
 from planner import TRAINING_INTENSITY_SPLIT
 from week import humanize
 
+# The type scale — four sizes, replacing nine crammed into an 8-to-14-pixel
+# band (56 uses of the smallest pixel value alone, 35 of the next) that no
+# two of were distinguishable at a glance. That was noise, not hierarchy.
+# Phase 1 of `ui-redesign.md`; the canonical statement of the scale is
+# `.claude/rules/ui.md`, which auto-loads on any `ui_*.py` touch. Weight and
+# colour carry the rest of the hierarchy now, not a fifth size — resist
+# adding one.
+TEXT_MICRO = "text-[10px]"  # data figures, chip/badge labels, link lines, captions
+TEXT_BODY = "text-xs"  # the default — labels, inputs, card titles, list rows
+TEXT_HEAD = "text-sm"  # section headings, day names, dialog section titles
+TEXT_DISPLAY = "text-lg"  # dialog titles, a recipe name in the detail view
+
+# Spacing — five steps, each with a job. Space siblings with the parent's
+# `gap`, not a per-element margin: margins collapse and double in ways a gap
+# does not, and put the spacing decision on the child rather than on the
+# layout that owns it. Write new code this way. The `mt-*`/`mb-*`/`mx-*`
+# still scattered through `ui_*.py` is legacy and deliberately untouched by
+# this scale — converting a margin to a parent `gap` moves layout, which is
+# phase 2's job, not phase 1's.
+SPACE_HAIR = "0.5"  # inside a chip or badge; icon to its own label
+SPACE_TIGHT = "1"  # between rows inside one card
+SPACE_BASE = "2"  # between cards, between form fields
+SPACE_SECTION = "3"  # between sections in a panel or dialog
+SPACE_PAGE = "4"  # dialog padding, page gutters
+# `1.5` was never a step: it is 6px, exactly halfway between SPACE_TIGHT and
+# SPACE_BASE, so "nearest" is undefined. Every one of its call sites resolves
+# to SPACE_TIGHT — down, not up, because the dense card interiors where `1.5`
+# appeared cannot absorb growth from a larger type scale and a wider gap at
+# once.
+
+# Radius — three values. The two in-between Tailwind radii this codebase used
+# to reach for are retired; every call site that used either now names which
+# of these three it actually meant.
+RADIUS_CARD = "rounded"  # cards, boxes, inputs
+RADIUS_PANEL = "rounded-lg"  # dialogs, panels
+RADIUS_PILL = "rounded-full"  # bars, dots, pills
+
 # The two cached weeks the app keeps on disk at once (see
 # `repository.LocalJSONRepository._week_plan_path`). "current" is the
 # original single-file layout (week_plan.json); "next" is stored alongside it
@@ -77,6 +114,10 @@ STATUS_STYLES = {
 # mirrors the same threshold `storage_note` used to write the cook's own
 # storage note, so the badge never disagrees with the text a user would see
 # on the recipe.
+#
+# "fridge"'s amber is the fifth meaning that colour carries in this UI (see
+# the collision note beside TRAINING_ACCENT below) — recorded, not resolved,
+# per phase 1 of `ui-redesign.md`.
 PREP_BADGE_STYLES = {
     "fridge": {
         "label": "⚡ Prepped on Sun",
@@ -119,7 +160,17 @@ def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
 # Amber for training is not a new choice: the telemetry header's per-day
 # workout marker is already an amber bolt, and the generation dialog's is the
 # same icon in the same tint, so a session reads the same wherever it appears.
-# Violet is new, and only ever means "location".
+# Violet is new, and only ever means "location" — here.
+#
+# **Known collisions, recorded per phase 1 of `ui-redesign.md` and not
+# resolved here** — resolving either is a design decision for phase 3, made
+# when the surfaces using them are rebuilt anyway:
+# - Amber means five things: near-target (`BAND_COLOURS`), carbs
+#   (`MACRO_TINTS`), training (`TRAINING_ACCENT`, here), a target override
+#   (the telemetry marker in `ui_telemetry.py`), and fridge storage
+#   (`PREP_BADGE_STYLES`).
+# - Violet means two: fat (`MACRO_TINTS`) and location (`LOCATION_ACCENT`,
+#   here).
 LOCATION_ACCENT = "bg-violet-400/10 text-violet-200 ring-1 ring-inset ring-violet-300/25"
 TRAINING_ACCENT = "bg-amber-400/10 text-amber-200 ring-1 ring-inset ring-amber-300/25"
 # A scheduled rest day. Explicitly muted rather than left in TRAINING_ACCENT:
@@ -193,6 +244,9 @@ MACRO_LABELS = [
 # strip, each with the tint that identifies it everywhere in the UI. Colour is
 # on the letter, not the number: the digits are what you compare between cards,
 # so they stay one weight and one colour down the whole column.
+#
+# `net_carbs_g`'s amber and `fat_g`'s violet are each one instance of a wider
+# collision — see the note beside `LOCATION_ACCENT`/`TRAINING_ACCENT` above.
 MACRO_TINTS = {
     "protein_g": "text-sky-300",
     "net_carbs_g": "text-amber-300",
@@ -228,7 +282,7 @@ MACRO_DETAIL_LABELS = [
 # dialog shares it exactly — a second hand-typed copy drifting by a pixel of
 # tracking is what makes this kind of layout look approximate.
 MONO_SECTION_LABEL = (
-    "text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500"
+    f"{TEXT_BODY} font-mono uppercase tracking-[0.18em] text-slate-500"
 )
 
 # Fallbacks for config.json's "ui_settings" object, used when a config.json
@@ -252,6 +306,9 @@ DEFAULT_UI_SETTINGS = {
 # because these are painted onto plain divs (a two-segment bar is not something
 # `ui.linear_progress` can draw) and the same value has to serve as the
 # overshoot segment at reduced alpha.
+#
+# "near"'s amber is one instance of a wider collision — see the note beside
+# `LOCATION_ACCENT`/`TRAINING_ACCENT` above.
 BAND_COLOURS = {
     "on": "#34d399",  # within ±5% of target
     "near": "#fbbf24",  # ±5–15%: worth seeing, not worth fixing
@@ -415,11 +472,11 @@ def link_line(marker: str, text: str, colour: str) -> None:
     Both ends get one — the cook says who eats it, the leftover says what it
     came from — so the pairing is readable without hovering anything.
     """
-    with ui.element("div").classes("flex flex-row items-center gap-1 min-w-0"):
-        ui.element("span").classes("shrink-0 w-1.5 h-1.5 rounded-full").style(
+    with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT} min-w-0"):
+        ui.element("span").classes(f"shrink-0 w-1.5 h-1.5 {RADIUS_PILL}").style(
             f"background: {colour}"
         )
-        ui.label(f"{marker} {text}").classes("text-[9px] truncate").style(f"color: {colour}")
+        ui.label(f"{marker} {text}").classes(f"{TEXT_MICRO} truncate").style(f"color: {colour}")
 
 
 def macro_band(actual: float, target: float) -> str:
@@ -461,10 +518,10 @@ def telemetry_bar(
     fill_pct = min(max(ratio, 0.0), bar_scale_limit) / bar_scale_limit * 100
     target_pct = 100 / bar_scale_limit
     with ui.element("div").classes(
-        "relative w-full rounded-full bg-slate-800 overflow-hidden"
+        f"relative w-full {RADIUS_PILL} bg-slate-800 overflow-hidden"
     ).style(f"height: {height}"):
         ui.element("div").classes(
-            "absolute inset-y-0 left-0 rounded-full transition-all duration-300"
+            f"absolute inset-y-0 left-0 {RADIUS_PILL} transition-all duration-300"
         ).style(f"width: {fill_pct:.1f}%; background: {colour};")
         ui.element("div").classes("absolute inset-y-0 w-px bg-slate-100/50").style(
             f"left: {target_pct:.1f}%;"

@@ -26,6 +26,15 @@ from shopping import (
     format_shopping_list_keep,
 )
 from ui_context import UIContext
+from ui_theme import (
+    RADIUS_CARD,
+    SPACE_BASE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+)
 from week import parse_slot_id, shopping_windows, slot_label
 
 
@@ -73,11 +82,11 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
     def shopping_panel() -> None:
         plan = state.week_plan
         if plan is None:
-            ui.label("No shopping list yet").classes("text-sm text-slate-300")
+            ui.label("No shopping list yet").classes(f"{TEXT_HEAD} text-slate-300")
             ui.label(
                 "A list is built from generated recipes, so there is nothing to buy "
                 "until the week has been generated."
-            ).classes("text-xs text-slate-500")
+            ).classes(f"{TEXT_BODY} text-slate-500")
             return
 
         # Daily mode reuses the same partitioning function with every day
@@ -87,7 +96,7 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
         windows = shopping_windows(state.days, window_days)
         if not windows:
             ui.label("No shopping days set — pick some in the drawer.").classes(
-                "text-xs text-slate-400"
+                f"{TEXT_BODY} text-slate-400"
             )
             return
 
@@ -99,15 +108,15 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
             shopping_list = aggregate_cook_events(events, window.days) if events else None
 
             with ui.element("div").classes(
-                "flex flex-col gap-2 p-2 rounded border border-slate-800 bg-slate-950/40"
+                f"flex flex-col gap-{SPACE_BASE} p-{SPACE_BASE} {RADIUS_CARD} border border-slate-800 bg-slate-950/40"
             ):
-                with ui.element("div").classes("flex flex-row items-center justify-between gap-2"):
+                with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_BASE}"):
                     with ui.element("div").classes("flex flex-col min-w-0"):
-                        ui.label(window.label).classes("text-xs font-semibold text-slate-100")
+                        ui.label(window.label).classes(f"{TEXT_BODY} font-semibold text-slate-100")
                         ui.label(
                             f"{len(events)} cook session(s)"
                             + (f" · {len(shopping_list.items())} items" if shopping_list else "")
-                        ).classes("text-[10px] text-slate-500")
+                        ).classes(f"{TEXT_MICRO} text-slate-500")
                     if shopping_list:
                         ui.button(
                             "Copy for Keep",
@@ -119,7 +128,7 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
 
                 if not events:
                     ui.label("Nothing cooked in this window.").classes(
-                        "text-[11px] text-slate-500 italic"
+                        f"{TEXT_BODY} text-slate-500 italic"
                     )
                     continue
 
@@ -138,23 +147,23 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
                     ui.label(
                         f"{', '.join(failed)} failed to generate — nothing for "
                         "those meals is on this list."
-                    ).classes("text-[10px] text-rose-300 p-1 rounded bg-rose-500/10")
+                    ).classes(f"{TEXT_MICRO} text-rose-300 p-{SPACE_TIGHT} {RADIUS_CARD} bg-rose-500/10")
 
                 # Quoted because NiceGUI's props parser drops an unquoted value
-                # containing brackets — `header-class=text-[11px]` silently
-                # never reaches Quasar at all.
+                # containing brackets — an unquoted arbitrary-value class like
+                # `header-class=w-[3px]` silently never reaches Quasar at all.
                 with ui.expansion("What this trip is for").props(
-                    "dense header-class='text-[11px] text-slate-400 px-0'"
+                    f"dense header-class='{TEXT_BODY} text-slate-400 px-0'"
                 ).classes("w-full"):
                     ui.label(
                         "Quantities below already include every portion."
-                    ).classes("text-[10px] text-slate-500")
+                    ).classes(f"{TEXT_MICRO} text-slate-500")
                     for line in cook_plan_lines(events):
-                        ui.label(line).classes("text-[10px] text-slate-400")
+                        ui.label(line).classes(f"{TEXT_MICRO} text-slate-400")
 
                 for department in sorted(shopping_list.categories):
                     ui.label(department).classes(
-                        "text-[10px] uppercase tracking-widest text-slate-500 mt-1"
+                        f"{TEXT_MICRO} uppercase tracking-widest text-slate-500 mt-1"
                     )
                     for item in shopping_list.categories[department]:
                         text = f"{item.name} — {format_quantity(item.name, item.total_amount_g)}"
@@ -164,18 +173,18 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
                         if item.buy_late:
                             text += "  ← buy fresh closer to the day"
                         ui.checkbox(text).props("dense size=xs color=teal").classes(
-                            "text-[11px] "
+                            f"{TEXT_BODY} "
                             + ("text-amber-300" if item.buy_late else "text-slate-200")
                         )
 
     with ui.right_drawer(value=False, bordered=True).classes(
-        "bg-slate-900 p-3 flex flex-col gap-3 overflow-y-auto"
+        f"bg-slate-900 p-{SPACE_SECTION} flex flex-col gap-{SPACE_SECTION} overflow-y-auto"
     ).props(":width=420") as shopping_drawer:
         with ui.element("div").classes("flex flex-row items-center justify-between"):
-            with ui.element("div").classes("flex flex-row items-center gap-1"):
-                ui.icon("shopping_cart").classes("text-sm text-slate-500")
+            with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                ui.icon("shopping_cart").classes(f"{TEXT_HEAD} text-slate-500")
                 ui.label("Shopping list").classes(
-                    "text-xs uppercase tracking-widest text-slate-500"
+                    f"{TEXT_BODY} uppercase tracking-widest text-slate-500"
                 )
             ui.button(icon="close", on_click=lambda: shopping_drawer.hide()).props(
                 "dense flat size=sm"
@@ -186,11 +195,11 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
             refreshables.refresh("shopping")
 
         with ui.element("div").classes("flex flex-row items-center justify-between"):
-            ui.label("Shop days (batch trips)").classes("text-[11px] text-slate-400")
+            ui.label("Shop days (batch trips)").classes(f"{TEXT_BODY} text-slate-400")
             ui.switch(value=state.daily_shop_mode, on_change=on_daily_shop_toggle).props(
                 "dense size=sm color=teal"
             )
-            ui.label("Daily shop").classes("text-[11px] text-slate-400")
+            ui.label("Daily shop").classes(f"{TEXT_BODY} text-slate-400")
 
         shopping_panel()
 

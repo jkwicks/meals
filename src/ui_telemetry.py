@@ -15,7 +15,22 @@ from nicegui import ui
 
 from ui_context import UIContext
 from ui_state import pipeline_value
-from ui_theme import MACRO_LABELS, MACRO_TINTS, PIPELINE_STAGES, telemetry_bar
+from ui_theme import (
+    MACRO_LABELS,
+    MACRO_TINTS,
+    PIPELINE_STAGES,
+    RADIUS_CARD,
+    RADIUS_PANEL,
+    RADIUS_PILL,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_TIGHT,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+    telemetry_bar,
+)
 from week import week_date_range
 
 
@@ -44,7 +59,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
         if day is None:
             return
         ui.label(f"{day} — context pipeline").classes(
-            "text-sm font-semibold text-slate-200 mb-2"
+            f"{TEXT_HEAD} font-semibold text-slate-200 mb-2"
         )
         with ui.stepper().props("header-nav flat").classes("bg-transparent w-full"):
             for key, label, icon, description, connected in PIPELINE_STAGES:
@@ -53,19 +68,19 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                 if not connected:
                     step.props("disable")
                 with step:
-                    ui.label(description).classes("text-xs text-slate-400")
+                    ui.label(description).classes(f"{TEXT_BODY} text-slate-400")
                     if connected:
                         ui.label(value if value is not None else "Nothing scheduled").classes(
-                            "text-sm font-mono mt-1 "
+                            f"{TEXT_HEAD} font-mono mt-1 "
                             + ("text-emerald-300" if value is not None else "text-slate-500")
                         )
                     else:
                         ui.label("Not connected").classes(
-                            "text-[10px] uppercase tracking-wide text-slate-600 mt-1"
+                            f"{TEXT_MICRO} uppercase tracking-wide text-slate-600 mt-1"
                         )
 
     with ui.dialog() as pipeline_dialog:
-        with ui.element("div").classes("bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full"):
+        with ui.element("div").classes(f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full"):
             pipeline_detail()
 
     def open_pipeline(day: str) -> None:
@@ -84,15 +99,15 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
 
     @ui.refreshable
     def context_pipeline() -> None:
-        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full mb-1"):
+        with ui.element("div").classes(f"grid grid-cols-8 gap-{SPACE_BASE} w-full mb-1"):
             # Empty spacer, not a pipeline row — none of PIPELINE_STAGES applies
             # to the prep column, but the grid still needs a column 0 here to
             # stay aligned with telemetry() and canvas() below it.
             ui.element("div")
             for day in state.days:
                 with ui.element("div").classes(
-                    "flex flex-row items-center gap-0.5 cursor-pointer rounded "
-                    "px-0.5 py-0.5 hover:bg-slate-800/60"
+                    f"flex flex-row items-center gap-{SPACE_HAIR} cursor-pointer {RADIUS_CARD} "
+                    f"px-{SPACE_HAIR} py-{SPACE_HAIR} hover:bg-slate-800/60"
                 ).on("click", lambda day=day: open_pipeline(day)):
                     for i, (key, label, icon, description, connected) in enumerate(
                         PIPELINE_STAGES
@@ -110,10 +125,10 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                                 "border border-dashed border-slate-700"
                             )
                             tip = f"{label} — not connected yet"
-                        with ui.icon(icon).classes(f"text-[13px] rounded-full p-1 {look}"):
+                        with ui.icon(icon).classes(f"{TEXT_HEAD} {RADIUS_PILL} p-{SPACE_TIGHT} {look}"):
                             ui.tooltip(tip)
                         if i < len(PIPELINE_STAGES) - 1:
-                            ui.icon("chevron_right").classes("text-[10px] text-slate-700")
+                            ui.icon("chevron_right").classes(f"{TEXT_MICRO} text-slate-700")
 
     # ---- header: week date banner -----------------------------------------
     # Purely cosmetic — nothing here reads back into state — but `state.days`
@@ -129,14 +144,14 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
             state.days, state.week_plan.generated_at if state.week_plan else None
         )
         fmt = "%b %-d, %Y"
-        with ui.element("div").classes("flex flex-row items-center gap-2 mb-1"):
+        with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_BASE} mb-1"):
             with ui.element("div").classes(
-                "flex flex-row items-center gap-1.5 px-2 py-1 rounded border "
+                f"flex flex-row items-center gap-{SPACE_TIGHT} px-{SPACE_BASE} py-{SPACE_TIGHT} {RADIUS_CARD} border "
                 "border-slate-800 bg-slate-800/40 w-fit"
             ):
-                ui.label("📅").classes("text-xs")
+                ui.label("📅").classes(TEXT_BODY)
                 ui.label(f"Week of {start.strftime(fmt)} – {end.strftime(fmt)}").classes(
-                    "text-[11px] font-medium text-slate-300 tracking-wide"
+                    f"{TEXT_BODY} font-medium text-slate-300 tracking-wide"
                 )
             # Unique plant-department ingredients (Produce, Herbs & Spices,
             # Nuts/Seeds & Spreads) across the week's cook events — see
@@ -144,12 +159,12 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
             # generated, same as every other week_plan-derived reading here.
             plant_count = len(state.week_plan.unique_plants) if state.week_plan else 0
             with ui.element("div").classes(
-                "flex flex-row items-center gap-1.5 px-2 py-1 rounded border "
+                f"flex flex-row items-center gap-{SPACE_TIGHT} px-{SPACE_BASE} py-{SPACE_TIGHT} {RADIUS_CARD} border "
                 "border-emerald-800/60 bg-emerald-900/20 w-fit"
             ):
-                ui.label("🌱").classes("text-xs")
+                ui.label("🌱").classes(TEXT_BODY)
                 ui.label(f"Plant Diversity: {plant_count}").classes(
-                    "text-[11px] font-medium text-emerald-300 tracking-wide"
+                    f"{TEXT_BODY} font-medium text-emerald-300 tracking-wide"
                 )
                 with ui.tooltip():
                     ui.label(
@@ -166,25 +181,25 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
     def prep_telemetry_cell() -> None:
         session = state.week_plan.sunday_prep_session if state.week_plan else None
         max_active = state.config["max_prep_active_mins"]
-        with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} min-w-0"):
             with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                 ui.label("PREP").classes(
-                    "text-[11px] font-semibold tracking-wider text-indigo-300"
+                    f"{TEXT_BODY} font-semibold tracking-wider text-indigo-300"
                 )
             if session is None:
-                ui.label("Not generated").classes("text-[10px] font-mono text-slate-500")
+                ui.label("Not generated").classes(f"{TEXT_MICRO} font-mono text-slate-500")
             else:
                 ui.label(
                     f"Active Prep: {session.total_active_minutes} / {max_active} mins"
-                ).classes("text-[10px] font-mono text-indigo-200")
+                ).classes(f"{TEXT_MICRO} font-mono text-indigo-200")
                 ui.label(
                     f"Passive Time: {session.total_passive_minutes} mins"
-                ).classes("text-[10px] font-mono text-indigo-200/70")
+                ).classes(f"{TEXT_MICRO} font-mono text-indigo-200/70")
 
     @ui.refreshable
     def telemetry() -> None:
         bar_scale_limit = state.config["ui_settings"]["bar_scale_limit"]
-        with ui.element("div").classes("grid grid-cols-8 gap-2 w-full"):
+        with ui.element("div").classes(f"grid grid-cols-8 gap-{SPACE_BASE} w-full"):
             prep_telemetry_cell()
             for day in state.days:
                 target = state.targets_for(day)
@@ -193,7 +208,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                 protein, protein_goal = totals["protein_g"], float(target["protein_g"])
                 overridden = day in state.target_overrides
                 training = state.has_training(day)
-                with ui.element("div").classes("flex flex-col gap-1 min-w-0"):
+                with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} min-w-0"):
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         # A dot is why the denominator moved: amber for a drawer
                         # target override, emerald for a scheduled workout —
@@ -202,7 +217,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                         # actually generated for.
                         marker = "•" if overridden else ("⚡" if training else "")
                         ui.label(day[:3].upper() + marker).classes(
-                            "text-[11px] font-semibold tracking-wider "
+                            f"{TEXT_BODY} font-semibold tracking-wider "
                             + (
                                 "text-amber-300"
                                 if overridden
@@ -210,7 +225,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                             )
                         )
                         ui.label(f"{kcal:.0f}/{kcal_goal:.0f} kcal").classes(
-                            "text-[10px] font-mono text-slate-400"
+                            f"{TEXT_MICRO} font-mono text-slate-400"
                         )
                     # Calories: the primary bar, dual-segmented — fill colour
                     # bands on how close the day landed (macro_band), and a
@@ -219,17 +234,17 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                     telemetry_bar(kcal, kcal_goal, height="9px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         ui.label("protein").classes(
-                            "text-[9px] uppercase tracking-wide text-slate-500"
+                            f"{TEXT_MICRO} uppercase tracking-wide text-slate-500"
                         )
                         ui.label(f"{protein:.0f}/{protein_goal:.0f}g").classes(
-                            f"text-[9px] font-mono {MACRO_TINTS['protein_g']}"
+                            f"{TEXT_MICRO} font-mono {MACRO_TINTS['protein_g']}"
                         )
                     telemetry_bar(protein, protein_goal, height="5px", bar_scale_limit=bar_scale_limit)
-                    with ui.element("div").classes("flex flex-row gap-2 mt-0.5"):
+                    with ui.element("div").classes(f"flex flex-row gap-{SPACE_BASE} mt-0.5"):
                         for key, short, unit in MACRO_LABELS[2:]:
                             ui.label(
                                 f"{short} {totals[key]:.0f}/{float(target[key]):.0f}{unit}"
-                            ).classes(f"text-[9px] font-mono {MACRO_TINTS[key]}")
+                            ).classes(f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}")
                         # Fibre rides on the same row but carries no
                         # denominator, because there is no fibre target to
                         # divide by (`planner.NUTRIENT_KEYS`) — printing one
@@ -237,7 +252,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                         # `.get` because a plan generated before `fiber_g`
                         # existed totals without the key.
                         ui.label(f"FIB {totals.get('fiber_g', 0.0):.0f}g").classes(
-                            f"text-[9px] font-mono {MACRO_TINTS['fiber_g']}"
+                            f"{TEXT_MICRO} font-mono {MACRO_TINTS['fiber_g']}"
                         )
                     with ui.tooltip():
                         for key, short, unit in MACRO_LABELS:
