@@ -1,7 +1,7 @@
 """A small pub/sub registry for `@ui.refreshable` sections, plus the context
 object that carries it (and `PlannerState`/the repository) across the
 per-concern UI modules (`ui_cards`, `ui_telemetry`, `ui_shopping`,
-`ui_drawer`, `ui_generation`).
+`ui_plan`, `ui_review`, `ui_generation`).
 
 `ui_app.py` is now a page *shell*: it builds a `UIContext`, hands it to each
 module's `build_*(ctx)` factory, and wires the returned refreshables into one
@@ -20,8 +20,8 @@ time (now in `ui_app.py`, once every module's built), not one more
 used to be.
 
 Multiple topics can and do share a section — `telemetry` is both its own
-topic (a single-field edit that must not disturb the drawer's focused
-target input, see `ui_drawer.day_target_row`) and part of
+topic (a single-field edit that must not disturb the review dialog's focused
+target input, see `ui_review.day_target_row`) and part of
 `plan`/`targets`/`training` (edits that legitimately repaint more) — so
 `refresh()` de-dupes rather than repainting a shared section twice per call.
 """

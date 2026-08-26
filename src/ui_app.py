@@ -8,32 +8,42 @@ prerequisite.
 everything at once — `week_plan.json` and a history entry per cooked day —
 because a generated week that isn't saved is a 20-minute run one browser
 refresh from being lost. Grid *edits* ("Link to next lunch") are still
-in-memory only: they live in the client's `PlannerState` until "Reload from
-disk" throws them away, and the header carries an "edited — not saved" chip
-while any are outstanding. Generating clears that chip, because saving is what
-it just did.
+in-memory only: they live in the client's `PlannerState` until "Discard
+pending changes" throws them away, and the staged-changes bar stays visible
+while any are outstanding. Generating clears the grid-edit part of it,
+because saving is what it just did — see `PlannerState.pending_changes()` for
+why the target/training/pantry parts deliberately do not.
 
-Three regions, mirroring how the week is actually read:
+Four regions, mirroring how the week is actually read:
 
-- **Left drawer** — the global knobs (week start, household size, shopping
-  days, model), the per-day macro targets and the pantry list, plus the
-  generation trigger. Everything that applies to the whole week rather than one
-  meal. Target overrides and the pantry are *inputs to the next run*: they are
-  held in `PlannerState`, merged into `planning_config()`, and never written
-  back to config.json.
-- **Header** — macro telemetry: one horizontal bar per day, in the *same*
-  7-column grid as the canvas below, so a day's bar sits directly above its
-  column of meals.
-- **Canvas** — 7 day columns x 4 stacked meal cards, cook vs. leftover
-  distinguished by colour, border and badge. Lives inside a "Week" tab
-  (`ui.tabs`/`ui.tab_panels`) alongside a "Today" tab — a read-only preview
-  of just today's four cards (`ui_today`), which needs `WeekPlan.
-  week_start_date` to know whether the loaded week's dates actually cover
-  today rather than just sharing its weekday names. See "This file is a
-  page shell" below for why the header isn't split the same way.
-- **Right drawer** — the shopping list, one section per trip, opened from the
-  header. It is derived from the plan on every repaint, so it always describes
-  the week as the grid currently stands rather than as it was generated.
+- **Header** — shared chrome above every destination: the week selector,
+  the week date banner, and macro telemetry (one horizontal bar per day, in
+  the same 8-column grid the canvas below uses, so a day's bar sits directly
+  above its column of meals).
+- **Staged-changes bar** — one persistent strip, visible under the header no
+  matter which destination is open, naming everything staged for the next
+  generation and offering Review / Generate week / Discard pending changes.
+  See `ui_staged_bar.py`.
+- **Rail** — a slim vertical tab strip (`ui.tabs().props("vertical")`)
+  choosing one of five destinations: Plan (the week grid — `ui_plan.py`),
+  Today (`ui_today.py`), Library (the recipe catalog and import —
+  `ui_catalog_browser.py`), Insights (a stub — `ui_insights.py`), Settings
+  (`ui_settings.py`).
+- **Destination panel** — whichever of the five is selected, in a
+  `ui.tab_panels` beside the rail. Every panel builds once and stays mounted
+  (tab-panel style, not routed pages), which is what makes navigating away
+  from Plan with unsaved edits and back lose nothing: `PlannerState` is never
+  reconstructed, only hidden and shown.
+
+This replaced a three/four-region layout (left drawer / header / canvas /
+right-hand shopping drawer) in phase 3 of `ui-redesign.md`. The drawer held
+five kinds of work with nothing in common but "global" — actions, per-run
+inputs, plan inputs, a content library, and a readout — each communicated
+with its own ad-hoc disclaimer. Giving each kind of work its own destination
+(or, for per-run inputs, the review dialog) is what let those disclaimers
+collapse into one honest staged-changes bar. The right-hand shopping
+slide-over is untouched by this — a different drawer, opened from the
+header's shopping button, out of scope for the rail.
 
 Why this can await the repository directly
 ------------------------------------------
@@ -65,17 +75,20 @@ This file is a page shell, not the whole UI
 --------------------------------------------
 Every widget used to be a closure inside this one ~2000-line function. It is
 now split by concern into flat-sibling modules — `ui_cards` (the grid),
-`ui_telemetry` (the header's banner/pipeline/macro bars), `ui_shopping` (the
-right-hand slide-over), `ui_drawer` (the left drawer), `ui_generation`
-(everything that writes `week_plan.json`), `ui_catalog` (favorites helpers
-shared by cards and drawer) — each exposing one `build_*(ctx)` factory that
-returns the refreshable functions/elements other modules or this shell need.
-`planner_page()` now does four things: build a `UIContext`, call each
-`build_*` in dependency order, lay out the header (the one region with no
-natural module of its own — it is pure page layout, stitching together
-`ui_telemetry`'s and `ui_shopping`'s pieces), and register every returned
-refreshable into one topic map (see `ui_context.Refreshables`) in place of a
-hand-written `refresh_all()`.
+`ui_telemetry` (the header's banner/macro bars), `ui_shopping` (the
+right-hand slide-over), `ui_plan`/`ui_today`/`ui_catalog_browser`/
+`ui_insights`/`ui_settings` (the five rail destinations), `ui_review` (the
+staged-input dialog), `ui_staged_bar` (the persistent pending-changes strip),
+`ui_generation` (everything that writes `week_plan.json`), `ui_catalog`
+(favorites helpers shared by cards and the catalog browser) — each exposing
+one `build_*(ctx)` factory that returns the refreshable functions/elements
+other modules or this shell need. `planner_page()` now does four things:
+build a `UIContext`, call each `build_*` in dependency order, lay out the
+header and staged-changes bar (the two regions with no natural module of
+their own — header because it stitches together `ui_telemetry`'s pieces,
+the bar because it needs `ui_review` and `ui_generation` both already
+built), and register every returned refreshable into one topic map (see
+`ui_context.Refreshables`) in place of a hand-written `refresh_all()`.
 """
 
 import os
@@ -92,10 +105,13 @@ from ui_cards import build_cards
 from ui_catalog import build_rename_dialog
 from ui_catalog_browser import build_catalog_browser
 from ui_context import Refreshables, UIContext
-from ui_drawer import build_drawer
 from ui_generation import build_generation
-from ui_prep_options import build_prep_options
+from ui_insights import build_insights
+from ui_plan import build_plan
+from ui_review import build_review
+from ui_settings import build_settings
 from ui_shopping import build_shopping
+from ui_staged_bar import build_staged_bar
 from ui_state import PlannerState
 from ui_telemetry import build_telemetry
 from ui_today import build_today
@@ -107,11 +123,10 @@ from ui_theme import (
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
-    WEEK_GRID_SCROLL_CLASS,
-    WEEK_GRID_SCROLL_SYNC_JS,
     WEEK_SELECTION_LABELS,
     card_hover_css,
     chain_css,
+    week_grid_scroll,
 )
 
 # Explicit path — see the matching note in planner.py. NiceGUI's reloader can
@@ -130,27 +145,12 @@ REPOSITORY = LocalJSONRepository()
 # --------------------------------------------------------------------------
 
 
-def week_grid_scroll():
-    """One `overflow-x: auto` region around a `WEEK_GRID_COLS` grid.
-
-    Two of these exist — one wrapping the header's `context_pipeline`/
-    `telemetry` rows, one wrapping the canvas — because they can't share one
-    physical scroll parent (the header is `position: fixed`, the canvas
-    lives in the page container below it; see `WEEK_GRID_SCROLL_CLASS`'s
-    comment in `ui_theme.py`). Both carry the same class and the same
-    `WEEK_GRID_SCROLL_SYNC_JS` listener, which is what keeps a scroll on
-    either one visually moving the other — this function exists so that
-    wiring is written once rather than twice and can't drift between the two
-    call sites in `planner_page` below.
-    """
-    return ui.element("div").classes(f"{WEEK_GRID_SCROLL_CLASS} w-full overflow-x-auto").on(
-        "scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS
-    )
-
-
 @ui.page("/")
 async def planner_page() -> None:
     state = await PlannerState.load(REPOSITORY)
+    # Read once per page load for the Insights stub — nothing on this page
+    # writes biometrics.json, so there's no reason to re-read it on repaint.
+    biometrics = await REPOSITORY.load_biometrics()
     refreshables = Refreshables()
     ctx = UIContext(state=state, repository=REPOSITORY, refreshables=refreshables)
 
@@ -169,25 +169,29 @@ async def planner_page() -> None:
     )
 
     # Build order matters only where one module's factory needs another's
-    # return value: generation before cards (a card's regenerate icon calls
-    # into it), generation before prep_options (its "Generate" button starts
-    # a run via generation.run_generation), prep_options before drawer (the
-    # drawer's sticky Generate button opens this dialog rather than running
-    # the week directly), cards before today and before catalog_browser (both
-    # open cards' own recipe detail dialog), rename_dialog before drawer and
-    # before catalog_browser (both offer a per-row edit icon into the one
-    # shared dialog), catalog_browser before drawer (the drawer's "Browse
-    # all" button opens it), everything before the refresh-topic registration
-    # at the bottom (every topic there names a section some `build_*`
-    # returned).
+    # return value: generation before review (its "Generate" button starts a
+    # run via generation.run_generation), generation before cards (a card's
+    # regenerate icon calls into it), cards and review before plan (the Plan
+    # destination's canvas is cards' own, and its own "Generate" button
+    # opens the review dialog rather than running the week directly), cards
+    # before today and before catalog_browser (both open cards' own recipe
+    # detail dialog), rename_dialog before catalog_browser (its per-row edit
+    # icon opens the one shared dialog), review and generation before
+    # staged_bar (its Review/Generate week/Discard actions call straight
+    # into both) — everything before the refresh-topic registration below
+    # (every topic there names a section some `build_*` returned).
     generation = build_generation(ctx)
-    prep_options = build_prep_options(ctx, generation)
+    review = build_review(ctx, generation)
     cards = build_cards(ctx, generation)
+    plan = build_plan(ctx, cards, review)
     telemetry = build_telemetry(ctx)
     shopping = build_shopping(ctx)
     today = build_today(ctx, cards)
     rename_dialog = build_rename_dialog(ctx)
     catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
+    settings = build_settings(ctx)
+    insights = build_insights(ctx, biometrics)
+    staged_bar = build_staged_bar(ctx, review, generation)
 
     with ui.header(bordered=True).classes(f"bg-slate-900 px-{SPACE_SECTION} py-{SPACE_BASE} flex flex-col gap-{SPACE_BASE}"):
         with ui.element("div").classes(f"flex flex-row items-baseline gap-{SPACE_SECTION}"):
@@ -228,12 +232,6 @@ async def planner_page() -> None:
                     else "no cached week — showing planned shape only"
                 ),
             )
-            # Linking is an in-memory reshuffle: nothing here writes
-            # week_plan.json, so say so rather than letting the grid imply the
-            # cached week on disk has changed.
-            ui.label("edited — not saved").classes(
-                f"{TEXT_MICRO} font-semibold px-{SPACE_TIGHT} {RADIUS_CARD} bg-amber-400/15 text-amber-300"
-            ).bind_visibility_from(state, "edited")
             ui.space()
             ui.label().classes(f"{TEXT_BODY} text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
@@ -316,12 +314,12 @@ async def planner_page() -> None:
                 )
         telemetry.week_banner()
         with week_grid_scroll():
-            telemetry.context_pipeline()
             telemetry.telemetry()
 
-    drawer = build_drawer(ctx, generation, prep_options, rename_dialog, catalog_browser)
+    with ui.element("div").classes(f"w-full px-{SPACE_SECTION} pt-{SPACE_TIGHT}"):
+        staged_bar.bar()
 
-    # ---- refresh topics ----------------------------------------------------
+    # ---- refresh topics ------------------------------------------------------
     # Registered here, last, once every section named below actually exists —
     # each came back from a `build_*` call above. Every call site inside
     # those modules refers to a topic by string (`refreshables.refresh(
@@ -331,82 +329,108 @@ async def planner_page() -> None:
     #
     # "plan" replaces what used to be a hand-written `refresh_all()` — every
     # section that reads the generated week, so a generation, a reload, a
-    # leftover link, or a drawer control that reshapes the week (week start,
-    # servings) all repaint the same set. `telemetry` recurs across several
-    # narrower topics (a plain macro edit, a training edit) because it is the
-    # one section every kind of target change is visible in; `targets_editor`
-    # is deliberately left out of "telemetry" alone — see `ui_drawer.
-    # day_target_row`'s `sync()` — because rebuilding it mid-edit would steal
-    # the input focus.
+    # leftover link, or a settings control that reshapes the week (week
+    # start, servings) all repaint the same set. `telemetry` recurs across
+    # several narrower topics (a plain macro edit, a training edit) because
+    # it is the one section every kind of target change is visible in;
+    # `review.targets_editor` is deliberately left out of "telemetry" alone —
+    # see `ui_review.day_target_row`'s `sync()` — because rebuilding it
+    # mid-edit would steal the input focus. `staged_bar.bar` rides on
+    # "plan"/"targets"/"training"/"telemetry" rather than a topic of its own,
+    # since `pending_changes()` reads nothing those four don't already cover
+    # between them — "telemetry" is the one a bare keystroke in a target
+    # input actually fires (see below), and the bar isn't the section that
+    # trap is about, so it can safely be part of it.
     refreshables.on(
         "plan",
         telemetry.week_banner,
         telemetry.telemetry,
         cards.canvas,
-        drawer.week_summary,
+        plan.week_summary,
         shopping.shopping_panel,
-        drawer.targets_editor,
-        drawer.training_editor,
+        review.targets_editor,
+        review.training_editor,
         today.today_view,
+        staged_bar.bar,
     )
     refreshables.on("today", today.today_view)
-    refreshables.on("telemetry", telemetry.telemetry)
+    # `staged_bar.bar` rides on "telemetry" too, not just "targets"/
+    # "training": `ui_review.day_target_row`'s `sync()` deliberately refreshes
+    # only "telemetry" on a keystroke (refreshing "targets" would rebuild the
+    # very section that owns the focused input — the focus-theft trap
+    # `.claude/rules/ui.md` documents). The bar isn't part of that section,
+    # so it can safely ride along without reintroducing the trap.
+    refreshables.on("telemetry", telemetry.telemetry, staged_bar.bar)
     # `today_view` joins both of these because it reads the same live numbers
     # the header does — its calorie bar divides by `targets_for`, and its
     # context strip and per-card workout badges come from `day_context`, which
-    # reads the drawer's training schedule through `planning_config()`. It is
-    # deliberately *not* in "telemetry": that topic exists to repaint the
-    # header on every keystroke of a focused target input without disturbing
-    # the drawer, and rebuilding four cards plus a `planning_config()` per
-    # keystroke is the cost this narrow topic was carved out to avoid.
-    refreshables.on("targets", drawer.targets_editor, telemetry.telemetry, today.today_view)
+    # reads the review dialog's training schedule through `planning_config()`.
+    # It is deliberately *not* in "telemetry": that topic exists to repaint
+    # the header on every keystroke of a focused target input without
+    # disturbing the dialog, and rebuilding four cards plus a
+    # `planning_config()` per keystroke is the cost this narrow topic was
+    # carved out to avoid.
+    refreshables.on(
+        "targets", review.targets_editor, telemetry.telemetry, today.today_view, staged_bar.bar
+    )
     refreshables.on(
         "training",
-        drawer.training_editor,
+        review.training_editor,
         telemetry.telemetry,
-        drawer.targets_editor,
+        review.targets_editor,
         today.today_view,
+        staged_bar.bar,
     )
-    refreshables.on("catalog", drawer.favorites_list, cards.canvas, catalog_browser.catalog_grid)
-    refreshables.on("favorites", drawer.favorites_list, catalog_browser.catalog_grid)
+    refreshables.on("catalog", cards.canvas, catalog_browser.catalog_grid)
+    refreshables.on("favorites", catalog_browser.catalog_grid)
     refreshables.on("catalog_browser", catalog_browser.catalog_grid)
     refreshables.on("shopping", shopping.shopping_panel)
-    refreshables.on("shopping_days", drawer.week_summary, shopping.shopping_panel)
+    refreshables.on("shopping_days", plan.week_summary, shopping.shopping_panel)
     refreshables.on("swap_matches", cards.swap_matches)
     refreshables.on("swap_dialog", cards.swap_dialog_body)
-    refreshables.on("pipeline_detail", telemetry.pipeline_detail)
     refreshables.on("recipe_detail", cards.recipe_detail)
-    # Registered like every other section for consistency, though nothing
-    # refreshes it today — no drawer control changes what it shows yet
-    # (see `ui_state.pipeline_value`: only "workout" is wired up).
-    refreshables.on("context_pipeline", telemetry.context_pipeline)
 
-    # ---- tabs ---------------------------------------------------------------
-    # The header (week selector, banner, context pipeline, telemetry) stays
-    # shared chrome above both tabs — it's weekly macro data either view would
-    # want, and splitting it apart is a call for whichever tab actually needs
-    # to make it, not this one. Only the main content area — previously just
-    # a bare `cards.canvas()` call — is tab-scoped.
+    # ---- rail + destinations --------------------------------------------------
+    # Tab-panel style, not routed pages: every destination builds once and
+    # stays mounted, hidden rather than torn down, so `PlannerState` is never
+    # reconstructed by navigating away from Plan and back — the trap a routed
+    # approach would have needed a per-connection store outside this function
+    # to avoid. `ui.tabs().props("vertical")` is the same tabs/tab_panels
+    # machinery the old Week/Today setup used, restyled as a rail; nothing
+    # about how NiceGUI wires a tab strip to its panels changes with
+    # orientation.
     #
     # "Today" is read-only on purpose — no favorite/swap/regenerate buttons,
-    # no click-to-detail (see `ui_today`'s module docstring). `value=week_tab`
-    # keeps the week grid — everything this app has ever shown — the
-    # default, so a page load looks exactly as it did before tabs existed.
-    with ui.tabs().classes("w-full") as tabs:
-        week_tab = ui.tab("Week", icon="calendar_view_week")
-        today_tab = ui.tab("Today", icon="today")
-        # The label becomes the day being browsed ("Today · Sun 23 Aug", or
-        # "Mon 24 Aug" once you step away). Injected rather than computed
-        # here: `build_today` owns which day is on screen, and it ran well
-        # before this tab existed.
-        today.bind_tab(today_tab)
+    # no click-to-detail (see `ui_today`'s module docstring). `value=plan_tab`
+    # keeps the week grid — everything this app has ever shown — the default
+    # destination, so a page load looks exactly as it did before the rail
+    # existed.
+    with ui.row().classes("w-full flex-1 flex-nowrap items-stretch gap-0"):
+        with ui.tabs().props("vertical dense").classes(
+            f"bg-slate-900 border-r border-slate-800 shrink-0 py-{SPACE_BASE}"
+        ) as rail:
+            plan_tab = ui.tab("Plan", icon="calendar_view_week").props("no-caps")
+            today_tab = ui.tab("Today", icon="today").props("no-caps")
+            library_tab = ui.tab("Library", icon="menu_book").props("no-caps")
+            insights_tab = ui.tab("Insights", icon="insights").props("no-caps")
+            settings_tab = ui.tab("Settings", icon="settings").props("no-caps")
+            # The label becomes the day being browsed ("Today · Sun 23 Aug", or
+            # "Mon 24 Aug" once you step away). Injected rather than computed
+            # here: `build_today` owns which day is on screen, and it ran well
+            # before this tab existed.
+            today.bind_tab(today_tab)
 
-    with ui.tab_panels(tabs, value=week_tab).classes("w-full bg-transparent p-0"):
-        with ui.tab_panel(week_tab).classes("p-0"):
-            with week_grid_scroll():
-                cards.canvas()
-        with ui.tab_panel(today_tab).classes("p-0"):
-            today.today_view()
+        with ui.tab_panels(rail, value=plan_tab).classes("w-full flex-1 bg-transparent p-0"):
+            with ui.tab_panel(plan_tab).classes("p-0"):
+                plan.panel()
+            with ui.tab_panel(today_tab).classes("p-0"):
+                today.today_view()
+            with ui.tab_panel(library_tab).classes("p-0"):
+                catalog_browser.panel()
+            with ui.tab_panel(insights_tab).classes("p-0"):
+                insights.panel()
+            with ui.tab_panel(settings_tab).classes("p-0"):
+                settings.panel()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

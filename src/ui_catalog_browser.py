@@ -1,6 +1,8 @@
-"""The full-screen catalog browser — a maximized dialog for reviewing every
-recipe ever favorited or imported (`data/recipes_master.json`), not just the
-7-row search box the drawer's "Recipe Catalog" section has room for.
+"""The Library destination: the recipe catalog (`data/recipes_master.json`),
+its filters, and recipe import. Used to be a `ui.dialog().props("maximized")`
+opened from the drawer's "Browse all" button — phase 3 of `ui-redesign.md`
+promotes it to a rail destination, so the wrapper dialog and its close button
+are gone; the content below is otherwise the surface that already existed.
 
 `build_catalog_browser(ctx, cards, rename_dialog)` needs `cards` (see
 `ui_cards`) so a clicked recipe opens the same read-only detail dialog every
@@ -8,6 +10,12 @@ other card in the app shares — this module never builds its own — and
 `rename_dialog` (see `ui_catalog`) so its edit icon opens the one dialog every
 catalog row anywhere in the app shares. `favorite`/`delete` are plain
 awaitable helpers from `ui_catalog`, needing no dialog of their own.
+
+Import is the one recipe-intake path this app's UI currently offers — paste
+raw text, an ingredient list, or a URL into one dialog, parsed through
+`import_external_recipe` under the same dietary rules generation uses. It
+lives here now rather than in the deleted drawer, since Library is where
+`ui-redesign.md`'s target shape puts "all import paths."
 """
 
 from dataclasses import dataclass
@@ -15,7 +23,7 @@ from typing import Callable, Optional
 
 from nicegui import ui
 
-from planner import Recipe
+from planner import Recipe, api_key_error, import_external_recipe, short_error
 from ui_catalog import RenameDialogHandles, delete_recipe, toggle_favorite
 from ui_cards import CardHandles
 from ui_context import UIContext
@@ -41,7 +49,7 @@ from week import MODE_COOK
 
 @dataclass
 class CatalogBrowserHandles:
-    open: Callable
+    panel: Callable
     catalog_grid: Callable
 
 
@@ -89,6 +97,7 @@ def build_catalog_browser(
     ctx: UIContext, cards: CardHandles, rename_dialog: RenameDialogHandles
 ) -> CatalogBrowserHandles:
     state = ctx.state
+    REPOSITORY = ctx.repository
     refreshables = ctx.refreshables
 
     def on_search(event) -> None:
@@ -217,20 +226,82 @@ def build_catalog_browser(
             for entry in matches:
                 catalog_card(entry)
 
-    # `maximized` is Quasar's own full-screen dialog mode — this is a browse
-    # surface, not a modal form, so it gets the whole viewport rather than a
-    # fixed-width card.
-    with ui.dialog().props("maximized") as dialog:
+    # ---- import ---------------------------------------------------------
+
+    async def on_import() -> None:
+        text = (state.import_text or "").strip()
+        if not text:
+            ui.notify("Paste some recipe text first.", type="warning")
+            return
+        key_error = api_key_error()
+        if key_error:
+            ui.notify(key_error, type="negative", close_button=True, timeout=0)
+            return
+
+        import_button.props("loading")
+        try:
+            recipe = await import_external_recipe(
+                text, config=state.planning_config(), repository=REPOSITORY
+            )
+        except Exception as exc:
+            ui.notify(
+                f"Import failed: {short_error(exc)}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            import_button.props(remove="loading")
+
+        favorite = state.import_as_favorite
+        await REPOSITORY.import_recipe(recipe.model_dump(), favorite=favorite)
+        state.recipe_catalog = await REPOSITORY.load_recipe_catalog()
+        refreshables.refresh("favorites")
+        state.import_text = ""
+        state.import_as_favorite = False
+        import_dialog.close()
+        ui.notify(
+            f"Imported \"{recipe.name}\"" + (" and favorited it." if favorite else "."),
+            type="positive",
+        )
+
+    with ui.dialog() as import_dialog:
         with ui.element("div").classes(
-            f"bg-slate-950 h-full w-full flex flex-col p-{SPACE_PAGE} gap-{SPACE_SECTION}"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
+            ui.label("Import a recipe").classes(f"{TEXT_HEAD} font-semibold")
+            ui.label(
+                "Paste raw recipe text, an ingredient list, or a URL — it's turned "
+                "into grams, macros and NOVA groups under the same dietary rules "
+                "generation uses."
+            ).classes(f"{TEXT_MICRO} text-slate-500")
+            ui.textarea(placeholder="Paste recipe text or a URL…").bind_value(
+                state, "import_text"
+            ).props("dense outlined").classes(f"w-full {TEXT_BODY}").style(
+                "min-height: 8rem"
+            )
+            ui.checkbox("Mark as favorite").bind_value(state, "import_as_favorite").classes(
+                TEXT_BODY
+            )
+            with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-2"):
+                ui.button("Cancel", on_click=import_dialog.close).props(
+                    "dense flat no-caps"
+                )
+                import_button = ui.button(
+                    "Analyze & Import", icon="auto_awesome", on_click=on_import
+                ).props("dense no-caps")
+
+    def panel() -> None:
+        with ui.element("div").classes(f"flex flex-col p-{SPACE_PAGE} gap-{SPACE_SECTION}"):
             with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_SECTION}"):
                 with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_BASE}"):
                     ui.icon("menu_book").classes("text-slate-300")
-                    ui.label("Recipe Catalog").classes(
-                        f"{TEXT_DISPLAY} font-semibold text-slate-100"
-                    )
-                ui.button(icon="close", on_click=dialog.close).props("dense flat round")
+                    ui.label("Library").classes(f"{TEXT_DISPLAY} font-semibold text-slate-100")
+                ui.button(
+                    "Import recipe", icon="upload_file", on_click=import_dialog.open
+                ).props("dense flat no-caps").classes("text-slate-300")
 
             with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                 ui.input(placeholder="Search recipes…", on_change=on_search).props(
@@ -243,7 +314,6 @@ def build_catalog_browser(
                     f"{TEXT_HEAD} text-slate-300"
                 )
 
-            with ui.element("div").classes("flex-1 overflow-y-auto"):
-                catalog_grid()
+            catalog_grid()
 
-    return CatalogBrowserHandles(open=dialog.open, catalog_grid=catalog_grid)
+    return CatalogBrowserHandles(panel=panel, catalog_grid=catalog_grid)

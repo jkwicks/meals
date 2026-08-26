@@ -80,7 +80,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         Toggled by mutating this row's own classes, not by refreshing the
         dialog: ticking step 2 of 9 must not repaint the recipe you are
         reading (and lose its scroll position) to change one line. Same
-        in-place reasoning as `ui_drawer.day_target_row`.
+        in-place reasoning as `ui_review.day_target_row`.
 
         Deliberately unpersisted, and reset every time the dialog opens
         because `recipe_detail` rebuilds these rows — it is scratch state for
@@ -291,7 +291,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
     # (`week.skip_estimate_totals` has the full reasoning).
     #
     # Calories/protein/carbs are typed and fat is derived, the same division
-    # `ui_drawer.day_target_row` uses for daily targets: `derive_fat_g` is the
+    # `ui_review.day_target_row` uses for daily targets: `derive_fat_g` is the
     # rule every other budget in the app is built on, so an input for fat
     # could only ever disagree with it.
     skip_target: dict = {"slot_id": "", "calories": 0.0, "protein_g": 0.0, "net_carbs_g": 0.0}

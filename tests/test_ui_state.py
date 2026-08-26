@@ -77,6 +77,11 @@ CONFIG = {
     "training_schedule": [],
     "serving_rules": {"servings_per_meal": 2},
     "shopping": {"shop_days": ["Monday"]},
+    # `discard_pending_inputs` resets `pantry` back to this seed, the same
+    # one `.load()` uses — real config always has the key (`AppConfig`
+    # requires it), so the fixture carries it too rather than the production
+    # code defending against a shape config guarantees against.
+    "inventory_to_clear": [],
 }
 
 
@@ -286,6 +291,154 @@ class TestTargetOverrides(unittest.TestCase):
         state.set_target("Monday", "calories", 1500)
         state.clear_targets("Monday")
         self.assertNotIn("Monday", state.target_overrides)
+
+
+class TestPendingChanges(unittest.TestCase):
+    """What the staged-changes bar/review dialog count and summarize.
+
+    `make_state()` never calls `.load()`, so `_original_training_schedule`
+    defaults to `[]` — tests that care about "unchanged from the file" seed
+    it explicitly rather than relying on a loader this fixture doesn't run.
+    """
+
+    def test_nothing_set_is_nothing_pending(self):
+        self.assertEqual(make_state().pending_changes(), [])
+
+    def test_a_target_override_reports_the_signed_delta(self):
+        state = make_state()
+        state.set_target("Monday", "calories", 2200)
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(summaries, ["Mon +200 kcal"])
+
+    def test_a_negative_override_keeps_its_sign(self):
+        state = make_state()
+        state.set_target("Tuesday", "calories", 1700)
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(summaries, ["Tue -300 kcal"])
+
+    def test_an_added_training_session_is_reported_as_added(self):
+        state = make_state()
+        state.add_training_session()
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("added", summaries[0])
+
+    def test_a_removed_session_is_reported_as_removed(self):
+        session = {
+            "day": "Monday", "time": "07:00", "type": "gym",
+            "duration_minutes": 60, "estimated_burn_kcal": 300,
+        }
+        state = make_state(
+            training_schedule=[dict(session)],
+            _original_training_schedule=[dict(session)],
+        )
+        state.remove_training_session(0)
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("removed", summaries[0])
+
+    def test_an_edited_session_is_reported_as_edited(self):
+        session = {
+            "day": "Monday", "time": "07:00", "type": "gym",
+            "duration_minutes": 60, "estimated_burn_kcal": 300,
+        }
+        state = make_state(
+            training_schedule=[dict(session)],
+            _original_training_schedule=[dict(session)],
+        )
+        # Same day/time signature, a different field changed — the
+        # unchanged-signature branch must still catch this as an edit.
+        state.training_schedule[0]["estimated_burn_kcal"] = 450
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(len(summaries), 1)
+        self.assertIn("edited", summaries[0])
+
+    def test_an_untouched_session_reports_nothing(self):
+        session = {
+            "day": "Monday", "time": "07:00", "type": "gym",
+            "duration_minutes": 60, "estimated_burn_kcal": 300,
+        }
+        state = make_state(
+            training_schedule=[dict(session)],
+            _original_training_schedule=[dict(session)],
+        )
+        self.assertEqual(state.pending_changes(), [])
+
+    def test_pantry_items_are_counted_not_listed(self):
+        state = make_state()
+        state.pantry = ["600g chicken thighs", "half a bag of spinach"]
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(summaries, ["2 pantry item(s)"])
+
+    def test_a_grid_edit_is_its_own_entry(self):
+        state = make_state()
+        state.apply_spec(link_leftover(state.spec, "Tuesday:lunch", "Monday:dinner"))
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(summaries, ["grid edited"])
+
+    def test_categories_combine_independently(self):
+        """None of the four sources should suppress or duplicate another."""
+        state = make_state()
+        state.set_target("Monday", "calories", 2200)
+        state.pantry = ["600g chicken thighs"]
+        state.apply_spec(link_leftover(state.spec, "Tuesday:lunch", "Monday:dinner"))
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertEqual(len(summaries), 3)
+        self.assertIn("Mon +200 kcal", summaries)
+        self.assertIn("1 pantry item(s)", summaries)
+        self.assertIn("grid edited", summaries)
+
+    def test_discard_clears_all_three_non_grid_categories(self):
+        """The staged-changes bar's "Discard pending changes" button sits
+        right beside these summaries — it has to make them all go away, not
+        just the grid-edit part `reload_from_disk` alone ever touched."""
+        session = {
+            "day": "Monday", "time": "07:00", "type": "gym",
+            "duration_minutes": 60, "estimated_burn_kcal": 300,
+        }
+        state = make_state(
+            training_schedule=[dict(session)],
+            _original_training_schedule=[dict(session)],
+        )
+        state.set_target("Monday", "calories", 2200)
+        state.pantry = ["600g chicken thighs"]
+        state.add_training_session()
+        self.assertEqual(len(state.pending_changes()), 3)
+
+        state.discard_pending_inputs()
+
+        self.assertEqual(state.pending_changes(), [])
+        self.assertEqual(state.target_overrides, {})
+        self.assertEqual(state.pantry, [])
+        self.assertEqual(state.training_schedule, [session])
+
+    def test_discard_restores_the_configured_pantry_not_an_empty_one(self):
+        """Pantry is seeded from `inventory_to_clear` at `.load()` — discard
+        should return to that seed, the same way a target override resets to
+        config.json's number rather than to zero."""
+        state = make_state()
+        state.config["inventory_to_clear"] = ["half a bag of spinach"]
+        state.pantry = ["600g chicken thighs"]
+        state.discard_pending_inputs()
+        self.assertEqual(state.pantry, ["half a bag of spinach"])
+
+    def test_generating_does_not_clear_target_or_pantry_pending_state(self):
+        """`target_overrides`/`pantry` are never written to config.json, so a
+        generation that used them must not make them look "done" — the next
+        regenerate still uses them, and the bar should keep saying so."""
+        state = make_state()
+        state.set_target("Monday", "calories", 2200)
+        state.pantry = ["600g chicken thighs"]
+        state.apply_spec(link_leftover(state.spec, "Tuesday:lunch", "Monday:dinner"))
+        # Simulates what a successful generation does to `edited` —
+        # `adopt_plan` clears it because saving is what makes the grid match
+        # disk — without touching overrides/pantry/training.
+        state.week_plan = make_plan(state.spec, generated_at="2026-08-19T10:00:00")
+        state.edited = False
+        summaries = [c.summary for c in state.pending_changes()]
+        self.assertIn("Mon +200 kcal", summaries)
+        self.assertIn("1 pantry item(s)", summaries)
+        self.assertNotIn("grid edited", summaries)
 
 
 class TestSlotViews(unittest.TestCase):

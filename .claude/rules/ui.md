@@ -107,10 +107,12 @@ never raise on an unknown key.
   Tailwind class in a Quasar prop must be quoted:
   `props("header-class='text-[11px]'")`. Unquoted, it never reaches the
   component at all and there is no error.
-- **`bind_value` fires an initial change event at build time.** A handler's
-  callees must therefore be defined *before* the widget is built. This is why
-  `canvas` is defined above the drawer in `ui_app.py` and only called at the
-  end.
+- **`bind_value`'s own sync back to `state` runs *after* a widget's
+  `on_change` handler, not before.** A handler that both sets the field and
+  refreshes something must set it explicitly first rather than trusting the
+  binding to have already landed it — `ui_settings.py`'s week-start select
+  does exactly this before calling `refreshables.refresh("plan")`, or the
+  repaint would read the old week order.
 - **Refreshing a section that owns the focused input steals the cursor.**
   `day_target_row` is built once and mutated in place for exactly this
   reason, and refreshes only the narrow `telemetry` topic rather than

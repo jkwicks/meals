@@ -1,11 +1,17 @@
-"""The header strip: the week date banner, the context-pipeline chip row (and
-its per-day detail dialog), and the macro telemetry bars.
+"""The header strip: the week date banner and the macro telemetry bars.
 
-All four sections render inside `ui.header(...)` in `ui_app.py`, in this
-order (`week_banner`, `context_pipeline`, `telemetry`) — `build_telemetry`
-only builds the refreshable functions and the pipeline dialog; the header
-`with` block that actually places them is still the page shell's job, since
-where they render is layout, not this module's concern.
+Both sections render inside `ui.header(...)` in `ui_app.py`, in this order
+(`week_banner`, `telemetry`) — `build_telemetry` only builds the refreshable
+functions; the header `with` block that actually places them is still the
+page shell's job, since where they render is layout, not this module's
+concern.
+
+Used to carry a third section, the per-day `context_pipeline` chip row (28
+chips: 3 unconnected stages x 7 days, plus workout x 7 days) and its
+click-through detail dialog. Phase 3 of `ui-redesign.md` moved that content
+to the Settings destination as a static status list (`ui_settings.py`) —
+workout was the only connected stage, and its per-day detail already lives
+in the Today destination's day-context strip, so nothing here replaced it.
 """
 
 from dataclasses import dataclass
@@ -14,20 +20,13 @@ from typing import Callable
 from nicegui import ui
 
 from ui_context import UIContext
-from ui_state import pipeline_value
 from ui_theme import (
     MACRO_LABELS,
     MACRO_TINTS,
-    PIPELINE_STAGES,
     RADIUS_CARD,
-    RADIUS_PANEL,
-    RADIUS_PILL,
     SPACE_BASE,
-    SPACE_HAIR,
-    SPACE_PAGE,
     SPACE_TIGHT,
     TEXT_BODY,
-    TEXT_HEAD,
     TEXT_MICRO,
     WEEK_GRID_COLS,
     telemetry_bar,
@@ -39,97 +38,10 @@ from week import week_date_range
 class TelemetryHandles:
     week_banner: Callable
     telemetry: Callable
-    context_pipeline: Callable
-    pipeline_detail: Callable
 
 
 def build_telemetry(ctx: UIContext) -> TelemetryHandles:
     state = ctx.state
-    refreshables = ctx.refreshables
-
-    # ---- context pipeline: what fed a day's plan --------------------------
-    # One dialog reused for every day, refreshable off state.pipeline_day —
-    # same pattern as recipe_detail/state.focus in ui_cards. The expanded
-    # ui.stepper lives here rather than inline because a stepper's headers
-    # need more width than a grid-cols-7 column has (telemetry already
-    # fights this squeezing three macro numbers into the same column).
-
-    @ui.refreshable
-    def pipeline_detail() -> None:
-        day = state.pipeline_day
-        if day is None:
-            return
-        ui.label(f"{day} — context pipeline").classes(
-            f"{TEXT_HEAD} font-semibold text-slate-200 mb-2"
-        )
-        with ui.stepper().props("header-nav flat").classes("bg-transparent w-full"):
-            for key, label, icon, description, connected in PIPELINE_STAGES:
-                value = pipeline_value(state, day, key)
-                step = ui.step(label, icon=icon)
-                if not connected:
-                    step.props("disable")
-                with step:
-                    ui.label(description).classes(f"{TEXT_BODY} text-slate-400")
-                    if connected:
-                        ui.label(value if value is not None else "Nothing scheduled").classes(
-                            f"{TEXT_HEAD} font-mono mt-1 "
-                            + ("text-emerald-300" if value is not None else "text-slate-500")
-                        )
-                    else:
-                        ui.label("Not connected").classes(
-                            f"{TEXT_MICRO} uppercase tracking-wide text-slate-600 mt-1"
-                        )
-
-    with ui.dialog() as pipeline_dialog:
-        with ui.element("div").classes(f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full"):
-            pipeline_detail()
-
-    def open_pipeline(day: str) -> None:
-        state.pipeline_day = day
-        refreshables.refresh("pipeline_detail")
-        pipeline_dialog.open()
-
-    # ---- header: context pipeline ------------------------------------------
-    # Compact icon-chip row, one per pipeline stage, directly above the
-    # telemetry it explains. A row of chips rather than an inline
-    # ui.stepper — same width problem as above — connected by a thin
-    # chevron line like a mini timeline. Clicking a day's row opens the full
-    # stepper. Three of the four stages have no data source yet
-    # (`connected=False` in PIPELINE_STAGES) and render dashed/muted;
-    # "Adaptive Workout" is already live off the drawer's training schedule.
-
-    @ui.refreshable
-    def context_pipeline() -> None:
-        with ui.element("div").classes(f"grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full mb-1"):
-            # Empty spacer, not a pipeline row — none of PIPELINE_STAGES applies
-            # to the prep column, but the grid still needs a column 0 here to
-            # stay aligned with telemetry() and canvas() below it.
-            ui.element("div")
-            for day in state.days:
-                with ui.element("div").classes(
-                    f"flex flex-row items-center gap-{SPACE_HAIR} cursor-pointer {RADIUS_CARD} "
-                    f"px-{SPACE_HAIR} py-{SPACE_HAIR} hover:bg-slate-800/60"
-                ).on("click", lambda day=day: open_pipeline(day)):
-                    for i, (key, label, icon, description, connected) in enumerate(
-                        PIPELINE_STAGES
-                    ):
-                        value = pipeline_value(state, day, key)
-                        if connected and value is not None:
-                            look = "bg-emerald-400/20 text-emerald-300"
-                            tip = f"{label}: {value}"
-                        elif connected:
-                            look = "bg-slate-800/60 text-slate-400 border border-slate-700"
-                            tip = f"{label}: none scheduled"
-                        else:
-                            look = (
-                                "bg-slate-800/60 text-slate-600 "
-                                "border border-dashed border-slate-700"
-                            )
-                            tip = f"{label} — not connected yet"
-                        with ui.icon(icon).classes(f"{TEXT_HEAD} {RADIUS_PILL} p-{SPACE_TIGHT} {look}"):
-                            ui.tooltip(tip)
-                        if i < len(PIPELINE_STAGES) - 1:
-                            ui.icon("chevron_right").classes(f"{TEXT_MICRO} text-slate-700")
 
     # ---- header: week date banner -----------------------------------------
     # Purely cosmetic — nothing here reads back into state — but `state.days`
@@ -273,6 +185,4 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
     return TelemetryHandles(
         week_banner=week_banner,
         telemetry=telemetry,
-        context_pipeline=context_pipeline,
-        pipeline_detail=pipeline_detail,
     )
