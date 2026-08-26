@@ -127,8 +127,15 @@ MEALS_PORT=9000 ./scripts/server.sh start
 `scripts/server.sh` handles venv activation, backgrounding (`nohup`), the PID
 file (`logs/.nicegui.pid`) and the log (`logs/nicegui.log`). Open
 [http://localhost:8080](http://localhost:8080) for the high-density desktop
-canvas: a left drawer of global controls, a header of seven per-day macro
-telemetry bars, and a 7-column x 4-row grid of meal cards below it.
+canvas: a header of seven per-day macro telemetry bars, a persistent
+staged-changes bar beneath it naming anything queued for the next
+generation, and a slim rail choosing one of five destinations — **Plan**
+(the 7-column x 4-row grid of meal cards), **Today**, **Library** (the
+recipe catalog and import), **Insights**, **Settings** (week start,
+shopping days, model). Every per-run input that used to live in a left
+drawer — daily targets, training schedule, pantry, cuisine/diet-style/
+bulk-prep picks, people per meal — now lives in the review dialog, opened
+from either Plan's own Generate button or the staged-changes bar's "Review."
 
 A week can also be generated headlessly from the CLI — see Section 5.
 
@@ -142,9 +149,9 @@ macro targets:
 | `meal_generation_model` | Model used to generate a week |
 | `recipe_parser_model` | Model used to parse a pasted/imported recipe. Deliberately independent of the generation model, so a cheap fast model can do the parsing regardless of what generates the week |
 | `request_timeout_seconds` | Client timeout. **No in-code fallback** — a missing value fails loudly at startup rather than drifting onto a stale default |
-| `models` | The model ids the drawer's dropdown offers, each mapped to its quirks. `{}` means "nothing unusual". `{"reasoning_required": true}` marks a model that rejects the reasoning-disable switch with a hard `400`, for which the `reasoning` key is omitted entirely — see `CLAUDE.md`, "Reasoning must be disabled" |
+| `models` | The model ids the Settings destination's dropdown offers, each mapped to its quirks. `{}` means "nothing unusual". `{"reasoning_required": true}` marks a model that rejects the reasoning-disable switch with a hard `400`, for which the `reasoning` key is omitted entirely — see `CLAUDE.md`, "Reasoning must be disabled" |
 
-The CLI's `--model` and the drawer's model select override
+The CLI's `--model` and the Settings destination's model select override
 `meal_generation_model` **for that run only** — neither writes to the file.
 
 Token budgets are **not** configured here — they're derived in `planner.py`
@@ -162,17 +169,22 @@ have each cost a full run before.
 
 ### Target Tuning & Training Plans
 
-**Macro targets** live under **"Daily Targets"** in the
-left drawer, one row per day (calories, protein g, net carbs g). Fat is
+**Macro targets** live under **"Daily targets"** in the
+review dialog (opened from Plan's Generate button or the staged-changes
+bar's "Review"), one row per day (calories, protein g, net carbs g). Fat is
 never typed — it's computed from what's left
 (`calories - (protein*4 + carbs*4) / 9`), so a low-carb day automatically
 becomes a high-fat day with no separate keto flag. An edited day is marked
-with an amber `•` and amber label wherever its telemetry appears; that
-override wins over whatever the current plan or `config/profile.json` says, because
+with an amber `•` and amber label wherever its telemetry appears, and shows
+up by name ("Mon +200 kcal") in the staged-changes bar; that override wins
+over whatever the current plan or `config/profile.json` says, because
 the point of editing a target before a run is seeing how far the current week
-sits from where you're about to aim it. It's reset per-day from the drawer,
-which writes the file's numbers back in and clears the marker. **Overrides
-apply on the next generation** — they never touch the files in `config/`.
+sits from where you're about to aim it. It's reset per-day from the review
+dialog, which writes the file's numbers back in and clears the marker.
+**Overrides apply on the next generation** — they never touch the files in
+`config/`, and surviving a generation is intentional (see "Non-Blocking Week
+Generation" below) — only the staged-changes bar's "Discard pending changes"
+clears them.
 
 A specific meal's budget can be pinned instead of weighted, via
 `weekly_schedule.<day>.meal_overrides` in `config/profile.json`
@@ -180,7 +192,7 @@ A specific meal's budget can be pinned instead of weighted, via
 pinned meal is assigned that budget verbatim and pushes the *other* meals of
 that day down so the day still totals its target.
 
-**Training plans** live in the drawer's **"Training Schedule"**
+**Training plans** live in the review dialog's **"Training schedule"**
 expansion. Each row is one workout: day, time, type (hypertrophy / cardio /
 walk / rest), duration and an estimated calorie burn. Adding a session does
 three things to that day, live in the telemetry preview, before any
@@ -199,9 +211,10 @@ generation call is made:
    food, without changing that meal's macro budget.
 
 A training day shows a green `⚡` marker in the header wherever the
-budget-expanded target is being shown. Like targets and pantry, training
-sessions are drawer-only input — they apply to the next generation and are
-never written to any file in `config/`.
+budget-expanded target is being shown, and an add/remove/edit shows up in
+the staged-changes bar the same way a target override does. Like targets
+and pantry, training sessions are review-dialog-only input — they apply to
+the next generation and are never written to any file in `config/`.
 
 ### Biometric Sync — Garmin & Cronometer
 
@@ -251,7 +264,7 @@ warning logged rather than a failure.
 
 ### Pantry Clearing (`inventory_to_clear`)
 
-The drawer's **"Pantry Clear"** section is a free-text list of things
+The review dialog's **"Pantry clear"** section is a free-text list of things
 to use up (`"600g chicken thighs"`, `"half a bag of spinach"`). It's a
 **priority, not a constraint**: the prompt tells the model to prefer these
 items where they naturally fit, and explicitly forbids bending a meal's
@@ -281,8 +294,10 @@ something else); hover it to see why.
 
 ### Non-Blocking Week Generation
 
-**"Generate Current Week"** in the drawer (the label follows the header's
-week selector) runs the whole week — CLI and UI both go through the same
+**"Generate Current Week"** — the Plan destination's own button, or the
+staged-changes bar's "Generate week" shortcut, or the review dialog's own
+Generate button (the label follows the header's week selector) — runs the
+whole week; CLI and UI both go through the same
 `generate_week_plan`. In the UI each meal type's call runs on a background
 thread while the event loop stays free, so the browser stays fully interactive
 (other tabs, other clicks) for the 5–20 minutes a full week can take. A
@@ -352,7 +367,7 @@ Two export paths, for two different use cases:
 `recipes_master.json` is the one place recipe content outlives the week it was
 generated in (`week_plan.json` is overwritten every run, and `meal_history.json`
 keeps only lean per-day summaries). Three ways in and out, all from the
-drawer's **"Recipe Catalog"** expansion or a card's own icons:
+**Library** destination or a card's own icons:
 
 - **Bookmark** a cooked card to add it to the catalog and favorite it in one
   click. Un-favoriting keeps the entry — only the explicit delete removes it.
@@ -408,10 +423,11 @@ Run this after any change that touches targets, generation, chaining or
 shopping. Each item names the surface to look at and what "working" means.
 
 - [ ] **Macro telemetry recalculation on schedule edits.** Edit a day's
-      calorie/protein/carb target in the drawer (or add a training session).
-      The header's telemetry bar and numbers for that day update immediately,
-      without a page reload or generation run, and the day gets its marker
-      (amber `•` for an override, green `⚡` for training).
+      calorie/protein/carb target in the review dialog (or add a training
+      session). The header's telemetry bar and numbers for that day update
+      immediately, without a page reload or generation run, and the day gets
+      its marker (amber `•` for an override, green `⚡` for training) — and
+      the staged-changes bar shows the edit by name.
 - [ ] **Leftover chaining & visual outline highlighting.** Click "Link to
       next lunch" on a dinner with a recipe. Confirm: the next day's lunch
       card switches to a leftover treatment, both cards show a chain dot/line
@@ -441,24 +457,24 @@ shopping. Each item names the surface to look at and what "working" means.
 
 | Action | CLI (`src/planner.py`) | UI (`src/ui_app.py`) |
 |---|---|---|
-| Generate a week | `python src/planner.py` | Drawer → **Generate Current Week** |
+| Generate a week | `python src/planner.py` | Plan destination → **Generate**, or the staged-changes bar's **Generate week** |
 | Use a different config directory | `--config-dir PATH` | — (always `config/`) |
-| Override the model for one run | `--model NAME` | Drawer model selector |
+| Override the model for one run | `--model NAME` | Settings destination model selector |
 | Set the week's start day | `--week-start DAY` | Fixed by `week_start_day` in config |
-| Set household size | `--servings N` | Drawer servings field |
+| Set household size | `--servings N` | Review dialog **"People per meal"** field |
 | Set shopping trip days | `--shop-days Sunday,Wednesday` | `config/week.json` (`shopping.shop_days`) |
 | Make every lunch a leftover of the prior dinner | `--leftover-lunches` | Per-dinner **"Link to next lunch"** button |
 | Export shopping lists as Markdown | `--save-shopping-list` → `data/shopping_list.md` | — |
 | Export a shopping trip for Google Keep | — | Per-trip **"Copy for Keep"** button |
 | Re-use the last generated plan without an API call | `--use-cached-plan` | Grid always shows the last saved `week_plan.json` until you generate again |
 | Regenerate a single day or meal | — | Refresh icon on a day header / on a card |
-| Favorite, import or swap in a recipe | — | Drawer → **Recipe Catalog**; card bookmark and ⇄ icons |
+| Favorite, import or swap in a recipe | — | **Library** destination; card bookmark and ⇄ icons |
 | Export the week as a PDF menu | — | Header printer icon → `weekly_menu.pdf` |
 | Keep a second week in progress | — | Header **Current / Next Week** selector |
-| Edit a day's macro target for the next run | Edit `config/profile.json` `weekly_schedule` | Drawer → **Daily Targets** |
-| Pin one meal's budget | `config/profile.json` `meal_overrides` | (not yet editable from the drawer) |
-| Add a training/workout session | `config/schedule.json` `training_schedule` | Drawer → **Training Schedule** |
-| Prioritize using up pantry items | `config/week.json` `inventory_to_clear` | Drawer → **Pantry Clear** |
+| Edit a day's macro target for the next run | Edit `config/profile.json` `weekly_schedule` | Review dialog → **Daily targets** |
+| Pin one meal's budget | `config/profile.json` `meal_overrides` | (not yet editable from the UI) |
+| Add a training/workout session | `config/schedule.json` `training_schedule` | Review dialog → **Training schedule** |
+| Prioritize using up pantry items | `config/week.json` `inventory_to_clear` | Review dialog → **Pantry clear** |
 | Print shopping lists to the terminal | Always, after generation | — (use the shopping drawer) |
 | Monitor per-call generation timing/failures | `logs/meals.log` | Progress dialog (live) + warning toast on completion |
 | Sync weigh-ins / logged intake | `src/integrations/sync_service.py --sync-garmin` / `--sync-cronometer --date YYYY-MM-DD` | — (not in UI) |
@@ -476,7 +492,8 @@ other.
 
 ## Configuration reference
 
-Everything in Sections 3 and 5 that isn't drawer-editable lives in `config/`.
+Everything in Sections 3 and 5 that isn't editable from the review dialog or
+Settings destination lives in `config/`.
 The "File" column is the one to open; see `CLAUDE.md` for why the split falls
 where it does.
 
@@ -513,7 +530,7 @@ where it does.
 | `ui_settings.title_tooltip_chars` | `engine.json` | Title length above which a card gets a full-name tooltip |
 | `meal_generation_model` / `recipe_parser_model` | `models.json` | The two model roles. Each must also appear in the same file's `models` table, which is where per-model quirks like `reasoning_required` live — a role naming a model the table doesn't describe fails at load |
 | `garmin.exercise_recovery_factor` | `integrations.json` | Fraction of an activity's gross calories counted as genuinely additional (0.50) |
-| `--model` / drawer select | — | Model id for this run only, overriding `meal_generation_model`. Not a config-file key — it is never written to disk, and unlike the file's roles it is deliberately free-form. Both unset is a hard error, never a silent fallback |
+| `--model` / Settings destination select | — | Model id for this run only, overriding `meal_generation_model`. Not a config-file key — it is never written to disk, and unlike the file's roles it is deliberately free-form. Both unset is a hard error, never a silent fallback |
 
 The five core files are validated against the `AppConfig` Pydantic model at
 startup with `extra="forbid"` — a typo'd or unknown key fails immediately with

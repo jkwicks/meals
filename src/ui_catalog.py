@@ -1,7 +1,6 @@
 """Favorites/catalog helpers shared by `ui_cards` (the bookmark button on a
-cooked card), `ui_drawer` (the catalog list's bookmark/edit/delete row) and
-`ui_catalog_browser` (the full-screen catalog dialog, which offers the same
-three actions per recipe).
+cooked card) and `ui_catalog_browser` (the Library destination, which offers
+the same three actions per recipe).
 
 These read `state.recipe_catalog` (the in-memory copy loaded at startup)
 rather than awaiting the repository, deliberately: `ui_cards.canvas()` calls
@@ -10,11 +9,11 @@ a disk read per card would make a repaint O(cards) file opens. Every handler
 that mutates the catalog refreshes the "catalog"/"favorites" topics, so it
 stays in sync — do not "fix" these into async repository calls.
 
-`build_rename_dialog` lives here rather than in `ui_drawer` for the same
-reason `toggle_favorite` does: two surfaces now need to rename a catalog
-entry, and one dialog keyed off `state.edit_catalog_id` (the same pattern
-`ui_cards.recipe_detail` uses for `state.focus`) is what lets both open it
-without either owning it.
+`build_rename_dialog` lives here rather than in `ui_catalog_browser` for the
+same reason `toggle_favorite` does: more than one surface needs to rename a
+catalog entry, and one dialog keyed off `state.edit_catalog_id` (the same
+pattern `ui_cards.recipe_detail` uses for `state.focus`) is what lets each
+open it without any one of them owning it.
 """
 
 from dataclasses import dataclass

@@ -54,20 +54,19 @@ RADIUS_CARD = "rounded"  # cards, boxes, inputs
 RADIUS_PANEL = "rounded-lg"  # dialogs, panels
 RADIUS_PILL = "rounded-full"  # bars, dots, pills
 
-# Phase 2a of `ui-redesign.md`. The header's two `WEEK_GRID_COLS` rows
-# (`ui_telemetry.context_pipeline`/`telemetry`) and the canvas
-# (`ui_cards.canvas`) have to scroll in lockstep, but they can't share one
-# physical scroll parent: the header stays `position: fixed` (see
-# `ui_drawer.py`'s left-drawer comment for why that still matters even
-# after the drawer stopped pushing the page) so it stays visible while the
-# canvas scrolls vertically beneath it, and a fixed ancestor is never the
-# same element as the page's own scrolling container. `ui_app.py` instead
-# wraps each region's call site in its own `overflow-x: auto` div carrying
-# this class, and one `scroll` listener — attached to both, running
-# `WEEK_GRID_SCROLL_SYNC_JS` — mirrors `scrollLeft` between them entirely
-# client-side. Same technique a frozen-header spreadsheet UI uses; no
-# round trip per scroll tick, same reasoning `chain_css` already gives for
-# staying out of Python on a hover effect.
+# Phase 2a of `ui-redesign.md`. The header's `WEEK_GRID_COLS` row
+# (`ui_telemetry.telemetry`) and the canvas (`ui_cards.canvas`) have to
+# scroll in lockstep, but they can't share one physical scroll parent: the
+# header is `position: fixed` (a plain Quasar `QHeader` default) so it stays
+# visible while the canvas scrolls vertically beneath it, and a fixed
+# ancestor is never the same element as the page's own scrolling container.
+# `week_grid_scroll()` below wraps each region's call site in its own
+# `overflow-x: auto` div carrying this class, and one `scroll` listener —
+# attached to both, running `WEEK_GRID_SCROLL_SYNC_JS` — mirrors
+# `scrollLeft` between them entirely client-side. Same technique a
+# frozen-header spreadsheet UI uses; no round trip per scroll tick, same
+# reasoning `chain_css` already gives for staying out of Python on a hover
+# effect.
 WEEK_GRID_SCROLL_CLASS = "week-grid-scroll"
 
 # `minmax(110px, 1fr)` per column, not a flat min-width on the wrapper — 110px
@@ -93,6 +92,23 @@ WEEK_GRID_SCROLL_SYNC_JS = (
     " if (el !== e.currentTarget && el.scrollLeft !== e.currentTarget.scrollLeft)"
     " el.scrollLeft = e.currentTarget.scrollLeft; }); }"
 )
+
+
+def week_grid_scroll():
+    """One `overflow-x: auto` region around a `WEEK_GRID_COLS` grid.
+
+    Two call sites use this — the header's `telemetry()` row and the Plan
+    destination's canvas — because they can't share one physical scroll
+    parent (see `WEEK_GRID_SCROLL_CLASS`'s comment above). Both carry the
+    same class and the same `WEEK_GRID_SCROLL_SYNC_JS` listener, which is
+    what keeps a scroll on either one visually moving the other. Living here
+    rather than duplicated at each call site is what stops the two from
+    drifting apart.
+    """
+    return ui.element("div").classes(f"{WEEK_GRID_SCROLL_CLASS} w-full overflow-x-auto").on(
+        "scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS
+    )
+
 
 # The two cached weeks the app keeps on disk at once (see
 # `repository.LocalJSONRepository._week_plan_path`). "current" is the
@@ -391,12 +407,15 @@ PREP_COLUMN_ACCENT = "border border-indigo-400/25 border-l-[3px] border-l-indigo
 TRAINING_TYPES = list(TRAINING_INTENSITY_SPLIT) + ["rest"]
 TRAINING_TYPE_LABELS = {value: humanize(value) for value in TRAINING_TYPES}
 
-# The context pipeline shown above the telemetry header: what's supposed to
-# feed a day's plan, in dependency order. (key, label, icon, description,
-# connected). `connected=False` stages have no data source wired up yet —
-# they render as a permanently dashed/muted chip until something real lands
-# in `pipeline_value()`. "Meal Plan" isn't a fifth stage here because
-# `telemetry()` already renders it immediately below this row.
+# What's supposed to feed a day's plan, in dependency order. (key, label,
+# icon, description, connected). Shown on the Settings destination as a
+# static integrations status list (`ui_settings.py`) — `connected=False`
+# stages render "Not connected" until something real lands. Used to be a
+# per-day chip row above the telemetry header (28 chips: 3 unconnected
+# stages x 7 days, plus workout x 7 days); phase 3 of `ui-redesign.md` moved
+# it here since workout, the one connected stage, already has its per-day
+# detail in the Today destination's day-context strip. "Meal Plan" isn't a
+# fifth stage here because `telemetry()` already shows it directly.
 PIPELINE_STAGES = [
     (
         "readiness",
@@ -423,7 +442,7 @@ PIPELINE_STAGES = [
         "workout",
         "Adaptive Workout",
         "fitness_center",
-        "Training session for the day, from the drawer's schedule.",
+        "Training session for the day, from the review dialog's schedule.",
         True,
     ),
 ]

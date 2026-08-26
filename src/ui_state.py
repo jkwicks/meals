@@ -264,6 +264,19 @@ class DayContext:
 
 
 @dataclass
+class PendingChange:
+    """One line of the staged-changes bar/review dialog's "N pending changes".
+
+    Just a label — `pending_changes()` is the only producer, so there's
+    nothing else a consumer needs to branch on. Kept as a real type rather
+    than a bare string so a future consumer (grouping by category, say) has
+    somewhere to add a field without every call site's tuple shape changing.
+    """
+
+    summary: str
+
+
+@dataclass
 class PlannerState:
     """Everything one browser tab is looking at.
 
@@ -399,6 +412,13 @@ class PlannerState:
     _spec: Optional[WeekSpec] = None
     _spec_shape: tuple = ()
 
+    # `training_schedule` as `.load()` first read it from config.json — a
+    # snapshot, not a live reference, so `pending_changes()` can tell an
+    # edited/added/removed session apart from one still exactly as the file
+    # left it, the same way `set_target` diffs an override against
+    # `config["weekly_schedule"]`. Never touched after `.load()`.
+    _original_training_schedule: List[dict] = field(default_factory=list)
+
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
         # `load_app_config` validates config.json against `AppConfig` here,
@@ -421,6 +441,7 @@ class PlannerState:
             long_cook_enabled=config["enable_sunday_prep"],
             baseline_cuisine_share=config["planning_rules"]["min_baseline_cuisine_share"],
         )
+        state._original_training_schedule = [dict(session) for session in state.training_schedule]
         state.recipe_catalog = await repository.load_recipe_catalog()
         await state.reload_plan(repository)
         return state
@@ -965,6 +986,80 @@ class PlannerState:
         if 0 <= index < len(self.training_schedule):
             self.training_schedule.pop(index)
 
+    def pending_changes(self) -> List[PendingChange]:
+        """Everything staged for the next run that config.json doesn't know
+        about yet — what the staged-changes bar counts and summarizes.
+
+        Deliberately does **not** clear once a generation has used these
+        values: `target_overrides`/`pantry`/`training_schedule` are never
+        written back to config.json (see their field comments above), so a
+        week just generated from an overridden Wednesday is still, honestly,
+        a week generated from settings that disagree with the file — the
+        next regenerate uses them again. Only the grid-edit entry
+        (`edited`) actually clears after a generation, because saving *is*
+        what makes the grid match disk.
+        """
+        changes: List[PendingChange] = []
+
+        for day in self.days:
+            override = self.target_overrides.get(day)
+            if not override:
+                continue
+            base = self.config["weekly_schedule"].get(day, {})
+            # Calories first since it's the headline number; falling back to
+            # whichever key the override actually touched keeps this honest
+            # for a protein-only or carb-only edit.
+            key = "calories" if "calories" in override else next(iter(override))
+            delta = float(override[key]) - float(base.get(key, 0))
+            unit = "kcal" if key == "calories" else "g"
+            changes.append(PendingChange(f"{day[:3]} {delta:+.0f} {unit}"))
+
+        original_by_signature = {
+            (s.get("day"), s.get("time")): s for s in self._original_training_schedule
+        }
+        current_signatures = {(s.get("day"), s.get("time")) for s in self.training_schedule}
+        for session in self.training_schedule:
+            signature = (session.get("day"), session.get("time"))
+            original = original_by_signature.get(signature)
+            if original is None:
+                label = TRAINING_TYPE_LABELS.get(session.get("type"), "session")
+                changes.append(PendingChange(f"{session.get('day', '?')} {label} added"))
+            elif original != session:
+                changes.append(PendingChange(f"{session.get('day', '?')} training edited"))
+        for signature, original in original_by_signature.items():
+            if signature not in current_signatures:
+                label = TRAINING_TYPE_LABELS.get(original.get("type"), "session")
+                changes.append(PendingChange(f"{original.get('day', '?')} {label} removed"))
+
+        if self.pantry:
+            changes.append(PendingChange(f"{len(self.pantry)} pantry item(s)"))
+
+        if self.edited:
+            changes.append(PendingChange("grid edited"))
+
+        return changes
+
+    def discard_pending_inputs(self) -> None:
+        """Reset target overrides, the training schedule and the pantry list
+        back to what config.json/`.load()` gave them — the non-grid three
+        quarters of `pending_changes()`.
+
+        The staged-changes bar's "Discard pending changes" button pairs this
+        with `reload_from_disk` (which handles the fourth quarter, grid
+        edits, by re-reading `week_plan.json`): a button sitting right next
+        to "Mon +700 kcal" has to actually make that line go away, not just
+        the grid-edit part `reload_from_disk` alone ever touched. Unlike a
+        *successful generation* — which deliberately leaves these three
+        alone, see `pending_changes()`'s own docstring — this is the "give up
+        on everything I've staged" action, so it is allowed to be the
+        stronger of the two.
+        """
+        self.clear_targets()
+        self.training_schedule = [dict(session) for session in self._original_training_schedule]
+        self.pantry = [
+            str(item).strip() for item in self.config["inventory_to_clear"] if str(item).strip()
+        ]
+
     def has_training(self, day: str) -> bool:
         return any(session.get("day") == day for session in self.training_schedule)
 
@@ -1257,25 +1352,6 @@ def day_context(state: PlannerState, day: str) -> DayContext:
                 break
 
     return DayContext(location=location, sessions=sessions, meal_notes=meal_notes)
-
-
-def pipeline_value(state: PlannerState, day: str, key: str) -> Optional[str]:
-    """What a connected pipeline stage has for `day`, or None if unset.
-
-    Only "workout" is wired today — it reads the same `training_schedule`
-    `has_training()`/the telemetry ⚡ marker already use, so this is a real
-    signal, not a placeholder, from the day this pipeline ships. The other
-    stages stay in `PIPELINE_STAGES` with `connected=False` and never reach
-    here.
-    """
-    if key == "workout":
-        session = next(
-            (s for s in state.training_schedule if s.get("day") == day), None
-        )
-        if session is None:
-            return None
-        return TRAINING_TYPE_LABELS.get(session["type"], session["type"])
-    return None
 
 
 def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:

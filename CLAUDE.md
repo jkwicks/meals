@@ -178,16 +178,18 @@ deleted once the migration landed; if you need its rendering or grid-editing
 code as a reference, it is in git history at `git show e237872:app.py`.
 
 A week can be generated from either front end — `python src/planner.py` or the
-NiceGUI drawer's "Generate Current Week" — and both go through the same
+NiceGUI rail's "Generate" button — and both go through the same
 `generate_week_plan`, write the same `week_plan.json` and append the same
 history. The CLI is still the one that prints shopping lists.
 
 ### NiceGUI front end
 
-`ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density desktop
-UI: an overlaying left drawer for global controls, a header of 7 per-day macro bars, and a
-7-column x 4-card canvas sitting inside a "Week" tab alongside a "Today" tab
-(see "Module layout" and "The Today tab" below). Both grids are
+`ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density
+desktop UI: a header of 7 per-day macro bars, a persistent staged-changes bar
+beneath it, and a slim vertical rail choosing one of five destinations — Plan
+(the week grid), Today, Library, Insights, Settings — each owning the full
+canvas below the bar (see "Module layout" and "Five destinations, one rail"
+below). The Plan destination's canvas and the header's telemetry row are both
 `grid-cols-[repeat(8,minmax(110px,1fr))]` (`ui_theme.WEEK_GRID_COLS`) — an
 indigo Sunday-prep column sits at index 0, ahead of the seven days — so a
 day's telemetry stays directly above its meals, at rest and while scrolled.
@@ -196,20 +198,25 @@ too narrow for eight such columns needs to scroll, but the header
 (`position: fixed`, so it stays visible while the canvas scrolls vertically
 beneath it) and the canvas (in the page container below it) can never be the
 same physical scroll parent. Each gets its own `overflow-x: auto` wrapper
-instead — `ui_app.week_grid_scroll()`, two call sites sharing one class,
+instead — `ui_theme.week_grid_scroll()`, two call sites sharing one class,
 `ui_theme.WEEK_GRID_SCROLL_CLASS` — and a `scroll` listener
 (`WEEK_GRID_SCROLL_SYNC_JS`) mirrors `scrollLeft` between them entirely
 client-side, the same reasoning `chain_css` already gives for staying out of
-Python on a per-frame effect. Phase 2a of `ui-redesign.md`; it replaced an
-older fix where `ui.left_drawer(top_corner=True)` made the drawer push the
-page and inset the fixed header by the drawer's width, keeping the two grids
-at the same x-offset by insetting both — which was also the bug report: 320px
-of drawer competing with an 8-column grid for the rest of the viewport is
-what widened `.nicegui-content` enough for the *document* to scroll
-sideways. `ui.left_drawer(...).props("overlay")` now floats the drawer over
-the page instead of resizing it, so opening or closing it never reflows
-either grid, and neither grid is ever pushed in the first place. Cook/leftover/skip/not-generated
-are four distinct card treatments (`STATUS_STYLES`).
+Python on a per-frame effect. Phase 2a of `ui-redesign.md`.
+
+**Phase 2a's fix targeted a problem phase 3 later made structurally
+impossible to reintroduce.** The left drawer that existed before phase 3
+toggled open and closed, and an earlier version inset the fixed header by
+the drawer's width (`ui.left_drawer(top_corner=True)`) to keep the header's
+and canvas's grid columns aligned whenever it was open — which was also the
+bug report: 320px of drawer competing with an 8-column grid for the rest of
+the viewport is what widened `.nicegui-content` enough for the *document* to
+scroll sideways. `overlay` mode fixed that without removing the toggle.
+Phase 3 (below) removed the drawer, and the toggle, outright: the rail is a
+fixed-width, always-visible flex sibling of the destination panels, not a
+`QDrawer`, so there is no open/close event left to reflow anything.
+Cook/leftover/skip/not-generated are four distinct card treatments
+(`STATUS_STYLES`).
 
 #### The type, spacing and radius scale
 
@@ -272,31 +279,40 @@ width on every one of 28 cards to repeat the border's answer.
 `ui_app.py` used to be the whole UI — every widget a closure inside one
 ~3,200-line page function. It is now an ~300-line **page shell**: it builds
 a `UIContext` (`state`, the repository, a `Refreshables` registry), calls
-each concern's `build_*(ctx)` factory, lays out the header (the one region
-with no natural module of its own, since it's shared chrome above both
-tabs), and registers every returned refreshable into one topic map. The
-concerns:
+each concern's `build_*(ctx)` factory, lays out the header and the
+staged-changes bar (the two regions with no natural module of their own —
+the header because it's shared chrome above every destination, the bar
+because it needs two other modules already built), lays out the rail and its
+five destination panels, and registers every returned refreshable into one
+topic map. The concerns:
 
 | module | owns |
 |---|---|
-| `ui_theme.py` | presentation constants, CSS, pure render helpers (`STATUS_STYLES`, `telemetry_bar`, `chain_css`, ...) — no `PlannerState` dependency |
+| `ui_theme.py` | presentation constants, CSS, pure render helpers (`STATUS_STYLES`, `telemetry_bar`, `chain_css`, `week_grid_scroll`, ...) — no `PlannerState` dependency |
 | `ui_state.py` | `PlannerState`, `SlotView` — the view model, unchanged in substance from before the split |
 | `ui_context.py` | `Refreshables` (the topic registry, see below) and `UIContext` |
-| `ui_catalog.py` | favorites helpers shared by `ui_cards` and `ui_drawer` (`is_favorited`, `toggle_favorite`, ...) |
+| `ui_catalog.py` | favorites helpers shared by `ui_cards` and `ui_catalog_browser` (`is_favorited`, `toggle_favorite`, `build_rename_dialog`, ...) |
 | `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `reload_from_disk`, plus the progress dialog |
-| `ui_cards.py` | the Week tab's canvas, meal cards, recipe detail and swap-with-favorite dialogs |
-| `ui_telemetry.py` | the header's week banner, context-pipeline strip, and macro bars |
-| `ui_shopping.py` | the shopping slide-over |
-| `ui_drawer.py` | the left drawer's targets/training/pantry/catalog/import sections |
-| `ui_prep_options.py` | the "Generate Current Week" options popup — cuisine picker, diet-style picker, bulk-prep and long-cook toggles, each a one-off for the *next* run only (see below) |
-| `ui_today.py` | the Today tab — one day's cards, its location/training context strip, and the day picker that moves between days (see below) |
+| `ui_cards.py` | the meal cards, recipe detail and swap-with-favorite dialogs, and the canvas the Plan destination wraps |
+| `ui_telemetry.py` | the header's week banner and macro bars |
+| `ui_shopping.py` | the right-hand shopping slide-over |
+| `ui_review.py` | the review dialog — every input to the *next* generation: cuisine, diet style, bulk-prep/long-cook, people per meal, daily targets, training schedule, pantry (see "The review dialog and the staged-changes bar" below) |
+| `ui_staged_bar.py` | the persistent pending-changes strip between the header and the rail |
+| `ui_plan.py` | the Plan destination — the "This week" stat block plus `ui_cards`' canvas |
+| `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below) |
+| `ui_catalog_browser.py` | the Library destination — the recipe catalog, its filters, and recipe import |
+| `ui_insights.py` | the Insights destination — a stub honest-empty-state, see `future-ideas.md`'s 5c |
+| `ui_settings.py` | the Settings destination — week start, shopping days, model, and an integrations status list |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
 (and, for `ui_shopping`, the drawer element) other modules or the shell
 need — `ui_cards.build_cards`, for instance, needs `ui_generation`'s
 handles passed in, because a card's regenerate icon calls into it. This is
 why build order matters in `planner_page()`: `ui_generation` before
-`ui_cards`, everything before the refresh-topic registration at the bottom.
+`ui_review` (its Generate button starts a run), `ui_review` and `ui_cards`
+before `ui_plan` (the Plan destination's own Generate button opens the
+review dialog; its canvas is `ui_cards`' own), everything before the
+refresh-topic registration at the bottom.
 
 The presentation contract — the type/spacing/radius scales, which colours are
 structural vs. semantic vs. categorical, and the NiceGUI traps that have each
@@ -311,9 +327,9 @@ A call site says *what changed* — `refreshables.refresh("plan")`,
 `"targets"`, `"catalog"` — instead of naming every widget that currently
 depends on it. Topics are registered once, in `planner_page()`, after every
 module is built. `"plan"` is the broad one (a generation, a reload, a
-leftover link, or a drawer control that reshapes the week all repaint the
+leftover link, or a settings control that reshapes the week all repaint the
 same set); several narrower topics exist because rebuilding a section
-mid-edit would steal an input's focus — see `ui_drawer.day_target_row`'s
+mid-edit would steal an input's focus — see `ui_review.day_target_row`'s
 `sync()`, which refreshes `"telemetry"` alone rather than `"targets"` for
 exactly that reason.
 
@@ -327,15 +343,18 @@ saves `week_plan.json` and records history *before* adopting the plan into
 `PlannerState`, so the grid can never show a week that isn't saved — a
 20-minute run one browser refresh from being lost is the failure that ordering
 prevents. Grid *edits* are still in-memory only: they live in the client's
-`PlannerState` until "Reload from disk" discards them, and the header shows an
-"edited — not saved" chip while they're outstanding (`adopt_plan` clears it,
-because saving is what it just did).
+`PlannerState` until the staged-changes bar's "Discard pending changes"
+discards them, and that bar stays visible while any are outstanding
+(`adopt_plan` clears the grid-edit part of `pending_changes()`, because
+saving is what it just did — see "The review dialog and the staged-changes
+bar" below for why the target/training/pantry parts deliberately do not
+clear the same way).
 
 Things worth knowing about the generation path specifically:
 
 - **It generates what's on the grid**, not a fresh default week — including
   any "Link to next lunch" edits, so a linked lunch is a leftover the model is
-  told not to generate. `generation_spec()` reapplies the drawer's
+  told not to generate. `generation_spec()` reapplies the review dialog's
   people-per-meal, which `PlannerState.spec` deliberately ignores once a week
   exists (see `_shape()`); without that, the control would silently do nothing
   on every run after the first.
@@ -401,7 +420,7 @@ a busy week reuses a hue.
 
 #### The expanded recipe card
 
-Clicking any card — Week tab or Today tab, they share the one dialog — opens
+Clicking any card — Plan or Today destination, they share the one dialog — opens
 `ui_cards.recipe_detail`, which is laid out as a document you cook from rather
 than as a roomier version of the card that opened it: a mono eyebrow
 (`MEAL TYPE — STYLE`), the title, one ruled strip carrying
@@ -444,16 +463,21 @@ able to check and not worth a column.
 
 ### The Today tab
 
-`ui_today.py` is a read-only preview of just today's four cards, sitting
-next to the Week tab. It is deliberately not built on `ui_cards.meal_card`
-— that function's action-row buttons all need `ui_catalog`/`ui_generation`
-wired in, none of which a card with no buttons needs, so a smaller card of
-its own there is a real decoupling rather than a "fix later" shortcut. No
-favorite/swap/regenerate buttons yet, but clicking a card *does* open the
-recipe detail dialog — `build_today(ctx, cards)` takes `ui_cards`'s
-`CardHandles` and calls `cards.open_detail(view)` on click, the same one
-dialog every Week-tab card already shares, rather than a second copy of it
-living here.
+`ui_today.py` is a read-only preview of just today's four cards, its own
+destination on the rail beside Plan. It is deliberately not built on
+`ui_cards.meal_card` — that function's action-row buttons all need
+`ui_catalog`/`ui_generation` wired in, none of which a card with no buttons
+needs, so a smaller card of its own there is a real decoupling rather than a
+"fix later" shortcut. No favorite/swap/regenerate buttons yet, but clicking
+a card *does* open the recipe detail dialog — `build_today(ctx, cards)`
+takes `ui_cards`'s `CardHandles` and calls `cards.open_detail(view)` on
+click, the same one dialog every Plan-destination card already shares,
+rather than a second copy of it living here.
+
+(Still called "the Today tab" throughout this section — mechanically it is
+still one `ui.tab`/`ui.tab_panel` pair, per `ui_app.py`'s rail; only its
+orientation and its four siblings changed in phase 3 of `ui-redesign.md`,
+not the widget or any of the logic below.)
 
 **Knowing "today" needed a real calendar date, which nothing in this
 codebase stored.** `WeekPlan.days` is a rotation of weekday *names*
@@ -486,11 +510,11 @@ all" still replaces the panel.
 
 The Today tab also carries a **day-context strip** above the calorie bar:
 where the day is spent, and the workouts scheduled for it. This is the one
-thing the tab can show that the Week tab structurally cannot — seven columns
-have room for an amber bolt saying *that* a day has a workout, and one day
-has room to say which session, at what time, for how many calories, and what
-the location does to lunch. So it lives here rather than in the shared header
-above both tabs.
+thing the tab can show that the Plan destination structurally cannot — seven
+columns have room for an amber bolt saying *that* a day has a workout, and
+one day has room to say which session, at what time, for how many calories,
+and what the location does to lunch. So it lives here rather than in the
+shared header above every destination.
 
 `ui_state.day_context` is the whole view model, built **once per repaint**
 rather than once per card: the per-meal training notes are only reachable
@@ -500,14 +524,14 @@ that work for one day's answer.
 
 It reads the config **the next run would use**, not the file on disk, which
 is what puts it under the same "live preview" contract `targets_for` already
-honours — a session added in the drawer changes the day's budget *and* its
-post-workout pin, so a strip still showing the file's schedule would
-contradict the calorie bar directly above it. `today_view` is registered on
-the `targets` and `training` refresh topics for that reason. It is
-deliberately **not** on `telemetry`: that topic exists so a keystroke in a
-focused target input can repaint the header without disturbing the drawer,
-and rebuilding four cards plus a `planning_config()` per keystroke is exactly
-the cost it was carved out to avoid.
+honours — a session added in the review dialog changes the day's budget
+*and* its post-workout pin, so a strip still showing the file's schedule
+would contradict the calorie bar directly above it. `today_view` is
+registered on the `targets` and `training` refresh topics for that reason.
+It is deliberately **not** on `telemetry`: that topic exists so a keystroke
+in a focused target input can repaint the header without disturbing the
+dialog, and rebuilding four cards plus a `planning_config()` per keystroke is
+exactly the cost it was carved out to avoid.
 
 Four things in it are decisions rather than detail:
 
@@ -618,18 +642,22 @@ would go stale on the others. The shell injects its `ui.tab` through
 `TodayHandles.bind_tab` because `build_today` runs well before the tabs exist
 (see `planner_page`'s build order).
 
-### Drawer inputs to the next run: targets and pantry
+### The review dialog and the staged-changes bar
 
-The left drawer's "Daily Targets" and "Pantry Clear" sections (plus "Training
-Schedule") edit `PlannerState`, never the files in `config/`, and are merged into a config
-by `PlannerState.planning_config()` — one object carrying the model, the
-overrides and the pantry, because `generate_week_plan`, `validate_week`,
-`split_targets` and `inventory_instruction` all read plain config and would
-otherwise each need their own patch. Generating is still the only thing in the
-app that writes to disk.
+`ui_review.py`'s dialog is where every input to the *next* generation lives:
+cuisine, western-style share, diet styles, bulk-prep/long-cook, people per
+meal, and — folded in from the deleted left drawer by phase 3 of
+`ui-redesign.md` — "Daily Targets", "Training Schedule" and "Pantry Clear".
+All of it edits `PlannerState`, never the files in `config/`, and is merged
+into a config by `PlannerState.planning_config()` — one object carrying the
+model, the overrides, the training schedule and the pantry, because
+`generate_week_plan`, `validate_week`, `split_targets` and
+`inventory_instruction` all read plain config and would otherwise each need
+their own patch. Generating is still the only thing in the app that writes
+to disk.
 
 - `target_overrides` holds only what **differs** from the file, per day. That
-  is what lets the drawer count overridden days, reset them one at a time, and
+  is what lets the dialog count overridden days, reset them one at a time, and
   leave untouched days following config if config changes. `set_target` clears
   a key whose value matches the file, which is also how the reset button undoes
   itself: it writes the file's numbers back into the inputs and the change
@@ -644,7 +672,46 @@ app that writes to disk.
 - `day_target_row` is built once and mutated in place rather than being
   refreshable: the derived-fat readout updates per keystroke, and repainting a
   section containing the focused input takes the cursor out of the number being
-  typed. Only `telemetry` is refreshed on an edit.
+  typed. Only `telemetry` (and, riding along on that same topic,
+  `ui_staged_bar.bar` — see below) is refreshed on an edit.
+
+**The staged-changes bar (`ui_staged_bar.py`) is what phase 3 replaced three
+separate "Applies to the next generation only" disclaimers, the amber
+telemetry override dot, and the old "edited — not saved" chip with.** One
+persistent strip beneath the header, on every destination, reading "N pending
+changes — <summaries> · Review · Generate week", or nothing at all when
+`PlannerState.pending_changes()` is empty. It counts four independent things
+— an overridden day (signed delta against `config["weekly_schedule"]`), an
+added/removed/edited training session (diffed against
+`_original_training_schedule`, the snapshot `.load()` takes), a non-empty
+pantry list, and `state.edited` (grid edits: leftover links, unlinks, skip
+estimates, favorite swaps) — and none of the four suppresses or duplicates
+another.
+
+**A successful generation deliberately clears only the fourth.**
+`target_overrides`/`training_schedule`/`pantry` are never written to
+config.json, so a week just generated from an overridden Wednesday is still,
+honestly, a week generated from settings that disagree with the file — the
+next regenerate uses them again, and the bar is right to keep saying so.
+Only the grid-edit entry clears on generation, because saving is what makes
+the grid match disk. The bar's own "Discard pending changes" button is
+allowed to be stronger: `PlannerState.discard_pending_inputs()` resets all
+three of the non-grid categories back to their config/session baseline (the
+same numbers a per-day reset button would land on), paired with
+`generation.reload_from_disk` for the grid-edit quarter — a button sitting
+directly beside "Mon +700 kcal" has to make that line go away too, not only
+the part `reload_from_disk` alone ever touched.
+
+**The Plan destination carries its own "Generate" button independent of the
+bar**, and this is deliberate, not redundant: the bar hides entirely when
+nothing is pending, which is the common case on a fresh page load, and
+cuisine/diet-style/bulk-prep/servings picks in the review dialog don't count
+toward `pending_changes()` at all (see above) — so without a second entry
+point, there would be runs where the *only* way to reach "Generate" is
+inside a bar that isn't there. Both buttons open the same dialog; the bar
+additionally offers a "Generate week" shortcut that skips straight to
+`generation.run_generation` for when something is already staged and the
+current picks are fine as they are.
 
 ### Shopping list drawer
 
@@ -681,9 +748,12 @@ Two things it does differently from the old Streamlit app, both worth keeping:
 - There is no re-run, so there is no session-state cache to defend. UI widgets
   bind to a per-client `PlannerState` and structural changes call
   `.refresh()` on the `@ui.refreshable` sections that depend on them. Note
-  that attaching `bind_value` fires an initial change event, so a handler's
-  callees must be defined before the widget is built — that is why `canvas` is
-  defined above the drawer and only *called* at the end.
+  that `bind_value`'s own sync back to `state` runs *after* a widget's
+  `on_change` handler, not before — `ui_settings.py`'s week-start select sets
+  `state.week_start` explicitly at the top of its handler before calling
+  `refreshables.refresh("plan")`, rather than trusting the binding to have
+  already landed it, or the repaint would still be reading the old week
+  order.
 
 `PlannerState.slot_views()` flattens both a generated `WeekPlan` and an
 un-generated `WeekSpec` into the same `SlotView` shape, so the card widget has
@@ -758,7 +828,7 @@ types: dinner is generated before lunch so the one cross-type leftover
   Model selection lives in `config/models.json`: `meal_generation_model` is
   the standing choice, and `config["openrouter_model"]` is a per-run
   selection injected **in memory only** by the CLI's `--model` and the
-  drawer's model select. There is **no in-code model default** — both unset
+  Settings destination's model select. There is **no in-code model default** — both unset
   raises (`resolve_planner_model`), deliberately, so the app can never
   silently plan against a stale hardcoded model.
 - `repository.py` — the storage boundary (see below).
@@ -809,7 +879,7 @@ types: dinner is generated before lunch so the one cross-type leftover
       post-workout meal, pre-workout digestion note), and pinning a *style*
       is only warranted when the session lands before the meal can settle.
       Both are pins, not overrides — a style or cuisine the user chose in the
-      drawer always survives, the same precedence a hand-written
+      review dialog always survives, the same precedence a hand-written
       `meal_overrides` entry gets over a computed one.
 
       **The pin only fires on a slot still on auto**, which is what makes
@@ -819,11 +889,11 @@ types: dinner is generated before lunch so the one cross-type leftover
       concrete style from a previous run — the normal state once a week has
       been generated once — blocks the pin from ever re-firing, even after a
       `training_schedule` edit newly qualifies that day: a schedule change
-      would otherwise silently fail to reach the plan until the drawer's
-      "Shuffle styles" button (`PlannerState.shuffle_styles`, same two
-      `week.clear_*` calls) was clicked by hand. Mode, leftover links and
-      skips survive the clear — those are structural edits the user made on
-      purpose, not picks due for a re-roll.
+      would otherwise silently fail to reach the plan until the Plan
+      destination's "Shuffle styles" button (`PlannerState.shuffle_styles`,
+      same two `week.clear_*` calls) was clicked by hand. Mode, leftover
+      links and skips survive the clear — those are structural edits the
+      user made on purpose, not picks due for a re-roll.
 
     The prompt side of blocking lives in `generate_meal_type_week`, which is
     the only call that can see the whole week: `build_cuisine_continuity_rule`
@@ -979,7 +1049,7 @@ rather than once in the CLI, because NiceGUI builds its config in the
 *synchronous* `PlannerState.planning_config()`, which cannot await storage.
 Hydrating where the repository is already in hand gets both front ends onto
 the same numbers with no UI change. The consequence worth knowing: the
-drawer's telemetry header still previews the **file's** targets, so before a
+header's telemetry still previews the **file's** targets, so before a
 run it can disagree with what the run will actually aim at. Closing that gap
 means giving `planning_config()` a weigh-in, which is a `ui_app.py` change.
 
@@ -1288,10 +1358,11 @@ so the day shows up as a visible shortfall rather than crashing.
 **Both narrower retries must clear what they fix.** `regenerate_single_day`
 pops every cook slot on the day out of `failures`; `regenerate_single_meal`
 pops its one slot. Forgetting this doesn't show up on the card (which reads
-`cook_events`, so it turns green) — it shows up in the drawer's failure list
-and the shopping drawer's "nothing for those meals is on this list" note,
-which keep naming a meal that now exists. The per-card regenerate button is
-offered *on* NOT GENERATED cards, so that is the common path, not an edge case.
+`cook_events`, so it turns green) — it shows up in the Plan destination's
+failure list (`ui_plan.week_summary`) and the shopping drawer's "nothing for
+those meals is on this list" note, which keep naming a meal that now exists.
+The per-card regenerate button is offered *on* NOT GENERATED cards, so that
+is the common path, not an edge case.
 
 ### Reasoning must be disabled — this is not optional
 
@@ -1362,15 +1433,15 @@ different models:
   what the week costs. It deliberately does **not** follow the generation
   model.
 
-Its `models` table doubles as the drawer's selectable list (the UI offers its
-keys) and as the home for per-model quirks; an entry with nothing unusual
-about it is just `{}`.
+Its `models` table doubles as the Settings destination's selectable list (the
+UI offers its keys) and as the home for per-model quirks; an entry with
+nothing unusual about it is just `{}`.
 
 `config["openrouter_model"]` is a third thing and is **not a file key**: it is
-the per-run selection injected in memory by `--model` and the drawer's model
-select, and no front end ever writes it to disk. It used to exist as a
-config.json field too, where its only effect was to give the standing choice a
-second place to hide.
+the per-run selection injected in memory by `--model` and the Settings
+destination's model select, and no front end ever writes it to disk. It used
+to exist as a config.json field too, where its only effect was to give the
+standing choice a second place to hide.
 
 There is no `openrouter_base_url` key any more — it was the same URL for every
 model and a knob nobody turned, so it is a constant in `planner.py`.
@@ -1414,10 +1485,11 @@ milk" out of oats.
 
 ### Batch cooking on purpose: the two prep toggles
 
-The drawer's Generate button opens `ui_prep_options`' popup rather than
-running the week directly, and two of its controls reshape the *grid* before
-generation rather than merely briefing the model: **bulk prep** and **long
-cook**. Each calls `week.spread_batch`, which picks one dinner as an anchor
+The Plan destination's Generate button, and the staged-changes bar's, both
+open `ui_review`'s dialog rather than running the week directly, and two of
+its controls reshape the *grid* before generation rather than merely
+briefing the model: **bulk prep** and **long cook**. Each calls
+`week.spread_batch`, which picks one dinner as an anchor
 and links enough forward slots to it — via ordinary `link_leftover` calls, so
 portions stay derived and nothing new is invented — to approach
 `planning_rules.batch_target_servings`.
@@ -1829,7 +1901,7 @@ The card's "Eaten out?" button seeds from `PlannerState.default_skip_estimate`
 slot temporarily added back as a cook — because a restaurant dinner is
 usually well above its weighted share and a missed meal is 0, so the default
 is only ever a starting point. Calories/protein/carbs are typed and fat is
-derived, the same division `ui_drawer.day_target_row` uses.
+derived, the same division `ui_review.day_target_row` uses.
 
 Fibre is deliberately **not** part of a skip estimate: the fibre in a meal
 nobody cooked isn't estimable, and 0 is more honest than a guess.
