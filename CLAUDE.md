@@ -192,6 +192,40 @@ UI: left drawer for global controls, a header of 7 per-day macro bars, and a
 a day's telemetry stays directly above its meals. Cook/leftover/skip/not-generated
 are four distinct card treatments (`STATUS_STYLES`).
 
+#### The type, spacing and radius scale
+
+`ui_theme.py` names four text sizes (`TEXT_MICRO`/`TEXT_BODY`/`TEXT_HEAD`/
+`TEXT_DISPLAY`), five spacing steps (`SPACE_HAIR`/`SPACE_TIGHT`/`SPACE_BASE`/
+`SPACE_SECTION`/`SPACE_PAGE`) and three radii (`RADIUS_CARD`/`RADIUS_PANEL`/
+`RADIUS_PILL`), and every `ui_*.py` call site now names one of these instead
+of a literal Tailwind class. Phase 1 of `ui-redesign.md`; the canonical
+statement of the scale, including which value goes where, is
+`.claude/rules/ui.md`, which auto-loads whenever a `ui_*.py` file is touched.
+
+What it replaced: nine font sizes between 8px and 14px (`text-[8px]` through
+`text-base`), 56 call sites at the smallest pixel value alone and 35 at the
+next — a band too narrow for any two of them to read as different at a
+glance. That was noise being mistaken for hierarchy; weight and colour
+already carried the real distinctions, and still do. Spacing had the same
+problem one step down: `1.5` (6px) sat exactly halfway between the `1` and
+`2` steps with no principled reason to reach for it over either, so all 24 of
+its call sites now resolve to `SPACE_TIGHT` — down, not up, because the type
+scale is simultaneously getting larger and the dense card interiors where
+`1.5` appeared can't absorb growth from both directions at once.
+`rounded-md`/`rounded-xl`, the two in-between Tailwind radii, are retired the
+same way — every site that used either now names `RADIUS_CARD` or
+`RADIUS_PANEL`, whichever the element actually was.
+
+**This is a token pass, not a layout change.** No element moved, was added,
+or was removed — `mt-*`/`mb-*`/`mx-*` margins are deliberately untouched,
+because folding them into a parent `gap` is a layout decision that belongs to
+phase 2, which is already restructuring containers. Phase 1 also recorded,
+without resolving, that amber currently carries five meanings (near-target,
+carbs, training, a target override, fridge storage) and violet two (fat,
+location) — see the collision note beside `LOCATION_ACCENT` in
+`ui_theme.py`. Resolving either is a phase 3 decision, made when the
+surfaces using them are rebuilt anyway.
+
 #### Module layout
 
 `ui_app.py` used to be the whole UI — every widget a closure inside one

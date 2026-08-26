@@ -24,6 +24,7 @@ from nicegui import ui
 
 from repository import recipe_content_key
 from ui_context import UIContext
+from ui_theme import RADIUS_PANEL, SPACE_BASE, SPACE_PAGE, TEXT_BODY, TEXT_HEAD
 
 
 def catalog_entry_for(ctx: UIContext, recipe: dict) -> Optional[dict]:
@@ -98,13 +99,13 @@ def build_rename_dialog(ctx: UIContext) -> RenameDialogHandles:
 
     with ui.dialog() as dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-96 max-w-full flex flex-col gap-2"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-96 max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
-            ui.label("Rename recipe").classes("text-sm font-semibold")
+            ui.label("Rename recipe").classes(f"{TEXT_HEAD} font-semibold")
             ui.input(label="Name").bind_value(state, "edit_catalog_name").props(
                 "dense outlined"
-            ).classes("w-full text-xs")
-            with ui.row().classes("justify-end gap-2 mt-2"):
+            ).classes(f"w-full {TEXT_BODY}")
+            with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-2"):
                 ui.button("Cancel", on_click=dialog.close).props("dense flat no-caps")
                 ui.button("Save", on_click=save).props("dense no-caps")
 

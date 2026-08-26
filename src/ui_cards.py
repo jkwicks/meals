@@ -26,8 +26,20 @@ from ui_theme import (
     MONO_SECTION_LABEL,
     PREP_BADGE_STYLES,
     PREP_COLUMN_ACCENT,
+    RADIUS_CARD,
+    RADIUS_PANEL,
+    RADIUS_PILL,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
     STATUS_SKIP,
     STATUS_STYLES,
+    TEXT_BODY,
+    TEXT_DISPLAY,
+    TEXT_HEAD,
+    TEXT_MICRO,
     link_line,
     split_quantity,
 )
@@ -83,17 +95,17 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         # item's default `min-width: auto` won't shrink past its longest
         # word, which reintroduces the overflow one step further along.
         row = ui.element("div").classes(
-            "flex flex-row flex-nowrap items-start gap-3 px-3 py-2 rounded-md "
+            f"flex flex-row flex-nowrap items-start gap-{SPACE_SECTION} px-{SPACE_SECTION} py-{SPACE_BASE} {RADIUS_CARD} "
             "cursor-pointer border border-slate-800 bg-slate-800/30 "
             "hover:border-slate-700 transition-colors duration-100"
         )
         with row:
             marker = ui.label(str(number)).classes(
-                "shrink-0 w-5 h-5 rounded-full grid place-items-center "
-                "text-[10px] font-mono border border-slate-700 text-slate-400"
+                f"shrink-0 w-5 h-5 {RADIUS_PILL} grid place-items-center "
+                f"{TEXT_MICRO} font-mono border border-slate-700 text-slate-400"
             )
             label = ui.label(step).classes(
-                "min-w-0 text-[13px] leading-snug text-slate-200"
+                f"min-w-0 {TEXT_HEAD} leading-snug text-slate-200"
             )
 
         def toggle() -> None:
@@ -134,16 +146,16 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         # put a portion multiplier this app can't have (portions are derived,
         # see `week.portions_for`) — the same cook/leftover chip the card
         # carries, so the dialog says what it opened from.
-        with ui.element("div").classes("flex flex-row items-center justify-between gap-3"):
+        with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_SECTION}"):
             eyebrow = " — ".join(
                 part.upper() for part in [view.meal_type, view.style] if part
             )
             ui.label(eyebrow).classes(MONO_SECTION_LABEL)
             with ui.element("div").classes(
-                f"flex items-center gap-1 px-2 py-[2px] rounded-full shrink-0 {look['badge']}"
+                f"flex items-center gap-{SPACE_TIGHT} px-{SPACE_BASE} py-[2px] {RADIUS_PILL} shrink-0 {look['badge']}"
             ):
-                ui.icon(look["icon"]).classes("text-[11px]")
-                ui.label(look["label"]).classes("text-[9px] font-semibold tracking-wide")
+                ui.icon(look["icon"]).classes(TEXT_BODY)
+                ui.label(look["label"]).classes(f"{TEXT_MICRO} font-semibold tracking-wide")
 
         ui.label(view.title).classes(
             "text-2xl font-semibold leading-tight text-slate-100 mt-2"
@@ -160,7 +172,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             if part
         )
         if subtitle:
-            ui.label(subtitle).classes("text-sm text-slate-400 mt-1")
+            ui.label(subtitle).classes(f"{TEXT_HEAD} text-slate-400 mt-1")
 
         if view.macros:
             # One ruled strip, dot-separated, rather than four stacked
@@ -178,21 +190,21 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 cells.append((f"{view.prep_minutes}m", "PREP", "text-slate-500"))
 
             with ui.element("div").classes(
-                "flex flex-row items-center justify-between gap-2 mt-3 px-4 py-3 "
-                "rounded-lg border border-slate-800 bg-slate-800/40"
+                f"flex flex-row items-center justify-between gap-{SPACE_BASE} mt-3 px-{SPACE_PAGE} py-{SPACE_SECTION} "
+                f"{RADIUS_PANEL} border border-slate-800 bg-slate-800/40"
             ):
                 for index, (value, label, tint) in enumerate(cells):
                     if index:
-                        ui.label("·").classes("text-slate-600 text-sm")
-                    with ui.element("div").classes("flex flex-row items-baseline gap-1.5"):
+                        ui.label("·").classes(f"text-slate-600 {TEXT_HEAD}")
+                    with ui.element("div").classes(f"flex flex-row items-baseline gap-{SPACE_TIGHT}"):
                         # Colour rides on the label, never the number — the
                         # same rule `MACRO_TINTS` states for the card strip.
-                        ui.label(value).classes("text-base font-semibold text-slate-100")
+                        ui.label(value).classes(f"{TEXT_DISPLAY} font-semibold text-slate-100")
                         ui.label(label).classes(
-                            f"text-[10px] font-mono tracking-wider {tint}"
+                            f"{TEXT_MICRO} font-mono tracking-wider {tint}"
                         )
             ui.label("PER SERVING").classes(
-                "block text-right text-[9px] font-mono tracking-[0.18em] "
+                f"block text-right {TEXT_MICRO} font-mono tracking-[0.18em] "
                 "text-slate-600 mt-1"
             )
 
@@ -202,32 +214,32 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         # one serving, and on a bulk-cooked dinner those are different numbers
         # by a factor of four. Each half says which it is, next to itself.
         count = len(view.recipe.ingredients)
-        with ui.element("div").classes("flex flex-row items-baseline justify-between gap-3"):
+        with ui.element("div").classes(f"flex flex-row items-baseline justify-between gap-{SPACE_SECTION}"):
             ui.label(f"INGREDIENTS ({count} ITEM{'' if count == 1 else 'S'})").classes(
                 MONO_SECTION_LABEL
             )
             if view.portions:
                 ui.label(f"ALL {portion_note.upper()}").classes(
-                    "text-[10px] font-mono tracking-wider text-slate-500 shrink-0"
+                    f"{TEXT_MICRO} font-mono tracking-wider text-slate-500 shrink-0"
                 )
-        with ui.element("div").classes("grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2"):
+        with ui.element("div").classes(f"grid grid-cols-1 sm:grid-cols-2 gap-{SPACE_BASE} mt-2"):
             for ingredient in view.recipe.ingredients:
                 with ui.element("div").classes(
-                    "flex flex-row items-baseline justify-between gap-2 min-w-0 "
-                    "px-3 py-2 rounded-md border border-slate-800 bg-slate-800/30"
+                    f"flex flex-row items-baseline justify-between gap-{SPACE_BASE} min-w-0 "
+                    f"px-{SPACE_SECTION} py-{SPACE_BASE} {RADIUS_CARD} border border-slate-800 bg-slate-800/30"
                 ):
                     ui.label(ingredient.name).classes(
-                        "text-[13px] text-slate-200 truncate"
+                        f"{TEXT_HEAD} text-slate-200 truncate"
                     )
                     amount, unit = split_quantity(
                         format_quantity(ingredient.name, ingredient.quantity_g)
                     )
                     with ui.element("div").classes(
-                        "flex flex-row items-baseline gap-1 shrink-0"
+                        f"flex flex-row items-baseline gap-{SPACE_TIGHT} shrink-0"
                     ):
-                        ui.label(amount).classes("text-[13px] font-mono text-slate-300")
+                        ui.label(amount).classes(f"{TEXT_HEAD} font-mono text-slate-300")
                         if unit:
-                            ui.label(unit).classes("text-[11px] font-mono text-slate-500")
+                            ui.label(unit).classes(f"{TEXT_BODY} font-mono text-slate-500")
                     # NOVA group moves to a tooltip rather than off the card:
                     # every group that reaches here is an allowed one (4 is
                     # rejected in validation), so it is worth being able to
@@ -236,30 +248,30 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
         hairline()
 
-        with ui.element("div").classes("flex flex-row items-baseline justify-between gap-3"):
+        with ui.element("div").classes(f"flex flex-row items-baseline justify-between gap-{SPACE_SECTION}"):
             ui.label("PREPARATION INSTRUCTIONS").classes(MONO_SECTION_LABEL)
             ui.label("Click a step when complete").classes(
-                "text-[10px] text-slate-500 shrink-0"
+                f"{TEXT_MICRO} text-slate-500 shrink-0"
             )
-        with ui.element("div").classes("flex flex-col gap-2 mt-2"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} mt-2"):
             for number, step in enumerate(view.recipe.instructions, start=1):
                 step_row(number, step)
 
         if view.recipe.prep_notes:
             with ui.element("div").classes(
-                "flex flex-row flex-nowrap items-start gap-2 mt-4 px-3 py-2 "
-                "rounded-md border border-amber-400/25 bg-amber-400/[0.07]"
+                f"flex flex-row flex-nowrap items-start gap-{SPACE_BASE} mt-4 px-{SPACE_SECTION} py-{SPACE_BASE} "
+                f"{RADIUS_CARD} border border-amber-400/25 bg-amber-400/[0.07]"
             ):
                 ui.icon("inventory_2").classes(
-                    "shrink-0 text-[13px] text-amber-300 mt-[3px]"
+                    f"shrink-0 {TEXT_HEAD} text-amber-300 mt-[3px]"
                 )
                 ui.label(view.recipe.prep_notes).classes(
-                    "min-w-0 text-[12px] leading-snug text-amber-200/90"
+                    f"min-w-0 {TEXT_BODY} leading-snug text-amber-200/90"
                 )
 
     with ui.dialog() as detail_dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-xl border border-slate-800 p-6 "
+            f"bg-slate-900 {RADIUS_PANEL} border border-slate-800 p-6 "
             "w-[46rem] max-w-full max-h-[85vh] overflow-y-auto"
         ):
             recipe_detail()
@@ -326,16 +338,16 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
     @ui.refreshable
     def skip_estimate_body() -> None:
-        ui.label("Eaten out").classes("text-base font-semibold text-slate-100")
+        ui.label("Eaten out").classes(f"{TEXT_DISPLAY} font-semibold text-slate-100")
         ui.label(
             slot_label(skip_target["slot_id"]) if skip_target["slot_id"] else ""
-        ).classes("text-[11px] font-mono uppercase tracking-widest text-slate-500")
+        ).classes(f"{TEXT_BODY} font-mono uppercase tracking-widest text-slate-500")
         ui.label(
             "Roughly what this meal cost. It comes off the day so the other "
             "meals aren't briefed for budget you've already spent."
-        ).classes("text-xs text-slate-400 mt-2 mb-1")
+        ).classes(f"{TEXT_BODY} text-slate-400 mt-2 mb-1")
 
-        with ui.element("div").classes("flex flex-row gap-2"):
+        with ui.element("div").classes(f"flex flex-row gap-{SPACE_BASE}"):
             for key, label in (
                 ("calories", "kcal"),
                 ("protein_g", "Protein g"),
@@ -353,14 +365,14 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             float(skip_target["net_carbs_g"] or 0.0),
         )
         ui.label(f"fat {fat:.0f}g — derived from the three above").classes(
-            "text-[10px] font-mono text-slate-500 mt-1"
+            f"{TEXT_MICRO} font-mono text-slate-500 mt-1"
         )
 
         with ui.element("div").classes("flex flex-row justify-between items-center w-full mt-4"):
             ui.button("Not eaten", on_click=clear_skip_estimate).props(
                 "flat dense no-caps size=sm"
             ).classes("text-slate-400")
-            with ui.element("div").classes("flex flex-row gap-2"):
+            with ui.element("div").classes(f"flex flex-row gap-{SPACE_BASE}"):
                 ui.button("Cancel", on_click=lambda: skip_dialog.close()).props(
                     "flat dense no-caps size=sm"
                 ).classes("text-slate-400")
@@ -428,15 +440,15 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         if not matches:
             ui.label(
                 "No favorites match — clear the filter or import one."
-            ).classes("text-xs text-slate-500 italic")
+            ).classes(f"{TEXT_BODY} text-slate-500 italic")
 
-        with ui.element("div").classes("flex flex-col gap-1 max-h-64 overflow-y-auto"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-h-64 overflow-y-auto"):
             for favorite in matches:
                 recipe = favorite["recipe"]
                 macros = Recipe.model_validate(recipe).per_serving_macros
                 is_selected = favorite["id"] == state.swap_selected_id
                 with ui.element("div").classes(
-                    "flex flex-row items-center justify-between gap-2 p-1.5 rounded "
+                    f"flex flex-row items-center justify-between gap-{SPACE_BASE} p-{SPACE_TIGHT} {RADIUS_CARD} "
                     "cursor-pointer border "
                     + (
                         "bg-emerald-400/15 border-emerald-400/40"
@@ -446,41 +458,41 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 ).on("click", lambda f=favorite: select_swap_favorite(f["id"])):
                     with ui.element("div").classes("flex flex-col min-w-0"):
                         ui.label(recipe["name"]).classes(
-                            "text-xs font-semibold truncate"
+                            f"{TEXT_BODY} font-semibold truncate"
                         )
                         ui.label(recipe.get("meal_type", "").title()).classes(
-                            "text-[10px] text-slate-500"
+                            f"{TEXT_MICRO} text-slate-500"
                         )
                     ui.label(f"{macros['calories']:.0f} kcal").classes(
-                        "text-[10px] font-mono text-slate-300 shrink-0"
+                        f"{TEXT_MICRO} font-mono text-slate-300 shrink-0"
                     )
 
         ui.separator()
-        with ui.element("div").classes("flex flex-row gap-4"):
-            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+        with ui.element("div").classes(f"flex flex-row gap-{SPACE_PAGE}"):
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_HAIR} flex-1"):
                 ui.label("Target slot budget").classes(
-                    "text-[10px] uppercase tracking-wide text-slate-500"
+                    f"{TEXT_MICRO} uppercase tracking-wide text-slate-500"
                 )
                 if budget:
                     for key, short, unit in MACRO_LABELS:
                         ui.label(f"{short}: {budget[key]:.0f}{unit}").classes(
-                            "text-xs text-slate-300"
+                            f"{TEXT_BODY} text-slate-300"
                         )
                 else:
-                    ui.label("—").classes("text-xs text-slate-500")
-            with ui.element("div").classes("flex flex-col gap-0.5 flex-1"):
+                    ui.label("—").classes(f"{TEXT_BODY} text-slate-500")
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_HAIR} flex-1"):
                 ui.label("Selected favorite (per serving)").classes(
-                    "text-[10px] uppercase tracking-wide text-slate-500"
+                    f"{TEXT_MICRO} uppercase tracking-wide text-slate-500"
                 )
                 if selected:
                     macros = Recipe.model_validate(selected["recipe"]).per_serving_macros
                     for key, short, unit in MACRO_LABELS:
                         ui.label(f"{short}: {macros[key]:.0f}{unit}").classes(
-                            "text-xs text-emerald-200"
+                            f"{TEXT_BODY} text-emerald-200"
                         )
                 else:
                     ui.label("Pick a favorite above").classes(
-                        "text-xs text-slate-500 italic"
+                        f"{TEXT_BODY} text-slate-500 italic"
                     )
 
     @ui.refreshable
@@ -489,8 +501,8 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         if view is None:
             return
 
-        with ui.element("div").classes("flex flex-col gap-2"):
-            ui.label(f"Swap {slot_label(view.id)}").classes("text-sm font-semibold")
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE}"):
+            ui.label(f"Swap {slot_label(view.id)}").classes(f"{TEXT_HEAD} font-semibold")
 
             def on_filter_change(event) -> None:
                 state.swap_filter = event.value
@@ -500,21 +512,21 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 state.swap_query = event.value or ""
                 refreshables.refresh("swap_matches")
 
-            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                 ui.select(
                     ["All meal types"] + state.meal_types,
                     value=state.swap_filter or "All meal types",
                     on_change=on_filter_change,
-                ).props("dense outlined").classes("flex-1 text-xs")
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
                 ui.input(
                     placeholder="Search favorites…",
                     value=state.swap_query,
                     on_change=on_query_change,
-                ).props("dense outlined clearable").classes("flex-1 text-xs")
+                ).props("dense outlined clearable").classes(f"flex-1 {TEXT_BODY}")
 
             swap_matches()
 
-            with ui.row().classes("justify-end gap-2 mt-1"):
+            with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-1"):
                 ui.button("Cancel", on_click=swap_dialog.close).props(
                     "dense flat no-caps"
                 )
@@ -526,7 +538,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
     with ui.dialog() as swap_dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-[36rem] max-w-full max-h-[85vh] overflow-y-auto"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[36rem] max-w-full max-h-[85vh] overflow-y-auto"
         ):
             swap_dialog_body()
 
@@ -593,18 +605,18 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         chain = f"chain chain-{view.chain}" if view.chain is not None else ""
 
         with ui.element("div").classes(
-            f"meal-card card-{view.status} rounded p-2 flex flex-col gap-1 min-w-0 "
+            f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_BASE} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
             f"transition-shadow duration-150 {look['card']} {chain}"
         ):
             # Header row is a sibling of the clickable body below, not a child
             # of it — same reasoning as the "Link to next lunch" button: a
             # click on the favorite/swap buttons would otherwise bubble up
             # through `body`'s click handler and open the detail dialog too.
-            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
                 ui.label(meal_type[:5].upper()).classes(
-                    "text-[9px] font-semibold tracking-widest text-slate-500"
+                    f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
                 )
-                with ui.element("div").classes("flex flex-row items-center gap-0.5"):
+                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_HAIR}"):
                     if view.recipe is not None:
                         if view.mode == MODE_COOK:
                             recipe_dict = view.recipe.model_dump()
@@ -614,7 +626,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                                 on_click=lambda r=recipe_dict: toggle_favorite(ctx, r),
                             )
                             fav_button.props("dense flat round size=xs").classes(
-                                "min-h-0 p-0.5 "
+                                f"min-h-0 p-{SPACE_HAIR} "
                                 + (
                                     "text-amber-300"
                                     if favorited
@@ -630,7 +642,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                             on_click=lambda v=view: open_swap_modal(v),
                         )
                         swap_button.props("dense flat round size=xs").classes(
-                            "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                            f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
                         )
                         with swap_button:
                             ui.tooltip("Swap with a favorite")
@@ -640,7 +652,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                         # day `regenerate_day` would redo.
                         meal_regen_button = ui.button(icon="refresh")
                         meal_regen_button.props("dense flat round size=xs").classes(
-                            "min-h-0 p-0.5 text-slate-500 hover:text-emerald-300"
+                            f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-emerald-300"
                         )
                         meal_regen_button.on_click(
                             lambda v=view, btn=meal_regen_button: generation.regenerate_meal(v, btn)
@@ -648,18 +660,18 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                         with meal_regen_button:
                             ui.tooltip("Regenerate this meal — re-cooks just it")
                     with ui.element("div").classes(
-                        "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
+                        f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
                         f"{look['badge']}"
                     ):
-                        ui.icon(look["icon"]).classes("text-[10px]")
+                        ui.icon(look["icon"]).classes(TEXT_MICRO)
                         ui.label(look["label"]).classes(
-                            "text-[8px] font-semibold tracking-wide"
+                            f"{TEXT_MICRO} font-semibold tracking-wide"
                         )
 
             # The recipe dialog opens from this inner block rather than the
             # card, so the action buttons above are siblings of it and a click
             # on them can't also open the dialog on its way up.
-            body = ui.element("div").classes(f"flex flex-col gap-1 min-w-0 {clickable}")
+            body = ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} min-w-0 {clickable}")
             if view.recipe:
                 body.on("click", lambda v=view: open_detail(v))
 
@@ -671,7 +683,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 # tooltip with the full name instead of just being cut off
                 # silently.
                 title_label = ui.label(view.title).classes(
-                    "text-[12px] leading-tight font-bold text-slate-100 line-clamp-2"
+                    f"{TEXT_BODY} leading-tight font-bold text-slate-100 line-clamp-2"
                 )
                 title_tooltip_chars = state.config["ui_settings"]["title_tooltip_chars"]
                 if len(view.title) > title_tooltip_chars:
@@ -680,7 +692,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
                 tags = " · ".join(part for part in [view.style, view.cuisine] if part)
                 if tags:
-                    ui.label(tags).classes("text-[9px] text-slate-400 truncate")
+                    ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
 
                 if view.mode == MODE_LEFTOVER and view.source_label:
                     link_line("↩ from", view.source_label, view.chain_colour)
@@ -690,12 +702,12 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 if view.prep_badge:
                     badge_look = PREP_BADGE_STYLES[view.prep_badge]
                     prep_badge_el = ui.element("div").classes(
-                        "flex items-center gap-1 px-1.5 py-[1px] rounded-full w-fit mt-0.5 "
+                        f"flex items-center gap-{SPACE_TIGHT} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} w-fit mt-0.5 "
                         f"{badge_look['classes']}"
                     )
                     with prep_badge_el:
                         ui.label(badge_look["label"]).classes(
-                            "text-[8px] font-semibold tracking-wide"
+                            f"{TEXT_MICRO} font-semibold tracking-wide"
                         )
                         if view.prep_origin:
                             ui.tooltip(view.prep_origin)
@@ -706,16 +718,16 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                     # numbers stay comparable down the column while the
                     # letters carry the identity.
                     with ui.element("div").classes(
-                        "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
-                        "rounded-full bg-slate-950/40 w-fit max-w-full"
+                        f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                        f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
                     ):
                         ui.label(f"{view.macros['calories']:.0f} kcal").classes(
-                            "text-[9px] font-mono text-slate-300"
+                            f"{TEXT_MICRO} font-mono text-slate-300"
                         )
                         for key, short, unit in MACRO_LABELS[1:]:
-                            ui.label("·").classes("text-[9px] text-slate-600")
+                            ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
                             ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
-                                f"text-[9px] font-mono {MACRO_TINTS[key]}"
+                                f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
                             )
 
                 if view.mode == MODE_SKIP and view.skip_estimate:
@@ -724,27 +736,27 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                     # are estimated, not measured off a recipe, and the strip
                     # should not claim the precision the cooked cards have.
                     with ui.element("div").classes(
-                        "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
-                        "rounded-full bg-slate-950/40 w-fit max-w-full"
+                        f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                        f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
                     ):
                         ui.label(
                             f"~{view.skip_estimate.get('calories', 0):.0f} kcal"
-                        ).classes("text-[9px] font-mono text-slate-400")
-                        ui.label("·").classes("text-[9px] text-slate-600")
+                        ).classes(f"{TEXT_MICRO} font-mono text-slate-400")
+                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
                         ui.label(
                             f"~{view.skip_estimate.get('protein_g', 0):.0f}g P"
-                        ).classes("text-[9px] font-mono text-slate-400")
+                        ).classes(f"{TEXT_MICRO} font-mono text-slate-400")
 
                 if view.mode == MODE_COOK and view.portions:
                     ui.label(
                         f"{view.portions} portions · {view.prep_minutes} min"
                         if view.prep_minutes is not None
                         else f"{view.portions} portions"
-                    ).classes("text-[9px] text-emerald-300/70 truncate")
+                    ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
 
                 if view.mode == MODE_LEFTOVER and view.prep_badge and view.prep_minutes is not None:
                     ui.label(f"{view.prep_minutes} min reheat/assemble").classes(
-                        "text-[9px] text-amber-300/70 truncate"
+                        f"{TEXT_MICRO} text-amber-300/70 truncate"
                     )
 
             if view.mode == MODE_SKIP and view.day:
@@ -757,7 +769,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                     on_click=lambda v=view: open_skip_estimate(v),
                 )
                 skip_button.props("unelevated dense no-caps size=sm").classes(
-                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    f"self-start min-h-0 px-{SPACE_TIGHT} py-{SPACE_HAIR} {RADIUS_PILL} {TEXT_MICRO} "
                     "transition-all duration-150 bg-slate-800/60 text-slate-400 "
                     "hover:bg-slate-700/60 hover:text-slate-200"
                 )
@@ -780,7 +792,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                     on_click=lambda v=view: on_link_next_lunch(v),
                 )
                 button.props("unelevated dense no-caps size=sm").classes(
-                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    f"self-start min-h-0 px-{SPACE_TIGHT} py-{SPACE_HAIR} {RADIUS_PILL} {TEXT_MICRO} "
                     "transition-all duration-150 "
                     + (
                         "bg-slate-800/60 text-slate-600"
@@ -806,7 +818,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                     "Unlink", icon="link_off", on_click=lambda v=view: on_unlink(v)
                 )
                 unlink_button.props("flat dense no-caps size=sm").classes(
-                    "self-start min-h-0 px-1.5 py-0.5 rounded-full text-[9px] "
+                    f"self-start min-h-0 px-{SPACE_TIGHT} py-{SPACE_HAIR} {RADIUS_PILL} {TEXT_MICRO} "
                     "text-slate-500 hover:text-rose-200"
                 )
                 with unlink_button:
@@ -826,73 +838,73 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
     def prep_day_column() -> None:
         session = state.week_plan.sunday_prep_session if state.week_plan else None
-        with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} min-w-0"):
             with ui.element("div").classes(
-                "px-1 py-0.5 border-b border-indigo-400/40 flex flex-row "
+                f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-indigo-400/40 flex flex-row "
                 "justify-between items-baseline"
             ):
                 ui.label("PREP DAY").classes(
-                    "text-xs font-semibold text-indigo-300 tracking-wide"
+                    f"{TEXT_BODY} font-semibold text-indigo-300 tracking-wide"
                 )
-                ui.icon("checklist").classes("text-[11px] text-indigo-400")
+                ui.icon("checklist").classes(f"{TEXT_BODY} text-indigo-400")
             if session is None:
                 with ui.element("div").classes(
-                    f"rounded-md p-2 {PREP_COLUMN_ACCENT} border-dashed"
+                    f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT} border-dashed"
                 ):
-                    ui.label("Not generated").classes("text-[10px] text-slate-500")
+                    ui.label("Not generated").classes(f"{TEXT_MICRO} text-slate-500")
                     ui.label(
                         "Turn on Bulk prep or Long cook meal in the Generate popup "
                         "for a batch-prep timeline here (or set enable_sunday_prep "
                         "in config.json to do it every week)."
-                    ).classes("text-[9px] text-slate-600 mt-1")
+                    ).classes(f"{TEXT_MICRO} text-slate-600 mt-1")
                 return
             # What this session is for, before how — a shopper glancing at the
             # column should see which dishes it batches without opening any
             # of the phase timeline below.
             if session.meals_included:
-                with ui.element("div").classes(f"rounded-md p-2 {PREP_COLUMN_ACCENT}"):
+                with ui.element("div").classes(f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT}"):
                     ui.label("Batching for").classes(
-                        "text-[9px] uppercase tracking-wide text-indigo-400 mb-1"
+                        f"{TEXT_MICRO} uppercase tracking-wide text-indigo-400 mb-1"
                     )
                     for meal in session.meals_included:
                         ui.label(f"• {meal}").classes(
-                            "text-[10px] text-indigo-200 leading-tight"
+                            f"{TEXT_MICRO} text-indigo-200 leading-tight"
                         )
             for phase in session.timeline:
                 with ui.expansion(
                     phase.name,
                     caption=f"{phase.active_minutes} active / {phase.passive_minutes} passive min",
-                ).classes(f"rounded-md {PREP_COLUMN_ACCENT} text-[11px] w-full").props(
-                    "dense header-class='text-indigo-200 text-[11px] font-medium'"
+                ).classes(f"{RADIUS_CARD} {PREP_COLUMN_ACCENT} {TEXT_BODY} w-full").props(
+                    f"dense header-class='text-indigo-200 {TEXT_BODY} font-medium'"
                 ):
                     if phase.description:
                         ui.label(phase.description).classes(
-                            "text-[10px] text-slate-400 mb-1"
+                            f"{TEXT_MICRO} text-slate-400 mb-1"
                         )
                     ui.checkbox(f"Done: {phase.name}").props(
                         "dense size=xs color=indigo"
-                    ).classes("text-[10px] text-indigo-200")
+                    ).classes(f"{TEXT_MICRO} text-indigo-200")
 
     @ui.refreshable
     def canvas() -> None:
         views = state.slot_views()
-        with ui.element("div").classes("meal-canvas grid grid-cols-8 gap-2 w-full items-start"):
+        with ui.element("div").classes(f"meal-canvas grid grid-cols-8 gap-{SPACE_BASE} w-full items-start"):
             prep_day_column()
             for day in state.days:
-                with ui.element("div").classes("flex flex-col gap-2 min-w-0"):
+                with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} min-w-0"):
                     with ui.element("div").classes(
-                        "px-1 py-0.5 border-b border-slate-800 flex flex-row "
+                        f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-slate-800 flex flex-row "
                         "justify-between items-baseline"
                     ):
-                        with ui.element("div").classes("flex flex-row items-center gap-1"):
-                            ui.label(day).classes("text-xs font-semibold text-slate-200")
+                        with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                            ui.label(day).classes(f"{TEXT_BODY} font-semibold text-slate-200")
                             # Only offered once a week exists and this day has
                             # something to cook — regenerating a leftover/skip-only
                             # day would be a no-op API call for nothing.
                             if state.week_plan is not None and state.spec.cook_slots_on(day):
                                 regen_button = ui.button(icon="refresh")
                                 regen_button.props("dense flat round size=xs").classes(
-                                    "min-h-0 p-0.5 text-slate-500 hover:text-emerald-300"
+                                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-emerald-300"
                                 )
                                 regen_button.on_click(
                                     lambda day=day, btn=regen_button: generation.regenerate_day(day, btn)
@@ -900,7 +912,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                                 with regen_button:
                                     ui.tooltip(f"Regenerate {day} — re-cooks just this day")
                         ui.label(str(state.days.index(day) + 1)).classes(
-                            "text-[9px] font-mono text-slate-600"
+                            f"{TEXT_MICRO} font-mono text-slate-600"
                         )
                     for meal_type in state.meal_types:
                         meal_card(views.get(slot_id(day, meal_type)), meal_type)

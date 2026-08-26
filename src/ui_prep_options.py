@@ -19,6 +19,16 @@ from nicegui import ui
 
 from ui_context import UIContext
 from ui_generation import GenerationHandles
+from ui_theme import (
+    RADIUS_PANEL,
+    SPACE_BASE,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+)
 from week import humanize
 
 
@@ -40,15 +50,15 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
 
     with ui.dialog() as dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-[28rem] max-w-full flex flex-col gap-3"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[28rem] max-w-full flex flex-col gap-{SPACE_SECTION}"
         ):
-            with ui.element("div").classes("flex flex-row items-center gap-1.5"):
-                ui.icon("tune").classes("text-sm text-amber-300")
-                ui.label("Generate options").classes("text-sm font-semibold")
+            with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                ui.icon("tune").classes(f"{TEXT_HEAD} text-amber-300")
+                ui.label("Generate options").classes(f"{TEXT_HEAD} font-semibold")
             ui.label(
                 "Applies to this generation only — nothing here is saved to "
                 "config.json."
-            ).classes("text-[10px] text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-500")
 
             ui.select(
                 cuisine_options,
@@ -56,16 +66,16 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
                 multiple=True,
             ).bind_value(state, "cuisine_override").props(
                 "dense outlined use-chips"
-            ).classes("w-full text-xs")
+            ).classes(f"w-full {TEXT_BODY}")
             ui.label("Leave empty to use config.json's cuisine list.").classes(
-                "text-[9px] text-slate-600 -mt-2"
+                f"{TEXT_MICRO} text-slate-600 -mt-2"
             )
 
             baseline_cuisines = state.config.get("baseline_cuisines") or []
             if baseline_cuisines:
                 with ui.element("div").classes("flex flex-row items-center justify-between"):
-                    ui.label("Min. western-style share").classes("text-xs text-slate-300")
-                    ui.label().classes("text-xs font-mono text-slate-400").bind_text_from(
+                    ui.label("Min. western-style share").classes(f"{TEXT_BODY} text-slate-300")
+                    ui.label().classes(f"{TEXT_BODY} font-mono text-slate-400").bind_text_from(
                         state, "baseline_cuisine_share", backward=lambda share: f"{share:.0%}"
                     )
                 ui.slider(min=0.0, max=1.0, step=0.05).bind_value(
@@ -76,7 +86,7 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
                     + ", ".join(humanize(c).title() for c in baseline_cuisines)
                     + " before the rest rotates freely. 0% turns the floor off"
                     " for this run."
-                ).classes("text-[9px] text-slate-600 -mt-2")
+                ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
 
             if diet_style_options:
                 ui.select(
@@ -85,13 +95,13 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
                     multiple=True,
                 ).bind_value(state, "diet_style_override").props(
                     "dense outlined use-chips"
-                ).classes("w-full text-xs")
+                ).classes(f"w-full {TEXT_BODY}")
                 ui.label(
                     "Leave empty to use config.json's active diet styles."
-                ).classes("text-[9px] text-slate-600 -mt-2")
+                ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
 
             with ui.element("div").classes("flex flex-row items-center justify-between"):
-                ui.label("Bulk prep").classes("text-xs text-slate-300")
+                ui.label("Bulk prep").classes(f"{TEXT_BODY} text-slate-300")
                 ui.switch().bind_value(state, "bulk_prep_enabled").props(
                     "dense size=sm color=teal"
                 )
@@ -99,10 +109,10 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
                 "Batches one dinner across several days automatically — which "
                 "days is decided for you, no picking required. Absorbs the old "
                 "Sunday-prep timeline (no longer tied to Sunday)."
-            ).classes("text-[9px] text-slate-600 -mt-2")
+            ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
 
             with ui.element("div").classes("flex flex-row items-center justify-between"):
-                ui.label("Long cook meal").classes("text-xs text-slate-300")
+                ui.label("Long cook meal").classes(f"{TEXT_BODY} text-slate-300")
                 ui.switch().bind_value(state, "long_cook_enabled").props(
                     "dense size=sm color=teal"
                 )
@@ -110,9 +120,9 @@ def build_prep_options(ctx: UIContext, generation: GenerationHandles) -> PrepOpt
                 "One dinner this week is a genuinely long, hands-off oven "
                 "roast/braise — a different day than bulk prep's, if both are "
                 "on."
-            ).classes("text-[9px] text-slate-600 -mt-2")
+            ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
 
-            with ui.row().classes("justify-end gap-2 mt-1"):
+            with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-1"):
                 ui.button("Cancel", on_click=dialog.close).props("dense flat no-caps")
 
                 async def on_generate() -> None:

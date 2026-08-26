@@ -99,7 +99,18 @@ from ui_shopping import build_shopping
 from ui_state import PlannerState
 from ui_telemetry import build_telemetry
 from ui_today import build_today
-from ui_theme import WEEK_SELECTION_LABELS, card_hover_css, chain_css
+from ui_theme import (
+    RADIUS_CARD,
+    SPACE_BASE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+    WEEK_SELECTION_LABELS,
+    card_hover_css,
+    chain_css,
+)
 
 # Explicit path — see the matching note in planner.py. NiceGUI's reloader can
 # also start the process from a different directory than the one you typed in.
@@ -158,12 +169,12 @@ async def planner_page() -> None:
     rename_dialog = build_rename_dialog(ctx)
     catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
 
-    with ui.header(bordered=True).classes("bg-slate-900 px-3 py-2 flex flex-col gap-2"):
-        with ui.element("div").classes("flex flex-row items-baseline gap-3"):
-            with ui.element("div").classes("flex flex-row items-center gap-1.5"):
-                ui.icon("restaurant_menu").classes("text-sm text-slate-300")
+    with ui.header(bordered=True).classes(f"bg-slate-900 px-{SPACE_SECTION} py-{SPACE_BASE} flex flex-col gap-{SPACE_BASE}"):
+        with ui.element("div").classes(f"flex flex-row items-baseline gap-{SPACE_SECTION}"):
+            with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                ui.icon("restaurant_menu").classes(f"{TEXT_HEAD} text-slate-300")
                 ui.label("AI Weekly Meal Planner").classes(
-                    "text-sm font-semibold tracking-wide"
+                    f"{TEXT_HEAD} font-semibold tracking-wide"
                 )
 
             async def on_week_selection_change(event) -> None:
@@ -188,7 +199,7 @@ async def planner_page() -> None:
                 on_change=on_week_selection_change,
             ).props("dense outlined size=sm").classes("text-slate-200 w-32")
 
-            ui.label().classes("text-[11px] text-slate-400").bind_text_from(
+            ui.label().classes(f"{TEXT_BODY} text-slate-400").bind_text_from(
                 state,
                 "week_plan",
                 backward=lambda plan: (
@@ -201,10 +212,10 @@ async def planner_page() -> None:
             # week_plan.json, so say so rather than letting the grid imply the
             # cached week on disk has changed.
             ui.label("edited — not saved").classes(
-                "text-[10px] font-semibold px-1 rounded bg-amber-400/15 text-amber-300"
+                f"{TEXT_MICRO} font-semibold px-{SPACE_TIGHT} {RADIUS_CARD} bg-amber-400/15 text-amber-300"
             ).bind_visibility_from(state, "edited")
             ui.space()
-            ui.label().classes("text-[11px] text-slate-400").bind_text_from(
+            ui.label().classes(f"{TEXT_BODY} text-slate-400").bind_text_from(
                 state, "model", backward=lambda model: f"model: {model}"
             )
 

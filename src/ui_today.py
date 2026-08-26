@@ -36,9 +36,20 @@ from ui_theme import (
     format_day_label,
     MACRO_LABELS,
     MACRO_TINTS,
+    RADIUS_CARD,
+    RADIUS_PILL,
     REST_ACCENT,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
     STATUS_SKIP,
     STATUS_STYLES,
+    TEXT_BODY,
+    TEXT_DISPLAY,
+    TEXT_HEAD,
+    TEXT_MICRO,
     training_icon,
     TRAINING_ACCENT,
     TRAINING_NOTE_BADGES,
@@ -51,7 +62,7 @@ from week import MODE_COOK, MODE_LEFTOVER, humanize, slot_id
 # sets `flex-wrap: wrap` and Tailwind's `flex-row` does not undo it, so a
 # label long enough to fill its chip wraps *below* its icon and runs back
 # underneath it — the same trap the recipe dialog's step rows document.
-CHIP = "flex flex-row flex-nowrap items-center gap-1 px-1.5 py-[2px] rounded-full"
+CHIP = f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} px-{SPACE_TIGHT} py-[2px] {RADIUS_PILL}"
 
 
 @dataclass
@@ -118,7 +129,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         index = days.index(day) if day in days else 0
         today = state.today_day()
 
-        with ui.element("div").classes("flex flex-row flex-wrap items-center gap-1"):
+        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
             # Clamped, not wrapping — `step_viewed_day` stops at both ends
             # because the loaded plan holds exactly these seven days. A
             # disabled chevron is the honest edge; wrapping Sunday round to
@@ -157,14 +168,14 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                 ring = " ring-1 ring-inset ring-slate-500" if is_today else ""
                 button = ui.button(on_click=lambda n=name: go(day=n)).props(
                     "dense flat no-caps size=sm"
-                ).classes(f"min-h-0 px-2 py-1 rounded {fill}{ring}")
+                ).classes(f"min-h-0 px-{SPACE_BASE} py-{SPACE_TIGHT} {RADIUS_CARD} {fill}{ring}")
 
                 with button:
                     with ui.element("div").classes(
-                        "flex flex-col items-center gap-0.5 leading-none"
+                        f"flex flex-col items-center gap-{SPACE_HAIR} leading-none"
                     ):
                         ui.label(name[:3].upper()).classes(
-                            f"text-[11px] tracking-wide {tone}"
+                            f"{TEXT_BODY} tracking-wide {tone}"
                         )
                         # Fixed height whether or not the day trains, so the
                         # pills keep one baseline down the row instead of the
@@ -174,7 +185,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                             "gap-px h-[10px]"
                         ):
                             for icon in icons:
-                                ui.icon(icon).classes("text-[10px] text-amber-300/85")
+                                ui.icon(icon).classes(f"{TEXT_MICRO} text-amber-300/85")
 
                     tip = ([f"{s.time} {s.label.title()}" for s in sessions])
                     if is_today:
@@ -196,11 +207,11 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
     # ---- the day-context strip: where you are, what you're training --------
 
     def location_row(location: LocationView) -> None:
-        with ui.element("div").classes("flex flex-row flex-wrap items-center gap-1.5"):
+        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
             with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
-                ui.icon("place").classes("text-[12px]")
+                ui.icon("place").classes(TEXT_BODY)
                 ui.label(location.name).classes(
-                    "text-[11px] font-semibold tracking-wide"
+                    f"{TEXT_BODY} font-semibold tracking-wide"
                 )
 
             # One chip per restriction tag, humanized, with the model's own
@@ -213,7 +224,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                     f"{CHIP} bg-slate-800/60 text-slate-300 ring-1 ring-inset "
                     "ring-slate-700/60"
                 ):
-                    ui.label(humanize(tag)).classes("text-[10px]")
+                    ui.label(humanize(tag)).classes(TEXT_MICRO)
                     ui.tooltip(phrase).classes("max-w-xs")
 
             if location.max_prep_minutes is not None:
@@ -221,10 +232,10 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                     "no prep at the eating location"
                     if location.max_prep_minutes == 0
                     else f"≤ {location.max_prep_minutes} min prep"
-                ).classes("text-[10px] text-slate-500 italic")
+                ).classes(f"{TEXT_MICRO} text-slate-500 italic")
 
             if location.notes:
-                ui.label(location.notes).classes("text-[10px] text-slate-500 italic")
+                ui.label(location.notes).classes(f"{TEXT_MICRO} text-slate-500 italic")
 
     def session_chip(session: TrainingView) -> None:
         if session.is_rest:
@@ -232,15 +243,15 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
             # chip says "Rest day", and `is_rest` also catches a zero-burn
             # session of a real type. Icon follows the label it sits beside.
             with ui.element("div").classes(f"{CHIP} {REST_ACCENT}"):
-                ui.icon("bedtime").classes("text-[12px]")
-                ui.label("Rest day").classes("text-[10px] font-semibold tracking-wide")
+                ui.icon("bedtime").classes(TEXT_BODY)
+                ui.label("Rest day").classes(f"{TEXT_MICRO} font-semibold tracking-wide")
             return
 
         with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
-            ui.icon(training_icon(session.type)).classes("text-[12px]")
-            ui.label(session.time).classes("text-[11px] font-mono")
+            ui.icon(training_icon(session.type)).classes(TEXT_BODY)
+            ui.label(session.time).classes(f"{TEXT_BODY} font-mono")
             ui.label(session.label.title()).classes(
-                "text-[11px] font-semibold tracking-wide"
+                f"{TEXT_BODY} font-semibold tracking-wide"
             )
             detail = " · ".join(
                 part
@@ -251,10 +262,10 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                 if part
             )
             if detail:
-                ui.label(detail).classes("text-[10px] font-mono text-amber-300/70")
+                ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-amber-300/70")
 
     def training_row(context: DayContext) -> None:
-        with ui.element("div").classes("flex flex-row flex-wrap items-center gap-1.5"):
+        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
             for session in context.sessions:
                 session_chip(session)
 
@@ -264,7 +275,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
             # budget, which is the denominator of the bar directly above.
             if len(context.active_sessions) > 1:
                 ui.label(f"+{context.total_burn_kcal:.0f} kcal on today's budget").classes(
-                    "text-[10px] text-amber-300/70 italic"
+                    f"{TEXT_MICRO} text-amber-300/70 italic"
                 )
 
     def context_strip(context: DayContext) -> None:
@@ -278,7 +289,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         if context.location is None and not context.sessions:
             return
         with ui.element("div").classes(
-            "flex flex-col gap-1.5 p-2 rounded border border-slate-800 "
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_BASE} {RADIUS_CARD} border border-slate-800 "
             "bg-slate-950/30 w-fit max-w-full"
         ):
             if context.location is not None:
@@ -303,20 +314,20 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         if not brief and note is None:
             return
 
-        with ui.element("div").classes("flex flex-row flex-wrap items-center gap-1 mt-0.5"):
+        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT} mt-0.5"):
             if brief:
                 with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
-                    ui.icon("place").classes("text-[10px]")
+                    ui.icon("place").classes(TEXT_MICRO)
                     ui.label(location.name).classes(
-                        "text-[9px] font-semibold tracking-wide"
+                        f"{TEXT_MICRO} font-semibold tracking-wide"
                     )
                     ui.tooltip(brief).classes("max-w-xs")
             if note is not None:
                 badge = TRAINING_NOTE_BADGES[note.kind]
                 with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
-                    ui.icon(badge["icon"]).classes("text-[10px]")
+                    ui.icon(badge["icon"]).classes(TEXT_MICRO)
                     ui.label(badge["label"]).classes(
-                        "text-[9px] font-semibold tracking-wide"
+                        f"{TEXT_MICRO} font-semibold tracking-wide"
                     )
                     ui.tooltip(note.text).classes("max-w-xs")
 
@@ -329,49 +340,49 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         clickable = "cursor-pointer" if view.recipe else ""
 
         card = ui.element("div").classes(
-            f"meal-card card-{view.status} rounded p-3 flex flex-col gap-1.5 min-w-0 "
+            f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_SECTION} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
             f"w-56 {look['card']} {clickable}"
         )
         if view.recipe:
             card.on("click", lambda v=view: cards.open_detail(v))
 
         with card:
-            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
+            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
                 ui.label(meal_type.upper()).classes(
-                    "text-[10px] font-semibold tracking-widest text-slate-500"
+                    f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
                 )
                 with ui.element("div").classes(
-                    "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full "
+                    f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
                     f"{look['badge']}"
                 ):
-                    ui.icon(look["icon"]).classes("text-[10px]")
+                    ui.icon(look["icon"]).classes(TEXT_MICRO)
                     ui.label(look["label"]).classes(
-                        "text-[8px] font-semibold tracking-wide"
+                        f"{TEXT_MICRO} font-semibold tracking-wide"
                     )
 
             ui.label(view.title).classes(
-                "text-sm leading-tight font-bold text-slate-100 line-clamp-2"
+                f"{TEXT_HEAD} leading-tight font-bold text-slate-100 line-clamp-2"
             )
 
             tags = " · ".join(part for part in [view.style, view.cuisine] if part)
             if tags:
-                ui.label(tags).classes("text-[10px] text-slate-400 truncate")
+                ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
 
             if view.mode == MODE_LEFTOVER and view.source_label:
                 link_line("↩ from", view.source_label, view.chain_colour)
 
             if view.macros:
                 with ui.element("div").classes(
-                    "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
-                    "rounded-full bg-slate-950/40 w-fit max-w-full"
+                    f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                    f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
                 ):
                     ui.label(f"{view.macros['calories']:.0f} kcal").classes(
-                        "text-[10px] font-mono text-slate-300"
+                        f"{TEXT_MICRO} font-mono text-slate-300"
                     )
                     for key, short, unit in MACRO_LABELS[1:]:
-                        ui.label("·").classes("text-[10px] text-slate-600")
+                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
                         ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
-                            f"text-[10px] font-mono {MACRO_TINTS[key]}"
+                            f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
                         )
 
             if view.mode == MODE_COOK and view.portions:
@@ -379,7 +390,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                     f"{view.portions} portions · {view.prep_minutes} min"
                     if view.prep_minutes is not None
                     else f"{view.portions} portions"
-                ).classes("text-[10px] text-emerald-300/70 truncate")
+                ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
 
             card_context_badges(context, meal_type)
 
@@ -391,7 +402,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
             ui.label(
                 "Nothing generated yet — use \"Generate Current Week\", or "
                 "switch the header's week selector to a cached week."
-            ).classes("text-sm text-slate-500 p-4")
+            ).classes(f"{TEXT_HEAD} text-slate-500 p-{SPACE_PAGE}")
             return
 
         target = state.targets_for(day)
@@ -403,12 +414,12 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         # that work for one day's answer.
         context = day_context(state, day)
 
-        with ui.element("div").classes("flex flex-col gap-3 p-3"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION} p-{SPACE_SECTION}"):
             day_nav(day)
 
-            with ui.element("div").classes("flex flex-row flex-wrap items-baseline gap-2"):
+            with ui.element("div").classes(f"flex flex-row flex-wrap items-baseline gap-{SPACE_BASE}"):
                 ui.label(format_day_label(day, state.day_date_iso(day))).classes(
-                    "text-base font-semibold text-slate-200"
+                    f"{TEXT_DISPLAY} font-semibold text-slate-200"
                 )
                 # A note, not a refusal: before the picker existed this case
                 # replaced the whole panel, because a lone "today" view has
@@ -417,12 +428,12 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                 # saying so once is enough.
                 if not state.week_covers_today():
                     ui.label("this cached week doesn't cover today").classes(
-                        "text-[11px] text-amber-300/80 italic"
+                        f"{TEXT_BODY} text-amber-300/80 italic"
                     )
 
             context_strip(context)
 
-            with ui.element("div").classes("flex flex-col gap-1 max-w-md"):
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-w-md"):
                 telemetry_bar(
                     totals["calories"],
                     float(target["calories"]),
@@ -431,10 +442,10 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                 )
                 ui.label(
                     f"{totals['calories']:.0f} / {float(target['calories']):.0f} kcal"
-                ).classes("text-xs text-slate-400")
+                ).classes(f"{TEXT_BODY} text-slate-400")
 
             views = state.slot_views()
-            with ui.element("div").classes("flex flex-row flex-wrap gap-2"):
+            with ui.element("div").classes(f"flex flex-row flex-wrap gap-{SPACE_BASE}"):
                 for meal_type in state.meal_types:
                     today_card(views.get(slot_id(day, meal_type)), meal_type, context)
 

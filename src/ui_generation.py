@@ -29,7 +29,18 @@ from planner import (
 )
 from ui_context import UIContext
 from ui_state import SlotView
-from ui_theme import WEEK_SELECTION_LABELS, pluralize
+from ui_theme import (
+    RADIUS_CARD,
+    RADIUS_PANEL,
+    SPACE_BASE,
+    SPACE_PAGE,
+    SPACE_TIGHT,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+    WEEK_SELECTION_LABELS,
+    pluralize,
+)
 from week import (
     DEFAULT_INVENTORY_RULES,
     MODE_COOK,
@@ -144,24 +155,24 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
 
     with ui.dialog().props("persistent") as progress_dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full flex flex-col gap-2"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
-            with ui.element("div").classes("flex flex-row items-center gap-1.5"):
-                ui.icon("bolt").classes("text-sm text-amber-300")
-                ui.label("Generating week").classes("text-sm font-semibold")
-            progress_status = ui.label("Starting…").classes("text-xs text-slate-300")
+            with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                ui.icon("bolt").classes(f"{TEXT_HEAD} text-amber-300")
+                ui.label("Generating week").classes(f"{TEXT_HEAD} font-semibold")
+            progress_status = ui.label("Starting…").classes(f"{TEXT_BODY} text-slate-300")
             progress_bar = ui.linear_progress(value=0.0, size="10px", show_value=False).props(
                 "rounded color=primary"
             )
             ui.label(
                 "One API call per meal type, 30s–3 min each. This window stays "
                 "until the whole week is done."
-            ).classes("text-[10px] text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-500")
             # Portion trims and failed days both arrive as notes, mid-run. A log
             # keeps them all — a single status label would overwrite the trim
             # you wanted to read with the next day's heading.
             progress_log = ui.log(max_lines=200).classes(
-                "w-full h-40 text-[10px] bg-slate-950 rounded"
+                f"w-full h-40 {TEXT_MICRO} bg-slate-950 {RADIUS_CARD}"
             )
 
     def generation_spec() -> WeekSpec:

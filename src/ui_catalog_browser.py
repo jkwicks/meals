@@ -20,7 +20,22 @@ from ui_catalog import RenameDialogHandles, delete_recipe, toggle_favorite
 from ui_cards import CardHandles
 from ui_context import UIContext
 from ui_state import SlotView
-from ui_theme import MACRO_LABELS, MACRO_TINTS, STATUS_COOK
+from ui_theme import (
+    MACRO_LABELS,
+    MACRO_TINTS,
+    RADIUS_PANEL,
+    RADIUS_PILL,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    STATUS_COOK,
+    TEXT_BODY,
+    TEXT_DISPLAY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+)
 from week import MODE_COOK
 
 
@@ -102,34 +117,34 @@ def build_catalog_browser(
         macros = detail_view.macros if detail_view else None
 
         with ui.element("div").classes(
-            "flex flex-col gap-1 p-2 rounded-lg border border-slate-800 bg-slate-900/60 "
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_BASE} {RADIUS_PANEL} border border-slate-800 bg-slate-900/60 "
             "hover:border-slate-600 transition-colors min-w-0"
         ):
-            with ui.element("div").classes("flex flex-row items-start justify-between gap-1"):
+            with ui.element("div").classes(f"flex flex-row items-start justify-between gap-{SPACE_TIGHT}"):
                 title = ui.label(recipe.get("name", "")).classes(
-                    "text-[12px] font-semibold leading-tight line-clamp-2 min-w-0 "
+                    f"{TEXT_BODY} font-semibold leading-tight line-clamp-2 min-w-0 "
                     + ("cursor-pointer hover:text-sky-300" if detail_view else "text-slate-500")
                 )
                 if detail_view:
                     title.on("click", lambda e=entry: open_detail(e))
-                with ui.element("div").classes("flex flex-row items-center gap-0.5 shrink-0"):
+                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_HAIR} shrink-0"):
                     fav_button = ui.button(
                         icon="bookmark" if favorited else "bookmark_border",
                         on_click=lambda r=recipe: toggle_favorite(ctx, r),
                     ).props("dense flat round size=xs")
                     fav_button.classes(
-                        "min-h-0 p-0.5 "
+                        f"min-h-0 p-{SPACE_HAIR} "
                         + ("text-amber-300" if favorited else "text-slate-500 hover:text-amber-300")
                     )
                     ui.button(
                         icon="edit", on_click=lambda e=entry: rename_dialog.open(e)
                     ).props("dense flat round size=xs").classes(
-                        "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                        f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
                     )
                     ui.button(
                         icon="delete", on_click=lambda rid=entry["id"]: delete_recipe(ctx, rid)
                     ).props("dense flat round size=xs").classes(
-                        "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
+                        f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-rose-300"
                     )
 
             tags = " · ".join(
@@ -142,20 +157,20 @@ def build_catalog_browser(
                 if part
             )
             if tags:
-                ui.label(tags).classes("text-[9px] text-slate-500")
+                ui.label(tags).classes(f"{TEXT_MICRO} text-slate-500")
 
             if macros:
                 with ui.element("div").classes(
-                    "flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-1.5 py-0.5 "
-                    "rounded-full bg-slate-950/40 w-fit max-w-full"
+                    f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                    f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
                 ):
                     ui.label(f"{macros['calories']:.0f} kcal").classes(
-                        "text-[9px] font-mono text-slate-300"
+                        f"{TEXT_MICRO} font-mono text-slate-300"
                     )
                     for key, short, unit in MACRO_LABELS[1:]:
-                        ui.label("·").classes("text-[9px] text-slate-600")
+                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
                         ui.label(f"{macros[key]:.0f}{unit} {short}").classes(
-                            f"text-[9px] font-mono {MACRO_TINTS[key]}"
+                            f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
                         )
 
     @ui.refreshable
@@ -182,22 +197,22 @@ def build_catalog_browser(
         )
 
         ui.label(f"{len(matches)} of {len(state.recipe_catalog)} recipes").classes(
-            "text-[11px] text-slate-500 mb-2"
+            f"{TEXT_BODY} text-slate-500 mb-2"
         )
 
         if not state.recipe_catalog:
             ui.label("Catalog is empty — bookmark a cooked meal or import one.").classes(
-                "text-sm text-slate-500 italic"
+                f"{TEXT_HEAD} text-slate-500 italic"
             )
             return
         if not matches:
             ui.label("No recipes match these filters.").classes(
-                "text-sm text-slate-500 italic"
+                f"{TEXT_HEAD} text-slate-500 italic"
             )
             return
 
         with ui.element("div").classes(
-            "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2"
+            f"grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-{SPACE_BASE}"
         ):
             for entry in matches:
                 catalog_card(entry)
@@ -207,25 +222,25 @@ def build_catalog_browser(
     # fixed-width card.
     with ui.dialog().props("maximized") as dialog:
         with ui.element("div").classes(
-            "bg-slate-950 h-full w-full flex flex-col p-4 gap-3"
+            f"bg-slate-950 h-full w-full flex flex-col p-{SPACE_PAGE} gap-{SPACE_SECTION}"
         ):
-            with ui.element("div").classes("flex flex-row items-center justify-between gap-3"):
-                with ui.element("div").classes("flex flex-row items-center gap-2"):
+            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_SECTION}"):
+                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_BASE}"):
                     ui.icon("menu_book").classes("text-slate-300")
                     ui.label("Recipe Catalog").classes(
-                        "text-base font-semibold text-slate-100"
+                        f"{TEXT_DISPLAY} font-semibold text-slate-100"
                     )
                 ui.button(icon="close", on_click=dialog.close).props("dense flat round")
 
-            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                 ui.input(placeholder="Search recipes…", on_change=on_search).props(
                     "dense outlined clearable"
-                ).classes("flex-1 text-sm")
+                ).classes(f"flex-1 {TEXT_HEAD}")
                 ui.select(
                     ["All"] + state.meal_types, value="All", on_change=on_meal_type
-                ).props("dense outlined").classes("w-40 text-sm")
+                ).props("dense outlined").classes(f"w-40 {TEXT_HEAD}")
                 ui.checkbox("Favorites only", on_change=on_favorites_only).classes(
-                    "text-sm text-slate-300"
+                    f"{TEXT_HEAD} text-slate-300"
                 )
 
             with ui.element("div").classes("flex-1 overflow-y-auto"):

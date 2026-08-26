@@ -23,7 +23,21 @@ from ui_catalog_browser import CatalogBrowserHandles
 from ui_context import UIContext
 from ui_generation import GenerationHandles
 from ui_prep_options import PrepOptionsHandles
-from ui_theme import TARGET_FIELDS, TRAINING_TYPE_LABELS, WEEK_SELECTION_LABELS
+from ui_theme import (
+    RADIUS_CARD,
+    RADIUS_PANEL,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    TARGET_FIELDS,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+    TRAINING_TYPE_LABELS,
+    WEEK_SELECTION_LABELS,
+)
 from week import portions_for, shopping_windows, slot_label
 
 
@@ -62,20 +76,20 @@ def build_drawer(
             ("Portions total", total_portions),
             ("Shopping trips", len(windows)),
         ]:
-            with ui.element("div").classes("flex flex-row justify-between text-xs"):
+            with ui.element("div").classes(f"flex flex-row justify-between {TEXT_BODY}"):
                 ui.label(label).classes("text-slate-400")
                 ui.label(str(value)).classes("font-mono text-slate-200")
 
         failures = state.week_plan.failures if state.week_plan else {}
         if failures:
             with ui.element("div").classes(
-                "mt-2 p-2 rounded bg-rose-500/10 border border-rose-900"
+                f"mt-2 p-{SPACE_BASE} {RADIUS_CARD} bg-rose-500/10 border border-rose-900"
             ):
                 ui.label(f"{len(failures)} meal(s) failed to generate").classes(
-                    "text-xs text-rose-300 font-semibold"
+                    f"{TEXT_BODY} text-rose-300 font-semibold"
                 )
                 for key, error in failures.items():
-                    ui.label(f"{slot_label(key)}: {error}").classes("text-[10px] text-rose-200/80")
+                    ui.label(f"{slot_label(key)}: {error}").classes(f"{TEXT_MICRO} text-rose-200/80")
 
     # ---- per-day macro targets ---------------------------------------------
 
@@ -113,14 +127,14 @@ def build_drawer(
                 number.value = restored[key]
             sync()
 
-        with ui.element("div").classes("flex flex-col gap-1"):
-            with ui.element("div").classes("flex flex-row items-center justify-between gap-1"):
-                ui.label(day).classes("text-[11px] font-semibold text-slate-200")
-                with ui.element("div").classes("flex flex-row items-center gap-1"):
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
+            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
+                ui.label(day).classes(f"{TEXT_BODY} font-semibold text-slate-200")
+                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
                     # Fat is shown, never typed: it is whatever energy is left
                     # once protein and carbs are paid for.
                     fat_label = ui.label(f"fat {target['fat_g']:.0f}g").classes(
-                        "text-[10px] font-mono text-slate-500"
+                        f"{TEXT_MICRO} font-mono text-slate-500"
                     )
                     reset = (
                         ui.button(icon="undo", on_click=on_reset)
@@ -130,7 +144,7 @@ def build_drawer(
                     reset.set_visibility(day in state.target_overrides)
                     with reset:
                         ui.tooltip(f"Reset {day} to config.json")
-            with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                 for key, label in TARGET_FIELDS:
                     inputs[key] = (
                         ui.number(
@@ -144,7 +158,7 @@ def build_drawer(
                         # Debounced so holding a key doesn't repaint the
                         # telemetry header once per digit.
                         .props("dense outlined debounce=350")
-                        .classes("flex-1 text-xs")
+                        .classes(f"flex-1 {TEXT_BODY}")
                     )
 
     @ui.refreshable
@@ -162,7 +176,7 @@ def build_drawer(
             refreshables.refresh("targets")
 
         with ui.element("div").classes("flex flex-row items-center justify-between mt-1"):
-            ui.label().classes("text-[10px] text-amber-300").bind_text_from(
+            ui.label().classes(f"{TEXT_MICRO} text-amber-300").bind_text_from(
                 state,
                 "target_overrides",
                 backward=lambda overrides: (
@@ -199,7 +213,7 @@ def build_drawer(
     def training_editor() -> None:
         if not state.training_schedule:
             ui.label("No workouts scheduled.").classes(
-                "text-[10px] text-slate-500 italic"
+                f"{TEXT_MICRO} text-slate-500 italic"
             )
         for index, session in enumerate(state.training_schedule):
 
@@ -208,29 +222,29 @@ def build_drawer(
                 refreshables.refresh("training")
 
             with ui.element("div").classes(
-                "flex flex-col gap-1 p-1.5 rounded border border-slate-800 bg-slate-950/30"
+                f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_TIGHT} {RADIUS_CARD} border border-slate-800 bg-slate-950/30"
             ):
-                with ui.element("div").classes("flex flex-row items-center gap-1"):
+                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
                     ui.select(
                         state.days,
                         value=session.get("day"),
                         on_change=training_field_handler(index, "day"),
-                    ).props("dense outlined").classes("flex-1 min-w-0 text-xs")
+                    ).props("dense outlined").classes(f"flex-1 min-w-0 {TEXT_BODY}")
                     ui.button(icon="delete", on_click=on_remove).props(
                         "dense flat size=xs"
                     ).classes("min-h-0 p-0 text-slate-500")
-                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+                with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                     ui.input(
                         label="Time (HH:MM)",
                         value=session.get("time", ""),
                         on_change=training_field_handler(index, "time"),
-                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
+                    ).props("dense outlined debounce=350").classes(f"flex-1 {TEXT_BODY}")
                     ui.select(
                         TRAINING_TYPE_LABELS,
                         value=session.get("type"),
                         on_change=training_field_handler(index, "type"),
-                    ).props("dense outlined").classes("flex-1 text-xs")
-                with ui.row().classes("w-full items-center flex-nowrap gap-2"):
+                    ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                     ui.number(
                         label="Duration (min)",
                         value=session.get("duration_minutes", 0),
@@ -238,7 +252,7 @@ def build_drawer(
                         step=5,
                         precision=0,
                         on_change=training_field_handler(index, "duration_minutes"),
-                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
+                    ).props("dense outlined debounce=350").classes(f"flex-1 {TEXT_BODY}")
                     ui.number(
                         label="Burn (kcal)",
                         value=session.get("estimated_burn_kcal", 0),
@@ -246,7 +260,7 @@ def build_drawer(
                         step=10,
                         precision=0,
                         on_change=training_field_handler(index, "estimated_burn_kcal"),
-                    ).props("dense outlined debounce=350").classes("flex-1 text-xs")
+                    ).props("dense outlined debounce=350").classes(f"flex-1 {TEXT_BODY}")
 
         def on_add() -> None:
             state.add_training_session()
@@ -299,23 +313,23 @@ def build_drawer(
 
     with ui.dialog() as import_dialog:
         with ui.element("div").classes(
-            "bg-slate-900 rounded-lg p-4 w-[32rem] max-w-full flex flex-col gap-2"
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
-            ui.label("Import a recipe").classes("text-sm font-semibold")
+            ui.label("Import a recipe").classes(f"{TEXT_HEAD} font-semibold")
             ui.label(
                 "Paste raw recipe text, an ingredient list, or a URL — it's turned "
                 "into grams, macros and NOVA groups under the same dietary rules "
                 "generation uses."
-            ).classes("text-[10px] text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-500")
             ui.textarea(placeholder="Paste recipe text or a URL…").bind_value(
                 state, "import_text"
-            ).props("dense outlined").classes("w-full text-xs").style(
+            ).props("dense outlined").classes(f"w-full {TEXT_BODY}").style(
                 "min-height: 8rem"
             )
             ui.checkbox("Mark as favorite").bind_value(state, "import_as_favorite").classes(
-                "text-xs"
+                TEXT_BODY
             )
-            with ui.row().classes("justify-end gap-2 mt-2"):
+            with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-2"):
                 ui.button("Cancel", on_click=import_dialog.close).props(
                     "dense flat no-caps"
                 )
@@ -333,13 +347,13 @@ def build_drawer(
     # x-offsets whenever the drawer is open — which it is by default at
     # desktop widths.
     with ui.left_drawer(bordered=True, top_corner=True).classes(
-        "bg-slate-900 p-3 gap-3 flex flex-col h-screen overflow-y-auto w-full max-w-xs"
+        f"bg-slate-900 p-{SPACE_SECTION} gap-{SPACE_SECTION} flex flex-col h-screen overflow-y-auto w-full max-w-xs"
     ).props(":width=320"):
         # Pinned above the accordion (sticky, not just first-in-DOM) so the one
         # action that spends money and writes to disk is never a scroll away,
         # no matter how many sections below are expanded.
         with ui.element("div").classes(
-            "sticky top-0 z-10 bg-slate-900 flex flex-col gap-2 pb-2"
+            f"sticky top-0 z-10 bg-slate-900 flex flex-col gap-{SPACE_BASE} pb-2"
         ):
             generate = (
                 ui.button(icon="bolt", on_click=lambda: prep_options.open())
@@ -389,7 +403,7 @@ def build_drawer(
 
         with ui.expansion("Global Controls", icon="settings", value=True).classes(
             "w-full"
-        ).props("dense header-class='text-xs px-0'"):
+        ).props(f"dense header-class='{TEXT_BODY} px-0'"):
 
             def on_week_start(event) -> None:
                 # Set the field explicitly before refreshing: `bind_value`
@@ -404,7 +418,7 @@ def build_drawer(
                 label="Week starts on",
                 on_change=on_week_start,
             ).bind_value(state, "week_start").props("dense outlined").classes(
-                "w-full text-xs"
+                f"w-full {TEXT_BODY}"
             )
 
             def on_servings(event) -> None:
@@ -419,7 +433,7 @@ def build_drawer(
                 precision=0,
                 on_change=on_servings,
             ).bind_value(state, "servings").props("dense outlined").classes(
-                "w-full text-xs"
+                f"w-full {TEXT_BODY}"
             )
 
             def on_shop_days(event) -> None:
@@ -434,28 +448,28 @@ def build_drawer(
                 multiple=True,
                 on_change=on_shop_days,
             ).bind_value(state, "shop_days").props("dense outlined use-chips").classes(
-                "w-full text-xs"
+                f"w-full {TEXT_BODY}"
             )
 
             ui.select(
                 selectable_models(state.models_config),
                 label="Model",
-            ).bind_value(state, "model").props("dense outlined").classes("w-full text-xs")
+            ).bind_value(state, "model").props("dense outlined").classes(f"w-full {TEXT_BODY}")
 
         # Collapsed by default: seven days x three numbers is the densest thing
         # in the drawer, and most weeks run on the config file's targets.
         with ui.expansion("Daily Targets", icon="track_changes").classes(
             "w-full"
-        ).props("dense header-class='text-xs px-0'"):
+        ).props(f"dense header-class='{TEXT_BODY} px-0'"):
             ui.label(
                 "Applies to the next generation only — config.json is not changed."
-            ).classes("text-[10px] text-slate-500 mb-1")
-            with ui.element("div").classes("flex flex-col gap-2"):
+            ).classes(f"{TEXT_MICRO} text-slate-500 mb-1")
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE}"):
                 targets_editor()
 
         with ui.expansion("Pantry Clear", icon="kitchen").classes(
             "w-full"
-        ).props("dense header-class='text-xs px-0'"):
+        ).props(f"dense header-class='{TEXT_BODY} px-0'"):
 
             def on_pantry(event) -> None:
                 state.pantry = [
@@ -476,32 +490,32 @@ def build_drawer(
             ).props(
                 "dense outlined use-chips use-input hide-dropdown-icon "
                 'input-debounce=0 placeholder="600g chicken thighs — press enter"'
-            ).classes("w-full text-xs")
+            ).classes(f"w-full {TEXT_BODY}")
             ui.label(
                 "A priority, not a rule: the model prefers these where they fit and "
                 "never bends a meal's style, cuisine or macro budget to use one up. "
                 "They are still ordinary ingredients, so they still appear on the "
                 "shopping list."
-            ).classes("text-[10px] text-slate-500 mt-1")
+            ).classes(f"{TEXT_MICRO} text-slate-500 mt-1")
 
         with ui.expansion("Training Schedule", icon="fitness_center").classes(
             "w-full"
-        ).props("dense header-class='text-xs px-0'"):
+        ).props(f"dense header-class='{TEXT_BODY} px-0'"):
             ui.label(
                 "A workout's burn is added to that day's target, and the meal "
                 "closest to it is pinned for glycogen replenishment — see "
                 "Macro targets above and the meal brief once generated. Applies "
                 "to the next generation only, same as targets and pantry."
-            ).classes("text-[10px] text-slate-500 mb-1")
-            with ui.element("div").classes("flex flex-col gap-1.5"):
+            ).classes(f"{TEXT_MICRO} text-slate-500 mb-1")
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
                 training_editor()
 
         with ui.expansion("Recipe Catalog", icon="favorite").classes(
             "w-full"
-        ).props("dense header-class='text-xs px-0'"):
+        ).props(f"dense header-class='{TEXT_BODY} px-0'"):
 
-            with ui.row().classes("w-full items-center justify-between gap-2 mb-1"):
-                ui.label().classes("text-[10px] text-slate-500").bind_text_from(
+            with ui.row().classes(f"w-full items-center justify-between gap-{SPACE_BASE} mb-1"):
+                ui.label().classes(f"{TEXT_MICRO} text-slate-500").bind_text_from(
                     state,
                     "recipe_catalog",
                     backward=lambda catalog: f"{len(catalog)} recipe(s)",
@@ -517,7 +531,7 @@ def build_drawer(
             ui.input(
                 placeholder="Search catalog…",
                 on_change=on_catalog_search,
-            ).props("dense outlined clearable").classes("w-full text-xs")
+            ).props("dense outlined clearable").classes(f"w-full {TEXT_BODY}")
 
             @ui.refreshable
             def favorites_list() -> None:
@@ -532,35 +546,35 @@ def build_drawer(
                 if not state.recipe_catalog:
                     ui.label(
                         "Catalog is empty — bookmark a cooked meal or import one."
-                    ).classes("text-[10px] text-slate-500 italic")
+                    ).classes(f"{TEXT_MICRO} text-slate-500 italic")
                 elif not matches:
                     ui.label("No recipes match that search.").classes(
-                        "text-[10px] text-slate-500 italic"
+                        f"{TEXT_MICRO} text-slate-500 italic"
                     )
-                with ui.element("div").classes("flex flex-col gap-1 max-h-56 overflow-y-auto"):
+                with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-h-56 overflow-y-auto"):
                     for entry in matches:
                         recipe = entry["recipe"]
                         favorited = bool(entry.get("is_favorite"))
                         with ui.element("div").classes(
-                            "flex flex-row items-center justify-between gap-1 p-1 rounded "
+                            f"flex flex-row items-center justify-between gap-{SPACE_TIGHT} p-{SPACE_TIGHT} {RADIUS_CARD} "
                             "border border-slate-800 bg-slate-950/30"
                         ):
                             with ui.element("div").classes("flex flex-col min-w-0"):
                                 ui.label(recipe["name"]).classes(
-                                    "text-[11px] font-semibold truncate"
+                                    f"{TEXT_BODY} font-semibold truncate"
                                 )
                                 ui.label(recipe.get("meal_type", "").title()).classes(
-                                    "text-[9px] text-slate-500"
+                                    f"{TEXT_MICRO} text-slate-500"
                                 )
                             with ui.element("div").classes(
-                                "flex flex-row items-center gap-0.5 shrink-0"
+                                f"flex flex-row items-center gap-{SPACE_HAIR} shrink-0"
                             ):
                                 fav_toggle = ui.button(
                                     icon="bookmark" if favorited else "bookmark_border",
                                     on_click=lambda r=recipe: toggle_favorite(ctx, r),
                                 ).props("dense flat round size=xs")
                                 fav_toggle.classes(
-                                    "min-h-0 p-0.5 "
+                                    f"min-h-0 p-{SPACE_HAIR} "
                                     + (
                                         "text-amber-300"
                                         if favorited
@@ -571,13 +585,13 @@ def build_drawer(
                                     icon="edit",
                                     on_click=lambda e=entry: rename_dialog.open(e),
                                 ).props("dense flat round size=xs").classes(
-                                    "min-h-0 p-0.5 text-slate-500 hover:text-sky-300"
+                                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
                                 )
                                 ui.button(
                                     icon="delete",
                                     on_click=lambda rid=entry["id"]: delete_recipe(ctx, rid),
                                 ).props("dense flat round size=xs").classes(
-                                    "min-h-0 p-0.5 text-slate-500 hover:text-rose-300"
+                                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-rose-300"
                                 )
 
             favorites_list()
@@ -588,10 +602,10 @@ def build_drawer(
             ).props("dense flat no-caps size=sm").classes("w-full text-slate-300")
 
         ui.separator()
-        with ui.element("div").classes("flex flex-row items-center gap-1"):
-            ui.icon("insights").classes("text-xs text-slate-500")
+        with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+            ui.icon("insights").classes(f"{TEXT_BODY} text-slate-500")
             ui.label("This week").classes(
-                "text-xs uppercase tracking-widest text-slate-500"
+                f"{TEXT_BODY} uppercase tracking-widest text-slate-500"
             )
         week_summary()
 
