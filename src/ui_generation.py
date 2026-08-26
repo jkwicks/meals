@@ -12,11 +12,14 @@ a different module, after this one.
 """
 
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from typing import Callable, Dict, Optional, Tuple
 
 from nicegui import ui
 
 from planner import (
+    REJECTION_REASON_LABELS,
+    RejectionEntry,
     api_key_error,
     generate_week_plan,
     meal_type_order,
@@ -174,6 +177,76 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             progress_log = ui.log(max_lines=200).classes(
                 f"w-full h-40 {TEXT_MICRO} bg-slate-950 {RADIUS_CARD}"
             )
+
+    # ---- rejection capture ---------------------------------------------
+    # See CLAUDE.md's "Rejection capture" — the point of this phase.
+    # Hitting regenerate on a card is thrown away today; this is what asks
+    # why, without getting in the way of the retry that already ran.
+    #
+    # A plain `fixed`-positioned div, not `ui.notify`/`ui.dialog`: NiceGUI's
+    # `ui.notify` only ever forwards its `actions` to Quasar as serialized
+    # JSON, so a Python `on_click` handler on one of its buttons has nothing
+    # to bind to — checked directly against this app's installed NiceGUI
+    # (3.16) before writing this. `ui.dialog` is a real container but is
+    # modal (a dimmed backdrop), which is the opposite of "appears alongside
+    # the retry, never in front of it". A `fixed` div is a real NiceGUI
+    # element tree, so its buttons are ordinary `on_click` callbacks, and it
+    # visually floats regardless of where in the page it's built — the same
+    # reason `ui.header`'s own fixed positioning works regardless of DOM
+    # nesting.
+    #
+    # `_pending_rejection` is closure-local, not a `PlannerState` field: it
+    # is presentation-only scratch state for one widget (which recipe this
+    # prompt is currently about), never read by another module or refresh
+    # topic, so it doesn't belong on the one UI object `.claude/rules/ui.md`
+    # says is tested.
+    _pending_rejection: Dict[str, str] = {}
+
+    @ui.refreshable
+    def rejection_prompt() -> None:
+        if not _pending_rejection:
+            return
+        with ui.element("div").classes(
+            f"fixed bottom-4 right-4 z-50 flex flex-row flex-wrap items-center gap-{SPACE_TIGHT} "
+            f"p-{SPACE_TIGHT} {RADIUS_CARD} border border-slate-700 bg-slate-900 shadow-lg max-w-sm"
+        ):
+            ui.label(f"Why regenerate \"{_pending_rejection['recipe_name']}\"?").classes(
+                f"{TEXT_MICRO} text-slate-400"
+            )
+            for reason, label in REJECTION_REASON_LABELS.items():
+                ui.button(
+                    label, on_click=lambda r=reason: record_rejection(r)
+                ).props("dense flat no-caps size=sm").classes("text-slate-300")
+            ui.button(icon="close", on_click=dismiss_rejection_prompt).props(
+                "dense flat size=xs"
+            ).classes("min-h-0 p-0 text-slate-500")
+
+    def dismiss_rejection_prompt() -> None:
+        # No action = no record — an ignored prompt must not silently log a
+        # default reason.
+        _pending_rejection.clear()
+        rejection_prompt.refresh()
+
+    async def record_rejection(reason: str) -> None:
+        if not _pending_rejection:
+            return
+        entry = RejectionEntry(
+            date=date.today().isoformat(),
+            slot_id=_pending_rejection["slot_id"],
+            recipe_name=_pending_rejection["recipe_name"],
+            reason=reason,
+            marked_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+        await REPOSITORY.save_rejection_entry(entry.model_dump())
+        dismiss_rejection_prompt()
+        ui.notify("Noted — thanks", type="info", timeout=2000)
+
+    def offer_rejection_prompt(slot_id_value: str, recipe_name: str) -> None:
+        _pending_rejection["slot_id"] = slot_id_value
+        _pending_rejection["recipe_name"] = recipe_name
+        rejection_prompt.refresh()
+
+    rejection_prompt()
 
     def generation_spec() -> WeekSpec:
         """The week we're about to ask for: what's on screen, with live servings.
@@ -507,6 +580,15 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         state.adopt_plan(plan)
         refreshables.refresh("plan")
         ui.notify(f"Regenerated {slot_label(target_slot_id)}", type="positive")
+
+        # `view` is the SlotView captured before this call — its `.recipe` is
+        # still the one just discarded. None here means the slot was
+        # NOT_GENERATED before this click (a prior failure, not a real
+        # suggestion), which has nothing to name as rejected — see CLAUDE.md's
+        # "A failed meal must not fail the week" on why NOT_GENERATED cards
+        # also carry this same regenerate button.
+        if view.recipe is not None:
+            offer_rejection_prompt(target_slot_id, view.recipe.name)
 
     return GenerationHandles(
         run_generation=run_generation,

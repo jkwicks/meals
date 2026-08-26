@@ -20,6 +20,7 @@ from typing import Callable
 from nicegui import ui
 
 from ui_context import UIContext
+from ui_inspector import InspectorHandles
 from ui_theme import (
     MACRO_LABELS,
     MACRO_TINTS,
@@ -40,7 +41,7 @@ class TelemetryHandles:
     telemetry: Callable
 
 
-def build_telemetry(ctx: UIContext) -> TelemetryHandles:
+def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHandles:
     state = ctx.state
 
     # ---- header: week date banner -----------------------------------------
@@ -121,7 +122,11 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
                 protein, protein_goal = totals["protein_g"], float(target["protein_g"])
                 overridden = day in state.target_overrides
                 training = state.has_training(day)
-                with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} min-w-0"):
+                # Opens the day inspector (`ui_inspector.py`) — a floating
+                # overlay, so this never reflows the grid it's clicked from.
+                with ui.element("div").classes(
+                    f"flex flex-col gap-{SPACE_TIGHT} min-w-0 cursor-pointer"
+                ).on("click", lambda d=day: inspector.open(d)):
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         # A dot is why the denominator moved: amber for a drawer
                         # target override, emerald for a scheduled workout —

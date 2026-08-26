@@ -1137,10 +1137,11 @@ class TestPinnedFavouritesReachGeneration(unittest.IsolatedAsyncioTestCase):
 
 
 class _FakeRepository:
-    """The one seam `generate_week_plan` reaches storage through.
+    """The one seam `generate_week_plan`/`regenerate_single_day`/
+    `regenerate_single_meal` reach storage through in this suite.
 
-    Only the three methods that path calls — the suite substitutes at the
-    seam rather than at the filesystem, same as `test_sync_service.py`.
+    Only the methods those paths call — the suite substitutes at the seam
+    rather than at the filesystem, same as `test_sync_service.py`.
     """
 
     def __init__(self, favourites):
@@ -1159,6 +1160,9 @@ class _FakeRepository:
         return None
 
     async def load_whfoods(self):
+        return []
+
+    async def load_rejections(self):
         return []
 
 

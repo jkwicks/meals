@@ -107,6 +107,7 @@ from ui_catalog_browser import build_catalog_browser
 from ui_context import Refreshables, UIContext
 from ui_generation import build_generation
 from ui_insights import build_insights
+from ui_inspector import build_inspector
 from ui_plan import build_plan
 from ui_review import build_review
 from ui_settings import build_settings
@@ -175,16 +176,21 @@ async def planner_page() -> None:
     # destination's canvas is cards' own, and its own "Generate" button
     # opens the review dialog rather than running the week directly), cards
     # before today and before catalog_browser (both open cards' own recipe
-    # detail dialog), rename_dialog before catalog_browser (its per-row edit
-    # icon opens the one shared dialog), review and generation before
-    # staged_bar (its Review/Generate week/Discard actions call straight
-    # into both) — everything before the refresh-topic registration below
-    # (every topic there names a section some `build_*` returned).
+    # detail dialog), cards and review before inspector (its slot cards open
+    # cards' own recipe detail dialog, and its "Edit targets" link opens
+    # review's dialog), inspector before telemetry (telemetry's day cell
+    # wires the click that opens it), rename_dialog before catalog_browser
+    # (its per-row edit icon opens the one shared dialog), review and
+    # generation before staged_bar (its Review/Generate week/Discard actions
+    # call straight into both) — everything before the refresh-topic
+    # registration below (every topic there names a section some `build_*`
+    # returned).
     generation = build_generation(ctx)
     review = build_review(ctx, generation)
     cards = build_cards(ctx, generation)
     plan = build_plan(ctx, cards, review)
-    telemetry = build_telemetry(ctx)
+    inspector = build_inspector(ctx, cards, review)
+    telemetry = build_telemetry(ctx, inspector)
     shopping = build_shopping(ctx)
     today = build_today(ctx, cards)
     rename_dialog = build_rename_dialog(ctx)
@@ -351,9 +357,16 @@ async def planner_page() -> None:
         review.targets_editor,
         review.training_editor,
         today.today_view,
+        inspector.panel,
         staged_bar.bar,
     )
     refreshables.on("today", today.today_view)
+    # The inspector panel has no focused input (its targets are read-only —
+    # editing lives in the review dialog), so unlike "telemetry" it's safe to
+    # repaint on every kind of target/training change, not just the narrow
+    # ones. Registered on its own topic too so `inspector.open()` can force a
+    # repaint the moment it opens, independent of anything else changing.
+    refreshables.on("inspector", inspector.panel)
     # `staged_bar.bar` rides on "telemetry" too, not just "targets"/
     # "training": `ui_review.day_target_row`'s `sync()` deliberately refreshes
     # only "telemetry" on a keystroke (refreshing "targets" would rebuild the
@@ -371,7 +384,12 @@ async def planner_page() -> None:
     # `planning_config()` per keystroke is the cost this narrow topic was
     # carved out to avoid.
     refreshables.on(
-        "targets", review.targets_editor, telemetry.telemetry, today.today_view, staged_bar.bar
+        "targets",
+        review.targets_editor,
+        telemetry.telemetry,
+        today.today_view,
+        inspector.panel,
+        staged_bar.bar,
     )
     refreshables.on(
         "training",
@@ -379,6 +397,7 @@ async def planner_page() -> None:
         telemetry.telemetry,
         review.targets_editor,
         today.today_view,
+        inspector.panel,
         staged_bar.bar,
     )
     refreshables.on("catalog", cards.canvas, catalog_browser.catalog_grid)

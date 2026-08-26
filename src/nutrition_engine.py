@@ -332,6 +332,76 @@ def calculate_dynamic_deficit(
     return ramped if ceiling is None else min(ramped, ceiling)
 
 
+def resolve_current_weight_kg(
+    profile: dict, latest_biometrics: Optional[dict]
+) -> Optional[float]:
+    """The weight `calculate_macro_targets` plans against — the latest weigh-in,
+    falling back to `user_profile.current_weight_kg`.
+
+    Pulled out of `calculate_macro_targets` so a second caller (the training
+    editor's derived burn estimate, `ui_state.PlannerState.estimate_burn`) can
+    ask the same question without duplicating the fallback rule. Unlike its
+    original caller this returns `None` rather than raising — a UI default
+    that can't be computed should just not offer one, not take the page down.
+    """
+    biometrics = latest_biometrics or {}
+    return biometrics.get("weight_kg") or (profile or {}).get("current_weight_kg")
+
+
+# MET (metabolic equivalent of task) per training-schedule session type, for
+# `estimate_session_burn_kcal`'s default `estimated_burn_kcal`. Restated here
+# rather than imported from `planner.TRAINING_INTENSITY_SPLIT` — this module
+# is deliberately free of `planner`'s dependency graph, the same reasoning
+# `derive_fat_g` above already documents for duplicating the Atwater
+# constants rather than importing them. Keys and rough intensity match
+# `TRAINING_INTENSITY_SPLIT`'s; values are Compendium-of-Physical-Activities
+# ballpark figures (resistance training ~6, vigorous interval work ~8-10,
+# running/cycling ~7.5-9.8, brisk walking ~3.5) — approximate by nature, the
+# same caveat `KCAL_PER_KG_TISSUE`'s 7700 figure already carries, and good
+# enough for an editable *default* rather than a claimed measurement.
+MET_VALUES = {
+    "gym_hypertrophy": 6.0,
+    "cardio_hiit": 8.5,
+    "cardio_run": 9.8,
+    "cardio_ride": 7.5,
+    "cardio_easy": 5.0,
+    "walk": 3.5,
+    "rest": 0.0,
+    # Prefix fallbacks, longest-first at match time — mirrors
+    # `ui_theme.training_icon`'s lookup so a future `gym_strength` or
+    # `cardio_swim` gets a sensible estimate with no edit here.
+    "gym": 6.0,
+    "cardio": 7.5,
+}
+# What an unrecognised type gets — a light-moderate general-activity MET
+# rather than 0, since an unknown but real session still burns something.
+MET_FALLBACK = 5.0
+
+
+def estimate_session_burn_kcal(
+    session_type: str, duration_minutes: float, weight_kg: float
+) -> float:
+    """A MET-based default for `estimated_burn_kcal` — kcal, not a measurement.
+
+    `kcal = MET * 3.5 * weight_kg / 200 * minutes`, the standard ACSM
+    metabolic-equivalent formula: `MET * 3.5 * weight_kg / 200` is kcal/min at
+    that intensity for that body. Deliberately editable everywhere it's used
+    (see `ui_state.PlannerState.estimate_burn`) — nobody knows their real
+    session burn, so this exists to stop the field defaulting to an arbitrary
+    flat number, not to claim a measurement `apply_training_adjustments`
+    should trust blindly.
+
+    Lookup is exact match, then longest prefix, same as `training_icon` — a
+    type this table hasn't heard of still gets a plausible estimate
+    (`MET_FALLBACK`) rather than zero or a raise.
+    """
+    met = MET_VALUES.get(session_type)
+    if met is None:
+        matches = [key for key in MET_VALUES if session_type.startswith(key)]
+        met = MET_VALUES[max(matches, key=len)] if matches else MET_FALLBACK
+    return met * 3.5 * weight_kg / 200 * duration_minutes
+
+
 def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float:
     """Fat is whatever energy is left once protein and carbs are paid for.
 
@@ -390,7 +460,7 @@ def calculate_macro_targets(
     profile = user_profile or {}
     biometrics = latest_biometrics or {}
 
-    weight_kg = biometrics.get("weight_kg") or profile.get("current_weight_kg")
+    weight_kg = resolve_current_weight_kg(profile, latest_biometrics)
     if not weight_kg:
         raise ValueError(
             "No current weight available: pass a weigh-in with 'weight_kg' as "
