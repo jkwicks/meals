@@ -185,11 +185,30 @@ history. The CLI is still the one that prints shopping lists.
 ### NiceGUI front end
 
 `ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density desktop
-UI: left drawer for global controls, a header of 7 per-day macro bars, and a
+UI: an overlaying left drawer for global controls, a header of 7 per-day macro bars, and a
 7-column x 4-card canvas sitting inside a "Week" tab alongside a "Today" tab
-(see "Module layout" and "The Today tab" below). Both grids are `grid-cols-8`
-— an indigo Sunday-prep column sits at index 0, ahead of the seven days — so
-a day's telemetry stays directly above its meals. Cook/leftover/skip/not-generated
+(see "Module layout" and "The Today tab" below). Both grids are
+`grid-cols-[repeat(8,minmax(110px,1fr))]` (`ui_theme.WEEK_GRID_COLS`) — an
+indigo Sunday-prep column sits at index 0, ahead of the seven days — so a
+day's telemetry stays directly above its meals, at rest and while scrolled.
+The 110px floor is what makes "while scrolled" possible at all: a viewport
+too narrow for eight such columns needs to scroll, but the header
+(`position: fixed`, so it stays visible while the canvas scrolls vertically
+beneath it) and the canvas (in the page container below it) can never be the
+same physical scroll parent. Each gets its own `overflow-x: auto` wrapper
+instead — `ui_app.week_grid_scroll()`, two call sites sharing one class,
+`ui_theme.WEEK_GRID_SCROLL_CLASS` — and a `scroll` listener
+(`WEEK_GRID_SCROLL_SYNC_JS`) mirrors `scrollLeft` between them entirely
+client-side, the same reasoning `chain_css` already gives for staying out of
+Python on a per-frame effect. Phase 2a of `ui-redesign.md`; it replaced an
+older fix where `ui.left_drawer(top_corner=True)` made the drawer push the
+page and inset the fixed header by the drawer's width, keeping the two grids
+at the same x-offset by insetting both — which was also the bug report: 320px
+of drawer competing with an 8-column grid for the rest of the viewport is
+what widened `.nicegui-content` enough for the *document* to scroll
+sideways. `ui.left_drawer(...).props("overlay")` now floats the drawer over
+the page instead of resizing it, so opening or closing it never reflows
+either grid, and neither grid is ever pushed in the first place. Cook/leftover/skip/not-generated
 are four distinct card treatments (`STATUS_STYLES`).
 
 #### The type, spacing and radius scale

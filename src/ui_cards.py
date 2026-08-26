@@ -40,6 +40,7 @@ from ui_theme import (
     TEXT_DISPLAY,
     TEXT_HEAD,
     TEXT_MICRO,
+    WEEK_GRID_COLS,
     link_line,
     split_quantity,
 )
@@ -909,7 +910,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
     @ui.refreshable
     def canvas() -> None:
         views = state.slot_views()
-        with ui.element("div").classes(f"meal-canvas grid grid-cols-8 gap-{SPACE_BASE} w-full items-start"):
+        with ui.element("div").classes(f"meal-canvas grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full items-start"):
             prep_day_column()
             for day in state.days:
                 with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} min-w-0"):

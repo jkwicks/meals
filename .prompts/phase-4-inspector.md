@@ -138,3 +138,5 @@ Updating CLAUDE.md: the drawer-targets section describes a control that no
 longer exists, and rejection capture needs its own subsection under
 Architecture — what it stores, why it is separate from 5b, and why it is soft
 guidance. Add the decay decision to `future-ideas.md` if it is still open.
+
+Publish a release in github. 

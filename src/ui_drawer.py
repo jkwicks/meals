@@ -337,18 +337,23 @@ def build_drawer(
                     "Analyze & Import", icon="auto_awesome", on_click=on_import
                 ).props("dense no-caps")
 
-    # `top_corner=True` is NiceGUI's own switch for this — it makes the left
-    # drawer span past the header instead of sitting below it, which in turn
-    # makes Quasar inset the fixed header by the drawer's width the same way
-    # it already insets `.q-page-container`. Without it, the header spans the
-    # full window regardless of the drawer, so telemetry's day columns (in
-    # the header) and canvas's day columns (in the page container, inset by
-    # the drawer) share the same grid-cols-8 math but render at different
-    # x-offsets whenever the drawer is open — which it is by default at
-    # desktop widths.
-    with ui.left_drawer(bordered=True, top_corner=True).classes(
+    # Overlay, not push. `top_corner=True` used to live here so Quasar would
+    # inset the fixed header by the drawer's width the same way it already
+    # inset `.q-page-container` — the only way to keep telemetry's day
+    # columns (in the header) and canvas's day columns (in the page
+    # container, inset by the drawer) at the same x-offset was to inset both
+    # by the same amount. That inset was also the whole problem: 320px of
+    # drawer competing with an 8-column grid for the rest of the viewport is
+    # what pushed the page wide enough to scroll the document sideways.
+    # `overlay` makes the drawer float above the page instead of resizing it,
+    # so opening or closing it never changes either region's width — and
+    # since neither region is pushed any more, there is nothing left for
+    # `top_corner` to keep in sync. Staying aligned *while scrolled* is now
+    # `ui_app.py`'s job (see `ui_theme.WEEK_GRID_SCROLL_CLASS`), not this
+    # prop's.
+    with ui.left_drawer(bordered=True).props("overlay :width=320").classes(
         f"bg-slate-900 p-{SPACE_SECTION} gap-{SPACE_SECTION} flex flex-col h-screen overflow-y-auto w-full max-w-xs"
-    ).props(":width=320"):
+    ):
         # Pinned above the accordion (sticky, not just first-in-DOM) so the one
         # action that spends money and writes to disk is never a scroll away,
         # no matter how many sections below are expanded.

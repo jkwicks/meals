@@ -54,6 +54,46 @@ RADIUS_CARD = "rounded"  # cards, boxes, inputs
 RADIUS_PANEL = "rounded-lg"  # dialogs, panels
 RADIUS_PILL = "rounded-full"  # bars, dots, pills
 
+# Phase 2a of `ui-redesign.md`. The header's two `WEEK_GRID_COLS` rows
+# (`ui_telemetry.context_pipeline`/`telemetry`) and the canvas
+# (`ui_cards.canvas`) have to scroll in lockstep, but they can't share one
+# physical scroll parent: the header stays `position: fixed` (see
+# `ui_drawer.py`'s left-drawer comment for why that still matters even
+# after the drawer stopped pushing the page) so it stays visible while the
+# canvas scrolls vertically beneath it, and a fixed ancestor is never the
+# same element as the page's own scrolling container. `ui_app.py` instead
+# wraps each region's call site in its own `overflow-x: auto` div carrying
+# this class, and one `scroll` listener — attached to both, running
+# `WEEK_GRID_SCROLL_SYNC_JS` — mirrors `scrollLeft` between them entirely
+# client-side. Same technique a frozen-header spreadsheet UI uses; no
+# round trip per scroll tick, same reasoning `chain_css` already gives for
+# staying out of Python on a hover effect.
+WEEK_GRID_SCROLL_CLASS = "week-grid-scroll"
+
+# `minmax(110px, 1fr)` per column, not a flat min-width on the wrapper — 110px
+# is the day column's own natural width (see CLAUDE.md's phase-1 "cards
+# visually overlapping" note). At any normal desktop width the `1fr` still
+# splits the available space evenly across all eight columns exactly as
+# `grid-cols-8` always did; only a viewport too narrow for eight 110px
+# columns triggers the scroll. And because `ui_telemetry`'s two rows and
+# `ui_cards.canvas` all use this identical template inside identically-wide
+# wrappers (both sit `px-3`/`0.75rem` in from the same full-width page — see
+# `ui_app.py`'s page CSS), their columns resolve to identical pixel widths,
+# which is what keeps them aligned *while scrolled* and not just at rest.
+WEEK_GRID_COLS = "grid-cols-[repeat(8,minmax(110px,1fr))]"
+
+# `e.currentTarget` (the listening element itself), not `e.target`: a native
+# `scroll` event doesn't bubble, but `currentTarget` is the correct handle
+# regardless. The equality check is what stops the mirrored write from
+# re-triggering its source — setting `scrollLeft` to the value it already
+# holds doesn't fire another `scroll` event in practice, but the check makes
+# that explicit rather than relying on it.
+WEEK_GRID_SCROLL_SYNC_JS = (
+    "(e) => { document.querySelectorAll('." + WEEK_GRID_SCROLL_CLASS + "').forEach(el => {"
+    " if (el !== e.currentTarget && el.scrollLeft !== e.currentTarget.scrollLeft)"
+    " el.scrollLeft = e.currentTarget.scrollLeft; }); }"
+)
+
 # The two cached weeks the app keeps on disk at once (see
 # `repository.LocalJSONRepository._week_plan_path`). "current" is the
 # original single-file layout (week_plan.json); "next" is stored alongside it
