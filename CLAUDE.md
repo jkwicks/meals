@@ -226,6 +226,28 @@ location) — see the collision note beside `LOCATION_ACCENT` in
 `ui_theme.py`. Resolving either is a phase 3 decision, made when the
 surfaces using them are rebuilt anyway.
 
+**The larger scale did surface the risk this phase called out, and it took a
+real bug to find it.** Reported as cards visually overlapping their
+neighbours on Monday/Thursday/Saturday at common laptop widths (1280-1440px;
+invisible at 1600px+, which is why the phase's own screenshot pass missed
+it). Root cause turned out to be older than the token pass: `meal_card`'s
+outer `div` had no explicit width, and relied on the day column's flex
+`stretch` to size it to the grid's ~110px track. That stretch was never
+actually engaging — measured, the card's `width:auto` was instead sizing off
+its widest descendant's *unwrapped* content (the macro-pill row's ~178px),
+so every card in the column followed it out to the same wrong width. This
+already overflowed slightly before phase 1; the larger fonts added enough
+per card to push it from invisible to visible. Fixed with `w-full` (pin the
+card to the column's real width instead of trusting stretch) plus
+`overflow-hidden` (which is what then makes `max-w-full` on the macro pill
+and `truncate`/`line-clamp-2` on the title mean anything — none of them
+constrain content against a box that's still sizing itself off that
+content). Both look removable to a future reader who doesn't know this; they
+aren't. The status badge (`STATUS_STYLES`) also dropped its text label down
+to icon-only-plus-tooltip in the same pass — the card's own left-border
+colour already said cook/leftover/skip/missing, so the label was spending
+width on every one of 28 cards to repeat the border's answer.
+
 #### Module layout
 
 `ui_app.py` used to be the whole UI — every widget a closure inside one

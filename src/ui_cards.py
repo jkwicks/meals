@@ -606,8 +606,24 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
         with ui.element("div").classes(
             f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_BASE} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
-            f"transition-shadow duration-150 {look['card']} {chain}"
+            f"w-full overflow-hidden transition-shadow duration-150 {look['card']} {chain}"
         ):
+            # `w-full` and `overflow-hidden` are both load-bearing, not
+            # tidiness. The day column above this is a real 110px-ish flex
+            # column (the grid gives it that), but nothing here made the card
+            # itself stretch to fill it — measured, a card's own `width:auto`
+            # was instead sizing off its widest descendant's unwrapped
+            # content (the macro-pill row's ~178px), and every card in the
+            # column was following it out to the same width. `w-full` pins
+            # the card to its column's actual width instead of trusting
+            # stretch to do it; `overflow-hidden` is what then makes that
+            # width real for `max-w-full` on the pill and `truncate`/
+            # `line-clamp-2` on the title and subtitle, none of which mean
+            # anything against a box still sized by its own content. Found as
+            # cards visually overlapping their neighbours on Monday/Thursday/
+            # Saturday at common laptop widths (1280-1440px) — box-shadow
+            # (the hover glow) and NiceGUI's tooltips both still render
+            # outside `overflow-hidden`, so neither is affected.
             # Header row is a sibling of the clickable body below, not a child
             # of it — same reasoning as the "Link to next lunch" button: a
             # click on the favorite/swap buttons would otherwise bubble up
@@ -659,14 +675,19 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                         )
                         with meal_regen_button:
                             ui.tooltip("Regenerate this meal — re-cooks just it")
+                    # Icon only, not icon+label: the card's own left-border
+                    # colour (`look['card']`) already encodes cook/leftover/
+                    # skip/missing, so the text repeated the border's answer
+                    # in the one row on the card with no width to spare — see
+                    # CLAUDE.md's "one visual risk" for why that row is tight.
+                    # The tooltip keeps the label reachable, just not paid for
+                    # in width on every one of 28 cards.
                     with ui.element("div").classes(
-                        f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
+                        f"flex items-center px-{SPACE_HAIR} py-[1px] {RADIUS_PILL} "
                         f"{look['badge']}"
                     ):
                         ui.icon(look["icon"]).classes(TEXT_MICRO)
-                        ui.label(look["label"]).classes(
-                            f"{TEXT_MICRO} font-semibold tracking-wide"
-                        )
+                        ui.tooltip(look["label"])
 
             # The recipe dialog opens from this inner block rather than the
             # card, so the action buttons above are siblings of it and a click
