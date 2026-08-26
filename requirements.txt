@@ -6,6 +6,13 @@ nicegui
 reportlab
 requests
 
+# API boundary (src/api.py, mounted onto NiceGUI's own FastAPI app) and its
+# tests (tests/test_api.py, via fastapi.testclient.TestClient). Both already
+# arrive transitively through nicegui; pinned explicitly here because this
+# code now imports them directly rather than riding on nicegui's pull.
+fastapi
+httpx
+
 # OneNote sync (src/integrations/onenote_graph_import.py). msal drives the
 # device-code login against Microsoft Graph; beautifulsoup4 strips a fetched
 # page's layout HTML down to the plain text import_external_recipe expects.
