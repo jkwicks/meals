@@ -1366,6 +1366,86 @@ Consequences worth knowing:
 - `--use-cached-plan` now exits with a clear message when there is no cached
   plan, instead of an `open()` traceback.
 
+### The API boundary (read-only)
+
+`src/api.py`'s `build_api_router(repository) -> APIRouter` is phase 5 of
+`ui-redesign.md`, collecting the bet the previous section describes:
+`PlanRepository` was made fully `async` for a future backend, and this is
+the first thing to actually reach it from outside NiceGUI's own socket.
+
+**It mounts onto NiceGUI's own FastAPI app, not a second server.**
+`nicegui.app` *is* a `fastapi.FastAPI` instance (`App(FastAPI)`, in the
+installed `nicegui` package) — the same object Uvicorn serves — so
+`ui_app.py` does `fastapi_app.include_router(build_api_router(REPOSITORY))`
+at module scope, before `ui.run()`, the same timing `@ui.page("/")` already
+relies on. No new port, no new deployment.
+
+**What it exposes**, all `GET`, all under `/api`:
+
+| route | behind it |
+|---|---|
+| `/api/weeks/{"current"\|"next"}` | `repository.load_week_plan(id)` → `WeekPlan.model_validate` |
+| `/api/recipes?favorite=&meal_type=&search=` | `repository.load_recipe_catalog()`, filtered |
+| `/api/history` | `repository.load_history()` |
+| `/api/biometrics` | `repository.load_biometrics()` + `get_latest_biometrics()` |
+| `/api/targets` | `load_config_with_models` → `hydrate_config`, returning `weekly_schedule` + `dynamic_basis` (which carries `tdee_source`) |
+
+Every route calls an existing repository method or an existing pure
+`planner.py` function and returns the answer — **a route that computed
+something would be a route free to disagree with the UI**, which is the one
+mistake this phase existed to avoid. `/api/targets` is the one route that
+composes two calls (`load_config_with_models` then `hydrate_config`) rather
+than one, and both are already used elsewhere (`PlannerState.load`, the
+three generation entry points) — it still computes nothing itself.
+
+**Why `PlannerState` is not on it.** Every method that looked like a
+candidate — `targets_for`, `slot_views`, `day_context`, `planning_config` —
+turns out to read per-client staged edits (`target_overrides`,
+`training_schedule` edits, pantry, the cached `_spec`) that have no meaning
+outside one browser tab; that is a session concept, not an API one. A read
+route mirrors what is saved on disk, not what one open tab has staged but
+never generated. The two near-exceptions, `today_day`/`week_covers_today`
+and `totals_for`, are thin wrappers a route could call directly against a
+loaded `WeekPlan` with no `PlannerState` instance at all — neither is
+exposed yet because nothing in the "start read-only" surface needed them,
+not because they don't fit.
+
+**What it deliberately does not expose, yet:**
+
+- **Writes, and generation above all.** Generation is long-running (30s–3min
+  per meal type) and currently reports progress over NiceGUI's own socket
+  (`progress_callback`/`note_callback`, see above); turning that into an
+  HTTP-shaped operation is a real design question (poll a job? SSE? WS?), not
+  a mechanical translation, and phase 5 explicitly left it for later.
+- **OpenAPI docs.** `nicegui`'s `App.__init__` hardcodes
+  `docs_url=None, redoc_url=None, openapi_url=None` regardless of what's
+  passed to `ui.run()` — so `/api/docs`/`/api/openapi.json` don't exist
+  today. If TypeScript types are ever wanted for a real front end, they
+  should come from that OpenAPI schema (never a hand-maintained second copy
+  of `Recipe`) — re-enabling it is a small, separate task, not done here.
+- **Auth.** None added — the app is still localhost-only. If it's ever
+  exposed beyond that, the place for it is a dependency on the router
+  (`APIRouter(dependencies=[Depends(...)])`), which *gates access*, not
+  *scopes data* — nothing in this app's storage is per-user today, so auth
+  here is a lock on the door, not a multi-tenancy foundation.
+
+**Two findings recorded, not fixed, per the phase's own instruction:**
+
+- **`/api/recipes`'s filter duplicates `ui_catalog_browser._matches`**
+  (favorites-only, meal-type equality, case-insensitive substring on name) —
+  about four lines, reimplemented rather than imported, because the original
+  is private and lives in a UI widget module this phase doesn't touch. A real
+  shared home for it (it has no `PlannerState` dependency and never did) is a
+  good small follow-up.
+- **`PlannerState.targets_for`'s live preview can disagree with
+  `/api/targets`.** The UI reads static `weekly_schedule` values plus any
+  staged overrides and never calls `hydrate_config` — see "Targets come from
+  the body", which already documents this as a pre-existing gap
+  ("the header's telemetry still previews the file's targets... before a run
+  it can disagree with what the run will actually aim at"). `/api/targets`
+  always reflects the dynamic, biometrics-driven number; the drawer's preview
+  does not. This phase didn't introduce the gap and doesn't close it.
+
 ### Portion sizing — three layers, because models can't size meals
 
 Measured behaviour on `google/gemma-4-26b-a4b-it:free`: asked for two meals
@@ -2420,6 +2500,7 @@ through one seam, and the tests substitute at that seam.
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, and the day inspector's open/closed state |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
+| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics, and derived targets/`tdee_source` |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those

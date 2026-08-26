@@ -95,8 +95,9 @@ import os
 from typing import Optional
 
 from dotenv import load_dotenv
-from nicegui import ui
+from nicegui import app as fastapi_app, ui
 
+from api import build_api_router
 from export_menu import build_week_menu_html, build_week_menu_pdf
 from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
@@ -140,6 +141,12 @@ configure_logging()
 # stays a one-line change here. File names live on REPOSITORY.paths
 # (repository.py's StoragePaths), not as a module constant here.
 REPOSITORY = LocalJSONRepository()
+
+# The read-only API boundary (phase 5 of ui-redesign.md) — mounted onto
+# NiceGUI's own FastAPI app rather than a second server, since `nicegui.app`
+# already *is* the `FastAPI` instance Uvicorn serves. Registered at module
+# scope, before `ui.run()` runs, the same timing `@ui.page("/")` relies on.
+fastapi_app.include_router(build_api_router(REPOSITORY))
 
 # --------------------------------------------------------------------------
 # Page
