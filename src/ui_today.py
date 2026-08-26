@@ -21,6 +21,13 @@ Both come from `ui_state.day_context`, which reads them off the config the
 next run would use — so a training session added in the drawer shows up here
 immediately, matching the calorie bar directly above it rather than the file
 on disk.
+
+**The day-rendering helpers below (`location_row` through `today_card`) are
+module-level, not nested in `build_today`, so `ui_inspector.py`'s day
+inspector (phase 4 of `ui-redesign.md`) can call the exact same functions for
+an arbitrary day instead of duplicating this rendering. `today_card` is the
+one that needs `cards: CardHandles` passed explicitly rather than closed
+over, for that reason.**
 """
 
 from dataclasses import dataclass
@@ -63,6 +70,206 @@ from week import MODE_COOK, MODE_LEFTOVER, humanize, slot_id
 # label long enough to fill its chip wraps *below* its icon and runs back
 # underneath it — the same trap the recipe dialog's step rows document.
 CHIP = f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} px-{SPACE_TIGHT} py-[2px] {RADIUS_PILL}"
+
+
+# ---- the day-context strip: where you are, what you're training -----------
+# Module-level so `ui_inspector.py` can reuse them for an arbitrary day —
+# see the module docstring.
+
+
+def location_row(location: LocationView) -> None:
+    with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
+        with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
+            ui.icon("place").classes(TEXT_BODY)
+            ui.label(location.name).classes(
+                f"{TEXT_BODY} font-semibold tracking-wide"
+            )
+
+        # One chip per restriction tag, humanized, with the model's own
+        # sentence for it on hover. The tag is a config token ("portable")
+        # and the phrase is what it means; showing the phrase inline would
+        # be three lines of prose above four cards, and showing only the
+        # tag would leave "no long prep" to be guessed at.
+        for tag, phrase in location.phrase_pairs:
+            with ui.element("div").classes(
+                f"{CHIP} bg-slate-800/60 text-slate-300 ring-1 ring-inset "
+                "ring-slate-700/60"
+            ):
+                ui.label(humanize(tag)).classes(TEXT_MICRO)
+                ui.tooltip(phrase).classes("max-w-xs")
+
+        if location.max_prep_minutes is not None:
+            ui.label(
+                "no prep at the eating location"
+                if location.max_prep_minutes == 0
+                else f"≤ {location.max_prep_minutes} min prep"
+            ).classes(f"{TEXT_MICRO} text-slate-500 italic")
+
+        if location.notes:
+            ui.label(location.notes).classes(f"{TEXT_MICRO} text-slate-500 italic")
+
+
+def session_chip(session: TrainingView) -> None:
+    if session.is_rest:
+        # `bedtime` regardless of the type, unlike the branch below: this
+        # chip says "Rest day", and `is_rest` also catches a zero-burn
+        # session of a real type. Icon follows the label it sits beside.
+        with ui.element("div").classes(f"{CHIP} {REST_ACCENT}"):
+            ui.icon("bedtime").classes(TEXT_BODY)
+            ui.label("Rest day").classes(f"{TEXT_MICRO} font-semibold tracking-wide")
+        return
+
+    with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
+        ui.icon(training_icon(session.type)).classes(TEXT_BODY)
+        ui.label(session.time).classes(f"{TEXT_BODY} font-mono")
+        ui.label(session.label.title()).classes(
+            f"{TEXT_BODY} font-semibold tracking-wide"
+        )
+        detail = " · ".join(
+            part
+            for part in [
+                f"{session.duration_minutes} min" if session.duration_minutes else "",
+                f"{session.burn_kcal:.0f} kcal" if session.burn_kcal else "",
+            ]
+            if part
+        )
+        if detail:
+            ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-amber-300/70")
+
+
+def training_row(context: DayContext) -> None:
+    with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
+        for session in context.sessions:
+            session_chip(session)
+
+        # Only worth printing once there are two sessions to add up —
+        # under one it would just restate the chip beside it. This is the
+        # figure `apply_training_adjustments` put onto the day's calorie
+        # budget, which is the denominator of the bar directly above.
+        if len(context.active_sessions) > 1:
+            ui.label(f"+{context.total_burn_kcal:.0f} kcal on today's budget").classes(
+                f"{TEXT_MICRO} text-amber-300/70 italic"
+            )
+
+
+def context_strip(context: DayContext) -> None:
+    """The location and training rows, or nothing at all.
+
+    Nothing is the honest render for a config with no `base_schedule` and
+    an untrained day — the same opt-in tolerance `week.location_for` and
+    `apply_training_adjustments` extend. An empty bordered panel would be
+    a UI element announcing the absence of a feature.
+    """
+    if context.location is None and not context.sessions:
+        return
+    with ui.element("div").classes(
+        f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_BASE} {RADIUS_CARD} border border-slate-800 "
+        "bg-slate-950/30 w-fit max-w-full"
+    ):
+        if context.location is not None:
+            location_row(context.location)
+        if context.sessions:
+            training_row(context)
+
+
+# ---- the cards --------------------------------------------------------
+
+
+def card_context_badges(context: DayContext, meal_type: str) -> None:
+    """The location/training markers for one meal, if either has an opinion.
+
+    Per meal rather than only on the strip because both constraints are
+    scoped to a meal type, not to the day: `location_rules.Office` names
+    `lunch_mode` and says nothing about the breakfast eaten at home before
+    leaving, and a post-workout note lands on exactly one meal. A day-wide
+    chip would be read as applying to all four.
+    """
+    location = context.location
+    brief = location.brief(meal_type) if location else ""
+    note = context.meal_notes.get(meal_type)
+    if not brief and note is None:
+        return
+
+    with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT} mt-0.5"):
+        if brief:
+            with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
+                ui.icon("place").classes(TEXT_MICRO)
+                ui.label(location.name).classes(
+                    f"{TEXT_MICRO} font-semibold tracking-wide"
+                )
+                ui.tooltip(brief).classes("max-w-xs")
+        if note is not None:
+            badge = TRAINING_NOTE_BADGES[note.kind]
+            with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
+                ui.icon(badge["icon"]).classes(TEXT_MICRO)
+                ui.label(badge["label"]).classes(
+                    f"{TEXT_MICRO} font-semibold tracking-wide"
+                )
+                ui.tooltip(note.text).classes("max-w-xs")
+
+
+def today_card(
+    view: Optional[SlotView], meal_type: str, context: DayContext, cards: CardHandles
+) -> None:
+    if view is None:
+        view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
+    look = STATUS_STYLES[view.status]
+    clickable = "cursor-pointer" if view.recipe else ""
+
+    card = ui.element("div").classes(
+        f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_SECTION} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
+        f"w-56 {look['card']} {clickable}"
+    )
+    if view.recipe:
+        card.on("click", lambda v=view: cards.open_detail(v))
+
+    with card:
+        with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
+            ui.label(meal_type.upper()).classes(
+                f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
+            )
+            with ui.element("div").classes(
+                f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
+                f"{look['badge']}"
+            ):
+                ui.icon(look["icon"]).classes(TEXT_MICRO)
+                ui.label(look["label"]).classes(
+                    f"{TEXT_MICRO} font-semibold tracking-wide"
+                )
+
+        ui.label(view.title).classes(
+            f"{TEXT_HEAD} leading-tight font-bold text-slate-100 line-clamp-2"
+        )
+
+        tags = " · ".join(part for part in [view.style, view.cuisine] if part)
+        if tags:
+            ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
+
+        if view.mode == MODE_LEFTOVER and view.source_label:
+            link_line("↩ from", view.source_label, view.chain_colour)
+
+        if view.macros:
+            with ui.element("div").classes(
+                f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
+            ):
+                ui.label(f"{view.macros['calories']:.0f} kcal").classes(
+                    f"{TEXT_MICRO} font-mono text-slate-300"
+                )
+                for key, short, unit in MACRO_LABELS[1:]:
+                    ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
+                    ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
+                        f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
+                    )
+
+        if view.mode == MODE_COOK and view.portions:
+            ui.label(
+                f"{view.portions} portions · {view.prep_minutes} min"
+                if view.prep_minutes is not None
+                else f"{view.portions} portions"
+            ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
+
+        card_context_badges(context, meal_type)
 
 
 @dataclass
@@ -204,196 +411,6 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                     "Today", icon="today", on_click=lambda: go(reset=True)
                 ).props("dense flat no-caps size=sm").classes("text-sky-300")
 
-    # ---- the day-context strip: where you are, what you're training --------
-
-    def location_row(location: LocationView) -> None:
-        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
-            with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
-                ui.icon("place").classes(TEXT_BODY)
-                ui.label(location.name).classes(
-                    f"{TEXT_BODY} font-semibold tracking-wide"
-                )
-
-            # One chip per restriction tag, humanized, with the model's own
-            # sentence for it on hover. The tag is a config token ("portable")
-            # and the phrase is what it means; showing the phrase inline would
-            # be three lines of prose above four cards, and showing only the
-            # tag would leave "no long prep" to be guessed at.
-            for tag, phrase in location.phrase_pairs:
-                with ui.element("div").classes(
-                    f"{CHIP} bg-slate-800/60 text-slate-300 ring-1 ring-inset "
-                    "ring-slate-700/60"
-                ):
-                    ui.label(humanize(tag)).classes(TEXT_MICRO)
-                    ui.tooltip(phrase).classes("max-w-xs")
-
-            if location.max_prep_minutes is not None:
-                ui.label(
-                    "no prep at the eating location"
-                    if location.max_prep_minutes == 0
-                    else f"≤ {location.max_prep_minutes} min prep"
-                ).classes(f"{TEXT_MICRO} text-slate-500 italic")
-
-            if location.notes:
-                ui.label(location.notes).classes(f"{TEXT_MICRO} text-slate-500 italic")
-
-    def session_chip(session: TrainingView) -> None:
-        if session.is_rest:
-            # `bedtime` regardless of the type, unlike the branch below: this
-            # chip says "Rest day", and `is_rest` also catches a zero-burn
-            # session of a real type. Icon follows the label it sits beside.
-            with ui.element("div").classes(f"{CHIP} {REST_ACCENT}"):
-                ui.icon("bedtime").classes(TEXT_BODY)
-                ui.label("Rest day").classes(f"{TEXT_MICRO} font-semibold tracking-wide")
-            return
-
-        with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
-            ui.icon(training_icon(session.type)).classes(TEXT_BODY)
-            ui.label(session.time).classes(f"{TEXT_BODY} font-mono")
-            ui.label(session.label.title()).classes(
-                f"{TEXT_BODY} font-semibold tracking-wide"
-            )
-            detail = " · ".join(
-                part
-                for part in [
-                    f"{session.duration_minutes} min" if session.duration_minutes else "",
-                    f"{session.burn_kcal:.0f} kcal" if session.burn_kcal else "",
-                ]
-                if part
-            )
-            if detail:
-                ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-amber-300/70")
-
-    def training_row(context: DayContext) -> None:
-        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
-            for session in context.sessions:
-                session_chip(session)
-
-            # Only worth printing once there are two sessions to add up —
-            # under one it would just restate the chip beside it. This is the
-            # figure `apply_training_adjustments` put onto the day's calorie
-            # budget, which is the denominator of the bar directly above.
-            if len(context.active_sessions) > 1:
-                ui.label(f"+{context.total_burn_kcal:.0f} kcal on today's budget").classes(
-                    f"{TEXT_MICRO} text-amber-300/70 italic"
-                )
-
-    def context_strip(context: DayContext) -> None:
-        """The location and training rows, or nothing at all.
-
-        Nothing is the honest render for a config with no `base_schedule` and
-        an untrained day — the same opt-in tolerance `week.location_for` and
-        `apply_training_adjustments` extend. An empty bordered panel would be
-        a UI element announcing the absence of a feature.
-        """
-        if context.location is None and not context.sessions:
-            return
-        with ui.element("div").classes(
-            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_BASE} {RADIUS_CARD} border border-slate-800 "
-            "bg-slate-950/30 w-fit max-w-full"
-        ):
-            if context.location is not None:
-                location_row(context.location)
-            if context.sessions:
-                training_row(context)
-
-    # ---- the cards ---------------------------------------------------------
-
-    def card_context_badges(context: DayContext, meal_type: str) -> None:
-        """The location/training markers for one meal, if either has an opinion.
-
-        Per meal rather than only on the strip because both constraints are
-        scoped to a meal type, not to the day: `location_rules.Office` names
-        `lunch_mode` and says nothing about the breakfast eaten at home before
-        leaving, and a post-workout note lands on exactly one meal. A day-wide
-        chip would be read as applying to all four.
-        """
-        location = context.location
-        brief = location.brief(meal_type) if location else ""
-        note = context.meal_notes.get(meal_type)
-        if not brief and note is None:
-            return
-
-        with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT} mt-0.5"):
-            if brief:
-                with ui.element("div").classes(f"{CHIP} {LOCATION_ACCENT}"):
-                    ui.icon("place").classes(TEXT_MICRO)
-                    ui.label(location.name).classes(
-                        f"{TEXT_MICRO} font-semibold tracking-wide"
-                    )
-                    ui.tooltip(brief).classes("max-w-xs")
-            if note is not None:
-                badge = TRAINING_NOTE_BADGES[note.kind]
-                with ui.element("div").classes(f"{CHIP} {TRAINING_ACCENT}"):
-                    ui.icon(badge["icon"]).classes(TEXT_MICRO)
-                    ui.label(badge["label"]).classes(
-                        f"{TEXT_MICRO} font-semibold tracking-wide"
-                    )
-                    ui.tooltip(note.text).classes("max-w-xs")
-
-    def today_card(
-        view: Optional[SlotView], meal_type: str, context: DayContext
-    ) -> None:
-        if view is None:
-            view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
-        look = STATUS_STYLES[view.status]
-        clickable = "cursor-pointer" if view.recipe else ""
-
-        card = ui.element("div").classes(
-            f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_SECTION} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
-            f"w-56 {look['card']} {clickable}"
-        )
-        if view.recipe:
-            card.on("click", lambda v=view: cards.open_detail(v))
-
-        with card:
-            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
-                ui.label(meal_type.upper()).classes(
-                    f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
-                )
-                with ui.element("div").classes(
-                    f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
-                    f"{look['badge']}"
-                ):
-                    ui.icon(look["icon"]).classes(TEXT_MICRO)
-                    ui.label(look["label"]).classes(
-                        f"{TEXT_MICRO} font-semibold tracking-wide"
-                    )
-
-            ui.label(view.title).classes(
-                f"{TEXT_HEAD} leading-tight font-bold text-slate-100 line-clamp-2"
-            )
-
-            tags = " · ".join(part for part in [view.style, view.cuisine] if part)
-            if tags:
-                ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
-
-            if view.mode == MODE_LEFTOVER and view.source_label:
-                link_line("↩ from", view.source_label, view.chain_colour)
-
-            if view.macros:
-                with ui.element("div").classes(
-                    f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
-                    f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
-                ):
-                    ui.label(f"{view.macros['calories']:.0f} kcal").classes(
-                        f"{TEXT_MICRO} font-mono text-slate-300"
-                    )
-                    for key, short, unit in MACRO_LABELS[1:]:
-                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
-                        ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
-                            f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
-                        )
-
-            if view.mode == MODE_COOK and view.portions:
-                ui.label(
-                    f"{view.portions} portions · {view.prep_minutes} min"
-                    if view.prep_minutes is not None
-                    else f"{view.portions} portions"
-                ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
-
-            card_context_badges(context, meal_type)
-
     @ui.refreshable
     def today_view() -> None:
         sync_tab_label()
@@ -447,6 +464,6 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
             views = state.slot_views()
             with ui.element("div").classes(f"flex flex-row flex-wrap gap-{SPACE_BASE}"):
                 for meal_type in state.meal_types:
-                    today_card(views.get(slot_id(day, meal_type)), meal_type, context)
+                    today_card(views.get(slot_id(day, meal_type)), meal_type, context, cards)
 
     return TodayHandles(today_view=today_view, bind_tab=bind_tab)

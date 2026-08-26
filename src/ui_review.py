@@ -26,6 +26,7 @@ from typing import Callable, Dict
 
 from nicegui import ui
 
+from planner import calculate_daily_targets
 from ui_context import UIContext
 from ui_generation import GenerationHandles
 from ui_theme import (
@@ -69,8 +70,18 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
     # ---- per-day macro targets ---------------------------------------------
 
-    def day_target_row(day: str) -> None:
-        """One day's editable calorie/protein/carb targets.
+    # Bar height in px for the target-curve column — tall enough that a
+    # training-uplift segment (typically a fifth or less of the day) still
+    # reads as a visible sliver, short enough that seven of them plus their
+    # number inputs fit one dialog screen without scrolling.
+    TARGET_BAR_HEIGHT_PX = 96
+
+    def day_target_row(
+        day: str, target: dict, uplift_calories: float, max_calories: float
+    ) -> None:
+        """One day's target as a bar (filled = base, amber = training uplift,
+        dashed ghost = the config.json value once overridden), with the same
+        editable calorie/protein/carb inputs stacked beneath it.
 
         The row is built once and then mutated in place — the derived-fat
         readout has to keep up with every keystroke, and repainting a section
@@ -79,8 +90,18 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         the only other thing on screen showing a target live; the
         staged-changes bar's own count only needs to be right the next time
         *it* repaints, which "targets"/"plan" already cover elsewhere.
+
+        The bar's own proportions (`base_pct`/`uplift_pct`/`ghost_pct`) are
+        computed once, from the `target`/`uplift_calories`/`max_calories` this
+        was built with — they do **not** live-update per keystroke, the same
+        "only mutate what has to" rule the fat label and reset button already
+        followed before this became a bar. `targets_editor`'s own rebuild (on
+        a week-start change, or the "targets"/"training" refresh topics) is
+        what keeps them honest; a single day's edit changing the week's max
+        is a rare, cosmetic staleness, not a correctness problem, and rescaling
+        every column on every digit typed would defeat the point of not
+        rebuilding this section on edit.
         """
-        target = state.planned_targets(day)
         inputs: Dict[str, ui.number] = {}
 
         def sync() -> None:
@@ -105,49 +126,100 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 number.value = restored[key]
             sync()
 
-        with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
-            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
-                ui.label(day).classes(f"{TEXT_BODY} font-semibold text-slate-200")
-                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
-                    # Fat is shown, never typed: it is whatever energy is left
-                    # once protein and carbs are paid for.
-                    fat_label = ui.label(f"fat {target['fat_g']:.0f}g").classes(
-                        f"{TEXT_MICRO} font-mono text-slate-500"
+        base_calories = max(0.0, target["calories"] - uplift_calories)
+        base_pct = min(100.0, (base_calories / max_calories * 100) if max_calories else 0.0)
+        uplift_pct = min(
+            100.0 - base_pct, (uplift_calories / max_calories * 100) if max_calories else 0.0
+        )
+        file_calories = float((state.config["weekly_schedule"].get(day) or {}).get("calories", 0))
+        ghost_pct = min(100.0, (file_calories / max_calories * 100) if max_calories else 0.0)
+
+        with ui.element("div").classes(f"flex flex-col items-stretch gap-{SPACE_TIGHT} flex-1 min-w-0"):
+            with ui.element("div").classes("flex flex-row items-center justify-between"):
+                ui.label(day[:3]).classes(f"{TEXT_MICRO} font-semibold text-slate-300")
+                reset = (
+                    ui.button(icon="undo", on_click=on_reset)
+                    .props("dense flat size=xs")
+                    .classes("min-h-0 p-0 text-amber-300")
+                )
+                reset.set_visibility(day in state.target_overrides)
+                with reset:
+                    ui.tooltip(f"Reset {day} to config.json")
+
+            # The shape: a filled base segment, an amber training-uplift
+            # segment stacked on top of it, and — only on an overridden day —
+            # a dashed ghost line at the config.json value, so an override
+            # reads as "how far this day now sits from the file" rather than
+            # a bare number next to another bare number.
+            with ui.element("div").classes(
+                "relative w-full rounded bg-slate-800/50 overflow-hidden"
+            ).style(f"height: {TARGET_BAR_HEIGHT_PX}px"):
+                ui.element("div").classes("absolute inset-x-0 bottom-0 bg-slate-500/70").style(
+                    f"height: {base_pct:.1f}%"
+                )
+                if uplift_calories > 0:
+                    with ui.element("div").classes(
+                        "absolute inset-x-0 bg-amber-400/70"
+                    ).style(f"height: {uplift_pct:.1f}%; bottom: {base_pct:.1f}%"):
+                        ui.tooltip(f"+{uplift_calories:.0f} kcal training uplift")
+                if day in state.target_overrides:
+                    ui.element("div").classes(
+                        "absolute inset-x-0 border-t border-dashed border-slate-100/60"
+                    ).style(f"bottom: {ghost_pct:.1f}%")
+
+            # Fat is shown, never typed: it is whatever energy is left once
+            # protein and carbs are paid for.
+            fat_label = ui.label(f"fat {target['fat_g']:.0f}g").classes(
+                f"{TEXT_MICRO} font-mono text-slate-500 text-center"
+            )
+
+            for key, label in TARGET_FIELDS:
+                inputs[key] = (
+                    ui.number(
+                        label=label,
+                        value=target[key],
+                        min=0,
+                        step=10,
+                        precision=0,
+                        on_change=lambda event, k=key: on_edit(k, event),
                     )
-                    reset = (
-                        ui.button(icon="undo", on_click=on_reset)
-                        .props("dense flat size=xs")
-                        .classes("min-h-0 p-0 text-amber-300")
-                    )
-                    reset.set_visibility(day in state.target_overrides)
-                    with reset:
-                        ui.tooltip(f"Reset {day} to config.json")
-            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
-                for key, label in TARGET_FIELDS:
-                    inputs[key] = (
-                        ui.number(
-                            label=label,
-                            value=target[key],
-                            min=0,
-                            step=10,
-                            precision=0,
-                            on_change=lambda event, k=key: on_edit(k, event),
-                        )
-                        # Debounced so holding a key doesn't repaint the
-                        # telemetry header once per digit.
-                        .props("dense outlined debounce=350")
-                        .classes(f"flex-1 {TEXT_BODY}")
-                    )
+                    # Debounced so holding a key doesn't repaint the
+                    # telemetry header once per digit.
+                    .props("dense outlined debounce=350")
+                    .classes(f"w-full {TEXT_MICRO}")
+                )
 
     @ui.refreshable
     def targets_editor() -> None:
-        """The whole week's targets, in the same order as the grid.
+        """The whole week's targets as one bar-per-day row, left to right in
+        the same order as the grid — the "target curve" of `ui-redesign.md`'s
+        phase 4.2, replacing the old 21-spinbox stack of per-day panels.
 
-        Refreshable only so a change of week start reorders it; edits inside it
-        never refresh it (see `day_target_row`).
+        `config`/`targets_by_day`/`uplift_by_day`/`max_calories` are each
+        computed once here rather than once per day inside
+        `day_target_row` (which used to call `state.planned_targets(day)` —
+        itself a full `planning_config()` rebuild — seven times over). One
+        `planning_config()` call for the whole row is what makes the
+        uplift-vs-base split affordable without adding calls beyond what the
+        row already made before it needed the uplift figure at all.
+
+        Refreshable only so a change of week start reorders it, or a
+        target/training edit elsewhere changes the shape; edits inside a row
+        never refresh this section themselves (see `day_target_row`).
         """
-        for day in state.days:
-            day_target_row(day)
+        config = state.planning_config()
+        uplift_by_day = config.get("training_uplift", {})
+        targets_by_day = {day: calculate_daily_targets(day, config) for day in state.days}
+        max_calories = max((t["calories"] for t in targets_by_day.values()), default=0) or 1
+
+        with ui.element("div").classes(f"flex flex-row items-stretch gap-{SPACE_TIGHT} w-full"):
+            for day in state.days:
+                day_target_row(
+                    day,
+                    targets_by_day[day],
+                    uplift_by_day.get(day, {}).get("calories", 0.0),
+                    max_calories,
+                )
 
         def reset_all() -> None:
             state.clear_targets()
@@ -231,14 +303,57 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                         precision=0,
                         on_change=training_field_handler(index, "duration_minutes"),
                     ).props("dense outlined debounce=350").classes(f"flex-1 {TEXT_BODY}")
-                    ui.number(
-                        label="Burn (kcal)",
-                        value=session.get("estimated_burn_kcal", 0),
-                        min=0,
-                        step=10,
-                        precision=0,
-                        on_change=training_field_handler(index, "estimated_burn_kcal"),
-                    ).props("dense outlined debounce=350").classes(f"flex-1 {TEXT_BODY}")
+                    burn_input = (
+                        ui.number(
+                            label="Burn (kcal)",
+                            value=session.get("estimated_burn_kcal", 0),
+                            min=0,
+                            step=10,
+                            precision=0,
+                            on_change=training_field_handler(index, "estimated_burn_kcal"),
+                        )
+                        .props("dense outlined debounce=350")
+                        .classes(f"flex-1 {TEXT_BODY}")
+                    )
+
+                    # A MET-derived starting point, applied only on click — see
+                    # CLAUDE.md's "Derive the training burn". Deliberately not
+                    # a live recompute on every type/duration change: that
+                    # would mean rebuilding this whole row (there's no way to
+                    # update `burn_input.value` without holding a reference to
+                    # it, and that reference only exists inside this closure),
+                    # and rebuilding while an adjacent field in the same row
+                    # is still settling its debounce is exactly the
+                    # focus-theft trap `training_field_handler` already
+                    # avoids by refreshing "targets" rather than "training".
+                    # An explicit click is a deliberate action, the same "safe
+                    # to disrupt" idiom `on_remove`/`day_target_row.on_reset`
+                    # already use.
+                    estimate = state.estimate_burn(
+                        session.get("type"), session.get("duration_minutes", 0)
+                    )
+                    if estimate is not None:
+
+                        def apply_estimate(
+                            i: int = index, number: ui.number = burn_input
+                        ) -> None:
+                            new_estimate = state.estimate_burn(
+                                state.training_schedule[i].get("type"),
+                                state.training_schedule[i].get("duration_minutes", 0),
+                            )
+                            if new_estimate is None:
+                                return
+                            state.training_schedule[i]["estimated_burn_kcal"] = new_estimate
+                            number.value = new_estimate
+
+                        estimate_button = ui.button(
+                            icon="calculate", on_click=apply_estimate
+                        ).props("dense flat size=xs").classes("min-h-0 p-0 text-slate-400")
+                        with estimate_button:
+                            ui.tooltip(
+                                f"Estimate ≈ {estimate:.0f} kcal from type, duration and "
+                                "your latest weigh-in — click to apply"
+                            )
 
         def on_add() -> None:
             state.add_training_session()
@@ -261,7 +376,11 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
     with ui.dialog() as dialog:
         with ui.element("div").classes(
-            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full max-h-[85vh] overflow-y-auto "
+            # Widened from 32rem to fit the target curve's 7 side-by-side
+            # bar-columns (`targets_editor`) without cramming — every other
+            # section here is a single-column form that's just as readable
+            # wider.
+            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[40rem] max-w-full max-h-[85vh] overflow-y-auto "
             f"flex flex-col gap-{SPACE_SECTION}"
         ):
             with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):

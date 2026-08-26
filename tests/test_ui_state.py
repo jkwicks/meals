@@ -1072,5 +1072,67 @@ class TestTrainingForDay(unittest.TestCase):
         )
 
 
+class TestEstimateBurn(unittest.TestCase):
+    """`PlannerState.estimate_burn` — CLAUDE.md's "Derive the training burn":
+    a MET-based default for a new session's `estimated_burn_kcal`, editable
+    rather than a second source of truth `apply_training_adjustments` has to
+    know about."""
+
+    def test_derives_a_real_estimate_when_weight_is_known(self):
+        state = make_state(weight_kg=96.0)
+        estimate = state.estimate_burn("gym_hypertrophy", 60)
+        self.assertIsNotNone(estimate)
+        self.assertGreater(estimate, 0)
+
+    def test_none_without_a_weight(self):
+        """A fresh checkout with no weigh-in and no `current_weight_kg` must
+        degrade to "no estimate", not raise and take the training editor
+        down with it."""
+        state = make_state(weight_kg=None)
+        self.assertIsNone(state.estimate_burn("gym_hypertrophy", 60))
+
+    def test_add_training_session_seeds_a_derived_burn(self):
+        """Replaces the old hardcoded flat 300 kcal default."""
+        state = make_state(weight_kg=96.0)
+        state.add_training_session()
+        added = state.training_schedule[-1]
+        expected = state.estimate_burn(added["type"], added["duration_minutes"])
+        self.assertAlmostEqual(added["estimated_burn_kcal"], expected)
+
+    def test_add_training_session_falls_back_without_a_weight(self):
+        state = make_state(weight_kg=None)
+        state.add_training_session()
+        # The flat guess this used to always be — only reached now when no
+        # estimate could be derived at all.
+        self.assertEqual(state.training_schedule[-1]["estimated_burn_kcal"], 300)
+
+
+class TestDayInspector(unittest.TestCase):
+    """`inspector_day`/`open_inspector`/`close_inspector` — the day
+    inspector's open/closed state (`ui_inspector.py`). Repurposes the field
+    that used to back the removed per-day pipeline dialog, same
+    one-dialog-reused-by-key shape `focus` already uses for the recipe
+    detail dialog."""
+
+    def test_opening_a_real_day_sets_it(self):
+        state = make_state()
+        state.open_inspector("Tuesday")
+        self.assertEqual(state.inspector_day, "Tuesday")
+
+    def test_opening_a_day_outside_the_week_is_ignored(self):
+        # Same validation `select_day` already applies — a stale click
+        # target must not point the inspector at a day that no longer exists
+        # on this grid.
+        state = make_state()
+        state.open_inspector("Someday")
+        self.assertIsNone(state.inspector_day)
+
+    def test_close_clears_it(self):
+        state = make_state()
+        state.open_inspector("Tuesday")
+        state.close_inspector()
+        self.assertIsNone(state.inspector_day)
+
+
 if __name__ == "__main__":
     unittest.main()

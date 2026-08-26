@@ -96,6 +96,42 @@ architecture review as having no data source whatsoever — would need a new
 logging entry point of its own, a separate product decision from either 5b
 or 5c above.
 
+## Rejection-list decay
+
+**The gap:** rejection capture (phase 4 of `ui-redesign.md`; see CLAUDE.md's
+"Rejection capture") ships without any decay on the preference list —
+`build_rejection_rule` sends every entry in `data/rejections.json`, forever,
+to every generation call. That was a deliberate choice to raise the question
+rather than settle it, not an oversight: the phase that added this said so
+explicitly, and left picking a policy to the maintainer.
+
+**Why this isn't just plumbing.** A dislike recorded once and honoured
+forever will eventually starve the rotation, the same failure mode
+`planner.next_choice`'s docstring already documents for why style/cuisine
+rotation is strict LRU rather than "unused in the last N": with a handful of
+dinner favourites and a growing rejection list, the model could end up with
+nothing left it's allowed to suggest for a slot. A decay window (only count
+rejections from the last N weeks, or discount older ones) is probably the
+right shape, but:
+
+- **What N should be** is a real product call — too short and a genuine,
+  stable dislike stops being honoured after a month; too long and it's
+  today's unbounded behaviour with extra steps.
+- **Whether it's a hard cutoff or a soft discount** changes
+  `build_rejection_rule`'s aggregation, not just its inputs — a soft decay
+  might weight a recent "too much prep" more heavily than one from three
+  months ago rather than dropping the old one outright.
+- **Whether the reason matters to the decay rate.** "Had it recently" is
+  arguably self-resolving (the dish stops having been had recently) in a way
+  "don't fancy it" isn't — a single decay window applied uniformly across
+  all four reasons may not be the right model at all.
+
+**Order, if built:** the decision belongs in `planner.build_rejection_rule`
+(currently a pure function of `config["rejected_preferences"]`, so the
+filtering/weighting can happen either there or at the point that list is
+assembled before injection) — no repository or storage change needed either
+way, since `data/rejections.json` already keeps every entry's `date`.
+
 ## Pantry photo → an inventory ledger with real quantities
 
 **The gap:** `config.inventory_to_clear` is a flat list of strings ("600g

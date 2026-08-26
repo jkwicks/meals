@@ -196,6 +196,14 @@ class StoragePaths:
         return self.biometrics_override or os.path.join(self.data_dir, "biometrics.json")
 
     @property
+    def rejections(self) -> str:
+        """Why a suggestion was regenerated away — see CLAUDE.md's "Rejection
+        capture". A flat, append-only event log, not upsert-by-date like
+        `biometrics`: two rejections can land on the same slot on the same
+        day (regenerate twice), and there's nothing to merge them on."""
+        return os.path.join(self.data_dir, "rejections.json")
+
+    @property
     def shopping_list(self) -> str:
         """Not JSON state like the rest — an export the CLI's
         --save-shopping-list writes for a human to read. It lives here anyway
@@ -295,6 +303,27 @@ class PlanRepository(abc.ABC):
     async def save_history(self, history: List[dict]) -> None:
         """Replace the stored history with `history` (already trimmed by the
         caller to its max length)."""
+
+    @abc.abstractmethod
+    async def load_rejections(self) -> List[dict]:
+        """Every recorded `planner.RejectionEntry`, oldest first. Empty when
+        nothing has been recorded yet — the normal state until a user first
+        hits regenerate and picks a reason.
+
+        Separate from `daily_actuals`/`weigh_ins` for the same reason
+        CLAUDE.md's biometric-sync section keeps those two apart: this is a
+        different signal (why a suggestion was refused before it ever became
+        the plan) from anything else already stored, and folding it into an
+        existing key would let the two silently overwrite each other with no
+        way to tell which won.
+        """
+
+    @abc.abstractmethod
+    async def save_rejection_entry(self, entry: dict) -> None:
+        """Append one rejection. Unlike `save_biometric_entry`, this never
+        merges into an existing row — two rejections can land on the same
+        slot on the same day (regenerate twice in a row), and each is its own
+        event, not an update to the last one."""
 
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
@@ -561,6 +590,12 @@ class LocalJSONRepository(PlanRepository):
     async def save_history(self, history: List[dict]) -> None:
         await asyncio.to_thread(self._write_json, self.paths.history, history)
 
+    async def load_rejections(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.paths.rejections) or []
+
+    async def save_rejection_entry(self, entry: dict) -> None:
+        await asyncio.to_thread(self._append_rejection, entry)
+
     async def load_biometrics(self) -> dict:
         return await asyncio.to_thread(self._read_biometrics)
 
@@ -740,6 +775,16 @@ class LocalJSONRepository(PlanRepository):
             rows.append(dict(entry))
         rows.sort(key=lambda row: row.get("date") or "")
         self._write_json(self.paths.biometrics, biometrics)
+
+    def _append_rejection(self, entry: dict) -> None:
+        """Read-append-write in one worker-thread call, same reasoning as
+        `_upsert_dated_entry` — the read and the write must not be separated
+        by an `await`, or a concurrent save could be silently dropped. No
+        merge key here (unlike `_upsert_dated_entry`'s `date`): every
+        rejection is its own event."""
+        rejections = self._read_json(self.paths.rejections) or []
+        rejections.append(dict(entry))
+        self._write_json(self.paths.rejections, rejections)
 
     def _save_sync_checkpoint(self, source: str, checked_date: str) -> None:
         """Advance `source`'s entry in `sync_checkpoints`, never backward.

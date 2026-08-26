@@ -40,6 +40,7 @@ from planner import (
 # reading that decides which meal gets the post-workout pin; a second parser
 # is a second answer to "what time is `7:3o`?".
 from planner import clock_minutes
+from nutrition_engine import estimate_session_burn_kcal, resolve_current_weight_kg
 from repository import LocalJSONRepository
 from ui_theme import (
     LINK_COLOURS,
@@ -291,6 +292,13 @@ class PlannerState:
     # `models_config["meal_generation_model"]` as `model`'s starting value
     # until the select changes it for this session.
     models_config: dict = field(default_factory=dict)
+    # The latest weigh-in (falling back to user_profile.current_weight_kg),
+    # fetched once at `.load()` time — same "read once per page load, nothing
+    # here writes biometrics.json" reasoning `ui_app.py` already applies to
+    # its own Insights biometrics read. Feeds `estimate_burn`'s MET
+    # calculation; None when neither source has a weight, which just means no
+    # estimate is offered (see `estimate_burn`).
+    weight_kg: Optional[float] = None
     week_plan: Optional[WeekPlan] = None
     # Which cached week is on screen — a key into WEEK_SELECTION_LABELS, and
     # the `week_identifier` threaded through every `load_week_plan`/
@@ -343,10 +351,12 @@ class PlannerState:
     # `planning_config()` by `planner.apply_training_adjustments` and never
     # written back to config.json.
     training_schedule: List[dict] = field(default_factory=list)
-    # Which day's context-pipeline dialog is open, if any. Held the same way
-    # as `focus` is for the recipe detail dialog: one dialog reused for all
-    # seven days, refreshable off this key rather than seven pre-built dialogs.
-    pipeline_day: Optional[str] = None
+    # Which day the day inspector is open for, if any. Held the same way as
+    # `focus` is for the recipe detail dialog: one dialog reused for all seven
+    # days, refreshable off this key rather than seven pre-built dialogs.
+    # (This field used to back a per-day context-pipeline dialog that phase 3
+    # of `ui-redesign.md` removed — repurposed here rather than left dead.)
+    inspector_day: Optional[str] = None
     # Which day the Today tab is showing, or None for "follow today". None is
     # a distinct state rather than a copy of today's name: a tab left alone
     # should still be on the right day tomorrow, and storing the resolved name
@@ -428,9 +438,11 @@ class PlannerState:
         # each picking its own `.get(key, DEFAULT)` fallback.
         config = load_app_config(await repository.load_config())
         models_config = await repository.load_models_config()
+        latest_biometrics = await repository.get_latest_biometrics()
         state = cls(
             config=config,
             models_config=models_config,
+            weight_kg=resolve_current_weight_kg(config["user_profile"], latest_biometrics),
             week_start=config["week_start_day"],
             servings=config["serving_rules"]["servings_per_meal"],
             shop_days=list(config["shopping"]["shop_days"]),
@@ -559,6 +571,13 @@ class PlannerState:
         if day is None or day not in days:
             return
         self.selected_day = days[min(max(days.index(day) + delta, 0), len(days) - 1)]
+
+    def open_inspector(self, day: str) -> None:
+        """Open the day inspector for `day` — see `ui_inspector.py`."""
+        self.inspector_day = day if day in self.days else None
+
+    def close_inspector(self) -> None:
+        self.inspector_day = None
 
     def day_date_iso(self, day: str) -> Optional[str]:
         """The calendar date `day` falls on in the loaded week, or None.
@@ -970,15 +989,34 @@ class PlannerState:
         else:
             self.target_overrides.pop(day, None)
 
+    def estimate_burn(self, session_type: str, duration_minutes: float) -> Optional[float]:
+        """A MET-based default for a session's `estimated_burn_kcal`, or None.
+
+        None-safe wrapper around `nutrition_engine.estimate_session_burn_kcal`
+        — `self.weight_kg` is None on a fresh checkout with no weigh-in and no
+        `current_weight_kg` set, and this degrades to "no estimate" rather
+        than raising, the same tolerance `planned_targets` extends when the
+        body isn't known yet.
+        """
+        if not self.weight_kg:
+            return None
+        return estimate_session_burn_kcal(session_type, duration_minutes, self.weight_kg)
+
     def add_training_session(self) -> None:
         """Append a new workout row with sane defaults, ready to edit in place."""
+        default_type = TRAINING_TYPES[0]
+        default_duration = 60
         self.training_schedule.append(
             {
                 "day": self.days[0] if self.days else "Monday",
                 "time": "07:00",
-                "type": TRAINING_TYPES[0],
-                "duration_minutes": 60,
-                "estimated_burn_kcal": 300,
+                "type": default_type,
+                "duration_minutes": default_duration,
+                # A real MET-derived starting point, not the flat 300 kcal
+                # this used to hardcode — see CLAUDE.md's "Derive the
+                # training burn". Falls back to that same flat guess only
+                # when no weight is available to derive one from.
+                "estimated_burn_kcal": self.estimate_burn(default_type, default_duration) or 300,
             }
         )
 

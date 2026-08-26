@@ -24,6 +24,7 @@ docstring for why.
 """
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -217,6 +218,120 @@ class TestIsSeafoodMeal(unittest.TestCase):
 
     def test_no_ingredients_is_not_seafood(self):
         self.assertFalse(planner.is_seafood_meal(recipe()))
+
+
+class TestBuildRejectionRule(unittest.TestCase):
+    """`build_rejection_rule` — the soft-guidance line rejection capture
+    contributes to `build_generation_rules`, "beside banned_ingredients and
+    diet-style principles" per CLAUDE.md's "Rejection capture"."""
+
+    def test_no_rejections_emits_nothing(self):
+        # A fresh checkout (or one that's never had a regenerate answered)
+        # must produce a byte-identical prompt to before this feature existed.
+        self.assertEqual(planner.build_rejection_rule({}), "")
+        self.assertEqual(planner.build_rejection_rule({"rejected_preferences": []}), "")
+
+    def test_one_rejection_names_the_dish_and_reason(self):
+        config = {
+            "rejected_preferences": [
+                {
+                    "date": "2026-08-20",
+                    "slot_id": "Monday:dinner",
+                    "recipe_name": "Slow Cooker Beef Cheeks",
+                    "reason": "too_much_prep",
+                    "marked_at": "2026-08-20T18:00:00+00:00",
+                }
+            ]
+        }
+        rule = planner.build_rejection_rule(config)
+        self.assertIn("Slow Cooker Beef Cheeks", rule)
+        self.assertIn("too much prep", rule)
+
+    def test_several_rejections_all_appear(self):
+        config = {
+            "rejected_preferences": [
+                {
+                    "date": "2026-08-20", "slot_id": "Monday:dinner",
+                    "recipe_name": "Dish A", "reason": "too_much_prep",
+                    "marked_at": "2026-08-20T18:00:00+00:00",
+                },
+                {
+                    "date": "2026-08-21", "slot_id": "Tuesday:lunch",
+                    "recipe_name": "Dish B", "reason": "had_it_recently",
+                    "marked_at": "2026-08-21T13:00:00+00:00",
+                },
+            ]
+        }
+        rule = planner.build_rejection_rule(config)
+        self.assertIn("Dish A", rule)
+        self.assertIn("Dish B", rule)
+        self.assertIn("had it recently", rule)
+
+    def test_reason_labels_match_the_ui_chip_wording(self):
+        # planner.REJECTION_REASON_LABELS is what both the prompt rule and
+        # ui_generation.py's chip buttons read from — the two must not name
+        # the same reason differently.
+        self.assertEqual(
+            set(planner.RejectionEntry.model_fields["reason"].annotation.__args__),
+            set(planner.REJECTION_REASON_LABELS),
+        )
+
+    def test_placed_beside_diet_style_in_the_assembled_rules(self):
+        config = {
+            "dietary_rules": {"allowed_nova_groups": [1, 2, 3], "banned_ingredients": []},
+            "diet_styles": {},
+            "rejected_preferences": [
+                {
+                    "date": "2026-08-20", "slot_id": "Monday:dinner",
+                    "recipe_name": "Dish A", "reason": "wrong_for_slot",
+                    "marked_at": "2026-08-20T18:00:00+00:00",
+                },
+            ],
+        }
+        rules = planner.build_generation_rules(
+            config, days=WEEKDAYS, style_rule="", variety_rule="", budget_rule="",
+        )
+        self.assertIn("Dish A", rules)
+
+
+class TestRejectionStorage(unittest.TestCase):
+    """`LocalJSONRepository.save_rejection_entry`/`load_rejections` — an
+    append-only event log, not upsert-by-date like biometrics (two
+    rejections can land on the same slot on the same day)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = LocalJSONRepository(data_dir=self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def entry(self, recipe_name: str, reason: str) -> dict:
+        return planner.RejectionEntry(
+            date="2026-08-20",
+            slot_id="Monday:dinner",
+            recipe_name=recipe_name,
+            reason=reason,
+            marked_at="2026-08-20T18:00:00+00:00",
+        ).model_dump()
+
+    def test_absent_file_loads_empty(self):
+        self.assertEqual(run_sync(self.repo.load_rejections()), [])
+
+    def test_a_saved_entry_round_trips(self):
+        run_sync(self.repo.save_rejection_entry(self.entry("Dish A", "too_much_prep")))
+        loaded = run_sync(self.repo.load_rejections())
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["recipe_name"], "Dish A")
+
+    def test_two_rejections_on_the_same_slot_both_survive(self):
+        # Unlike a weigh-in, a rejection is an event, not a fact keyed by
+        # date — regenerating the same slot twice must record twice, not
+        # overwrite.
+        run_sync(self.repo.save_rejection_entry(self.entry("Dish A", "too_much_prep")))
+        run_sync(self.repo.save_rejection_entry(self.entry("Dish B", "dont_fancy_it")))
+        loaded = run_sync(self.repo.load_rejections())
+        self.assertEqual([e["recipe_name"] for e in loaded], ["Dish A", "Dish B"])
 
 
 class FakeWhfoodsRepository:

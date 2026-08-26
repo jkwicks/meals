@@ -6,7 +6,7 @@ import os
 import random
 import time
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 import instructor
 from dotenv import load_dotenv
@@ -628,6 +628,75 @@ def build_diet_style_rule(config: dict) -> str:
         "it, and a dish should satisfy both at once:\n" + lines
     )
 
+class RejectionEntry(BaseModel):
+    """One "why did you regenerate this" answer — see CLAUDE.md's "Rejection
+    capture". Same field-naming convention `future-ideas.md`'s proposed
+    `AdherenceEntry` uses for the sibling signal (5b), since the two are
+    stored separately on purpose but describe adjacent moments.
+
+    `date` is when the rejection was recorded (today), not the weekday the
+    slot belongs to — that's `slot_id`'s job, and the two answer different
+    questions: "when did the user say this" vs. "which meal were they
+    reacting to".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    slot_id: str
+    recipe_name: str
+    reason: Literal["too_much_prep", "dont_fancy_it", "had_it_recently", "wrong_for_slot"]
+    marked_at: str
+
+
+# `RejectionEntry.reason` -> the phrase both the UI's chip labels and the
+# prompt rule use, so the two can't drift apart — same reasoning
+# `TRAINING_NOTE_PREFIXES` already documents for its own UI/prompt pairing.
+REJECTION_REASON_LABELS = {
+    "too_much_prep": "too much prep",
+    "dont_fancy_it": "didn't fancy it",
+    "had_it_recently": "had it recently",
+    "wrong_for_slot": "wrong fit for that meal",
+}
+
+
+def build_rejection_rule(config: dict) -> str:
+    """Soft guidance from previously regenerated-away suggestions.
+
+    Reads `config["rejected_preferences"]` — a list of `RejectionEntry` dicts
+    injected by the three generation entry points the same way
+    `select_nudge_foods` injects `nudge_foods` — and asks the model to avoid
+    repeating the named dishes and to weigh a reason that recurs (several
+    "too much prep" entries is a hint to lean simpler for that meal type, not
+    just to avoid those specific dishes).
+
+    Soft, like `build_diet_style_rule`/`build_sourcing_rule`: a rejection is a
+    preference, not a banned ingredient, and a validator rejecting a response
+    over it would cost a full retry for what is, at most, a repeated dish.
+    Empty when there's nothing to say, so the prompt is byte-identical to
+    before this feature existed — same convention every rule here follows.
+
+    Deliberately unbounded — every recorded rejection is sent, with no
+    recency cap or decay. Whether the list should decay is an open product
+    question (see `future-ideas.md`); this function doesn't pre-empt it.
+    """
+    rejections = config.get("rejected_preferences") or []
+    if not rejections:
+        return ""
+    lines = "".join(
+        f'  - "{entry["recipe_name"]}" '
+        f'({REJECTION_REASON_LABELS.get(entry["reason"], entry["reason"])})\n'
+        for entry in rejections
+    )
+    return (
+        "- The user has previously hit regenerate on these suggestions — "
+        "avoid repeating the same dish, and where several entries share a "
+        "reason (e.g. multiple 'too much prep'), lean into that for this "
+        "meal type (simpler, faster, or otherwise steer away from what's "
+        "being said):\n" + lines
+    )
+
+
 # --------------------------------------------------------------------------
 # Prompt rules shared by both generation axes
 #
@@ -772,10 +841,12 @@ def build_generation_rules(
     reject on, followed immediately by the sourcing rule — it is the soft half
     of the line above it (what cannot be *bought* rather than what will be
     *rejected*), and it reads as an afterthought anywhere else; then
-    composition guidance — style, diet style, variety, and
-    the pantry consolidation rule that qualifies variety, in that order,
+    composition guidance — style, diet style, rejected preferences, variety,
+    and the pantry consolidation rule that qualifies variety, in that order,
     because diet style is a second "what approach" axis read right after
-    cuisine and consolidation only makes sense read as a limit on the
+    cuisine, rejected preferences is a third "what to avoid" axis read right
+    after it (recently regenerated-away dishes, same soft-guidance shape as
+    diet style), and consolidation only makes sense read as a limit on the
     sentence before it; then `extras` — the per-call blocks (dinner variety,
     cuisine blocks, shake rotation, avoid lists, pantry, fixed leftovers,
     batch cooking) that only sometimes apply; then the budget, which the
@@ -802,6 +873,7 @@ def build_generation_rules(
         f"{build_sourcing_rule(config, days)}"
         f"{style_rule}"
         f"{build_diet_style_rule(config)}"
+        f"{build_rejection_rule(config)}"
         f"{variety_rule}"
         f"{PANTRY_CONSOLIDATION_RULE}"
         "- Keep single dairy/staple portions realistic (e.g., max 200-250g "
@@ -4847,6 +4919,9 @@ async def generate_week_plan(
     nudge_foods = await select_nudge_foods(repository, config)
     if nudge_foods:
         config = dict(config, nudge_foods=nudge_foods)
+    rejections = await (repository or LocalJSONRepository()).load_rejections()
+    if rejections:
+        config = dict(config, rejected_preferences=rejections)
 
     # Saved favourites claim their slots before anything is generated, so the
     # stage loop below never asks the model for a meal already decided. Done
@@ -5243,11 +5318,15 @@ async def regenerate_single_day(
     direction needs the rest of the week to be walked again — that's the
     whole difference from `generate_week_plan`.
     """
+    store = repository or LocalJSONRepository()
     if history is None:
-        history = await (repository or LocalJSONRepository()).load_history()
+        history = await store.load_history()
     # Same hydration the full run does, so a re-cooked day aims at the same
     # target as the days around it rather than reverting to the file's.
     config = await hydrate_config(config, repository, note_callback)
+    rejections = await store.load_rejections()
+    if rejections:
+        config = dict(config, rejected_preferences=rejections)
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -5372,6 +5451,9 @@ async def regenerate_single_meal(
         history = await store.load_history()
     logged = logged_intake_for(day, await store.load_biometrics())
     config = await hydrate_config(config, store, note_callback)
+    rejections = await store.load_rejections()
+    if rejections:
+        config = dict(config, rejected_preferences=rejections)
 
     targets = week_targets(spec, config)
     day_target = targets[day]

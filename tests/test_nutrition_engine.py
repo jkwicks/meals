@@ -323,6 +323,72 @@ class TestMacroTargets(unittest.TestCase):
         self.assertAlmostEqual(result["basis"]["bmr"], 1990.0)
 
 
+class TestResolveCurrentWeightKg(unittest.TestCase):
+    """The fallback `calculate_macro_targets` uses internally, pulled out so
+    `ui_state.PlannerState.estimate_burn` (the derived training-burn default)
+    can ask the same question without a second copy of the rule."""
+
+    def test_prefers_the_latest_weigh_in(self):
+        profile = dict(PROFILE, current_weight_kg=90.0)
+        self.assertEqual(
+            ne.resolve_current_weight_kg(profile, {"weight_kg": 96.4}), 96.4
+        )
+
+    def test_falls_back_to_the_profiles_current_weight(self):
+        profile = dict(PROFILE, current_weight_kg=90.0)
+        self.assertEqual(ne.resolve_current_weight_kg(profile, None), 90.0)
+
+    def test_neither_source_resolves_to_none(self):
+        # None, not a raise — the UI default this feeds degrades to "no
+        # estimate offered" rather than taking a page load down.
+        self.assertIsNone(ne.resolve_current_weight_kg(PROFILE, None))
+
+    def test_a_zero_weigh_in_falls_back_same_as_calculate_macro_targets(self):
+        # A scale that couldn't get a reading writes 0 rather than omitting
+        # the key (the same case `body_fat_pct`'s `or None` handles).
+        profile = dict(PROFILE, current_weight_kg=90.0)
+        self.assertEqual(
+            ne.resolve_current_weight_kg(profile, {"weight_kg": 0}), 90.0
+        )
+
+
+class TestEstimateSessionBurnKcal(unittest.TestCase):
+    """The MET-based default for `estimated_burn_kcal` — CLAUDE.md's "Derive
+    the training burn"."""
+
+    def test_matches_the_standard_met_formula(self):
+        # MET(gym_hypertrophy)=6.0: 6.0 * 3.5 * 96 / 200 * 60 = 604.8
+        self.assertAlmostEqual(
+            ne.estimate_session_burn_kcal("gym_hypertrophy", 60, 96.0), 604.8
+        )
+
+    def test_longer_sessions_burn_more(self):
+        short = ne.estimate_session_burn_kcal("cardio_easy", 25, 90.0)
+        long = ne.estimate_session_burn_kcal("cardio_easy", 60, 90.0)
+        self.assertGreater(long, short)
+
+    def test_heavier_bodies_burn_more_at_the_same_session(self):
+        lighter = ne.estimate_session_burn_kcal("cardio_run", 30, 70.0)
+        heavier = ne.estimate_session_burn_kcal("cardio_run", 30, 100.0)
+        self.assertGreater(heavier, lighter)
+
+    def test_rest_burns_nothing(self):
+        self.assertEqual(ne.estimate_session_burn_kcal("rest", 0, 90.0), 0.0)
+
+    def test_unknown_exact_type_falls_back_to_longest_prefix(self):
+        # "gym_strength" isn't a table entry, but starts with "gym" — same
+        # widening `ui_theme.training_icon` already does for workout icons.
+        prefix = ne.estimate_session_burn_kcal("gym_strength", 45, 90.0)
+        exact_gym = ne.estimate_session_burn_kcal("gym", 45, 90.0)
+        self.assertAlmostEqual(prefix, exact_gym)
+
+    def test_wholly_unrecognised_type_still_returns_a_plausible_estimate(self):
+        # Never zero or a raise — a config typo shouldn't make the training
+        # editor take the page down.
+        estimate = ne.estimate_session_burn_kcal("yoga_flow", 45, 90.0)
+        self.assertGreater(estimate, 0)
+
+
 def _series(start_weight, kg_lost, days, calories, noise=None):
     """A weigh-in/log pair describing a steady `kg_lost` over `days`."""
     first = date(2026, 8, 1)

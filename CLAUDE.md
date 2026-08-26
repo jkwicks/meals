@@ -292,14 +292,15 @@ topic map. The concerns:
 | `ui_state.py` | `PlannerState`, `SlotView` — the view model, unchanged in substance from before the split |
 | `ui_context.py` | `Refreshables` (the topic registry, see below) and `UIContext` |
 | `ui_catalog.py` | favorites helpers shared by `ui_cards` and `ui_catalog_browser` (`is_favorited`, `toggle_favorite`, `build_rename_dialog`, ...) |
-| `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `reload_from_disk`, plus the progress dialog |
+| `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `reload_from_disk`, plus the progress dialog and the rejection-capture prompt (see "Rejection capture" below) |
 | `ui_cards.py` | the meal cards, recipe detail and swap-with-favorite dialogs, and the canvas the Plan destination wraps |
 | `ui_telemetry.py` | the header's week banner and macro bars |
 | `ui_shopping.py` | the right-hand shopping slide-over |
-| `ui_review.py` | the review dialog — every input to the *next* generation: cuisine, diet style, bulk-prep/long-cook, people per meal, daily targets, training schedule, pantry (see "The review dialog and the staged-changes bar" below) |
+| `ui_review.py` | the review dialog — every input to the *next* generation: cuisine, diet style, bulk-prep/long-cook, people per meal, daily targets (the target curve, see below), training schedule, pantry (see "The review dialog and the staged-changes bar" below) |
 | `ui_staged_bar.py` | the persistent pending-changes strip between the header and the rail |
+| `ui_inspector.py` | the day inspector — a floating, read-mostly panel for one day, opened from its telemetry column (see "The day inspector" below) |
 | `ui_plan.py` | the Plan destination — the "This week" stat block plus `ui_cards`' canvas |
-| `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below) |
+| `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below); its day-rendering helpers are module-level so `ui_inspector.py` reuses them |
 | `ui_catalog_browser.py` | the Library destination — the recipe catalog, its filters, and recipe import |
 | `ui_insights.py` | the Insights destination — a stub honest-empty-state, see `future-ideas.md`'s 5c |
 | `ui_settings.py` | the Settings destination — week start, shopping days, model, and an integrations status list |
@@ -311,8 +312,11 @@ handles passed in, because a card's regenerate icon calls into it. This is
 why build order matters in `planner_page()`: `ui_generation` before
 `ui_review` (its Generate button starts a run), `ui_review` and `ui_cards`
 before `ui_plan` (the Plan destination's own Generate button opens the
-review dialog; its canvas is `ui_cards`' own), everything before the
-refresh-topic registration at the bottom.
+review dialog; its canvas is `ui_cards`' own), `ui_cards` and `ui_review`
+before `ui_inspector` (its slot cards open `ui_cards`' recipe detail dialog,
+its "Edit targets" link opens `ui_review`'s), `ui_inspector` before
+`ui_telemetry` (the header's day cell wires the click that opens it),
+everything before the refresh-topic registration at the bottom.
 
 The presentation contract — the type/spacing/radius scales, which colours are
 structural vs. semantic vs. categorical, and the NiceGUI traps that have each
@@ -642,6 +646,52 @@ would go stale on the others. The shell injects its `ui.tab` through
 `TodayHandles.bind_tab` because `build_today` runs well before the tabs exist
 (see `planner_page`'s build order).
 
+### The day inspector
+
+`ui_inspector.py` (phase 4 of `ui-redesign.md`) is a second, floating
+consumer of everything the Today tab already knows how to draw for one day:
+click a day's telemetry column (the header cell `ui_telemetry.py`'s
+`telemetry()` builds per day) and a panel opens over the canvas showing that
+day's targets, training/location context, and its four slots — without
+leaving the Plan destination or reflowing the grid the click came from.
+
+**Cheap because the Today tab already proved the shape.** `targets_for`,
+`totals_for`, `day_context` and `slot_views` all already take a day
+argument, so the inspector adds no new data path — it just calls them for
+whichever day was clicked instead of `viewed_day()`. Its slot cards,
+location/training strip and card badges are the *same* functions
+`ui_today.py` uses (`context_strip`, `today_card`, `card_context_badges`,
+...), hoisted to module level in that file rather than duplicated here —
+`ui_today.py`'s own docstring says so, and is where to look if either
+surface's day rendering needs to change. `today_card` is the one that takes
+`cards: CardHandles` as an explicit argument rather than a closure, purely
+so a second caller can pass it in.
+
+**A true Quasar overlay, not a second drawer.** `ui.dialog()` centers over
+the page with a dimmed backdrop and reflows nothing behind it — which is
+what satisfies "floats over the canvas, never pushes it" for free, the exact
+failure phase 2a's `overlay`-mode drawer fix and phase 3's drawer removal
+both exist to prevent (see "Phase 2a's fix..." above). One dialog is built
+once and reused for all seven days, keyed off `PlannerState.inspector_day`
+— the same one-dialog-reused-by-key shape `ui_cards.py`'s recipe detail
+dialog already uses for `.focus`. `inspector_day` repurposes a field that
+used to back a per-day *pipeline* dialog phase 3 removed (the 28-chip row
+`ui_telemetry.py`'s own docstring describes moving to Settings) — it had
+been sitting dead since, reserved for exactly this shape of thing.
+
+**Targets are read-only here on purpose.** Editing a day's target is
+`ui_review.py`'s job (the target curve, immediately below) — the inspector
+shows `targets_for`/`totals_for` as a bar and links into the review dialog
+("Edit targets") rather than growing a second place to type a number, which
+would risk the two disagreeing about which value is live.
+
+Registered on its own `"inspector"` refresh topic (so `inspector.open()` can
+force a repaint independent of anything else changing) and also rides
+`"plan"`/`"targets"`/`"training"`, the same three `today.today_view` already
+does — safe here because, unlike `day_target_row`, nothing in this panel
+owns a focused input, so a full repaint while it's open never steals a
+keystroke.
+
 ### The review dialog and the staged-changes bar
 
 `ui_review.py`'s dialog is where every input to the *next* generation lives:
@@ -674,6 +724,38 @@ to disk.
   section containing the focused input takes the cursor out of the number being
   typed. Only `telemetry` (and, riding along on that same topic,
   `ui_staged_bar.bar` — see below) is refreshed on an edit.
+
+**Daily targets render as a curve — one bar per day, not 21 stacked
+spinboxes.** Phase 4.2 of `ui-redesign.md`. Each day is a filled segment
+(the base target) with a second, amber segment stacked on top for the
+training-uplift portion (`state.planning_config()["training_uplift"]`,
+already computed by `apply_training_adjustments` — the curve reads it
+rather than re-deriving the split), and a dashed ghost line at the
+config.json value once the day is overridden. `targets_editor` computes
+`config`/`targets_by_day`/`uplift_by_day`/`max_calories` **once for the
+whole row**, not once per day the way the old per-day panel called
+`planned_targets` (itself a full `planning_config()` rebuild) seven times
+over — the bar-height split needed the uplift figure anyway, and pulling
+the shared work up to the row level is strictly fewer calls than before,
+not more.
+
+**The numeric inputs did not go away — only the container around them
+did.** Calories/protein/carbs are still typed, `dense outlined
+debounce=350` `ui.number`s, still wired through the identical
+`set_target`/`on_edit`/`sync()`/`on_reset` — a bar reader can *see* the
+shape but still needs to *type* a precise number, and there is no
+pointer-drag precedent anywhere else in this app to build one on. That
+means **`day_target_row`'s build-once-mutate-in-place workaround survives
+unchanged** — a focused input is still a focused input, whatever the
+container around it looks like. A drag-only control, with no cursor to
+steal, would have let this go; that is a real, bigger alternative, deferred
+deliberately rather than overlooked — no pointer-drag interaction exists
+anywhere in this codebase to build one against, and every acceptance
+criterion this phase actually needed (overrides round-trip, reset by
+cancellation, override wins in the telemetry denominator) holds either way.
+Bar proportions are fixed at row-build time, not recomputed per keystroke,
+for the same reason: rescaling all seven columns on every digit typed would
+rebuild the section the input lives in.
 
 **The staged-changes bar (`ui_staged_bar.py`) is what phase 3 replaced three
 separate "Applies to the next generation only" disclaimers, the amber
@@ -1070,6 +1152,46 @@ Four things it deliberately does *not* compute:
   worked out from the file's 164 on a day that now has 144 — enough to push
   the day's snack under the floor and make `apply_protein_floor` give up on
   the whole day.
+
+#### Derived training burn
+
+`apply_training_adjustments` (above) reads `estimated_burn_kcal` straight off
+each `training_schedule` session — it always has, and phase 4.3 of
+`ui-redesign.md` doesn't touch that read. What changed is where the number
+in that field comes from before a human ever sees it: it used to be a flat,
+arbitrary 300 kcal (`PlannerState.add_training_session`'s hardcoded default,
+whatever the session's actual type or duration), on the reasoning that nobody
+actually knows their session's real energy cost and a placeholder was
+honest about that. It is now `nutrition_engine.estimate_session_burn_kcal` —
+the standard MET formula (`MET * 3.5 * weight_kg / 200 * minutes`) applied
+to the session's own type and duration and `PlannerState.weight_kg` (the
+latest weigh-in, fetched once at `.load()` time, falling back to
+`user_profile.current_weight_kg` via the same
+`nutrition_engine.resolve_current_weight_kg` `calculate_macro_targets`
+itself now calls — pulled out specifically so the two don't carry two copies
+of that fallback rule).
+
+**This is a *default*, not a second calorie source, and that distinction is
+the entire point of the trap this had to avoid.** `apply_training_adjustments`
+still reads exactly one field for a session's energy cost, still folds it
+into the day's budget exactly as before, and still records what it did in
+`training_uplift` for the replay above — a derived starting number and a
+hand-typed one are indistinguishable to it, because they're the same field.
+`ui_review.py`'s training editor keeps `estimated_burn_kcal` a normal
+editable `ui.number` for this reason: a derived default the user can
+overrule is the goal, and a value they can't correct would be worse than the
+flat guess it replaced. It's applied via an explicit calculator-icon button
+next to the field (`estimate_burn` computed, shown in a tooltip, written into
+the field only on click), not a live recompute on every type/duration edit —
+recomputing automatically would mean rebuilding the row that owns whichever
+adjacent input the user is still mid-edit on, the identical focus-theft trap
+`training_field_handler` already sidesteps by refreshing `"targets"` rather
+than `"training"` on a plain field edit.
+
+**Proposing the schedule itself from Garmin activity history is explicitly
+not this** — `GarminSyncService` already syncs the data a recurring-pattern
+detector would need, but that is a real, separate feature (a confirmation UI
+over inferred sessions) and was deliberately left for its own change.
 
 **Protein is locked to the target weight, not today's and not the day's
 activity.** 80 kg x 1.8 is 144 g every day of the week. Tying it to current
@@ -2008,6 +2130,77 @@ recipe, so they still appear on the shopping list. The list describes what the
 recipes need, not what you have yet to buy — subtracting inventory from it
 would need real quantities per item, which this list doesn't carry.
 
+### Rejection capture
+
+Hitting the regenerate icon on a meal card was, until phase 4 of
+`ui-redesign.md`, a pure discard: the recipe vanished and an
+identically-briefed call replaced it, with nothing learned from the fact
+that a real suggestion had just been thrown away. Favourites already capture
+the positive signal (`select_favorite_assignments`); this is the negative
+one, and per that phase's own framing it is the most valuable thing in it —
+everything else in phase 4 is UI, this is the app actually learning
+something.
+
+**What it stores, and why a new file.** `planner.RejectionEntry` (`date`,
+`slot_id`, `recipe_name`, `reason` — one of `too_much_prep`/`dont_fancy_it`/
+`had_it_recently`/`wrong_for_slot` — and `marked_at`) is appended to
+`data/rejections.json` via `PlanRepository.save_rejection_entry`/
+`load_rejections`, a plain event log rather than an upsert-by-date table:
+regenerating the same slot twice must record twice, not overwrite, which is
+exactly why `_append_rejection` (unlike `_upsert_dated_entry`) carries no
+merge key at all. This is a genuinely different signal from
+`future-ideas.md`'s proposed 5b (`AdherenceEntry`, whether a *served* plan
+was eaten, skipped or swapped) — a rejection happens *before* a recipe ever
+becomes the plan — and the two must not share a file for the same reason
+`weigh_ins` and `daily_actuals` don't: two different signals writing the
+same key would silently overwrite each other with no way to tell which won.
+
+**It is soft guidance, exactly like `diet_styles` and `sourcing`, never a
+validator.** `planner.build_rejection_rule(config)` reads
+`config["rejected_preferences"]` (a list of `RejectionEntry` dicts, injected
+into `config` the same way `select_nudge_foods` injects `nudge_foods` — see
+below) and asks the model to avoid repeating the named dishes and to weigh a
+reason that recurs across several entries (a run of "too much prep" answers
+is a hint to lean simpler for that meal type generally, not merely to avoid
+those specific dishes again). It sits in `build_generation_rules` right
+after `build_diet_style_rule` — "beside banned_ingredients and diet-style
+principles" — because a rejection is a preference the same way a diet style
+is: a rejection that hard-failed a response would cost a full 30s-3min retry
+for what is, at worst, a repeated dish, and `banned_ingredients` already
+owns the "must never appear" case.
+
+**Loaded at the top of all three generation entry points**
+(`generate_week_plan`, `regenerate_single_day`, `regenerate_single_meal`),
+not only the full-week path — a regenerated meal is exactly the moment the
+signal was just captured, and it has to reach the very next call, not wait
+for next week's run.
+
+**Captured alongside the retry, never in front of it.** `ui_generation.py`'s
+`regenerate_meal` already holds the discarded recipe's name at the exact
+moment it's replaced; once the new one lands, a small `fixed`-positioned
+prompt (four reason buttons, real `on_click` handlers — see below) offers to
+record why, and an ignored prompt records nothing. It is deliberately not
+`ui.notify`'s `actions` option: that only ever forwards to Quasar as
+serialized JSON, so a Python click handler has nothing to bind to in this
+NiceGUI version — checked directly rather than assumed. It is also
+deliberately not `ui.dialog`, which is modal (a dimmed backdrop) and would
+contradict "never in front of it" the same way a blocking confirmation
+would. A plain `fixed` div is a real element tree with ordinary `on_click`
+callbacks, and it floats regardless of where in the page it's built, the
+same reason `ui.header`'s own fixed positioning doesn't care about DOM
+nesting. Scoped to the per-card regenerate only, not the day-level one — a
+day regenerates four recipes at once, which doesn't fit one four-option
+prompt naturally, and a card that was previously NOT_GENERATED (a prior
+failure, not a real suggestion) offers nothing to name as rejected.
+
+**No decay, deliberately left open.** Every recorded rejection is sent,
+unbounded, forever — the phase that added this said explicitly not to
+settle the decay question, only to raise it: a dislike honoured forever
+would starve the rotation the same way an "unused in the last N" rule
+starves the tail of a list (see `planner.next_choice`'s note on why it's
+strict LRU instead), but capping to "most recent N" would just be that same
+decay policy picked silently. See `future-ideas.md` for the open question.
+
 ### Biometric sync — Garmin Connect and Cronometer
 
 `src/integrations/sync_service.py` fills the two lists `biometrics.json`
@@ -2216,22 +2409,23 @@ through one seam, and the tests substitute at that seam.
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
 | `test_planner_dynamic_targets.py` | target hydration, the protein floor, logged-intake substitution, adaptive TDEE |
-| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic and the adaptive estimate |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate, the current-weight fallback, and the MET-based training-burn estimate |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
-| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, and the nudge-sample ban filter |
+| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule, and `rejections.json`'s storage round trip |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views, and the Today tab's day picker and location/training context |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, and the day inspector's open/closed state |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those
-rules are exactly what a UI change can silently break. The other eleven `ui_*`
-modules are widget construction, and testing them would mean a NiceGUI
+rules are exactly what a UI change can silently break. The other twelve `ui_*`
+modules (including `ui_inspector.py`, the day inspector) are widget
+construction, and testing them would mean a NiceGUI
 harness asserting on element trees, which pins the layout rather than the
 behaviour. If logic worth testing appears in one of them, the move is to pull
 it into `ui_state.py` (or a pure helper) rather than to grow a UI harness.
