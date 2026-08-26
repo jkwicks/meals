@@ -101,3 +101,5 @@ exposes, what it deliberately does not, and why `PlannerState` is not on it.
 Record any view-model logic you found that belongs a layer down — that list is
 the input to whatever front-end decision comes next, and it is worth more than
 the routes themselves.
+
+Publish a release in github. 

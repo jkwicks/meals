@@ -75,3 +75,5 @@ correction is worse than either alone.
 Report: files changed, where the scroll container ended up and why, which
 acceptance items you confirmed versus could not, and anything you found that
 belongs in 2b.
+
+Publish a release in github. 

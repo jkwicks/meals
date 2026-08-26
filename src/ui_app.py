@@ -107,6 +107,8 @@ from ui_theme import (
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
+    WEEK_GRID_SCROLL_CLASS,
+    WEEK_GRID_SCROLL_SYNC_JS,
     WEEK_SELECTION_LABELS,
     card_hover_css,
     chain_css,
@@ -126,6 +128,24 @@ REPOSITORY = LocalJSONRepository()
 # --------------------------------------------------------------------------
 # Page
 # --------------------------------------------------------------------------
+
+
+def week_grid_scroll():
+    """One `overflow-x: auto` region around a `WEEK_GRID_COLS` grid.
+
+    Two of these exist — one wrapping the header's `context_pipeline`/
+    `telemetry` rows, one wrapping the canvas — because they can't share one
+    physical scroll parent (the header is `position: fixed`, the canvas
+    lives in the page container below it; see `WEEK_GRID_SCROLL_CLASS`'s
+    comment in `ui_theme.py`). Both carry the same class and the same
+    `WEEK_GRID_SCROLL_SYNC_JS` listener, which is what keeps a scroll on
+    either one visually moving the other — this function exists so that
+    wiring is written once rather than twice and can't drift between the two
+    call sites in `planner_page` below.
+    """
+    return ui.element("div").classes(f"{WEEK_GRID_SCROLL_CLASS} w-full overflow-x-auto").on(
+        "scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS
+    )
 
 
 @ui.page("/")
@@ -295,8 +315,9 @@ async def planner_page() -> None:
                     "built from the grid as it stands, including any edits."
                 )
         telemetry.week_banner()
-        telemetry.context_pipeline()
-        telemetry.telemetry()
+        with week_grid_scroll():
+            telemetry.context_pipeline()
+            telemetry.telemetry()
 
     drawer = build_drawer(ctx, generation, prep_options, rename_dialog, catalog_browser)
 
@@ -382,7 +403,8 @@ async def planner_page() -> None:
 
     with ui.tab_panels(tabs, value=week_tab).classes("w-full bg-transparent p-0"):
         with ui.tab_panel(week_tab).classes("p-0"):
-            cards.canvas()
+            with week_grid_scroll():
+                cards.canvas()
         with ui.tab_panel(today_tab).classes("p-0"):
             today.today_view()
 

@@ -82,3 +82,5 @@ Updating CLAUDE.md's NiceGUI front-end section. The current text says "a
 Replace them, and record *why* the restructure happened — that the previous
 layout aligned rows by coincidence — because that is the reasoning a future
 reader would otherwise undo by "simplifying" back to per-column flex stacks.
+
+Publish a release in github. 

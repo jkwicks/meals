@@ -29,6 +29,7 @@ from ui_theme import (
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
+    WEEK_GRID_COLS,
     telemetry_bar,
 )
 from week import week_date_range
@@ -99,7 +100,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
 
     @ui.refreshable
     def context_pipeline() -> None:
-        with ui.element("div").classes(f"grid grid-cols-8 gap-{SPACE_BASE} w-full mb-1"):
+        with ui.element("div").classes(f"grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full mb-1"):
             # Empty spacer, not a pipeline row — none of PIPELINE_STAGES applies
             # to the prep column, but the grid still needs a column 0 here to
             # stay aligned with telemetry() and canvas() below it.
@@ -199,7 +200,7 @@ def build_telemetry(ctx: UIContext) -> TelemetryHandles:
     @ui.refreshable
     def telemetry() -> None:
         bar_scale_limit = state.config["ui_settings"]["bar_scale_limit"]
-        with ui.element("div").classes(f"grid grid-cols-8 gap-{SPACE_BASE} w-full"):
+        with ui.element("div").classes(f"grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full"):
             prep_telemetry_cell()
             for day in state.days:
                 target = state.targets_for(day)

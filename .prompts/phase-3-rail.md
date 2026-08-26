@@ -111,3 +111,5 @@ description of the three regions (left drawer / header / canvas / right
 drawer) — that whole passage becomes wrong in this phase. Record why
 destinations replaced the drawer: five kinds of work in one 320px column, with
 nothing in common but the word "global".
+
+Publish a release in github. 
