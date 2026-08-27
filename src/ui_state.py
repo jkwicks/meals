@@ -11,6 +11,7 @@ the monolith; this file just draws the module boundary where it already was.
 """
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
@@ -24,9 +25,14 @@ from planner import (
     CookEvent,
     Recipe,
     WeekPlan,
+    TARGET_MODE_AUTO,
+    TARGET_MODE_MACROS,
+    TARGET_MODE_MANUAL,
     apply_training_adjustments,
     calculate_daily_targets,
+    hydrate_dynamic_targets,
     day_multiplicity,
+    is_prepped_ahead,
     is_sunday_prepped,
     load_app_config,
     meal_overrides_for,
@@ -41,7 +47,7 @@ from planner import (
 # is a second answer to "what time is `7:3o`?".
 from planner import clock_minutes
 from nutrition_engine import estimate_session_burn_kcal, resolve_current_weight_kg
-from repository import LocalJSONRepository
+from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository
 from ui_theme import (
     LINK_COLOURS,
     LINK_SOURCE_MEAL,
@@ -50,6 +56,9 @@ from ui_theme import (
     STATUS_LEFTOVER,
     STATUS_MISSING,
     STATUS_SKIP,
+    SYNC_CHECKED,
+    SYNC_RECORDED,
+    SYNC_UNCHECKED,
     TRAINING_TYPE_LABELS,
     TRAINING_TYPES,
 )
@@ -60,6 +69,7 @@ from week import (
     WeekSpec,
     clear_cuisines,
     clear_styles,
+    cook_day_index,
     day_date,
     default_week_spec,
     eaten_on,
@@ -178,6 +188,14 @@ class LocationView:
     notes: str = ""
     max_prep_minutes: Optional[int] = None
     meal_modes: Dict[str, str] = field(default_factory=dict)
+    # `<meal_type>_skip_estimate` for the meals this location skips — what is
+    # eaten instead, per `week.apply_location_modes`, which stamps exactly this
+    # onto the slot. Kept here rather than left for a caller to re-read off
+    # `location_rules` because `meal_modes` above already comes off that rule
+    # in this one place, and a second reader of the same entry is a second
+    # chance to disagree with it about which meals a location actually skips.
+    # Empty for every location that skips nothing, which is most of them.
+    skip_estimates: Dict[str, dict] = field(default_factory=dict)
 
     def constrains(self, meal_type: str) -> bool:
         return meal_type in self.meal_modes
@@ -328,6 +346,21 @@ class PlannerState:
     # say which days are overridden and reset them one at a time, and means a
     # day nobody touched still follows the file if the file changes.
     target_overrides: Dict[str, dict] = field(default_factory=dict)
+    # Which switchable macro targets are computed and which are read off
+    # `weekly_schedule` — `planner.TargetModes`, seeded from profile.json at
+    # load() and, unlike every other field in this block, **written back to
+    # it** by `set_target_mode`. It is a standing setting rather than an
+    # input to the next run: a toggle that reset on reload would answer
+    # "where do these numbers come from" differently every time you looked.
+    target_modes: Dict[str, str] = field(default_factory=dict)
+    # The latest weigh-in and the full biometrics series, both fetched once
+    # at load(). Held rather than discarded so `planning_config()` can run
+    # `hydrate_dynamic_targets` — a *pure* function — without awaiting
+    # storage from a synchronous method. That is what makes the telemetry
+    # header a preview of the numbers the next run will actually aim at
+    # instead of the stale ones in the file.
+    latest_biometrics: Optional[dict] = None
+    biometrics: Optional[dict] = None
     # The popup's picks for the *next* generation only — same "transient,
     # diff-based, never persisted" contract as target_overrides. An empty
     # list means "use config.json's list unchanged"; a non-empty pick
@@ -439,9 +472,17 @@ class PlannerState:
         config = load_app_config(await repository.load_config())
         models_config = await repository.load_models_config()
         latest_biometrics = await repository.get_latest_biometrics()
+        # The *series* as well as the latest row, for the same reason
+        # `hydrate_config` reads both: `calculate_adaptive_tdee` measures
+        # expenditure from the whole weigh-in and intake history, and
+        # `planning_config()` now runs that same hydration to preview it.
+        biometrics = await repository.load_biometrics()
         state = cls(
             config=config,
             models_config=models_config,
+            latest_biometrics=latest_biometrics,
+            biometrics=biometrics,
+            target_modes=dict(config["target_modes"]),
             weight_kg=resolve_current_weight_kg(config["user_profile"], latest_biometrics),
             week_start=config["week_start_day"],
             servings=config["serving_rules"]["servings_per_meal"],
@@ -474,9 +515,8 @@ class PlannerState:
         The load happens before `week_selection` is reassigned, same
         ordering as `reload_plan`: if it raises, the previous week is still
         the one showing rather than the state flipping to a selection whose
-        plan never actually loaded. No generation call here — this only ever
-        reads what's already on disk, per CLAUDE.md's "generating is the only
-        thing that writes to disk."
+        plan never actually loaded. No generation call here, and no write
+        either — this only ever reads what's already on disk.
         """
         raw = await repository.load_week_plan(target_week)
         self.week_selection = target_week
@@ -667,8 +707,19 @@ class PlannerState:
                     # configured `inventory_rules.fridge_safe_days`. Omitting it
                     # silently fell back to week.DEFAULT_INVENTORY_RULES, so an
                     # edited config would disagree with the note on the card.
+                    # `is_prepped_ahead` so a batch cooked in the prep
+                    # session keeps counting its fridge days from the pan —
+                    # `scale_to_servings` rewrites the storage note it wrote
+                    # at generation, so without this a single grid edit puts
+                    # the off-by-one back.
                     "recipe": event.recipe.scale_to_servings(
-                        target, span_days(spec, event.slot_id), self.config
+                        target,
+                        span_days(
+                            spec,
+                            event.slot_id,
+                            is_prepped_ahead(event, plan),
+                        ),
+                        self.config,
                     ),
                 }
             )
@@ -867,7 +918,9 @@ class PlannerState:
         # favorite swap doesn't change that.
         scaled = recipe.scale_to_servings(
             event.portions,
-            keeps_for_days=span_days(spec, source_id),
+            keeps_for_days=span_days(
+                spec, source_id, is_prepped_ahead(event, self.week_plan)
+            ),
             config=self.config,
         )
         new_event = event.model_copy(update={"recipe": scaled})
@@ -885,7 +938,7 @@ class PlannerState:
         self.edited = True
         return None
 
-    def planning_config(self) -> dict:
+    def planning_config(self, *, ignore_overrides_for: Optional[str] = None) -> dict:
         """Config as the *next* generation will see it.
 
         The file on disk, plus everything the drawer can change: the model, the
@@ -903,76 +956,129 @@ class PlannerState:
         of a training edit rather than something only the next generation
         would show.
 
-        Nothing here is written back to config.json. Overrides are meant to be
-        "this week is different", and generating is still the only thing in
-        this app that touches disk.
+        Nothing here is written back to config.json — target/training/pantry
+        overrides are meant to be "this week is different" and nothing writes
+        them anywhere but `week_plan.json`'s own record of what a run used,
+        the same way `save_grid` writes a grid edit without touching
+        config.json either.
         """
+        overrides = {
+            day: values
+            for day, values in self.target_overrides.items()
+            if day != ignore_overrides_for
+        }
+        # Which (day, macro) pairs an override wrote, so hydration knows not
+        # to replace them. Without this the fold below is invisible to
+        # `hydrate_dynamic_targets`, which cannot tell an edited value from a
+        # stale file one and overwrote both — the bug that made every
+        # calorie/protein override a silent no-op.
+        locks = {
+            day: [key for key in values if key in TARGET_MODE_MACROS]
+            for day, values in overrides.items()
+        }
         schedule = {
-            day: dict(day_config, **self.target_overrides.get(day, {}))
+            day: dict(day_config, **overrides.get(day, {}))
             for day, day_config in self.config["weekly_schedule"].items()
         }
-        return apply_training_adjustments(
-            dict(
-                self.config,
-                weekly_schedule=schedule,
-                inventory_to_clear=list(self.pantry),
-                openrouter_model=self.model,
-                training_schedule=[dict(session) for session in self.training_schedule],
-                # generate_week_plan/build_client/fit_recipe_to_budget etc.
-                # all read `config.get("models")` — see planner.py — so this
-                # is what lets a run resolve request_timeout_seconds and the
-                # base URL from models.json instead of the pre-models.json
-                # literals.
-                models=self.models_config,
-                # cuisine_override/diet_style_override REPLACE (not add to)
-                # config's own lists when non-empty — resolve_auto_choices'
-                # pick_cuisine_blocks and build_diet_style_rule already just
-                # read whatever's here, so overriding these two values is the
-                # entire cuisine/diet-style popup feature; no new algorithm.
-                cuisines=self.cuisine_override or self.config["cuisines"],
-                dietary_rules=dict(
-                    self.config["dietary_rules"],
-                    active_diet_styles=(
-                        self.diet_style_override
-                        or self.config["dietary_rules"]["active_diet_styles"]
-                    ),
-                ),
-                bulk_prep_enabled=self.bulk_prep_enabled,
-                long_cook_enabled=self.long_cook_enabled,
-                # Same REPLACE-in-place approach as dietary_rules above: only
-                # this one key of planning_rules changes, so it's spread back
-                # in rather than rebuilt, and pick_cuisine_blocks reads it via
-                # planning_rule() exactly as it reads every other rule. `.get`
-                # rather than direct indexing — unlike dietary_rules above,
-                # not every hand-built config a test constructs carries this
-                # key, and planning_rule() already tolerates that same gap.
-                planning_rules=dict(
-                    self.config.get("planning_rules") or {},
-                    min_baseline_cuisine_share=self.baseline_cuisine_share,
-                ),
-            )
+        return hydrate_dynamic_targets(
+            apply_training_adjustments(
+                dict(
+                    self.config,
+                    weekly_schedule=schedule,
+                    inventory_to_clear=list(self.pantry),
+                            openrouter_model=self.model,
+                            training_schedule=[dict(session) for session in self.training_schedule],
+                            # generate_week_plan/build_client/fit_recipe_to_budget etc.
+                            # all read `config.get("models")` — see planner.py — so this
+                            # is what lets a run resolve request_timeout_seconds and the
+                            # base URL from models.json instead of the pre-models.json
+                            # literals.
+                            models=self.models_config,
+                            # cuisine_override/diet_style_override REPLACE (not add to)
+                            # config's own lists when non-empty — resolve_auto_choices'
+                            # pick_cuisine_blocks and build_diet_style_rule already just
+                            # read whatever's here, so overriding these two values is the
+                            # entire cuisine/diet-style popup feature; no new algorithm.
+                            cuisines=self.cuisine_override or self.config["cuisines"],
+                            dietary_rules=dict(
+                                self.config["dietary_rules"],
+                                active_diet_styles=(
+                                    self.diet_style_override
+                                    or self.config["dietary_rules"]["active_diet_styles"]
+                                ),
+                            ),
+                            bulk_prep_enabled=self.bulk_prep_enabled,
+                            long_cook_enabled=self.long_cook_enabled,
+                            # Same REPLACE-in-place approach as dietary_rules above: only
+                            # this one key of planning_rules changes, so it's spread back
+                            # in rather than rebuilt, and pick_cuisine_blocks reads it via
+                            # planning_rule() exactly as it reads every other rule. `.get`
+                            # rather than direct indexing — unlike dietary_rules above,
+                            # not every hand-built config a test constructs carries this
+                            # key, and planning_rule() already tolerates that same gap.
+                            planning_rules=dict(
+                                self.config.get("planning_rules") or {},
+                                min_baseline_cuisine_share=self.baseline_cuisine_share,
+                            ),
+                            target_modes=dict(self.target_modes),
+                            target_locks={day: keys for day, keys in locks.items() if keys},
+                )
+            ),
+            self.latest_biometrics,
+            biometrics=self.biometrics,
+            # Silent: this runs on every repaint, and a per-keystroke
+            # "dynamic targets: ..." line would bury the per-call generation
+            # timing `logs/meals.log` exists for. The generation entry points
+            # hydrate again with logging on.
+            log=False,
         )
 
     def planned_targets(self, day: str) -> dict:
-        """What the next run will aim at for `day` — file numbers plus overrides.
+        """What the next run will actually aim at for `day`.
+
+        Hydrated, so this is the engine's computed figure for any macro on
+        `auto` — not `weekly_schedule`'s stated one. Before `planning_config`
+        hydrated, this returned the file's numbers and the telemetry header
+        was measuring the week against a target no run would ever use: a
+        1000 kcal Thursday displayed against a plan generated for 1722.
 
         `fat_g` comes back derived, so the drawer shows the same figure the
         model will be told rather than one the UI computed its own way.
         """
         return calculate_daily_targets(day, self.planning_config())
 
-    def set_target(self, day: str, key: str, value: float) -> None:
-        """Record a drawer edit to one of a day's macro targets.
+    def baseline_targets(self, day: str) -> dict:
+        """What `day` would aim at with none of its own overrides applied.
 
-        A value equal to config.json clears that key instead of storing a no-op
-        override, so "overridden" always means "differs from the file". That is
-        also what makes the reset button able to undo itself: it writes the
-        file's numbers back into the inputs, and the change events those fire
-        land here and cancel out rather than re-creating the override.
+        The thing an override is a difference *from*, which is no longer
+        `weekly_schedule`'s stated numbers: on `auto` it is whatever the
+        engine computes. `set_target` compares against this so that typing
+        the computed value back in clears the override rather than storing a
+        no-op copy of it, and so the reset button can still undo itself.
         """
-        base = self.config["weekly_schedule"].get(day, {})
+        return calculate_daily_targets(
+            day, self.planning_config(ignore_overrides_for=day)
+        )
+
+    def set_target(self, day: str, key: str, value: float) -> None:
+        """Record a review-dialog edit to one of a day's macro targets.
+
+        A value equal to the day's *resolved* baseline clears that key
+        instead of storing a no-op override, so "overridden" always means
+        "differs from what this day would otherwise aim at". That is also
+        what makes the reset button able to undo itself: it writes the
+        baseline numbers back into the inputs, and the change events those
+        fire land here and cancel out rather than re-creating the override.
+
+        It compares against `baseline_targets`, not `weekly_schedule`. On a
+        macro set to `auto` the file's number is inert — Thursday's stated
+        1000 kcal against a computed 1722 — so diffing against it marked
+        every day permanently overridden and made typing the real target
+        look like an edit.
+        """
+        base = self.baseline_targets(day)
         override = dict(self.target_overrides.get(day, {}))
-        if float(base.get(key, 0)) == float(value):
+        if round(float(base.get(key, 0)), 1) == round(float(value), 1):
             override.pop(key, None)
         else:
             override[key] = float(value)
@@ -981,6 +1087,76 @@ class PlannerState:
             self.target_overrides[day] = override
         else:
             self.target_overrides.pop(day, None)
+
+    async def set_target_mode(
+        self, repository: LocalJSONRepository, macro: str, mode: str
+    ) -> None:
+        """Switch one macro between the engine's number and the file's, and save.
+
+        The only thing in the UI besides generation that writes to `config/`,
+        and deliberately so: this is a standing setting, not an input to the
+        next run. Everything in `pending_changes()` is "this week is
+        different" and is right to evaporate on reload; "protein is a number
+        I choose" is not, and a toggle that reset every time the page loaded
+        would be a worse answer to "where do these numbers come from" than
+        the silence it replaced.
+
+        Switching to `manual` seeds `weekly_schedule` from what the engine
+        currently computes, rather than exposing whatever stale figure the
+        file still holds. Those two had drifted a long way — a Thursday
+        stated at 1000 kcal against a computed 1722 — and handing back the
+        stale number as "your manual target" would look like the toggle had
+        changed the plan rather than merely changed who decides it.
+        """
+        if macro not in TARGET_MODE_MACROS:
+            raise ValueError(
+                f"'{macro}' is not a switchable target. "
+                f"Switchable: {list(TARGET_MODE_MACROS)}"
+            )
+        if mode not in (TARGET_MODE_AUTO, TARGET_MODE_MANUAL):
+            raise ValueError(f"'{mode}' is not a target mode.")
+
+        updates: dict = {}
+        if mode == TARGET_MODE_MANUAL and self.target_modes.get(macro) != mode:
+            # Read the computed figures *before* flipping the mode, or the
+            # seed reads back the file value this is meant to replace.
+            seeded = {day: self.planned_targets(day)[macro] for day in self.days}
+            schedule = {
+                day: dict(values, **({macro: seeded[day]} if day in seeded else {}))
+                for day, values in self.config["weekly_schedule"].items()
+            }
+            self.config = dict(self.config, weekly_schedule=schedule)
+            updates["weekly_schedule"] = schedule
+
+        self.target_modes[macro] = mode
+        self.config = dict(self.config, target_modes=dict(self.target_modes))
+        updates["target_modes"] = dict(self.target_modes)
+        await repository.save_config_keys(updates)
+
+    def set_manual_target(
+        self, day: str, macro: str, value: float
+    ) -> None:
+        """Edit a manual macro's stored per-day value, in memory.
+
+        Distinct from `set_target`, which stages a transient override for the
+        next run only. This changes the standing number a `manual` macro is
+        read from, so it needs `save_manual_targets` to reach disk — kept
+        apart so a half-typed digit doesn't write a file per keystroke.
+        """
+        schedule = {
+            existing_day: dict(values)
+            for existing_day, values in self.config["weekly_schedule"].items()
+        }
+        if day not in schedule:
+            raise ValueError(f"'{day}' is not in weekly_schedule.")
+        schedule[day][macro] = float(value)
+        self.config = dict(self.config, weekly_schedule=schedule)
+
+    async def save_manual_targets(self, repository: LocalJSONRepository) -> None:
+        """Persist `weekly_schedule` as it currently stands."""
+        await repository.save_config_keys(
+            {"weekly_schedule": self.config["weekly_schedule"]}
+        )
 
     def clear_targets(self, day: Optional[str] = None) -> None:
         """Drop one day's overrides, or the whole week's."""
@@ -1043,7 +1219,12 @@ class PlannerState:
             override = self.target_overrides.get(day)
             if not override:
                 continue
-            base = self.config["weekly_schedule"].get(day, {})
+            # Against the day's resolved baseline, not `weekly_schedule` —
+            # the same reason `set_target` diffs that way. On an `auto`
+            # macro the file's number is inert, so measuring from it
+            # reported "Thu +800 kcal" for an override that had moved the
+            # day 78 kcal off what it was actually going to aim at.
+            base = self.baseline_targets(day)
             # Calories first since it's the headline number; falling back to
             # whichever key the override actually touched keeps this honest
             # for a protein-only or carb-only edit.
@@ -1099,7 +1280,25 @@ class PlannerState:
         ]
 
     def has_training(self, day: str) -> bool:
-        return any(session.get("day") == day for session in self.training_schedule)
+        """Whether `day` carries a session that actually buys calories back.
+
+        Mirrors `apply_training_adjustments`' own filter — a `rest` entry, or
+        any session logged at zero burn, expands no budget and pins no meal,
+        so it must not read as one here either. That is the same distinction
+        `TrainingView.is_rest` draws for the Today tab's context strip.
+
+        Counting a rest day as training had two visible effects: the
+        telemetry header drew an emerald ⚡ on an explicitly scheduled rest
+        day, and — because `targets_for` branches on this — every day of a
+        week with a rest entry took the live-preview path, which is how the
+        stored plan's targets became unreachable from the header.
+        """
+        return any(
+            session.get("day") == day
+            and session.get("type") != "rest"
+            and float(session.get("estimated_burn_kcal", 0) or 0) > 0
+            for session in self.training_schedule
+        )
 
     def training_for(self, day: str) -> List["TrainingView"]:
         """`day`'s sessions, earliest first.
@@ -1144,21 +1343,61 @@ class PlannerState:
             key=lambda session: clock_minutes(session.time),
         )
 
+    def training_edited_for(self, day: str) -> bool:
+        """Whether this session's training edits have changed `day`'s schedule.
+
+        Diffed against `_original_training_schedule`, the snapshot `.load()`
+        takes — the same comparison `pending_changes` makes, so the staged
+        bar and the telemetry marker can't disagree about whether a day was
+        touched.
+        """
+        def sessions(schedule: List[dict]) -> List[tuple]:
+            return sorted(
+                tuple(sorted(session.items()))
+                for session in schedule
+                if session.get("day") == day
+            )
+
+        return sessions(self.training_schedule) != sessions(
+            self._original_training_schedule
+        )
+
+    def target_is_staged(self, day: str) -> bool:
+        """Whether `day` is being measured against a preview rather than the plan.
+
+        True when something *this session staged* changes what the day would
+        aim at — a target override, or an edit to that day's training. Both
+        are deliberate acts whose whole point is seeing where the week is
+        about to move to.
+
+        It deliberately does **not** include "this day has a workout".
+        Merely having a session scheduled is the config's standing state, not
+        a staged change, and branching on it put six of seven days on the
+        live preview while the seventh was measured against the stored plan —
+        one row of figures silently computed two different ways. A new
+        weigh-in moves the preview for every day at once, so letting it show
+        on some days and not others reads as a plan that drifted off target
+        on Monday and held on Thursday, which is not what happened.
+        """
+        return day in self.target_overrides or self.training_edited_for(day)
+
     def targets_for(self, day: str) -> dict:
         """The denominator the telemetry header measures a day against.
 
-        An override — or a workout scheduled that day — wins over the
-        generated plan's own targets on purpose: the point of editing a
-        target, or a training session, before a run is to see how far the
-        current week sits from where you are about to aim it. Without this, a
-        cached `week_plan.json` would keep showing yesterday's target and a
-        training edit would silently do nothing until the next generation —
-        exactly the "not live" failure this control exists to avoid. Otherwise
-        a generated week is measured against what it was generated for, and an
-        un-generated one against config, so the header always has something to
-        divide by.
+        A staged override — or a staged training edit — wins over the
+        generated plan's own targets on purpose: the point of editing either
+        before a run is to see how far the current week sits from where you
+        are about to aim it, and without that the control would silently do
+        nothing until the next generation.
+
+        Otherwise a generated week is measured against what it was actually
+        generated for, and an un-generated one against the live preview, so
+        the header always has something to divide by. That split is what
+        keeps a fresh weigh-in from making an untouched plan look like it
+        missed: the body moved, the plan didn't, and re-generating is what
+        reconciles them.
         """
-        if day in self.target_overrides or self.has_training(day):
+        if self.target_is_staged(day):
             return self.planned_targets(day)
         if self.week_plan and day in self.week_plan.targets:
             return self.week_plan.targets[day]
@@ -1271,8 +1510,9 @@ class PlannerState:
             # downstream leftover gets, not just the from-scratch cook it
             # would otherwise look like. "fridge" vs. "freezer" mirrors the
             # same span-vs-fridge-safe-days threshold `storage_note` used to
-            # write the batch's own storage note — always "fridge" for the
-            # anchor's own slot, since days_since_cook is 0 there.
+            # write the batch's own storage note, and counts from the same
+            # day it does (`week.cook_day_index`) so the badge and the note
+            # can't disagree about how old the food is.
             prep_badge, prep_origin = "", ""
             sunday_prepped = is_sunday_prepped(event, self.week_plan)
             if sunday_prepped:
@@ -1280,8 +1520,12 @@ class PlannerState:
                 # Per-slot distance from its cook day, not `span_days`'s
                 # whole-batch span to its *farthest* eater — a Tuesday
                 # portion of a batch that runs to next Sunday is still
-                # fridge-fresh even though the Sunday portion isn't.
-                days_since_cook = spec.day_index(slot.day) - spec.day_index(event.day)
+                # fridge-fresh even though the Sunday portion isn't. The
+                # anchor's own slot is 1, not 0, for a prep-session batch:
+                # it was cooked the day before the week started.
+                days_since_cook = spec.day_index(slot.day) - cook_day_index(
+                    spec, event.day, is_prepped_ahead(event, self.week_plan)
+                )
                 frozen = days_since_cook >= fridge_safe_days
                 prep_badge = "freezer" if frozen else "fridge"
                 storage_suffix = (
@@ -1332,6 +1576,49 @@ class PlannerState:
         return views
 
 
+def location_view(
+    config: dict, meal_types_: List[str], day: str
+) -> Optional[LocationView]:
+    """Where `day` is spent, per `base_schedule`/`location_rules`, or None.
+
+    Split out of `day_context` when the Settings destination's location page
+    (phase 6e of `ui-redesign.md`) needed the same seven answers without the
+    six other things `day_context` computes: its `training_notes` are only
+    reachable through `planning_config()`, so building the whole context for
+    each of seven days would be seven `apply_training_adjustments` passes over
+    the week to print a table of default locations. This takes an
+    already-loaded config instead, so the page pays for one.
+
+    A named location with no `location_rules` entry — "Home" in the shipped
+    schedule — is still a `LocationView`, not None: it says where the day is
+    spent, which is the question, and an empty rule simply constrains nothing.
+    None means the config has no `base_schedule` at all, which is every config
+    predating that feature and is the one case with genuinely nothing to say.
+    """
+    where = location_for(config, day)
+    if not where:
+        return None
+    rule = location_rule(config, day)
+    max_prep = rule.get("max_prep_minutes")
+    return LocationView(
+        name=where,
+        restrictions=list(rule.get("restrictions") or []),
+        notes=str(rule.get("notes") or "").strip(),
+        max_prep_minutes=int(max_prep) if max_prep is not None else None,
+        meal_modes={
+            meal_type: rule[f"{meal_type}_mode"]
+            for meal_type in meal_types_
+            if f"{meal_type}_mode" in rule
+        },
+        skip_estimates={
+            meal_type: rule[f"{meal_type}_skip_estimate"]
+            for meal_type in meal_types_
+            if rule.get(f"{meal_type}_mode") == MODE_SKIP
+            and rule.get(f"{meal_type}_skip_estimate")
+        },
+    )
+
+
 def day_context(state: PlannerState, day: str) -> DayContext:
     """Where `day` is spent and what is being trained that day.
 
@@ -1352,29 +1639,7 @@ def day_context(state: PlannerState, day: str) -> DayContext:
     an empty-state the Today tab would have to render around.
     """
     config = state.planning_config()
-
-    where = location_for(config, day)
-    location = None
-    if where:
-        # A named location with no `location_rules` entry — "Home" in the
-        # shipped schedule — is still worth showing: it says where the day is
-        # spent, which is the question, and an empty rule simply constrains
-        # nothing. Returning None for it would make the strip flicker between
-        # days for no reason a reader could see.
-        rule = location_rule(config, day)
-        max_prep = rule.get("max_prep_minutes")
-        location = LocationView(
-            name=where,
-            restrictions=list(rule.get("restrictions") or []),
-            notes=str(rule.get("notes") or "").strip(),
-            max_prep_minutes=int(max_prep) if max_prep is not None else None,
-            meal_modes={
-                meal_type: rule[f"{meal_type}_mode"]
-                for meal_type in state.meal_types
-                if f"{meal_type}_mode" in rule
-            },
-        )
-
+    location = location_view(config, state.meal_types, day)
     sessions = state.training_for(day)
 
     notes = (config.get("training_notes") or {}).get(day) or {}
@@ -1441,3 +1706,133 @@ def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
         return None
     source_id = slot.id if slot.mode == MODE_COOK else slot.source
     return budgets.get(source_id or "")
+
+
+# ---- the sync-status view model ------------------------------------------
+# Phase 6e of `ui-redesign.md`. Pure, day-parameterised and clock-free for the
+# same reason every other view model here is: the whole test suite runs without
+# a network, a model or a `date.today()`, and a status view that read the clock
+# itself could only be tested on the day it was written.
+
+
+# The three states a date can be in (`SYNC_RECORDED`/`SYNC_CHECKED`/
+# `SYNC_UNCHECKED`) live in `ui_theme.py` beside the styles that render them,
+# the same split `STATUS_COOK`..`STATUS_MISSING` already has with
+# `STATUS_STYLES` — see the note there for why the third one has to exist.
+
+# How many days back the Settings sync view draws. Deliberately the same
+# horizon as `sync_service`'s `--lookback-days` default, so what the strip
+# shows is roughly what a catchup run would still be willing to walk — but
+# it is a *display* choice, not a coupling: nothing here computes what a sync
+# would fetch (that is `get_sync_date_range`'s job, and duplicating its capped
+# walk would be a second answer to the same question), and changing the CLI
+# default would not make this strip wrong, only differently scoped.
+SYNC_WINDOW_DAYS = 14
+
+
+@dataclass
+class SyncDay:
+    """One date in the window, and what this source knows about it."""
+
+    date: str
+    state: str
+
+
+@dataclass
+class SyncSourceStatus:
+    """One sync source's standing, as `data/biometrics.json` records it.
+
+    `last_checked` is the source's `sync_checkpoints` entry — the last date it
+    was actually asked about — and `last_recorded` is the newest date it
+    actually stored a row for. They are separate fields rather than one
+    "latest" because the gap between them is information: a Garmin checked
+    through Wednesday whose last weigh-in was Sunday means three mornings
+    nobody stood on the scale, which is a different situation from a Garmin
+    nobody has synced since Sunday, and only these two numbers side by side
+    tell them apart.
+    """
+
+    source: str
+    section: str
+    label: str
+    last_checked: Optional[str]
+    last_recorded: Optional[str]
+    recorded_total: int
+    days: List[SyncDay]
+
+    def count(self, state: str) -> int:
+        return sum(1 for day in self.days if day.state == state)
+
+    @property
+    def connected(self) -> bool:
+        """Whether this source has ever produced anything at all.
+
+        A source with no checkpoint *and* no rows has never run — the normal
+        state of a fresh checkout, and the one case where the strip below is
+        14 identical unchecked cells and says nothing worth reading.
+        """
+        return bool(self.last_checked or self.last_recorded)
+
+
+def sync_status(
+    biometrics: dict, today: date, window_days: int = SYNC_WINDOW_DAYS
+) -> List[SyncSourceStatus]:
+    """Each sync source's checkpoint, latest row, and the last `window_days`.
+
+    A read over what `sync_service` already wrote, in `BIOMETRIC_SECTION_SOURCES`
+    order — it never triggers a sync and never decides what one *would* fetch.
+    Those are two different questions and only the CLI can answer the second:
+    `get_sync_date_range` caps its walk, anchors on whichever *requested*
+    source is furthest behind, and is the only place that reasoning belongs.
+    What this answers is the narrower one the maintainer actually asked
+    (ISSUES.md item 8): which days are present, which are missing, and which
+    were never looked at.
+
+    **A source's effective checkpoint is the later of its stored checkpoint
+    and its newest row**, mirroring `get_sync_date_range`'s own `max(dates +
+    [checkpoint])`. `sync_checkpoints` postdates the two lists, so a
+    `biometrics.json` written before it existed — or hand-edited since — has
+    rows past a checkpoint that would otherwise mark them as never-checked.
+    A stored row is proof the day was asked about, whatever the checkpoint
+    says.
+    """
+    checkpoints = biometrics.get("sync_checkpoints") or {}
+    window = [today - timedelta(days=offset) for offset in range(window_days - 1, -1, -1)]
+
+    statuses = []
+    for section, source in BIOMETRIC_SECTION_SOURCES.items():
+        recorded = sorted(
+            {
+                str(row["date"])
+                for row in (biometrics.get(section) or [])
+                if row.get("date")
+            }
+        )
+        checkpoint = checkpoints.get(source) or None
+        last_recorded = recorded[-1] if recorded else None
+        known = [stamp for stamp in (checkpoint, last_recorded) if stamp]
+        checked_through = max(known) if known else None
+
+        days = []
+        for stamp in window:
+            iso = stamp.isoformat()
+            if iso in recorded:
+                state = SYNC_RECORDED
+            elif checked_through and iso <= checked_through:
+                state = SYNC_CHECKED
+            else:
+                state = SYNC_UNCHECKED
+            days.append(SyncDay(date=iso, state=state))
+
+        statuses.append(
+            SyncSourceStatus(
+                source=source,
+                section=section,
+                label=humanize(source).title(),
+                last_checked=checkpoint,
+                last_recorded=last_recorded,
+                recorded_total=len(recorded),
+                days=days,
+            )
+        )
+    return statuses

@@ -26,13 +26,15 @@ from ui_theme import (
     MACRO_TINTS,
     RADIUS_CARD,
     SPACE_BASE,
+    SPACE_HAIR,
     SPACE_TIGHT,
     TEXT_BODY,
     TEXT_MICRO,
     WEEK_GRID_COLS,
+    format_day_label,
     telemetry_bar,
 )
-from week import week_date_range
+from week import portions_for, shopping_windows, week_date_range
 
 
 @dataclass
@@ -44,13 +46,19 @@ class TelemetryHandles:
 def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHandles:
     state = ctx.state
 
-    # ---- header: week date banner -----------------------------------------
-    # Purely cosmetic — nothing here reads back into state — but `state.days`
+    # ---- header: week date banner + the week's shape -----------------------
+    # A read-only strip — nothing here writes back into state. `state.days`
     # only ever carries weekday names (`week_days` rotates names, not dates),
-    # so without this a five-week-old cached plan and this week's plan look
-    # identical at a glance. `week_date_range` anchors on the plan's
-    # `generated_at` so the banner reflects the week that was actually
+    # so without the date pill a five-week-old cached plan and this week's
+    # plan look identical at a glance. `week_date_range` anchors on the
+    # plan's `generated_at` so the banner reflects the week that was actually
     # generated, falling back to today for an un-generated preview.
+    #
+    # Registered on `"shopping_days"` as well as `"plan"` in `ui_app.py`
+    # since phase 6b: the shopping-trip count below is a partition of the
+    # week by `state.shop_days`, so changing the shopping days in Settings
+    # has to repaint this strip too. That topic used to reach the Plan row
+    # this content came from, for the identical reason.
 
     @ui.refreshable
     def week_banner() -> None:
@@ -85,6 +93,34 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         "Unique produce, herbs/spices, nuts/seeds & spreads across "
                         "this week's cooked recipes."
                     )
+            # The week's shape, moved up here from the Plan destination's own
+            # header row by phase 6b of `ui-redesign.md`. These four are
+            # *readings* of the week — the same kind of thing as the two
+            # pills beside them — so they belong in the one reporting strip
+            # rather than in a second header inside the destination they
+            # describe, which is what left Plan with a heading row carrying
+            # both a readout and two controls. Reads `state.spec`, not
+            # `week_plan`, so an un-generated week still previews its shape
+            # exactly as the Plan row did.
+            spec = state.spec
+            cooks = spec.cook_slots()
+            with ui.element("div").classes(
+                f"flex flex-row items-baseline gap-{SPACE_BASE} px-{SPACE_BASE} py-{SPACE_TIGHT} "
+                f"{RADIUS_CARD} border border-slate-800 bg-slate-800/40 w-fit"
+            ):
+                for label, value in [
+                    ("Cook sessions", len(cooks)),
+                    ("Days cooking", len({slot.day for slot in cooks})),
+                    ("Portions", sum(portions_for(spec).values())),
+                    ("Shopping trips", len(shopping_windows(state.days, state.shop_days))),
+                ]:
+                    with ui.element("div").classes(
+                        f"flex flex-row items-baseline gap-{SPACE_HAIR}"
+                    ):
+                        ui.label(str(value)).classes(
+                            f"{TEXT_BODY} font-mono font-semibold text-slate-200"
+                        )
+                        ui.label(label).classes(f"{TEXT_MICRO} text-slate-500")
 
     # ---- header: macro telemetry -----------------------------------------
     # `prep_telemetry_cell` replaces the usual kcal/protein bars in the prep
@@ -114,6 +150,11 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
     def telemetry() -> None:
         bar_scale_limit = state.config["ui_settings"]["bar_scale_limit"]
         with ui.element("div").classes(f"grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full"):
+            # Empty — `WEEK_GRID_COLS`'s leading track is `ui_cards.canvas()`'s
+            # meal-type gutter. This row has no meal-type rows to label, but
+            # the column still has to exist here or every cell after it would
+            # land one track left of its counterpart in the canvas below.
+            ui.element("div")
             prep_telemetry_cell()
             for day in state.days:
                 target = state.targets_for(day)
@@ -121,29 +162,61 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                 kcal, kcal_goal = totals["calories"], float(target["calories"])
                 protein, protein_goal = totals["protein_g"], float(target["protein_g"])
                 overridden = day in state.target_overrides
-                training = state.has_training(day)
+                # Not `has_training`: the marker's job is to say this day is
+                # measured against a preview rather than against what the
+                # week was generated for, and a workout that was already in
+                # the config when the week was planned changes nothing about
+                # that. `target_is_staged` is the same test `targets_for`
+                # branches on, so the dot can never appear on a day reading
+                # the stored plan (or fail to appear on one that isn't).
+                training = state.training_edited_for(day)
+                staged = state.target_is_staged(day)
                 # Opens the day inspector (`ui_inspector.py`) — a floating
                 # overlay, so this never reflows the grid it's clicked from.
                 with ui.element("div").classes(
                     f"flex flex-col gap-{SPACE_TIGHT} min-w-0 cursor-pointer"
                 ).on("click", lambda d=day: inspector.open(d)):
-                    with ui.element("div").classes("flex flex-row justify-between items-baseline"):
-                        # A dot is why the denominator moved: amber for a drawer
-                        # target override, emerald for a scheduled workout —
-                        # either way this day is being measured against a live
-                        # preview, not config.json or the numbers the week was
-                        # actually generated for.
+                    with ui.element("div").classes(
+                        f"flex flex-row justify-between items-baseline gap-{SPACE_HAIR} min-w-0"
+                    ):
+                        # A dot is why the denominator moved: amber for a
+                        # target override, emerald for an edited training
+                        # session — either way this day is being measured
+                        # against a live preview, not the numbers the week
+                        # was actually generated for. An unmarked day is
+                        # measured against the plan itself.
                         marker = "•" if overridden else ("⚡" if training else "")
-                        ui.label(day[:3].upper() + marker).classes(
-                            f"{TEXT_BODY} font-semibold tracking-wider "
+                        # Phase 6a: this is now the *only* place a day's
+                        # identity is printed — `ui_cards.canvas()`'s swim-lane
+                        # header below dropped its own copy — so it carries the
+                        # date as well as the weekday. `format_day_label`
+                        # degrades to the bare short name for a plan generated
+                        # before `week_start_date` existed, the same tolerance
+                        # the Today tab's picker relies on.
+                        ui.label(
+                            format_day_label(day, state.day_date_iso(day), short=True).upper()
+                            + marker
+                        ).classes(
+                            f"{TEXT_BODY} font-semibold tracking-wider truncate min-w-0 "
                             + (
                                 "text-amber-300"
                                 if overridden
                                 else "text-emerald-300" if training else "text-slate-300"
                             )
                         )
+                        # The date makes this pair too wide for one line at
+                        # ordinary laptop widths, and it wraps to two rather
+                        # than overflowing into the next day's column —
+                        # Quasar's `.flex` sets `flex-wrap: wrap`, which is a
+                        # trap everywhere else in this UI and is the wanted
+                        # behaviour here. `truncate`/`min-w-0` above and
+                        # `shrink-0` here only decide the narrower case where
+                        # even one line doesn't fit: the date gives way, never
+                        # the figure. A clipped date still reads as its
+                        # weekday; a clipped number reads as a different
+                        # number.
                         ui.label(f"{kcal:.0f}/{kcal_goal:.0f} kcal").classes(
-                            f"{TEXT_MICRO} font-mono text-slate-400"
+                            f"{TEXT_MICRO} font-mono text-slate-400 shrink-0"
                         )
                     # Calories: the primary bar, dual-segmented — fill colour
                     # bands on how close the day landed (macro_band), and a
@@ -185,7 +258,12 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         if overridden:
                             ui.label("target overridden — applies on next generation")
                         if training:
-                            ui.label("training day — burn folded into target, applies on next generation")
+                            ui.label(
+                                "training edited — burn folded into target, "
+                                "applies on next generation"
+                            )
+                        if not staged and state.week_plan:
+                            ui.label("measured against the targets this week was generated for")
 
     return TelemetryHandles(
         week_banner=week_banner,

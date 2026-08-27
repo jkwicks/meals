@@ -31,7 +31,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, List, Optional, TypeVar
+from typing import Any, Awaitable, Dict, List, Optional, TypeVar
 
 # Anchored on this file, never on the working directory. The code lives in
 # `src/` and everything it reads one level up, so a relative "config/week.json"
@@ -67,6 +67,7 @@ CONFIG_FILES = {
     # The body being planned for, and the numbers it is aimed at.
     "profile.json": (
         "user_profile",
+        "target_modes",
         "weekly_schedule",
         "meal_weights",
         "dietary_rules",
@@ -119,6 +120,18 @@ T = TypeVar("T")
 # an ISO "YYYY-MM-DD" `date`, which is what makes a re-post for a day an update
 # rather than a duplicate row.
 BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals")
+
+# Which sync source fills which of those two lists. Here rather than in
+# `integrations/sync_service.py`, where it started, because it is a fact about
+# the file's layout — the same kind of thing `BIOMETRIC_SECTIONS` above already
+# states — and it now has two readers with nothing else in common: the catchup
+# walk (`get_sync_date_range`, deciding which section's latest date anchors a
+# source's range) and the Settings destination's sync-status view (deciding
+# which section's rows a source's checkpoint should be diffed against). A
+# second copy in the UI would be free to disagree about which source writes
+# what, and would do so silently — the read view would simply report the wrong
+# list as empty.
+BIOMETRIC_SECTION_SOURCES = {"weigh_ins": "garmin", "daily_actuals": "cronometer"}
 
 
 @dataclass(frozen=True)
@@ -254,6 +267,24 @@ class PlanRepository(abc.ABC):
     @abc.abstractmethod
     async def load_config(self) -> dict:
         """Targets, dietary rules, styles, cuisines. Raises if unavailable."""
+
+    @abc.abstractmethod
+    async def save_config_keys(self, updates: dict) -> None:
+        """Write top-level config keys back to whichever file owns each.
+
+        The one write path into `config/`, and the only place in the app
+        besides generation that persists anything. It exists because a
+        *setting* is not a per-week input: `target_modes` answers "where do
+        my numbers come from", and a toggle that reset on every page reload
+        would answer it differently each time you looked.
+
+        Deliberately narrow — it merges the keys it is given into the file
+        `CONFIG_FILES` says owns them and leaves every other key in that file
+        alone. It is not a general "save the config" call, because the config
+        the app holds in memory is a *merged* dict carrying runtime-injected
+        keys (`training_uplift`, `nudge_foods`, `openrouter_model`) that must
+        never reach disk.
+        """
 
     @abc.abstractmethod
     async def load_models_config(self) -> dict:
@@ -573,6 +604,38 @@ class LocalJSONRepository(PlanRepository):
                 "Config file(s) not found: " + ", ".join(missing)
             )
         return merged
+
+    async def save_config_keys(self, updates: dict) -> None:
+        await asyncio.to_thread(self._save_config_keys, updates)
+
+    def _save_config_keys(self, updates: dict) -> None:
+        """Merge `updates` into the config files that own its keys.
+
+        Read-modify-write per file rather than a whole-config rewrite, so a
+        key this app has never heard of — added by hand to profile.json — is
+        preserved rather than silently dropped on the next settings change.
+        An unknown key raises for the same reason `_read_config` does: it
+        belongs in *some* file, and guessing is what leaves a value written
+        somewhere nothing reads it back from.
+        """
+        by_file: Dict[str, dict] = {}
+        for key, value in updates.items():
+            owner = CONFIG_KEY_OWNER.get(key)
+            if owner is None:
+                raise ValueError(
+                    f"'{key}' is not a known config key. Add it to CONFIG_FILES "
+                    "in repository.py (and to AppConfig) if it is new."
+                )
+            by_file.setdefault(owner, {})[key] = value
+
+        for filename, changes in by_file.items():
+            path = os.path.join(self.paths.config_dir, filename)
+            contents = self._read_json(path)
+            if not isinstance(contents, dict):
+                raise ValueError(
+                    f"{path} must contain a JSON object before it can be updated."
+                )
+            self._write_json(path, {**contents, **changes})
 
     async def load_models_config(self) -> dict:
         return await asyncio.to_thread(self._read_json, self.paths.models) or {}

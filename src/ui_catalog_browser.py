@@ -129,58 +129,90 @@ def build_catalog_browser(
             f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_BASE} {RADIUS_PANEL} border border-slate-800 bg-slate-900/60 "
             "hover:border-slate-600 transition-colors min-w-0"
         ):
-            with ui.element("div").classes(f"flex flex-row items-start justify-between gap-{SPACE_TIGHT}"):
-                title = ui.label(recipe.get("name", "")).classes(
-                    f"{TEXT_BODY} font-semibold leading-tight line-clamp-2 min-w-0 "
-                    + ("cursor-pointer hover:text-sky-300" if detail_view else "text-slate-500")
+            # The icon row is a *sibling* of the clickable body below, never a
+            # parent of it — the same split `ui_cards.meal_card` and
+            # `prep_candidate_card` make, and for the same reason: a click on
+            # favorite/edit/delete would otherwise bubble into the body's
+            # handler and open the recipe dialog on its way past. Phase 6d of
+            # `ui-redesign.md`; before it, only the title carried the handler,
+            # so this was the one card in the app whose body did nothing.
+            #
+            # The title moved *out* of this row and down into that body, which
+            # is what makes the split possible at all — and it fixes a second
+            # thing measured on the running page at 1440px rather than read
+            # out of the source: this row is subject to the standing Quasar
+            # `.flex` wrap trap, and with the title still in it, any name whose
+            # max-content ran past roughly 200px pushed all three icons onto a
+            # line of their own. Wrapping is decided from the items'
+            # *unshrunk* widths, so the title's `min-w-0` never got a chance to
+            # prevent it. Half the catalog rendered icons-beside-title and half
+            # icons-under-title, on nothing more principled than name length.
+            # `flex-nowrap` keeps it that way now that the row is icons only.
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center justify-end gap-{SPACE_HAIR}"
+            ):
+                fav_button = ui.button(
+                    icon="bookmark" if favorited else "bookmark_border",
+                    on_click=lambda r=recipe: toggle_favorite(ctx, r),
+                ).props("dense flat round size=xs")
+                fav_button.classes(
+                    f"min-h-0 p-{SPACE_HAIR} "
+                    + ("text-amber-300" if favorited else "text-slate-500 hover:text-amber-300")
                 )
-                if detail_view:
-                    title.on("click", lambda e=entry: open_detail(e))
-                with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_HAIR} shrink-0"):
-                    fav_button = ui.button(
-                        icon="bookmark" if favorited else "bookmark_border",
-                        on_click=lambda r=recipe: toggle_favorite(ctx, r),
-                    ).props("dense flat round size=xs")
-                    fav_button.classes(
-                        f"min-h-0 p-{SPACE_HAIR} "
-                        + ("text-amber-300" if favorited else "text-slate-500 hover:text-amber-300")
-                    )
-                    ui.button(
-                        icon="edit", on_click=lambda e=entry: rename_dialog.open(e)
-                    ).props("dense flat round size=xs").classes(
-                        f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
-                    )
-                    ui.button(
-                        icon="delete", on_click=lambda rid=entry["id"]: delete_recipe(ctx, rid)
-                    ).props("dense flat round size=xs").classes(
-                        f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-rose-300"
-                    )
+                ui.button(
+                    icon="edit", on_click=lambda e=entry: rename_dialog.open(e)
+                ).props("dense flat round size=xs").classes(
+                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
+                )
+                ui.button(
+                    icon="delete", on_click=lambda rid=entry["id"]: delete_recipe(ctx, rid)
+                ).props("dense flat round size=xs").classes(
+                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-rose-300"
+                )
 
-            tags = " · ".join(
-                part
-                for part in [
-                    recipe.get("meal_type", "").title(),
-                    "Long cook" if recipe.get("long_oven_cook") else "",
-                    "Bulk prep" if recipe.get("bulk_prep_friendly") else "",
-                ]
-                if part
+            # `hover:text-sky-300` sits on the body rather than on the title,
+            # so hovering anywhere in the clickable region tints the one thing
+            # a click acts on. It reaches the title by inheritance — that label
+            # is the only descendant here with no colour of its own; the tag
+            # line and every macro figure set theirs and are left alone.
+            body = ui.element("div").classes(
+                f"flex flex-col gap-{SPACE_TIGHT} min-w-0 "
+                + ("cursor-pointer hover:text-sky-300" if detail_view else "")
             )
-            if tags:
-                ui.label(tags).classes(f"{TEXT_MICRO} text-slate-500")
+            if detail_view:
+                body.on("click", lambda e=entry: open_detail(e))
 
-            if macros:
-                with ui.element("div").classes(
-                    f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
-                    f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
-                ):
-                    ui.label(f"{macros['calories']:.0f} kcal").classes(
-                        f"{TEXT_MICRO} font-mono text-slate-300"
-                    )
-                    for key, short, unit in MACRO_LABELS[1:]:
-                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
-                        ui.label(f"{macros[key]:.0f}{unit} {short}").classes(
-                            f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
+            with body:
+                ui.label(recipe.get("name", "")).classes(
+                    f"{TEXT_BODY} font-semibold leading-tight line-clamp-2 min-w-0 "
+                    + ("" if detail_view else "text-slate-500")
+                )
+
+                tags = " · ".join(
+                    part
+                    for part in [
+                        recipe.get("meal_type", "").title(),
+                        "Long cook" if recipe.get("long_oven_cook") else "",
+                        "Bulk prep" if recipe.get("bulk_prep_friendly") else "",
+                    ]
+                    if part
+                )
+                if tags:
+                    ui.label(tags).classes(f"{TEXT_MICRO} text-slate-500")
+
+                if macros:
+                    with ui.element("div").classes(
+                        f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                        f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
+                    ):
+                        ui.label(f"{macros['calories']:.0f} kcal").classes(
+                            f"{TEXT_MICRO} font-mono text-slate-300"
                         )
+                        for key, short, unit in MACRO_LABELS[1:]:
+                            ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
+                            ui.label(f"{macros[key]:.0f}{unit} {short}").classes(
+                                f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
+                            )
 
     @ui.refreshable
     def catalog_grid() -> None:

@@ -22,7 +22,7 @@ via `generation.run_generation`) and before `build_staged_bar` (whose
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 from nicegui import ui
 
@@ -77,11 +77,24 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
     TARGET_BAR_HEIGHT_PX = 96
 
     def day_target_row(
-        day: str, target: dict, uplift_calories: float, max_calories: float
+        day: str,
+        target: dict,
+        uplift_calories: float,
+        max_calories: float,
+        baseline_calories: Optional[float] = None,
     ) -> None:
         """One day's target as a bar (filled = base, amber = training uplift,
-        dashed ghost = the config.json value once overridden), with the same
+        dashed ghost = what the day would aim at unoverridden), with the same
         editable calorie/protein/carb inputs stacked beneath it.
+
+        `baseline_calories` is the ghost's height and is passed in rather than
+        read here, because it costs a `planning_config()` rebuild — see
+        `targets_editor`, which computes it only for the days that actually
+        draw one. It is deliberately **not** `weekly_schedule`'s stated
+        figure: on a macro set to `auto` that number is inert (the shipped
+        config says 1000 kcal on a Thursday the engine puts at 1722), so a
+        ghost drawn at it would measure the override against a line nothing
+        plans from.
 
         The row is built once and then mutated in place — the derived-fat
         readout has to keep up with every keystroke, and repainting a section
@@ -131,8 +144,10 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         uplift_pct = min(
             100.0 - base_pct, (uplift_calories / max_calories * 100) if max_calories else 0.0
         )
-        file_calories = float((state.config["weekly_schedule"].get(day) or {}).get("calories", 0))
-        ghost_pct = min(100.0, (file_calories / max_calories * 100) if max_calories else 0.0)
+        ghost_calories = float(
+            target["calories"] if baseline_calories is None else baseline_calories
+        )
+        ghost_pct = min(100.0, (ghost_calories / max_calories * 100) if max_calories else 0.0)
 
         with ui.element("div").classes(f"flex flex-col items-stretch gap-{SPACE_TIGHT} flex-1 min-w-0"):
             with ui.element("div").classes("flex flex-row items-center justify-between"):
@@ -144,7 +159,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 )
                 reset.set_visibility(day in state.target_overrides)
                 with reset:
-                    ui.tooltip(f"Reset {day} to config.json")
+                    ui.tooltip(f"Reset {day} to its calculated target")
 
             # The shape: a filled base segment, an amber training-uplift
             # segment stacked on top of it, and — only on an overridden day —
@@ -212,6 +227,15 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         targets_by_day = {day: calculate_daily_targets(day, config) for day in state.days}
         max_calories = max((t["calories"] for t in targets_by_day.values()), default=0) or 1
 
+        # Only the overridden days draw a ghost line, and only they pay for
+        # the extra `planning_config()` rebuild that finding their unoverridden
+        # baseline costs. Usually none of them.
+        baseline_by_day = {
+            day: state.baseline_targets(day)["calories"]
+            for day in state.days
+            if day in state.target_overrides
+        }
+
         with ui.element("div").classes(f"flex flex-row items-stretch gap-{SPACE_TIGHT} w-full"):
             for day in state.days:
                 day_target_row(
@@ -219,6 +243,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     targets_by_day[day],
                     uplift_by_day.get(day, {}).get("calories", 0.0),
                     max_calories,
+                    baseline_by_day.get(day),
                 )
 
         def reset_all() -> None:

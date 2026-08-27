@@ -480,3 +480,164 @@ class TestEmptyScheduleIsNotAFailure(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTargetModesDecideWhoOwnsANumber(unittest.TestCase):
+    """`target_modes`/`target_locks` — who gets to state a macro's value.
+
+    Written after the bug they fix, per CLAUDE.md's rule about recording the
+    failure and not just the fix. Hydration used to overwrite every day's
+    calories, protein and fat unconditionally, which made two things true at
+    once: `weekly_schedule`'s stated numbers were dead weight the moment a
+    weigh-in existed, and every override typed into the review dialog was a
+    silent no-op — the UI accepted 2200 kcal, moved the bar, and generation
+    planned the computed figure regardless.
+    """
+
+    def test_auto_is_the_default_and_replaces_the_file(self):
+        """A config predating `target_modes` plans exactly as it did before."""
+        hydrated = planner.hydrate_dynamic_targets(config_with(), WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+        self.assertEqual(
+            hydrated["weekly_schedule"]["Monday"]["protein_g"], LOCKED_PROTEIN_G
+        )
+
+    def test_manual_keeps_the_file_figure(self):
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(target_modes={"calories": "manual", "protein_g": "auto"}),
+            WEIGH_IN,
+        )
+        # config_with's Monday states 1500; the engine would say DYNAMIC_KCAL.
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1500)
+        # The other macro is untouched by the switch.
+        self.assertEqual(
+            hydrated["weekly_schedule"]["Monday"]["protein_g"], LOCKED_PROTEIN_G
+        )
+
+    def test_manual_still_derives_fat_from_the_stated_numbers(self):
+        """Fat has no mode — it is always whatever energy is left."""
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(target_modes={"calories": "manual", "protein_g": "manual"}),
+            WEIGH_IN,
+        )
+        monday = hydrated["weekly_schedule"]["Monday"]
+        self.assertEqual(
+            monday["fat_g"],
+            round(planner.derive_fat_g(1500, 120, 130), 1),
+        )
+
+    def test_a_per_day_lock_beats_auto_for_that_day_only(self):
+        """`target_locks` is how a review-dialog override reaches hydration.
+
+        Without it the fold into `weekly_schedule` is invisible here —
+        hydration cannot tell an edited value from a stale file one, and
+        overwrote both.
+        """
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(target_locks={"Monday": ["calories"]}), WEIGH_IN
+        )
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1500)
+        self.assertEqual(
+            hydrated["weekly_schedule"]["Wednesday"]["calories"], DYNAMIC_KCAL
+        )
+
+    def test_every_macro_manual_never_calls_the_engine(self):
+        """A week planned entirely off the file must not need a weigh-in.
+
+        Passing `None` where a weigh-in goes is what would raise inside
+        `calculate_macro_targets`; reaching the assertions at all is the
+        test. `dynamic_basis` is absent because nothing was computed.
+        """
+        hydrated = planner.hydrate_dynamic_targets(
+            config_with(target_modes={"calories": "manual", "protein_g": "manual"}),
+            None,
+        )
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1500)
+        self.assertNotIn("dynamic_basis", hydrated)
+
+    def test_hydration_is_idempotent_for_a_stated_macro(self):
+        """The UI hydrates for its live preview and generation hydrates again.
+
+        An earlier version subtracted the training uplift from a stated
+        figure to undo what `apply_training_adjustments` had added. That was
+        right exactly once: the second pass subtracted it from a number that
+        no longer carried it, taking a 2200 kcal override down to 1850.
+        """
+        config = config_with(
+            target_locks={"Monday": ["calories"]},
+            meal_types=["breakfast", "lunch", "dinner", "snack"],
+            meal_weights={"breakfast": 0.3, "lunch": 0.3, "dinner": 0.3, "snack": 0.1},
+            training_schedule=[{
+                "day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+                "estimated_burn_kcal": 350,
+            }],
+        )
+        once = planner.hydrate_dynamic_targets(
+            planner.apply_training_adjustments(config), WEIGH_IN
+        )
+        twice = planner.hydrate_dynamic_targets(once, WEIGH_IN)
+        self.assertEqual(
+            once["weekly_schedule"]["Monday"]["calories"],
+            twice["weekly_schedule"]["Monday"]["calories"],
+        )
+
+
+class TestAWorkoutDoesNotGrowAStatedTarget(unittest.TestCase):
+    """`apply_training_adjustments` skips a macro somebody stated.
+
+    A toggle that changes *who decides* a number must not change the number.
+    Before this, flipping protein to manual moved a training Monday from
+    144 g to 187.8 g, because the uplift was still being added on top of the
+    figure the toggle had just seeded from the engine.
+    """
+
+    def setUp(self):
+        self.session = [{
+            "day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+            "estimated_burn_kcal": 350,
+        }]
+        self.shape = {
+            "meal_types": ["breakfast", "lunch", "dinner", "snack"],
+            "meal_weights": {
+                "breakfast": 0.3, "lunch": 0.3, "dinner": 0.3, "snack": 0.1
+            },
+        }
+
+    def adjusted(self, **extra):
+        return planner.apply_training_adjustments(
+            config_with(training_schedule=self.session, **self.shape, **extra)
+        )
+
+    def test_an_auto_macro_is_still_expanded(self):
+        adjusted = self.adjusted()
+        self.assertEqual(adjusted["weekly_schedule"]["Monday"]["calories"], 1500 + 350)
+        self.assertEqual(adjusted["training_uplift"]["Monday"]["calories"], 350.0)
+
+    def test_a_manual_macro_is_left_alone(self):
+        adjusted = self.adjusted(target_modes={"calories": "manual"})
+        self.assertEqual(adjusted["weekly_schedule"]["Monday"]["calories"], 1500)
+
+    def test_the_uplift_it_did_not_apply_is_not_recorded(self):
+        """Hydration replays this record onto the engine's base and the review
+        dialog draws it as the bar's amber segment, so recording calories
+        nothing added would show the day holding energy it never got."""
+        adjusted = self.adjusted(target_modes={"calories": "manual"})
+        self.assertNotIn("calories", adjusted["training_uplift"].get("Monday", {}))
+        # The macros still on auto keep their share.
+        self.assertEqual(
+            adjusted["training_uplift"]["Monday"]["net_carbs_g"], 350 * 0.5 / 4
+        )
+
+    def test_a_locked_day_is_left_alone_and_its_neighbours_are_not(self):
+        adjusted = planner.apply_training_adjustments(
+            config_with(
+                training_schedule=self.session + [{
+                    "day": "Wednesday", "time": "18:00", "type": "gym_hypertrophy",
+                    "estimated_burn_kcal": 350,
+                }],
+                target_locks={"Monday": ["calories"]},
+                **self.shape,
+            )
+        )
+        self.assertEqual(adjusted["weekly_schedule"]["Monday"]["calories"], 1500)
+        self.assertEqual(adjusted["weekly_schedule"]["Wednesday"]["calories"], 1000 + 350)

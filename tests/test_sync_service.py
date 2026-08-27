@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+from datetime import date
 from pathlib import Path
 
 import requests
@@ -695,12 +696,19 @@ class FlakyGarminClient(FakeGarminClient):
 
 @contextlib.contextmanager
 def replace_cronometer_service(fake_fetch):
-    """Make `sync_cronometer` build a service whose `fetch_daily_summary` is `fake_fetch`.
+    """Make both Cronometer sync paths build a service driven by `fake_fetch`.
 
-    Same reasoning as `replace_garmin_client`: `sync_cronometer` constructs
-    its own `CronometerSyncService`, so the seam has to be the class, not an
-    injected instance. `fake_fetch` takes the ISO date string and returns the
-    `daily_actuals` row `fetch_daily_summary` would have.
+    Same reasoning as `replace_garmin_client`: the sync functions construct
+    their own `CronometerSyncService`, so the seam has to be the class, not
+    an injected instance. `fake_fetch` takes the ISO date string and returns
+    the `daily_actuals` row `fetch_daily_summary` would have.
+
+    It stands in for `fetch_range_summaries` too, calling `fake_fetch` once
+    per day so a test can still say "this day logged 2000 kcal and that one
+    logged nothing" without a CSV fixture. That is emphatically *not* how
+    the real one works — one request for the whole span is the entire point
+    of it — so a test about what the range actually costs seams one level
+    lower, at `_rows_in_process`. See `TestCronometerRequestCost`.
     """
     original = sync.CronometerSyncService
 
@@ -710,6 +718,9 @@ def replace_cronometer_service(fake_fetch):
 
         def fetch_daily_summary(self, target_date):
             return fake_fetch(target_date)
+
+        def fetch_range_summaries(self, dates):
+            return {day: fake_fetch(day) for day in sorted(dates)}
 
     sync.CronometerSyncService = Patched
     try:
@@ -798,7 +809,7 @@ class TestRateLimitWaitHint(unittest.TestCase):
 
 
 class TestCronometerRangeSync(unittest.TestCase):
-    """`sync_cronometer_range` — the sequential per-date catchup walk."""
+    """`sync_cronometer_range` — one fetch for the span, persisted per day."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -831,74 +842,214 @@ class TestCronometerRangeSync(unittest.TestCase):
         actuals = run_sync(self.repo.load_biometrics())["daily_actuals"]
         self.assertEqual(sorted(row["date"] for row in actuals), dates)
 
-    def test_one_days_failure_does_not_abort_the_rest_of_the_range(self):
+    def test_a_day_with_nothing_logged_is_still_checkpointed(self):
+        """The empty day the range fold has to keep distinguishable.
+
+        `_daily_summary_row` returns `{"date": ...}` for a day the CSV has
+        no row for, which must not become a row of zeroes — but the date
+        was genuinely asked about, so its checkpoint has to advance or
+        `get_sync_date_range` re-requests it forever.
+        """
+
         def fake_fetch(day):
             if day == "2026-08-20":
-                raise RuntimeError("cronometer unavailable")
+                return {"date": day}
             return {"date": day, "calories": 2000.0, "source": "cronometer"}
+
+        dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
+        with replace_cronometer_service(fake_fetch):
+            sync.sync_cronometer_range(dates, self.repo)
+
+        biometrics = run_sync(self.repo.load_biometrics())
+        self.assertEqual(
+            sorted(row["date"] for row in biometrics["daily_actuals"]),
+            ["2026-08-19", "2026-08-21"],
+        )
+        self.assertEqual(biometrics["sync_checkpoints"]["cronometer"], "2026-08-21")
+
+    def test_a_failed_fetch_strands_the_whole_span_and_stores_nothing(self):
+        """One request has one outcome — there is no per-day isolation left.
+
+        Deliberate, and the opposite of `sync_garmin_range`: the span is a
+        single export call, so a failure means no day was fetched. It is
+        reported against the first date alone, and nothing is checkpointed,
+        which is what lets `get_sync_date_range` find every one of them
+        still missing on the next run.
+        """
+
+        def fake_fetch(day):
+            raise RuntimeError("cronometer unavailable")
 
         dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
         with replace_cronometer_service(fake_fetch):
             results = sync.sync_cronometer_range(dates, self.repo)
 
-        self.assertNotIn("error", results[0])
-        self.assertIn("error", results[1])
-        self.assertNotIn("error", results[2])
+        self.assertEqual([r["date"] for r in results], ["2026-08-19"])
+        self.assertIn("error", results[0])
+        self.assertNotIn("rate_limited", results[0])
 
-        actuals = run_sync(self.repo.load_biometrics())["daily_actuals"]
-        self.assertEqual(
-            sorted(row["date"] for row in actuals), ["2026-08-19", "2026-08-21"]
-        )
+        biometrics = run_sync(self.repo.load_biometrics())
+        self.assertEqual(biometrics["daily_actuals"], [])
+        self.assertNotIn("cronometer", biometrics["sync_checkpoints"])
 
-    def test_a_429_stops_the_walk_instead_of_retrying_every_remaining_date(self):
+    def test_a_429_is_reported_with_its_wait_hint(self):
         """Regression: a real run turned one 429 into fourteen.
 
-        Unlike the generic-failure case above, a 429 means the whole account
-        is throttled — every date after it is guaranteed to fail the same
-        way, so `sync_cronometer_range` must stop rather than burn through
-        the rest of the range against an endpoint already refusing it.
+        The original fix was to break the per-date walk on a 429. Fetching
+        the span in one request makes that structural — there is no walk to
+        break — but the flag and the ETA `main` prints still have to reach
+        the caller, so this pins them.
         """
-        calls = []
 
         def fake_fetch(day):
-            calls.append(day)
-            if day == "2026-08-20":
-                raise make_429(retry_after="60")
-            return {"date": day, "calories": 2000.0, "source": "cronometer"}
+            raise make_429(retry_after="60")
 
         dates = ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"]
         with replace_cronometer_service(fake_fetch):
             results = sync.sync_cronometer_range(dates, self.repo)
 
-        # 08-21 and 08-22 must never even be attempted.
-        self.assertEqual(calls, ["2026-08-19", "2026-08-20"])
-        self.assertEqual([r["date"] for r in results], ["2026-08-19", "2026-08-20"])
-        self.assertTrue(results[-1]["rate_limited"])
-        self.assertIn("60s", results[-1]["wait_hint"])
+        self.assertEqual([r["date"] for r in results], ["2026-08-19"])
+        self.assertTrue(results[0]["rate_limited"])
+        self.assertIn("60s", results[0]["wait_hint"])
+        # `main` names the tail from what the result list doesn't cover.
+        self.assertEqual(dates[len(results):], ["2026-08-20", "2026-08-21", "2026-08-22"])
 
-    def test_a_non_rate_limit_http_error_still_continues_past_it(self):
-        """Only a 429 short-circuits; every other failure keeps its old
-        "one bad day must not cost the rest" behaviour."""
 
-        def _server_error():
-            response = requests.Response()
-            response.status_code = 500
-            return requests.exceptions.HTTPError("500 Server Error", response=response)
+class TestCronometerRequestCost(unittest.TestCase):
+    """A range costs one export request, not one per day.
 
-        def fake_fetch(day):
-            if day == "2026-08-20":
-                raise _server_error()
-            return {"date": day, "calories": 2000.0, "source": "cronometer"}
+    Written because the per-day walk was the thing provoking Cronometer's
+    429s: `export_raw` re-authenticates and mints a fresh token before every
+    export, so six days of catchup was roughly thirty HTTP requests to
+    retrieve six CSV rows one call would have returned. Seamed at
+    `_rows_in_process` — one level below `replace_cronometer_service`, whose
+    fake deliberately still answers per day — because the request count is
+    exactly what that helper papers over.
+    """
 
+    ROWS = [
+        {"Date": "2026-08-19", "Energy (kcal)": "1800", "Protein (g)": "140"},
+        {"Date": "2026-08-21", "Energy (kcal)": "2100", "Protein (g)": "160"},
+    ]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "biometrics.json")
+        self.repo = LocalJSONRepository(biometrics_path=self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @contextlib.contextmanager
+    def _counting_service(self, rows):
+        spans = []
+        original = sync.CronometerSyncService
+
+        class Patched(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(username="user@example.com", password="pw")
+
+            def _rows_in_process(self, start, end):
+                spans.append((start, end))
+                return rows
+
+        sync.CronometerSyncService = Patched
+        try:
+            yield spans
+        finally:
+            sync.CronometerSyncService = original
+
+    def test_a_multi_day_range_is_one_export_over_the_whole_span(self):
         dates = ["2026-08-19", "2026-08-20", "2026-08-21"]
-        with replace_cronometer_service(fake_fetch):
+        with self._counting_service(self.ROWS) as spans:
             results = sync.sync_cronometer_range(dates, self.repo)
 
+        self.assertEqual(spans, [("2026-08-19", "2026-08-21")])
         self.assertEqual([r["date"] for r in results], dates)
-        self.assertNotIn("error", results[0])
-        self.assertIn("error", results[1])
-        self.assertNotIn("rate_limited", results[1])
-        self.assertNotIn("error", results[2])
+
+        biometrics = run_sync(self.repo.load_biometrics())
+        # 08-20 has no row in the CSV: nothing logged, so nothing stored —
+        # but every date was asked about, so the checkpoint covers them all.
+        self.assertEqual(
+            sorted(row["date"] for row in biometrics["daily_actuals"]),
+            ["2026-08-19", "2026-08-21"],
+        )
+        self.assertEqual(biometrics["sync_checkpoints"]["cronometer"], "2026-08-21")
+
+    def test_an_undated_row_is_not_smeared_across_a_span(self):
+        """The fallback that is only sound for a single day.
+
+        `_daily_summary_row` takes a lone undated row as the day asked for,
+        which is unambiguous for a one-day export and a silent corruption
+        over a range — the same figures would be written to every date in
+        it. `single_day_request` is what keeps them apart.
+        """
+        undated = [{"Energy (kcal)": "1500", "Protein (g)": "120"}]
+        with self._counting_service(undated):
+            sync.sync_cronometer_range(["2026-08-19", "2026-08-20"], self.repo)
+
+        self.assertEqual(run_sync(self.repo.load_biometrics())["daily_actuals"], [])
+
+        with self._counting_service(undated):
+            sync.sync_cronometer_range(["2026-08-19"], self.repo)
+
+        actuals = run_sync(self.repo.load_biometrics())["daily_actuals"]
+        self.assertEqual([row["date"] for row in actuals], ["2026-08-19"])
+        self.assertEqual(actuals[0]["calories"], 1500.0)
+
+
+class TestCLIDateSelection(unittest.TestCase):
+    """Which dates `main` actually asks for.
+
+    Written because `--date 2026-08-26` used to announce "Catching up 6
+    missing day(s)" and fetch the five days around it as well. Catchup
+    defaulted to on and `--date` defaulted to today, so nothing downstream
+    could tell a named day from an unnamed one — and against a
+    rate-limited Cronometer the difference is one export request or a
+    throttled account.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.synced = []
+
+        repo_path = str(Path(self.tmp.name) / "biometrics.json")
+        patches = [
+            unittest.mock.patch.object(
+                sync, "LocalJSONRepository", lambda: LocalJSONRepository(biometrics_path=repo_path)
+            ),
+            unittest.mock.patch.object(
+                sync,
+                "get_sync_date_range",
+                lambda repo, target, lookback, sources=None: ["catchup-ran", target],
+            ),
+            unittest.mock.patch.object(
+                sync,
+                "sync_cronometer_range",
+                lambda dates, repo: self.synced.extend(dates) or [],
+            ),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_a_named_date_syncs_only_that_date(self):
+        sync.main(["--sync-cronometer", "--date", "2026-08-26"])
+        self.assertEqual(self.synced, ["2026-08-26"])
+
+    def test_a_bare_run_still_catches_up(self):
+        """The scheduled-sync shape, where a missed day must not be lost."""
+        sync.main(["--sync-cronometer"])
+        self.assertEqual(self.synced[0], "catchup-ran")
+
+    def test_an_explicit_catchup_wins_over_a_named_date(self):
+        sync.main(["--sync-cronometer", "--date", "2026-08-26", "--catchup"])
+        self.assertEqual(self.synced, ["catchup-ran", "2026-08-26"])
+
+    def test_no_catchup_on_a_bare_run_is_still_today_only(self):
+        sync.main(["--sync-cronometer", "--no-catchup"])
+        self.assertEqual(self.synced, [date.today().isoformat()])
 
 
 class TestCredentialGuards(unittest.TestCase):

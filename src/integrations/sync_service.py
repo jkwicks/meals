@@ -47,6 +47,16 @@ the next caller nicely.
 which this project's Homebrew 3.14 venv satisfies, so `CronometerSyncService`
 just imports and calls it directly — no sidecar interpreter involved.
 
+**Cronometer is fetched a span at a time, Garmin a day at a time.** One
+Cronometer day is not one request: `export_raw` re-authenticates and mints a
+fresh auth token before every export, so a day costs about five and a
+six-day catchup cost around thirty — against an account that rate-limits,
+which is how the 429s below were being provoked. The export endpoint takes a
+real date range and returns a row per day, so `fetch_range_summaries` asks
+once for the whole span and `_daily_summary_row` folds the one CSV into each
+day. Garmin has no comparable limit and keeps its per-day loop, which buys
+it per-day failure isolation the Cronometer path gives up.
+
 **A day with nothing to report is still a day that was checked.** Neither
 list gets a row when the scale wasn't stepped on or nothing was logged (a day
 of zero calories would drag every average that reads the series), but
@@ -77,7 +87,12 @@ _SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from repository import PROJECT_ROOT, LocalJSONRepository, run_sync  # noqa: E402
+from repository import (  # noqa: E402
+    BIOMETRIC_SECTION_SOURCES,
+    PROJECT_ROOT,
+    LocalJSONRepository,
+    run_sync,
+)
 
 try:
     from dotenv import load_dotenv
@@ -485,12 +500,14 @@ class CronometerSyncService:
                 "CRONOMETER_PASSWORD in .env."
             )
 
-    def _rows_in_process(self, day: str) -> List[dict]:
+    def _rows_in_process(self, start: str, end: str) -> List[dict]:
         from cronometer_mcp import CronometerClient  # type: ignore[import-not-found]
 
-        target = datetime.strptime(day, "%Y-%m-%d").date()
         client = CronometerClient(username=self.username, password=self.password)
-        return client.get_daily_summary(start=target, end=target)
+        return client.get_daily_summary(
+            start=datetime.strptime(start, "%Y-%m-%d").date(),
+            end=datetime.strptime(end, "%Y-%m-%d").date(),
+        )
 
     def fetch_daily_summary(self, target_date: str) -> dict:
         """What was actually eaten on `target_date`, as a `daily_actuals` row.
@@ -502,11 +519,48 @@ class CronometerSyncService:
         """
         day = _iso(target_date)
         self._require_credentials()
-        rows = self._rows_in_process(day)
-        return _daily_summary_row(rows, day)
+        return _daily_summary_row(self._rows_in_process(day, day), day)
+
+    def fetch_range_summaries(self, dates: List[str]) -> Dict[str, dict]:
+        """Every day in `dates`, fetched in **one** export request.
+
+        Cronometer's export endpoint already takes a real `start`/`end` span
+        and answers with one CSV row per day, so a seven-day catchup costs
+        one HTTP request rather than seven — and, because `CronometerClient`
+        authenticates per instance, one login rather than seven.
+
+        That matters more than it looks, because a single `fetch_daily_
+        summary` was never one request either. `CronometerClient.export_raw`
+        calls `authenticate()` (a restored session still re-discovers the GWT
+        build hashes and re-mints an auth token; a cold one adds the CSRF
+        fetch, the login POST and the GWT handshake) and then mints a second
+        token before the export GET — roughly five requests warm, seven cold.
+        The per-day walk this replaces therefore spent around thirty requests
+        on a six-day backfill against an account that rate-limits, which is
+        how the 429s `_is_rate_limited` exists to survive were being
+        provoked in the first place.
+
+        Days inside the span that aren't in `dates` come back in the CSV and
+        are simply not looked up: asking for the span costs no more than
+        asking for its two ends.
+        """
+        days = sorted({_iso(day) for day in dates})
+        if not days:
+            return {}
+        self._require_credentials()
+        rows = self._rows_in_process(days[0], days[-1])
+        # `_daily_summary_row`'s undated-row fallback is only sound for a
+        # one-day request — over a span it would hand the same row to every
+        # day in it. See `single_day_request` there.
+        return {
+            day: _daily_summary_row(rows, day, single_day_request=len(days) == 1)
+            for day in days
+        }
 
 
-def _daily_summary_row(rows: List[dict], day: str) -> dict:
+def _daily_summary_row(
+    rows: List[dict], day: str, *, single_day_request: bool = True
+) -> dict:
     """Fold Cronometer's parsed CSV into one `daily_actuals` entry.
 
     Split out from `fetch_daily_summary` so the mapping — the part with the
@@ -529,10 +583,14 @@ def _daily_summary_row(rows: List[dict], day: str) -> dict:
             break
 
     if match is None:
-        # No date column matched. A one-row export is unambiguous; anything
-        # else would be a guess, and a wrong day silently overwrites a good
-        # entry, so it is left unwritten instead.
-        if len(rows) != 1:
+        # No date column matched. A one-row export *of a single day* is
+        # unambiguous; anything else would be a guess, and a wrong day
+        # silently overwrites a good entry, so it is left unwritten instead.
+        # `single_day_request` is what keeps that sound now `fetch_range_
+        # summaries` folds one CSV into many days: over a span, an undated
+        # row could belong to any day in it, and taking it would copy the
+        # same figures onto every one of them.
+        if not single_day_request or len(rows) != 1:
             return {"date": day}
         match = rows[0]
 
@@ -549,9 +607,6 @@ def _daily_summary_row(rows: List[dict], day: str) -> dict:
     if has_measurements(entry):
         entry["source"] = "cronometer"
     return entry
-
-
-SECTION_SOURCES = {"weigh_ins": "garmin", "daily_actuals": "cronometer"}
 
 
 def get_sync_date_range(
@@ -619,12 +674,12 @@ def get_sync_date_range(
     from a meal plan's targets right now.
     """
     end_date = datetime.strptime(_iso(target_end_date), "%Y-%m-%d").date()
-    requested = set(sources) if sources else set(SECTION_SOURCES.values())
+    requested = set(sources) if sources else set(BIOMETRIC_SECTION_SOURCES.values())
 
     biometrics = run_sync(repository.load_biometrics())
     checkpoints = biometrics.get("sync_checkpoints") or {}
     section_latest_dates = []
-    for section, source in SECTION_SOURCES.items():
+    for section, source in BIOMETRIC_SECTION_SOURCES.items():
         if source not in requested:
             continue
         dates = [row["date"] for row in biometrics.get(section, []) if row.get("date")]
@@ -710,23 +765,37 @@ def sync_garmin_range(dates: List[str], repository: LocalJSONRepository) -> List
     return results
 
 
-def sync_cronometer(target_date: str, repository: LocalJSONRepository) -> dict:
-    """Fetch a day from Cronometer and persist it to `daily_actuals`.
+def _persist_cronometer_day(
+    target_date: str, actuals: dict, repository: LocalJSONRepository
+) -> dict:
+    """Store one day's row and checkpoint the date it came from.
 
-    Checkpointed the same way `sync_garmin` is, and for the same reason: a
-    day with nothing logged is a genuine, checked outcome, and only reaching
-    this line at all (rather than raising out of `fetch_daily_summary`) means
-    Cronometer was actually asked. See `save_sync_checkpoint`.
+    Shared by the single-day and range paths so the two cannot disagree
+    about when a row is worth keeping. Checkpointed the same way
+    `sync_garmin` is, and for the same reason: a day with nothing logged is
+    a genuine, checked outcome, and reaching this line at all (rather than
+    raising out of the fetch) means Cronometer was actually asked. See
+    `save_sync_checkpoint`.
     """
-    service = CronometerSyncService()
-    actuals = service.fetch_daily_summary(target_date)
-
     if has_measurements(actuals):
         run_sync(repository.save_daily_actuals(actuals))
 
     run_sync(repository.save_sync_checkpoint("cronometer", target_date))
 
     return {"daily_actuals": actuals}
+
+
+def sync_cronometer(target_date: str, repository: LocalJSONRepository) -> dict:
+    """Fetch a day from Cronometer and persist it to `daily_actuals`.
+
+    The single-day entry point. `sync_cronometer_range` deliberately does
+    not loop over this — it fetches the whole span in one request instead,
+    see `CronometerSyncService.fetch_range_summaries` — but both persist
+    through `_persist_cronometer_day`.
+    """
+    day = _iso(target_date)
+    service = CronometerSyncService()
+    return _persist_cronometer_day(day, service.fetch_daily_summary(day), repository)
 
 
 def _is_rate_limited(exc: Exception) -> bool:
@@ -788,36 +857,45 @@ def _rate_limit_wait_hint(response: "requests.Response") -> str:
 
 
 def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
-    """`sync_cronometer` for every date in `dates`, in order.
+    """Every date in `dates`: one fetch for the span, then persisted per day.
 
-    Mirrors `sync_garmin_range`'s "one bad day must not cost the rest of the
-    range" policy, with one deliberate exception: a 429 stops the walk
-    outright instead of moving on to the next date. See `_is_rate_limited`
-    for why treating it as an ordinary per-day failure is what turned one
-    throttle into fourteen. The dates never reached are simply absent from
-    the result — no separate tracking needed, because a date that was never
-    written to `daily_actuals` is exactly what `get_sync_date_range` finds
-    missing and retries on the next run, once the throttle has had a chance
-    to clear.
+    This deliberately does **not** mirror `sync_garmin_range`'s per-date
+    loop, and the asymmetry is the point. Garmin has no restrictive rate
+    limit, so it can afford a request per day and buys real per-day failure
+    isolation with it. Cronometer throttles hard, and one day's fetch is
+    about five HTTP requests rather than one (see `fetch_range_summaries`),
+    so the per-day walk was itself provoking the 429s `_is_rate_limited`
+    exists to survive — six days of catchup cost around thirty requests to
+    retrieve six CSV rows the export endpoint would have returned together.
+
+    What that trade costs: one request has one outcome, so a failure is no
+    longer isolable to a single date. Less than it sounds — every Cronometer
+    failure seen in the wild was a 429, which is account-level and already
+    short-circuited the whole walk. Either kind of failure is now reported
+    against the first date alone, since none of the others were attempted;
+    `main` names the unattempted tail, and because nothing is checkpointed
+    on that path `get_sync_date_range` finds the same days missing and
+    retries them on the next run.
     """
+    if not dates:
+        return []
+
+    days = sorted({_iso(day) for day in dates})
+    service = CronometerSyncService()
+    try:
+        rows_by_day = service.fetch_range_summaries(days)
+    except Exception as exc:
+        failure = {"date": days[0], "error": str(exc)}
+        if _is_rate_limited(exc):
+            failure["rate_limited"] = True
+            failure["wait_hint"] = _rate_limit_wait_hint(exc.response)
+        return [failure]
+
     results = []
-    for target_date in dates:
-        try:
-            outcome = sync_cronometer(target_date, repository)
-            outcome["date"] = target_date
-            results.append(outcome)
-        except Exception as exc:
-            if _is_rate_limited(exc):
-                results.append(
-                    {
-                        "date": target_date,
-                        "error": str(exc),
-                        "rate_limited": True,
-                        "wait_hint": _rate_limit_wait_hint(exc.response),
-                    }
-                )
-                break
-            results.append({"date": target_date, "error": str(exc)})
+    for day in days:
+        outcome = _persist_cronometer_day(day, rows_by_day[day], repository)
+        outcome["date"] = day
+        results.append(outcome)
     return results
 
 
@@ -837,17 +915,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--date",
-        default=date.today().isoformat(),
-        help="Day to sync, ISO YYYY-MM-DD. Defaults to today.",
+        default=None,
+        help=(
+            "Day to sync, ISO YYYY-MM-DD. Defaults to today. Naming a day "
+            "explicitly means that day only — pass --catchup as well to "
+            "backfill up to it."
+        ),
     )
     parser.add_argument(
         "--catchup",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
         help=(
             "Backfill every day missing between the latest recorded "
-            "biometric and --date, not just --date itself. On by default; "
-            "pass --no-catchup to sync only --date, as before."
+            "biometric and --date, not just --date itself. On by default "
+            "for a bare run, off when --date names a specific day; pass "
+            "--catchup or --no-catchup to say so outright."
         ),
     )
     parser.add_argument(
@@ -862,7 +945,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("Nothing to do: pass --sync-garmin and/or --sync-cronometer.")
 
     repository = LocalJSONRepository()
-    target = _iso(args.date)
+    target = _iso(args.date or date.today().isoformat())
+    # Naming a date is a request for that date. Catchup stays on for a bare
+    # run, which is the shape a scheduled sync takes and where a missed day
+    # must not be lost — but "--date 2026-08-26" quietly fetching six other
+    # days is the opposite of what asking for one day means, and against a
+    # rate-limited Cronometer it is the difference between one export
+    # request and a throttled account. An explicit --catchup still wins.
+    catchup = args.catchup if args.catchup is not None else args.date is None
     # Scoped to the sync(es) actually requested — see get_sync_date_range's
     # docstring for why an unscoped call let a stale, never-run Cronometer
     # drag an already-caught-up Garmin back into a 14-day re-fetch every run.
@@ -873,7 +963,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ]
     dates = (
         get_sync_date_range(repository, target, args.lookback_days, sources=sources)
-        if args.catchup
+        if catchup
         else [target]
     )
     failed = False
@@ -936,16 +1026,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             else:
                 print(f"Cronometer {day}: nothing logged")
 
-        # A rate limit stops sync_cronometer_range early — see _is_rate_limited
-        # — so the tail of `dates` was never attempted. It isn't a second
-        # failure; get_sync_date_range will find those days still missing and
-        # retry them on the next run, once the throttle clears.
+        # A failed range fetch leaves the whole span unfetched, and
+        # sync_cronometer_range reports it against the first date only —
+        # one request had one outcome. The tail was never attempted, which
+        # isn't a second failure: nothing was checkpointed, so
+        # get_sync_date_range finds those days still missing and retries
+        # them on the next run, once any throttle has had a chance to clear.
         skipped = dates[len(cronometer_results):]
         if skipped:
             print(
-                f"Stopped after the rate limit; {len(skipped)} more day(s) "
-                f"({skipped[0]} through {skipped[-1]}) were not attempted and "
-                "will be picked up on the next run.",
+                f"{len(skipped)} more day(s) ({skipped[0]} through {skipped[-1]}) "
+                "were not fetched and will be picked up on the next run.",
                 file=sys.stderr,
             )
 

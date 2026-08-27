@@ -53,6 +53,7 @@ from week import (
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
+    cook_day_index,
     day_date,
     default_week_spec,
     eaten_on,
@@ -1129,6 +1130,65 @@ class UISettings(BaseModel):
     title_tooltip_chars: int = 38
 
 
+# The two macros that have both a calculated form and a hand-written one, and
+# therefore need somebody to say which is live. Fat is absent because it is
+# always derived (`derive_fat_g`) and `net_carbs_g` because it has no
+# calculated form at all — the engine takes whatever `weekly_schedule` states
+# and hands it straight back, which is what makes carbs the week's cycling
+# lever. Both of those are honest answers to "where does this number come
+# from"; neither is a mode anyone can switch.
+TARGET_MODE_MACROS = ("calories", "protein_g")
+TARGET_MODE_AUTO = "auto"
+TARGET_MODE_MANUAL = "manual"
+
+
+def target_is_stated(config: dict, day: str, macro: str) -> bool:
+    """Whether `weekly_schedule`'s own number is the final word for this macro.
+
+    Two independent ways to say so, deliberately different in lifetime.
+    `target_modes` is the standing setting in profile.json — "protein is a
+    number I choose" — and covers the whole week. `target_locks` is per-day
+    and injected at runtime by `PlannerState.planning_config`, marking the
+    values a review-dialog override just typed; it never reaches disk. Either
+    is enough, because both mean the same thing to the arithmetic: somebody
+    stated this number on purpose.
+
+    Read by the two functions that would otherwise each decide it their own
+    way — `apply_training_adjustments`, which must not grow a stated number
+    by a workout's share, and `hydrate_dynamic_targets`, which must not
+    replace it with a computed one. A second copy of this rule would let the
+    two disagree about whose number a day is aiming at, which shows up as a
+    target that moves when you toggle who owns it.
+    """
+    if macro in ((config.get("target_locks") or {}).get(day) or ()):
+        return True
+    modes = config.get("target_modes") or {}
+    return (modes.get(macro) or TARGET_MODE_AUTO) == TARGET_MODE_MANUAL
+
+
+class TargetModes(BaseModel):
+    """Which source each switchable macro target is read from.
+
+    `hydrate_dynamic_targets` used to overwrite every day's calories, protein
+    and fat unconditionally, which made `weekly_schedule`'s stated numbers
+    dead weight the moment a weigh-in existed — and, worse, silently
+    discarded a deliberate override typed into the review dialog, since
+    nothing downstream could tell an edited value apart from a stale file
+    one. This is the missing statement of intent: `auto` means the engine
+    computes it and the file's number is ignored, `manual` means the file's
+    number is the target and the engine leaves it alone.
+
+    Defaults are `auto` for both, which is exactly the behaviour before this
+    existed — so a config predating it plans identically, and the flag only
+    ever changes a week somebody deliberately switched.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    calories: Literal["auto", "manual"] = TARGET_MODE_AUTO
+    protein_g: Literal["auto", "manual"] = TARGET_MODE_AUTO
+
+
 class UserProfile(BaseModel):
     """config.json's "user_profile" object: the person the week is planned for.
 
@@ -1198,6 +1258,9 @@ class AppConfig(BaseModel):
     week_start_day: str = "Monday"
     meal_types: List[str] = Field(default_factory=lambda: list(DEFAULT_MEAL_TYPES))
     user_profile: UserProfile = Field(default_factory=UserProfile)
+    # Which of `weekly_schedule`'s numbers are live and which are ignored in
+    # favour of the engine's — see `TargetModes` and `hydrate_dynamic_targets`.
+    target_modes: TargetModes = Field(default_factory=TargetModes)
     weekly_schedule: Dict[str, DaySchedule]
     week_defaults: Dict[str, str] = Field(default_factory=dict)
     meal_styles: Dict[str, Dict[str, str]] = Field(default_factory=dict)
@@ -1494,6 +1557,15 @@ def apply_training_adjustments(config: dict) -> dict:
         day_targets = schedule[day]
         day_uplift = uplift.setdefault(day, {})
         for key, amount in added.items():
+            # A stated target is the day's final number, so a workout does
+            # not grow it — see `target_is_stated`. Recording the uplift it
+            # didn't apply would be worse than not recording it: hydration
+            # replays this record onto the engine's base, and the review
+            # dialog draws it as the amber segment of the day's bar, so a
+            # figure nothing added would show up as calories the day does
+            # not have.
+            if target_is_stated(config, day, key):
+                continue
             day_targets[key] = day_targets.get(key, 0) + amount
             # Accumulated, not assigned: two sessions on one day each expand it.
             day_uplift[key] = day_uplift.get(key, 0.0) + amount
@@ -1650,6 +1722,7 @@ def hydrate_dynamic_targets(
     latest_biometrics: Optional[dict],
     note_callback=None,
     biometrics: Optional[dict] = None,
+    log: bool = True,
 ) -> dict:
     """Recompute every `weekly_schedule` day from the body, not the file.
 
@@ -1706,6 +1779,23 @@ def hydrate_dynamic_targets(
     therefore the same number every day of the week, where the file had it
     drifting between 110 and 120 by day and a training day pushed it to 188.
 
+    **Which numbers it is allowed to replace is a setting, not a given.**
+    `config["target_modes"]` (profile.json, see `TargetModes`) marks a
+    switchable macro `auto` or `manual` for the whole week, and
+    `config["target_locks"]` — injected per-day at runtime by
+    `PlannerState.planning_config`, never written to disk — marks the values
+    a review-dialog override just typed. A macro that is manual by either
+    route is taken verbatim off `weekly_schedule` and the engine is not
+    consulted for it. Before this existed the overwrite was unconditional,
+    which made every override of calories or protein a silent no-op: the UI
+    accepted the number, the bar moved, and generation planned the computed
+    figure anyway.
+
+    `log=False` suppresses the summary and fallback log lines. The UI's
+    `planning_config()` hydrates on *every* repaint to keep the telemetry
+    header honest, and a per-keystroke "dynamic targets: ..." line would
+    bury the per-call generation timing this log exists for.
+
     Falls back to the file's numbers, with a warning, when the engine can't
     compute — no weigh-in and no `current_weight_kg`, or a Mifflin profile
     with no `birth_date`. That is not the "substitute a plausible body" the
@@ -1737,26 +1827,65 @@ def hydrate_dynamic_targets(
         )
 
     schedule: Dict[str, dict] = {}
+    modes = config.get("target_modes") or {}
+
+    def is_manual(day: str, macro: str) -> bool:
+        return target_is_stated(config, day, macro)
+
+    # The engine is consulted only for macros something actually reads off
+    # it. A week with every switchable macro manual is planned entirely from
+    # `weekly_schedule`, and computing a BMR to then discard is what would
+    # make a checkout with no weigh-in warn about targets nobody is using.
+    needs_engine = any(
+        not is_manual(day, macro)
+        for day in config["weekly_schedule"]
+        for macro in TARGET_MODE_MACROS
+    )
+
     # BMR, TDEE, the adaptive reconciliation, the deficit ramp and the locked
     # protein figure depend on the body and the adaptive estimate, never on
     # the day — only net_carbs_g (and the fat_g it derives) varies per day.
     # Computed once rather than once per weekday so `basis` is a single value
     # rather than whatever the loop's last iteration happened to leave behind.
-    try:
-        base = calculate_macro_targets(
-            profile, latest_biometrics, adaptive_tdee=adaptive_tdee
-        )
-    except (ValueError, TypeError) as exc:
-        message = short_error(exc)
-        logger.warning("dynamic targets unavailable, using config.json targets — %s", message)
-        if note_callback:
-            note_callback(f"Using config.json targets — {message}")
-        return config
-    basis = base["basis"]
+    base = None
+    basis = None
+    if needs_engine:
+        try:
+            base = calculate_macro_targets(
+                profile, latest_biometrics, adaptive_tdee=adaptive_tdee
+            )
+        except (ValueError, TypeError) as exc:
+            message = short_error(exc)
+            if log:
+                logger.warning(
+                    "dynamic targets unavailable, using config.json targets — %s", message
+                )
+            if note_callback:
+                note_callback(f"Using config.json targets — {message}")
+            return config
+        basis = base["basis"]
     try:
         for day, day_targets in config["weekly_schedule"].items():
-            calories = base["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
-            protein_g = base["protein_g"]
+            # A stated figure is taken exactly as it stands.
+            # `apply_training_adjustments` has already declined to grow it by
+            # the workout's share (`target_is_stated`), so there is nothing
+            # to unwind here — which is also what makes this idempotent, and
+            # it has to be: the UI hydrates once for its own live preview and
+            # generation hydrates that same config again. Subtracting an
+            # uplift instead was correct exactly once and wrong on the second
+            # pass, taking a 2200 kcal override down to 1850.
+            #
+            # The `auto` branch replays the uplift onto the engine's base,
+            # because there the figure it was added to has just been thrown
+            # away.
+            if is_manual(day, "calories"):
+                calories = float(day_targets["calories"])
+            else:
+                calories = base["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
+            if is_manual(day, "protein_g"):
+                protein_g = float(day_targets["protein_g"])
+            else:
+                protein_g = base["protein_g"]
             day_carbs = day_targets.get("net_carbs_g")
             net_carbs_g = round(
                 DEFAULT_NET_CARBS_G if day_carbs is None else day_carbs, 1
@@ -1785,7 +1914,10 @@ def hydrate_dynamic_targets(
         # because they differ only in the carb figure the failure never
         # reaches. Same reasoning as checking the API key up front.
         message = short_error(exc)
-        logger.warning("dynamic targets unavailable, using config.json targets — %s", message)
+        if log:
+            logger.warning(
+                "dynamic targets unavailable, using config.json targets — %s", message
+            )
         if note_callback:
             note_callback(f"Using config.json targets — {message}")
         return config
@@ -1798,15 +1930,32 @@ def hydrate_dynamic_targets(
         # not a failure, so hand back what we were given.
         return config
 
-    logger.info(
-        "dynamic targets: %s kcal/day base, %.0fg protein (BMR %.0f by %s, TDEE %.0f "
-        "from %s, deficit %.0f, weight %.1fkg -> %.1fkg)",
-        sorted({entry["calories"] for entry in schedule.values()}),
-        schedule[next(iter(schedule))]["protein_g"],
-        basis["bmr"], basis["bmr_method"], basis["tdee"], basis["tdee_source"],
-        basis["deficit_kcal"], basis["current_weight_kg"], basis["target_weight_kg"],
-    )
-    if basis["tdee_source"] == "formula_adaptive_rejected":
+    if basis is None:
+        # Every switchable macro is manual, so nothing was computed and there
+        # is no basis to report. The week is still hydrated — fat is derived
+        # and the training pins were rebuilt — it just came entirely from
+        # `weekly_schedule`, which is what the setting asked for.
+        if log:
+            logger.info(
+                "targets from config.json: every switchable macro is manual "
+                "(%s kcal/day, %.0fg protein)",
+                sorted({entry["calories"] for entry in schedule.values()}),
+                schedule[next(iter(schedule))]["protein_g"],
+            )
+        if note_callback:
+            note_callback("Targets read from config.json — calories and protein set to manual")
+        return dict(config, weekly_schedule=schedule)
+
+    if log:
+        logger.info(
+            "dynamic targets: %s kcal/day base, %.0fg protein (BMR %.0f by %s, TDEE %.0f "
+            "from %s, deficit %.0f, weight %.1fkg -> %.1fkg)",
+            sorted({entry["calories"] for entry in schedule.values()}),
+            schedule[next(iter(schedule))]["protein_g"],
+            basis["bmr"], basis["bmr_method"], basis["tdee"], basis["tdee_source"],
+            basis["deficit_kcal"], basis["current_weight_kg"], basis["target_weight_kg"],
+        )
+    if log and basis["tdee_source"] == "formula_adaptive_rejected":
         logger.warning(
             "measured TDEE of %.0f kcal is more than %.0f%% from the formula's %.0f — "
             "ignoring it and planning on the formula. Usually under-logged intake or "
@@ -1820,12 +1969,33 @@ def hydrate_dynamic_targets(
             "adaptive": "measured from intake + weight trend",
             "formula_adaptive_rejected": "formula; measured figure looked wrong",
         }.get(basis["tdee_source"], "formula")
-        note_callback(
-            f"Targets from biometrics: TDEE {basis['tdee']:.0f} kcal ({source}) - "
-            f"{basis['deficit_kcal']:.0f} deficit, protein locked at "
-            f"{schedule[next(iter(schedule))]['protein_g']:.0f}g "
-            f"({basis['target_weight_kg']:.0f}kg x {profile.get('protein_multiplier') or 1.8})"
-        )
+        # Named per macro rather than as one blanket "targets from
+        # biometrics". Once a macro can be manual, that sentence is a claim
+        # about where a number came from, and the run's own note is the worst
+        # place for it to be wrong — a manual protein figure reported as
+        # "locked at 144g (80kg x 1.8)" describes arithmetic that did not
+        # happen. `modes` alone here, not `is_manual`: a per-day review
+        # override is a handful of days, where the mode is the whole week.
+        manual = [
+            macro for macro in TARGET_MODE_MACROS
+            if (modes.get(macro) or TARGET_MODE_AUTO) == TARGET_MODE_MANUAL
+        ]
+        parts = [
+            f"TDEE {basis['tdee']:.0f} kcal ({source}) - {basis['deficit_kcal']:.0f} deficit"
+            if "calories" not in manual
+            else "calories manual, from config.json"
+        ]
+        if "protein_g" in manual:
+            parts.append(
+                f"protein manual at "
+                f"{schedule[next(iter(schedule))]['protein_g']:.0f}g"
+            )
+        else:
+            parts.append(
+                f"protein locked at {schedule[next(iter(schedule))]['protein_g']:.0f}g "
+                f"({basis['target_weight_kg']:.0f}kg x {profile.get('protein_multiplier') or 1.8})"
+            )
+        note_callback("Targets: " + ", ".join(parts))
     # `dynamic_basis` is diagnostic only — nothing plans off it. It rides on
     # the config so a log line or a future UI readout can say *why* the week
     # is aiming where it is, which two runs a fortnight apart will disagree on.
@@ -3113,6 +3283,44 @@ def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
     if session.candidate_slot_ids:
         return event.slot_id in session.candidate_slot_ids
     return bool(event.recipe.long_oven_cook or event.recipe.bulk_prep_friendly)
+
+
+def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
+    """Slot ids this run cooks on prep day rather than on their own grid day.
+
+    The generation-side answer to the question `is_prepped_ahead` answers
+    afterwards, and it has to be a different lookup for a plain ordering
+    reason: `generate_sunday_prep_session` runs *after* every cook event is
+    built, so `candidate_slot_ids` does not exist yet when `build_cook_event`
+    needs to know how old the food will be. The anchors do — they were chosen
+    by `ui_generation.apply_batch_selections` and merged into `config` before
+    the first call — and they are the same two slots the session goes on to
+    stamp.
+
+    Empty for a CLI run, whose legacy `enable_sunday_prep` path names no
+    anchor in advance (`BATCH_ROAST_RULE` lets the model pick its own day),
+    so those weeks count spans exactly as they always have.
+    """
+    config = config or {}
+    return {
+        value
+        for value in (config.get("long_cook_anchor"), config.get("bulk_prep_anchor"))
+        if value
+    }
+
+
+def is_prepped_ahead(event: CookEvent, week_plan: WeekPlan) -> bool:
+    """Whether `event`'s food came out of the pan on prep day, not on its slot's day.
+
+    Narrower than `is_sunday_prepped`, and the gap is the shake: it rides
+    along in the same session (`find_shake_candidate`) but is only
+    *portioned* ahead — each training morning genuinely blends it fresh, so
+    its food is exactly as old as its own day says. Only the two batch
+    anchors are cooked ahead, and they are a lunch (`bulk_prep_anchor`) and a
+    dinner (`long_cook_anchor`) while the shake is always a breakfast, which
+    is what lets one meal_type test tell them apart.
+    """
+    return event.meal_type != "breakfast" and is_sunday_prepped(event, week_plan)
 
 
 def weeknight_prep_minutes(event: CookEvent, week_plan: WeekPlan) -> int:
@@ -4723,9 +4931,17 @@ def build_cook_event(
     """
     claim_ids = claims.get(slot.id, [slot.id])
     last_day_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claim_ids)
+    # Counted from the day the food is actually cooked, which for a batch-prep
+    # anchor is prep day rather than its own slot's day (`week.PREP_DAY_INDEX`).
+    # Every anchor is day 0, so measuring from the slot was short by exactly
+    # one on every prep batch — and the maximum-span one then reported
+    # `fridge_safe_days - 1`, compared it against `fridge_safe_days`, and told
+    # you to refrigerate the single batch in the week that is sitting at the
+    # limit and is the whole reason `storage_note`'s freeze branch exists.
+    cook_index = cook_day_index(spec, slot.day, slot.id in prep_day_batch_slot_ids(config))
     scaled = recipe.scale_to_servings(
         portions[slot.id],
-        keeps_for_days=last_day_index - spec.day_index(slot.day),
+        keeps_for_days=last_day_index - cook_index,
         config=config,
     )
     return CookEvent(

@@ -96,6 +96,59 @@ architecture review as having no data source whatsoever — would need a new
 logging entry point of its own, a separate product decision from either 5b
 or 5c above.
 
+## 5d — Readiness: sleep, HRV and a morning check-in
+
+**The gap, and it isn't a bug.** `GarminSyncService.fetch_readiness`
+(`src/integrations/sync_service.py`) already fetches a sleep score, sleep
+hours and a bucketed readiness word on every sync — but `sync_garmin`'s own
+docstring says plainly: "The weigh-in is the only part that becomes a stored
+row... cardio and readiness are returned for the caller to print." Nothing in
+`LocalJSONRepository` ever writes it to `biometrics.json`; the CLI's `main()`
+is the only consumer, and it only prints it to stdout at sync time. So
+"sleep data downloaded previously" not showing up anywhere is exactly
+correct — it was never kept anywhere to show up. HRV is a step further
+behind: `fetch_readiness`'s own docstring says HRV "is not returned at all,"
+deliberately, on the reasoning that it's the metric most likely to be
+mistaken for a recovery-cost number — the same caution CLAUDE.md's Biometric
+sync section gives for why sleep/HRV never reach an energy equation.
+
+A Fenix is a real HRV-capable watch, which is what makes this worth doing now
+rather than leaving it as a footnote.
+
+**Why this isn't just plumbing — two decisions belong to the maintainer:**
+
+1. **Where it's stored, and it should not be the weigh-in row.** `weigh_ins`
+   is merged by `save_biometric_entry` on `date`, and CLAUDE.md's own
+   biometric-sync section already draws this exact line for
+   `daily_actuals`/`weigh_ins`: two different signals writing the same key
+   silently overwrite each other with no way to tell which won. Readiness is
+   a third, distinct signal — a scale and a watch can both report for the
+   same date — so it likely wants its own list (`readiness_log`, say: `date`,
+   `sleep_score`, `sleep_hours`, `hrv_ms`, `readiness_label`), upserted by
+   date the same way `weigh_ins`/`daily_actuals` already are, not folded into
+   either.
+2. **What a "morning check-in" actually does.** A read-only readiness figure
+   surfaced somewhere (the Today tab, or a Settings/workout page — see
+   `ui-redesign.md`'s 6e) is one product; a check-in that *adjusts*
+   something — softening a training uplift on a low-readiness morning, say —
+   is a materially bigger one, and would touch `apply_training_adjustments`,
+   which nothing in `nutrition_engine.py` does today on this signal. Settle
+   the first before considering the second: CLAUDE.md is explicit that
+   sleep/HRV are "readiness, not energy," and a feature that quietly turns a
+   readiness score into a calorie adjustment is exactly the conflation that
+   line exists to prevent.
+
+**Order, if built:** extend `fetch_readiness` to also pull HRV — check what
+the installed garminconnect version actually calls the endpoint before
+assuming it matches any example online; CLAUDE.md's note to check
+`inspect.signature` when `instructor` changes shape between versions applies
+here too, since garminconnect's own API already changed shape once between
+0.2.8 and 0.3.x. Add the storage list and its repository methods before any
+UI — the write path is the real design question, the same order this file's
+5b already recommends for its own new schema. The read surface can then be
+as small as a row on the readiness/workout Settings page from
+`ui-redesign.md`'s 6e, deferring "does this change a target" entirely.
+
 ## Rejection-list decay
 
 **The gap:** rejection capture (phase 4 of `ui-redesign.md`; see CLAUDE.md's

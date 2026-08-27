@@ -2139,10 +2139,10 @@
       "long_oven_cook": false,
       "bulk_prep_friendly": false
     },
-    "is_favorite": true,
+    "is_favorite": false,
     "source": "imported",
     "added_at": "2026-08-23T07:25:30+00:00",
-    "updated_at": "2026-08-23T07:25:30+00:00"
+    "updated_at": "2026-08-26T11:06:04+00:00"
   },
   {
     "id": "58587a0812fd46e7952166c523c0d5f4",
@@ -11873,10 +11873,10 @@
       "long_oven_cook": false,
       "bulk_prep_friendly": false
     },
-    "is_favorite": true,
+    "is_favorite": false,
     "source": "imported",
     "added_at": "2026-08-25T04:12:14+00:00",
-    "updated_at": "2026-08-25T04:12:14+00:00"
+    "updated_at": "2026-08-26T11:05:18+00:00"
   },
   {
     "id": "43f538e36c4047dd8eebc0efe0f55a64",
