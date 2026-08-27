@@ -93,7 +93,7 @@ The five core files, listed in `CONFIG_FILES`:
 
 | file | holds |
 |---|---|
-| `profile.json` | the body and the numbers aimed at it — `user_profile`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
+| `profile.json` | the body and the numbers aimed at it — `user_profile`, `target_modes`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
 | `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `diet_styles`, `week_defaults` |
 | `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` |
 | `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below) |
@@ -189,12 +189,17 @@ desktop UI: a header of 7 per-day macro bars, a persistent staged-changes bar
 beneath it, and a slim vertical rail choosing one of five destinations — Plan
 (the week grid), Today, Library, Insights, Settings — each owning the full
 canvas below the bar (see "Module layout" and "Five destinations, one rail"
-below). The Plan destination's canvas and the header's telemetry row are both
-`grid-cols-[repeat(8,minmax(110px,1fr))]` (`ui_theme.WEEK_GRID_COLS`) — an
-indigo Sunday-prep column sits at index 0, ahead of the seven days — so a
+below). The rail also carries **every control the app has** — see "The rail's
+action block" below; phase 6b of `ui-redesign.md` collected them there out of
+`ui.header()` and the Plan panel, so a destination reports and the rail acts. The Plan destination's canvas and the header's telemetry row are both
+`grid-cols-[minmax(80px,auto)_repeat(8,minmax(110px,1fr))]`
+(`ui_theme.WEEK_GRID_COLS`) — a meal-type gutter at index 0 (real content only
+in the canvas, see "Real grid rows and a meal-type gutter" below; an empty
+spacer cell in the header, purely to keep the two grids' tracks in step),
+then an indigo Sunday-prep column at index 1, ahead of the seven days — so a
 day's telemetry stays directly above its meals, at rest and while scrolled.
 The 110px floor is what makes "while scrolled" possible at all: a viewport
-too narrow for eight such columns needs to scroll, but the header
+too narrow for nine such columns needs to scroll, but the header
 (`position: fixed`, so it stays visible while the canvas scrolls vertically
 beneath it) and the canvas (in the page container below it) can never be the
 same physical scroll parent. Each gets its own `overflow-x: auto` wrapper
@@ -203,6 +208,42 @@ instead — `ui_theme.week_grid_scroll()`, two call sites sharing one class,
 (`WEEK_GRID_SCROLL_SYNC_JS`) mirrors `scrollLeft` between them entirely
 client-side, the same reasoning `chain_css` already gives for staying out of
 Python on a per-frame effect. Phase 2a of `ui-redesign.md`.
+
+**"Directly above its meals" is not free, and stopped being true for a
+while.** Phase 2a could take it for granted — header and canvas both sat
+`px-3` in from the same full-width page — but phase 3 put the rail to the
+left of the destination panels, and only the canvas is inside one. Measured
+at 1440px before phase 6a fixed it: the header's grid started at x=12 with
+159px day columns, the canvas's at x=192 with 135px ones, so every day's
+telemetry sat above its *neighbour's* meals and the two drifted further
+apart with every column. The header's call is now
+`week_grid_scroll(inset=True)`, which applies
+`ui_theme.WEEK_GRID_HEADER_INSET_STYLE` — a left margin of the rail's width
+plus the destination panel's own padding, and an explicit
+`width: calc(100% - ...)` rather than a stretched `w-auto`, because Quasar's
+`.flex` makes the header a *wrapping* column flex container and those size a
+stretched child to the widest item's max-content, which for this grid is all
+nine columns at their 110px floor. The rail is pinned to
+`ui_theme.RAIL_WIDTH_CLASS` for the same reason: `ui.tabs()` sizes a vertical
+rail to its widest tab, and the Daily View tab's label is whichever day is
+being browsed, so an intrinsic width slid the whole canvas sideways as you
+stepped through the week. Both wrappers now measure the same left edge, the
+same width and the same column tracks — which is also what makes the scroll
+sync mean anything: at 1000px the header's wrapper was 1024px wide with
+nothing to overflow while the canvas scrolled beneath it, so mirroring
+`scrollLeft` moved one grid out from under the other.
+
+**A day is named once, and the name carries its date.** Phase 6a. The
+telemetry header's day cell is the only place a day's identity is printed —
+`format_day_label(day, state.day_date_iso(day), short=True).upper()`, so a
+cell reads "MON 24 AUG", or "MON" for a plan generated before
+`week_start_date` existed (the same tolerance the Today tab's picker relies
+on). `ui_cards.canvas()`'s swim-lane header row underneath keeps only what is
+its own — the day-regenerate icon and the day's 1-indexed position — because
+a second copy of the name was repetition rather than hierarchy, the same
+diagnosis phase 1 made about font sizes one level up. It is the alignment
+above that earns this: the identity has to genuinely be overhead at every
+viewport width before the column beneath it can stop repeating it.
 
 **Phase 2a's fix targeted a problem phase 3 later made structurally
 impossible to reintroduce.** The left drawer that existed before phase 3
@@ -217,6 +258,117 @@ fixed-width, always-visible flex sibling of the destination panels, not a
 `QDrawer`, so there is no open/close event left to reflow anything.
 Cook/leftover/skip/not-generated are four distinct card treatments
 (`STATUS_STYLES`).
+
+**Real grid rows and a meal-type gutter.** Phase 2b of `ui-redesign.md`.
+Before this, `ui_cards.canvas()` laid each day out as its own `flex flex-col`
+of four cards — nothing shared a row, so a card with a long title or a link
+line made its whole column taller with no effect on the next day's same meal
+type, and same-row cards lined up by luck rather than by structure.
+`canvas()` is now a genuine CSS grid: every cell — a day's header, and each
+of its meal-type cards — is placed by explicit `grid-column`/`grid-row`
+rather than document order, so cells assigned the same row genuinely share
+one (the browser sizes the row to its tallest cell), and `items-start` on
+the grid keeps every shorter cell flush to that row's top rather than
+stretching to fill it. Column 1 is the meal-type gutter — `position: sticky;
+left: 0`, so it stays in view while `week_grid_scroll()`'s `overflow-x: auto`
+wrapper scrolls the rest of the grid beneath it, with an opaque background
+so a scrolled-under card can't show through — column 2 is the prep-day
+column (`grid-row: 1 / span N`, spanning the header row plus every meal-type
+row, since prep work isn't split by meal type), and columns 3.. are the
+seven days. The per-card meal-type label (`meal_card` printing
+`meal_type[:5].upper()` on all 28 cards) is gone; the gutter says it once
+per row instead.
+
+**The prep column's spanning cell holds no in-flow content, and that empty
+wrapper is load-bearing.** A grid item spanning N auto-sized rows still has
+to fit, and auto rows size to their items' *max-content*, so the prep
+column's natural height (its "Batching for" box plus one `ui.expansion` per
+prep phase — measured at ~1420px against ~750px of actual cards) was
+inflating all five rows proportionally: ~640px of dead space between a
+single day's four cards, which is what the shared-row restructure looked
+like it had caused and hadn't. `overflow-y: auto` on the cell does **not**
+fix this, and is the obvious thing to reach for — it zeroes an item's
+automatic *minimum* size, a different quantity from the max-content
+contribution auto rows actually use, and measured no change at all. The fix
+is to take the content out of flow: the spanning cell is
+`relative self-stretch` and empty, and the timeline lives in an
+`absolute inset-0 overflow-y-auto` child, so the column contributes a real
+zero to row sizing, the rows size off the day cards alone, and the timeline
+scrolls inside whatever height they come to. `self-stretch` is the other
+half — the grid sets `items-start`, so without it the cell would sit at zero
+height with nothing for `inset-0` to fill.
+
+**That `overflow-y: auto` could never actually fire, and phase 6c is what
+found out.** The out-of-flow child is `flex flex-col`, and Quasar's own
+`.flex` sets `flex-wrap: wrap` — which Tailwind's `flex-col` does not undo,
+the standing trap in `.claude/rules/ui.md` in its column-direction form. A
+*wrapping* column flex container whose content outgrows its box does not
+overflow; it starts a **second column beside the first**. Measured at 1440px
+once 6c's batching cards added height: the last prep phase laid itself out
+at x=423, which is the Monday day column, 143px clear of this cell's own
+135px track and on top of Monday's cards — and `absolute` positioning is
+what made that invisible rather than merely wrong, since nothing reflows to
+reveal it. `flex-nowrap` on that child is the fix, and it is what makes the
+`overflow-y: auto` beside it mean anything for the first time. The same trap
+has a second form one level down, on each batching card's own `flex flex-col`
+— see `prep_candidate_card`, where a stretched child sized to the widest
+sibling's max-content rather than the card's width, so the eyebrow's
+`truncate` never engaged. Both wanted `flex-nowrap`; neither is decoration.
+
+**The dishes in it are cards, not captions** (phase 6c of `ui-redesign.md`).
+The column used to render `session.meals_included` — the model's own prose
+list of what it batched — as plain `ui.label` bullets, which read as
+"batch-cooked meals can't be swapped or regenerated". They always could: each
+one is an ordinary `MODE_COOK` slot with a real recipe, the two anchors on
+day 1 and the shake candidate on its own training morning, and their cards in
+the weekly grid have carried the full icon row all along. The column was just
+the one place you could not act on any of it, or even open a recipe to check
+it, without scrolling right to find day 1. Each dish is now a card carrying
+`open_detail` on its body and the same `open_swap_modal`/
+`generation.regenerate_meal` icons as a sibling row above it — no new
+capability, no new dialog, and no new handles: `prep_day_column` is a closure
+inside `build_cards` and was already holding every one of them.
+
+Two things about how it resolves them:
+
+- **It reads `candidate_slot_ids`, never `meals_included`.** The slot ids are
+  what Python actually folded into the session — `generate_sunday_prep_session`
+  stamps them onto the response after the call precisely so nothing downstream
+  has to trust the model's self-report (see "Batch cooking on purpose") — and
+  they are also the only handle a click can act on. It has a second effect
+  worth knowing: a dish whose slot has since been swapped shows its *current*
+  recipe here, where the frozen string list would still be naming the one it
+  replaced.
+- **A session with no resolvable ids falls back to the old inert list.** An
+  empty `candidate_slot_ids` (a session saved before that field existed) or
+  ids that no longer resolve against `state.slot_views()` render exactly as
+  they did before 6c — the same pre-migration tolerance `is_sunday_prepped`
+  already extends to this identical field, rather than a column that silently
+  stops saying what it batches.
+
+The regenerate icon here says what it costs, because from this column the
+cost *is* this column: `regenerate_single_meal` drops `sunday_prep_session`
+outright whenever the slot it re-cooks was a prep candidate ("drop rather
+than risk a stale plan"), so clicking it empties the timeline until the week
+is generated again. That is existing, deliberate behaviour — the tooltip
+names it rather than letting the column vanish unexplained.
+
+Shipped alongside a real, pre-existing bug this phase's own acceptance
+criteria exposed rather than introduced: `ui_plan.panel()`'s own wrapper
+`div` had no `min-w-0`. Its parent, Quasar's `.q-tab-panel`, is a flex
+container, and a flex item's default `min-width: auto` refuses to shrink
+below its content's natural width — so the panel wrapper always grew to the
+grid's full min-content width regardless of viewport, `week_grid_scroll()`'s
+own `overflow-x: auto` on the canvas never actually had anything to overflow,
+and a *different*, outer Quasar ancestor (`.q-panel.scroll`) silently scrolled
+the whole panel — summary stats and all — instead. Harmless before this phase
+(nothing inside the canvas needed to stay put while the rest scrolled), but
+it would have made the gutter's `sticky` a dead letter: sticky positions
+against the nearest scrolling ancestor, which was never the one actually
+overflowing. Fixed by adding `w-full min-w-0` to that one wrapper — the same
+combination, and the same underlying flex/grid min-size trap, `.claude/rules/ui.md`'s
+NiceGUI-traps list and this file's own phase-1 `meal_card` writeup below both
+already document.
 
 #### The type, spacing and radius scale
 
@@ -279,12 +431,13 @@ width on every one of 28 cards to repeat the border's answer.
 `ui_app.py` used to be the whole UI — every widget a closure inside one
 ~3,200-line page function. It is now an ~300-line **page shell**: it builds
 a `UIContext` (`state`, the repository, a `Refreshables` registry), calls
-each concern's `build_*(ctx)` factory, lays out the header and the
-staged-changes bar (the two regions with no natural module of their own —
-the header because it's shared chrome above every destination, the bar
-because it needs two other modules already built), lays out the rail and its
-five destination panels, and registers every returned refreshable into one
-topic map. The concerns:
+each concern's `build_*(ctx)` factory, lays out the header, the
+staged-changes bar and the rail's action block (the three regions with no
+natural module of their own — the header because it's shared chrome above
+every destination, the bar because it needs two other modules already built,
+the action block because it needs handles from four), lays out the rail and
+its five destination panels, and registers every returned refreshable into
+one topic map. The concerns:
 
 | module | owns |
 |---|---|
@@ -292,31 +445,82 @@ topic map. The concerns:
 | `ui_state.py` | `PlannerState`, `SlotView` — the view model, unchanged in substance from before the split |
 | `ui_context.py` | `Refreshables` (the topic registry, see below) and `UIContext` |
 | `ui_catalog.py` | favorites helpers shared by `ui_cards` and `ui_catalog_browser` (`is_favorited`, `toggle_favorite`, `build_rename_dialog`, ...) |
-| `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `reload_from_disk`, plus the progress dialog and the rejection-capture prompt (see "Rejection capture" below) |
+| `ui_generation.py` | everything that writes `week_plan.json`: `run_generation`, `regenerate_day`, `regenerate_meal`, `save_grid`, `reload_from_disk`, plus the progress dialog and the rejection-capture prompt (see "Rejection capture" below) |
 | `ui_cards.py` | the meal cards, recipe detail and swap-with-favorite dialogs, and the canvas the Plan destination wraps |
-| `ui_telemetry.py` | the header's week banner and macro bars |
+| `ui_telemetry.py` | the header's week banner (week dates, plant count, the week's shape) and macro bars |
 | `ui_shopping.py` | the right-hand shopping slide-over |
 | `ui_review.py` | the review dialog — every input to the *next* generation: cuisine, diet style, bulk-prep/long-cook, people per meal, daily targets (the target curve, see below), training schedule, pantry (see "The review dialog and the staged-changes bar" below) |
 | `ui_staged_bar.py` | the persistent pending-changes strip between the header and the rail |
 | `ui_inspector.py` | the day inspector — a floating, read-mostly panel for one day, opened from its telemetry column (see "The day inspector" below) |
-| `ui_plan.py` | the Plan destination — the "This week" stat block plus `ui_cards`' canvas |
+| `ui_plan.py` | the Plan destination — `ui_cards`' canvas, plus the generation-failure list above it |
 | `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below); its day-rendering helpers are module-level so `ui_inspector.py` reuses them |
 | `ui_catalog_browser.py` | the Library destination — the recipe catalog, its filters, and recipe import |
 | `ui_insights.py` | the Insights destination — a stub honest-empty-state, see `future-ideas.md`'s 5c |
-| `ui_settings.py` | the Settings destination — week start, shopping days, model, and an integrations status list |
+| `ui_settings.py` | the Settings destination — week start, shopping days, model, the Daily Targets source panel (see below), and an integrations list whose rows open three read-only detail dialogs |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
 (and, for `ui_shopping`, the drawer element) other modules or the shell
 need — `ui_cards.build_cards`, for instance, needs `ui_generation`'s
 handles passed in, because a card's regenerate icon calls into it. This is
 why build order matters in `planner_page()`: `ui_generation` before
-`ui_review` (its Generate button starts a run), `ui_review` and `ui_cards`
-before `ui_plan` (the Plan destination's own Generate button opens the
-review dialog; its canvas is `ui_cards`' own), `ui_cards` and `ui_review`
+`ui_review` (its Generate button starts a run), `ui_cards`
+before `ui_plan` (the Plan destination's canvas is `ui_cards`' own —
+`ui_plan` stopped needing `ui_review` when phase 6b moved the Generate
+button to the rail), `ui_cards` and `ui_review`
 before `ui_inspector` (its slot cards open `ui_cards`' recipe detail dialog,
 its "Edit targets" link opens `ui_review`'s), `ui_inspector` before
 `ui_telemetry` (the header's day cell wires the click that opens it),
+`ui_review` and `ui_shopping` before the rail's action block (its Generate
+opens the review dialog, its Shopping button toggles the drawer),
 everything before the refresh-topic registration at the bottom.
+
+#### The rail's action block
+
+Phase 6b of `ui-redesign.md`. Five buttons — Generate, Shopping, Shuffle
+styles, PDF menu, Mobile page — sitting in the rail between the Plan/Daily
+View tabs and the Library/Insights/Settings ones. **The five destinations
+answer "what am I looking at"; these answer "what do I want to do", and
+nothing else on the page is clickable chrome** except the header's week
+selector (which changes scope, not state) and the staged-changes bar. They
+came out of two places: Generate and "Shuffle styles" from the Plan
+destination's own header row, and the print/mobile/shopping buttons from
+`ui.header()`, where they were competing for the same fixed strip of pixels
+the day columns need. The `model: <id>` readout that sat beside them was
+deleted rather than moved — the select is in Settings and the progress
+dialog names the model mid-run, so the header's copy was a third.
+
+Two things about it are load-bearing:
+
+- **They are ordinary children of `ui.tabs()`, not a second tab strip.**
+  Quasar's QTabs puts its default slot in a flex `.q-tabs__content` (a
+  column, in `vertical` mode) and only registers real QTab children with its
+  model, so a plain `div` sits in the flow without joining the selection —
+  which is what lets the block sit *between* the two groups of tabs with no
+  second `ui.tabs()` element and therefore no second `ui.tab_panels` value
+  to keep in sync with the first. Clicking an action leaves the selected
+  destination alone.
+- **`RAIL_WIDTH_PX` bounds every button in it.** The header's copy of the
+  week grid is inset by exactly that many pixels
+  (`WEEK_GRID_HEADER_INSET_STYLE`) so each day's telemetry sits over its own
+  meals, so a button wide enough to grow the rail slides all seven days off
+  their columns. Hence `TEXT_MICRO`, `align=left` and `w-full` on all five,
+  and "Shopping (108)" rather than the header's old "Shopping list (108
+  items)". Anything added here has to be measured, not assumed to fit.
+
+**The Plan destination's "This week" stat block moved in the other
+direction**, into `ui_telemetry.week_banner` beside the week dates and the
+plant-diversity count: cook sessions, days cooking, portions and shopping
+trips are *readings* of the week, the same kind of thing as the two pills
+already there, and one reporting strip beats a second header inside the
+destination it describes. It reads `state.spec` rather than `week_plan`, so
+an un-generated week still previews its shape exactly as the Plan row did.
+The consequence for refresh topics: `week_banner` is registered on
+`"shopping_days"` as well as `"plan"`, because the trip count is a partition
+of the week by `state.shop_days` — that topic used to reach the Plan row
+this content came from, for the identical reason. What is left in `ui_plan`
+is the generation-failure list, which is neither a control nor a reading of
+the week but an error banner for *this* grid, naming the slots whose cards
+below are the red NOT GENERATED ones.
 
 The presentation contract — the type/spacing/radius scales, which colours are
 structural vs. semantic vs. categorical, and the NiceGUI traps that have each
@@ -342,17 +546,21 @@ via plain `python src/ui_app.py`, per this file's `sys.path[0]` note under
 Layout. Nothing outside `src/ui_*.py` and `ui_app.py` changed shape — the
 repository, planner and week modules are untouched by the split.
 
-**Generating is the only thing here that writes to disk.** `run_generation`
-saves `week_plan.json` and records history *before* adopting the plan into
-`PlannerState`, so the grid can never show a week that isn't saved — a
-20-minute run one browser refresh from being lost is the failure that ordering
-prevents. Grid *edits* are still in-memory only: they live in the client's
-`PlannerState` until the staged-changes bar's "Discard pending changes"
-discards them, and that bar stays visible while any are outstanding
-(`adopt_plan` clears the grid-edit part of `pending_changes()`, because
-saving is what it just did — see "The review dialog and the staged-changes
-bar" below for why the target/training/pantry parts deliberately do not
-clear the same way).
+**Generating is the only thing here that calls the model — it is no longer
+the only thing that writes to disk.** `run_generation` saves `week_plan.json`
+and records history *before* adopting the plan into `PlannerState`, so the
+grid can never show a week that isn't saved — a 20-minute run one browser
+refresh from being lost is the failure that ordering prevents. Grid *edits*
+stay in-memory only until something acts on them: the staged-changes bar's
+"Discard pending changes" throws them away, "Generate week" folds them into a
+full re-plan (`adopt_plan` clears the grid-edit part of `pending_changes()`,
+because saving is what it just did), and — new, see `save_grid` below —
+"Save changes" writes `state.week_plan` to `week_plan.json` directly, with no
+model call, because a deterministic edit (a swap, a leftover link, a skip
+estimate) needed no LLM to be fully decided in the first place. See "The
+review dialog and the staged-changes bar" below for why the
+target/training/pantry parts of `pending_changes()` never clear this way —
+`save_grid` doesn't touch them either, for the same reason.
 
 Things worth knowing about the generation path specifically:
 
@@ -424,7 +632,8 @@ a busy week reuses a hue.
 
 #### The expanded recipe card
 
-Clicking any card — Plan or Today destination, they share the one dialog — opens
+Clicking any card — Plan, Today or Library destination, all three share the
+one dialog — opens
 `ui_cards.recipe_detail`, which is laid out as a document you cook from rather
 than as a roomier version of the card that opened it: a mono eyebrow
 (`MEAL TYPE — STYLE`), the title, one ruled strip carrying
@@ -465,6 +674,35 @@ NOVA group moved to a per-ingredient tooltip: every group that reaches the
 dialog is an allowed one (4 is rejected in validation), so it is worth being
 able to check and not worth a column.
 
+**Every card that opens it splits its icon row off from its clickable body**,
+and the split is structural rather than stylistic: the icons are a *sibling*
+of the body, never its parent, so a click on favorite/swap/regenerate/edit
+can't bubble into the body's handler and open the recipe dialog on its way
+past. `meal_card`, `today_card`, `prep_candidate_card` and — since phase 6d
+of `ui-redesign.md` — `ui_catalog_browser.catalog_card` are all that one
+shape. The Library card was the holdout: it wired `title.on("click", ...)`
+alone, so the recipe name was the only live pixel on a card whose whole body
+was about that recipe.
+
+Making the split possible there meant moving the **title out of the icon row
+and down into the body**, which is what the other three already do — and that
+move fixed a second thing, found by measuring the running page rather than by
+reading the source. That row carried the standing Quasar `.flex` wrap trap:
+with the title still in it, any name whose max-content ran past roughly 200px
+pushed all three icons onto a line of their own, because wrapping is decided
+from the items' *unshrunk* widths and the title's `min-w-0` therefore never
+got a chance to prevent it. Measured at 1440px on the shipped 92-recipe
+catalog, that was most of a screen of cards rendering icons-beside-title and
+the rest icons-under-title, on nothing more principled than name length. The
+row is icons-only and `flex-nowrap` now, and all 92 cards measure one 18px
+icon row at every breakpoint from 620px to 1440px.
+
+`hover:text-sky-300` moved onto the body with the handler, not onto the
+title: it reaches the title by inheritance, that label being the only
+descendant with no colour of its own, while the tag line and every macro
+figure set theirs and are left alone. So the hover affordance now covers the
+whole clickable region rather than the four words that used to be it.
+
 ### The Today tab
 
 `ui_today.py` is a read-only preview of just today's four cards, its own
@@ -481,7 +719,13 @@ rather than a second copy of it living here.
 (Still called "the Today tab" throughout this section — mechanically it is
 still one `ui.tab`/`ui.tab_panel` pair, per `ui_app.py`'s rail; only its
 orientation and its four siblings changed in phase 3 of `ui-redesign.md`,
-not the widget or any of the logic below.)
+not the widget or any of the logic below. The rail's own label reads
+**"Daily View"**, not "Today" — renamed post-phase-3 since the tab is a day
+picker, not only today's meals, and a dynamic label already had to drop the
+word "Today" the moment you stepped off today (see "Browsing to another
+day" below). Every function, class and file name (`ui_today.py`,
+`TodayHandles`, `build_today`, ...) keeps the old name regardless; only the
+on-screen string changed.)
 
 **Knowing "today" needed a real calendar date, which nothing in this
 codebase stored.** `WeekPlan.days` is a rotation of weekday *names*
@@ -577,8 +821,8 @@ all rather than an empty panel announcing the absence of a feature.
 
 The tab is no longer pinned to today: a row of seven day pills with a chevron
 either side moves through the loaded week, and the **tab's own label becomes
-the day being viewed** — "Today · Sun 23 Aug" on today, "Fri 21 Aug" once you
-step away. Each pill carries an amber mark per workout that day, so the row
+the day being viewed** — "Daily View · Sun 23 Aug" on today, "Fri 21 Aug" once
+you step away. Each pill carries an amber mark per workout that day, so the row
 doubles as a week-at-a-glance of the training schedule.
 
 **This was cheap because the panel was already day-parameterized.**
@@ -761,7 +1005,8 @@ rebuild the section the input lives in.
 separate "Applies to the next generation only" disclaimers, the amber
 telemetry override dot, and the old "edited — not saved" chip with.** One
 persistent strip beneath the header, on every destination, reading "N pending
-changes — <summaries> · Review · Generate week", or nothing at all when
+changes — <summaries> · Review · Generate week" (plus "Save changes" when
+`state.edited` is among them), or nothing at all when
 `PlannerState.pending_changes()` is empty. It counts four independent things
 — an overridden day (signed delta against `config["weekly_schedule"]`), an
 added/removed/edited training session (diffed against
@@ -784,9 +1029,29 @@ same numbers a per-day reset button would land on), paired with
 directly beside "Mon +700 kcal" has to make that line go away too, not only
 the part `reload_from_disk` alone ever touched.
 
-**The Plan destination carries its own "Generate" button independent of the
-bar**, and this is deliberate, not redundant: the bar hides entirely when
-nothing is pending, which is the common case on a fresh page load, and
+**"Save changes" (`ui_generation.save_grid`) is the other way the grid-edit
+quarter clears, and it is deliberately narrower than "Generate week."** A
+swap, a leftover link/unlink or a skip estimate is fully decided the moment
+it's clicked — `state.week_plan` already reflects it — so nothing about it
+needs the LLM in the loop, and before this button existed the *only* path to
+disk ran through a full multi-minute re-plan of every meal type just to keep
+an edit that generation itself had no part in making. The button is
+conditional on `state.edited` alone, not on the other three
+`pending_changes()` categories, because those are inputs to the *next*
+generation and were never candidates for a plain disk write — "Review" is
+still the only way to act on them. `save_grid` writes `state.week_plan`
+straight to `REPOSITORY.save_week_plan`, exactly what `run_generation` does
+after its model call, and then sets `state.edited = False` directly rather
+than calling `adopt_plan` — `adopt_plan`'s job is discarding unsaved edits by
+replacing `week_plan` with a freshly generated one, and a same-object persist
+is the opposite of that. It also does not call `record_week_history`: that
+records what the *model* chose for next week's rotation, and a grid edit
+makes no new choice for it to remember — the favorite or leftover it wrote
+down already came from history-aware selection upstream.
+
+**The rail carries a "Generate" button independent of the bar**, and this is
+deliberate, not redundant: the bar hides entirely when nothing is pending,
+which is the common case on a fresh page load, and
 cuisine/diet-style/bulk-prep/servings picks in the review dialog don't count
 toward `pending_changes()` at all (see above) — so without a second entry
 point, there would be runs where the *only* way to reach "Generate" is
@@ -795,9 +1060,157 @@ additionally offers a "Generate week" shortcut that skips straight to
 `generation.run_generation` for when something is already staged and the
 current picks are fine as they are.
 
+This button lived in the Plan destination's own header row until phase 6b
+moved it to the rail. Same reason, better satisfied: a rail button is
+visible from all five destinations, not only from Plan.
+
+### Settings' Daily Targets panel
+
+Where each macro's number comes from, and the only control in the app that
+writes to `config/`. Four rows — calories, protein, carbs, fat — each naming
+its source, its current figure for the week (collapsed to one number when
+every day agrees, a range when they don't) and, for the two on `auto`, the
+engine's own arithmetic behind it: "Katch-Mcardle BMR 1798 → TDEE 2472
+(formula) − 738 deficit (99.4 → 80.0 kg)".
+
+Calories and protein carry an Auto/Manual toggle; carbs and fat carry a chip
+saying they have no mode to switch and a sentence saying why (see
+`TARGET_SOURCE_ROWS` in `ui_theme.py`). **Naming all four rather than only the
+two with a control is the point** — the question the panel answers is "where
+does this number come from", and it has an answer for every macro.
+
+Per-day number inputs appear under carbs always, and under a switchable macro
+once it is manual. They are debounced and written through
+`save_manual_targets` on change rather than per keystroke, and the section
+deliberately does not repaint on an edit — the same focus-theft rule
+`ui_review.day_target_row` follows. Fat gets no inputs at all: an editable fat
+would be a second answer to what `derive_fat_g` already computes.
+
+Registered on its own `"settings"` topic (its toggles' own repaint, since
+switching to manual makes a row grow inputs) *and* on `"targets"`, because a
+review-dialog override changes the figures it reports even though nothing
+here was touched.
+
+### Settings' three read views
+
+Phase 6e of `ui-redesign.md`. The Settings destination's integrations list
+(`PIPELINE_STAGES`) used to be four static connected/not-connected rows.
+Three of them now open a read-only `ui.dialog` over data the app already
+reads on every generation and displayed nowhere:
+
+| row | dialog | reads |
+|---|---|---|
+| Biometric Sync | which days each source has | `biometrics.json`'s `weigh_ins`/`daily_actuals`/`sync_checkpoints` |
+| Calendar/Location | where each day is spent, and what that constrains | `schedule.json`'s `base_schedule`/`location_rules` |
+| Adaptive Workout | the week's sessions, type/time/duration/burn | `PlannerState.training_schedule` |
+
+**All three are reads, and the row that owns a piece of state keeps owning
+it.** Nothing here triggers a sync, writes a config file or edits a session —
+training is still edited in `ui_review.py`, and fetching a missing day is
+still the sync CLI's job. That is the same division the day inspector already
+draws with the review dialog ("Targets are read-only here on purpose"), and
+it is what keeps these pages from becoming a second place a value can be set
+and therefore a second value to disagree with the first.
+
+**Dialogs, not more sections in the panel**, on the maintainer's call
+(ISSUES.md item 8 asks for a "popup/page" for each): the rail is deliberately
+five destinations, these are reference views rather than places to work, and
+three tables stacked under the panel's three selects would bury the selects.
+Each body is `@ui.refreshable` and repainted by `open_stage` *on open* rather
+than registered on a refresh topic — two of them read live state
+(`training_schedule`, `planning_config()`) and one reads the clock, and a
+dialog that is closed almost always has no business being repainted by every
+edit that touches them. Repainting on open is also what stops a tab left open
+overnight drawing yesterday's 14-day sync window.
+
+**Two `PIPELINE_STAGES` rows said "not built yet" long after they were
+built**, which is what a dialog full of live data made impossible to leave
+standing: `sync` described a Health Connect feed that never landed while the
+Garmin/Cronometer sync that did has been writing `biometrics.json` since (see
+"Biometric sync"), and `context` predated `week.apply_location_modes`. Both
+are `connected=True` now, and `connected` means "something real reaches a
+plan from this" rather than "this is finished" — hence descriptions that name
+what each still doesn't do (no calendar integration) instead of a third flag
+state to interpret. `readiness` is the one genuinely unbuilt stage and stays
+a plain, unopenable row.
+
+#### What the sync view actually answers
+
+`ui_state.sync_status(biometrics, today, window_days)` is the view model —
+pure, clock-free (today is a parameter) and tested, per the standing rule
+that logic worth testing leaves the widget module. It reports each source's
+checkpoint, its newest stored row, and the last 14 days classified three
+ways:
+
+- `SYNC_RECORDED` — a row exists for that date.
+- `SYNC_CHECKED` — inside the checkpoint, no row: the sync asked and found
+  nothing. A forgotten weigh-in or an unlogged day, which is a real answer.
+- `SYNC_UNCHECKED` — past the checkpoint: nobody has asked yet.
+
+**The third state is the whole point, and it only exists because
+`sync_checkpoints` does.** Those two "no row" cases are identical in the file
+otherwise, and that indistinguishability is precisely what
+`save_sync_checkpoint` was added to fix for `get_sync_date_range`'s catchup
+walk — reading it from the other end is what lets this page tell a scale
+nobody stood on from a fortnight nobody synced. The constants and their
+styles live in `ui_theme.py` beside `STATUS_*`/`STATUS_STYLES`, same split
+and same reason; fill and outline carry the distinction rather than three
+hues, per that file's own "icon, not colour" rule.
+
+Three details are decisions:
+
+- **`last_checked` and `last_recorded` are separate fields, not one
+  "latest".** The gap between them is the information: checked through
+  Wednesday with the last weigh-in on Sunday is three mornings nobody stood
+  on the scale, which is a different situation from a source nobody has
+  synced since Sunday, and only both numbers side by side tell them apart.
+- **A source's effective checkpoint is the later of its checkpoint and its
+  newest row**, mirroring `get_sync_date_range`'s own `max(dates +
+  [checkpoint])`. `sync_checkpoints` postdates the two lists, so a file
+  written before it existed — or hand-edited since — has rows a checkpoint
+  doesn't cover, and a stored row is proof the day was asked about.
+- **It never computes what a sync *would* fetch.** That is
+  `get_sync_date_range`'s job — it caps its walk and anchors on whichever
+  *requested* source is furthest behind — and a second answer to the same
+  question is exactly the duplication the `/api/recipes` finding records.
+  `SYNC_WINDOW_DAYS` (14) is deliberately the same horizon as the CLI's
+  `--lookback-days` default, but as a display choice, not a coupling.
+
+`BIOMETRIC_SECTION_SOURCES` (which source fills which list) moved from
+`sync_service.py` to `repository.py` for this — it is a fact about the file's
+layout, the same kind of thing `BIOMETRIC_SECTIONS` beside it already states,
+and it now has two readers with nothing else in common. A second copy in the
+UI would be free to disagree about which source writes what, and would do so
+silently: the read view would simply report the wrong list as empty.
+
+#### The location and workout views
+
+Both reuse `ui_today.py`'s module-level render helpers (`location_row`,
+`session_chip`) rather than growing a second way to draw a location chip or a
+session — the same reuse `ui_inspector.py` already makes of that file, which
+is why those helpers are module-level in the first place.
+
+`ui_state.location_view(config, meal_types, day)` was split out of
+`day_context` for this: `day_context`'s per-meal training notes are only
+reachable through `planning_config()`, so seven days of it would be seven
+`apply_training_adjustments` passes over the week to print a table of default
+locations. The page pays for one config instead. `LocationView` gained
+`skip_estimates` at the same time — `<meal_type>_skip_estimate` for the meals
+a location skips, off the same rule `meal_modes` already comes from, because
+a skip carrying an estimate is a meal that was *eaten*, not one that was
+missed. Printing MODE_SKIP's "not planned" beside "eaten out, ~795 kcal"
+would be two clauses contradicting each other on one line; the page says "not
+cooked, but eaten" instead.
+
+Both pages print the bare weekday name rather than `format_day_label`'s dated
+one, deliberately: `base_schedule` and `training_schedule` are keyed by
+weekday and apply to every week, so dating them against the loaded plan would
+read as a claim about this particular Monday.
+
 ### Shopping list drawer
 
-A right-hand slide-over (opened from the header) rather than a dialog: the list
+A right-hand slide-over (opened from the rail's action block) rather than a
+dialog: the list
 is read *against* the grid, and a modal would cover the week it describes. One
 section per `shopping_windows()` trip, grouped into departments by
 `aggregate_cook_events` — by cook day, never eating day.
@@ -850,9 +1263,10 @@ printed whatever the dashboard happened to render (drawer icons, macro bars,
 dish names with no ingredients), which was a strictly worse document than the
 PDF sitting one button over, and having both meant two things to keep
 formatted well instead of one. `print_css()` and the CSS-only path are gone;
-the header's printer-icon button now triggers the same download as before.
+the "PDF menu" button now triggers the same download as before.
 
-- **The printer-icon button** (header) downloads `weekly_menu.pdf` —
+- **The "PDF menu" button** (the rail's action block; it was a printer icon
+  in `ui.header()` until phase 6b) downloads `weekly_menu.pdf` —
   `export_menu.build_week_menu_pdf()` does the formatting — it reads
   `WeekPlan.slots`/`WeekPlan.by_slot()` directly, the same source
   `planner.day_slot_macros` does, not `PlannerState`/`SlotView`, so the
@@ -1078,14 +1492,126 @@ ingredient outright. Real hard exclusions for one of these belong in
 ingredient; `diet_styles` is for shaping what the model reaches for, not
 policing what it must not.
 
-### Targets come from the body, not the file
+### Targets come from the body, not the file — unless you say otherwise
 
-`weekly_schedule`'s per-day calories and protein are no longer what the week
-is planned against. `hydrate_dynamic_targets()` replaces them with
+`weekly_schedule`'s per-day calories and protein are, by default, not what
+the week is planned against. `hydrate_dynamic_targets()` replaces them with
 `nutrition_engine.calculate_macro_targets()`'s output — BMR from the latest
 weigh-in, TDEE from the activity factor, and a deficit that slides with the
 remaining gap to `target_weight_kg`. It is a **pure function**; `hydrate_config()`
 is the thin `async` wrapper that fetches the biometrics for it.
+
+#### Who owns a number: `target_modes` and `target_locks`
+
+That replacement used to be **unconditional**, and it made two things true at
+once that nobody had decided:
+
+- `weekly_schedule`'s stated calories and protein were dead weight the moment
+  a weigh-in existed. The shipped config said 1000 kcal on a Thursday every
+  run planned at 1722, and the telemetry header — reading the file — printed
+  the 1000.
+- **Every override typed into the review dialog was a silent no-op.**
+  `planning_config()` folds `target_overrides` into `weekly_schedule`, and
+  hydration then overwrote calories, protein and fat for every day without
+  being able to tell an edited value from a stale file one. The UI accepted
+  2200 kcal, moved the bar, counted it in the staged-changes bar, and
+  generation planned the computed figure regardless. Only `net_carbs_g`
+  survived, because it is the one macro hydration reads back out of
+  `day_targets` rather than replacing.
+
+`planner.target_is_stated(config, day, macro)` is the rule that fixes both,
+and it is deliberately **one function read by two callers** — a second copy
+would let `apply_training_adjustments` and `hydrate_dynamic_targets` disagree
+about whose number a day is aiming at, which surfaces as a target that moves
+when you toggle who owns it. Two independent ways to say "somebody stated
+this on purpose", different in lifetime:
+
+| | `target_modes` | `target_locks` |
+|---|---|---|
+| scope | the whole week, one macro | one day, one macro |
+| lives in | `config/profile.json` (`TargetModes`, on `AppConfig`) | injected at runtime by `planning_config()` |
+| set by | the Settings destination's toggle | typing in the review dialog's target curve |
+| persists | yes — the one thing besides generation that writes to `config/` | never reaches disk |
+
+**Only two macros have a mode, because only two have two possible sources.**
+`TARGET_MODE_MACROS` is `("calories", "protein_g")`. `net_carbs_g` has no
+computed form at all — the engine takes `weekly_schedule`'s figure and hands
+it straight back, which is what makes carbs the week's cycling lever — and
+`fat_g` is always `derive_fat_g`. Both are honest answers to "where does this
+number come from"; neither is a mode anyone can switch, and the Settings page
+says so in words rather than offering a toggle that does nothing.
+
+Three consequences worth knowing:
+
+- **A stated target is the day's *final* number, so a workout does not grow
+  it.** `apply_training_adjustments` skips a macro `target_is_stated` returns
+  true for, and — importantly — does not record the uplift it declined to
+  apply, because that record is replayed onto the engine's base by hydration
+  and drawn as the amber segment of the review dialog's bar. This is what
+  makes flipping a macro to manual leave every figure exactly where it was;
+  before it, switching protein to manual silently moved a training Monday
+  from 144 g to 187.8 g. A toggle that changes *who decides* a number must
+  not change the number.
+- **The skip happens at the source, not by unwinding it later.** An earlier
+  version let the uplift be added and had hydration subtract it back off,
+  which was correct exactly once: the UI hydrates for its own live preview
+  (below) and generation hydrates that same config again, and the second pass
+  subtracted an uplift the number no longer carried, taking a 2200 kcal
+  override down to 1850. Hydration is now idempotent for a stated macro
+  because it takes it verbatim.
+- **Every switchable macro manual means the engine is never called.**
+  `needs_engine` is false, no BMR is computed, `dynamic_basis` is absent, and
+  a checkout with no weigh-in plans off the file without logging a warning
+  about targets nobody is using.
+
+Switching a macro to `manual` **seeds `weekly_schedule` from what the engine
+currently computes** (`PlannerState.set_target_mode`) rather than exposing
+whatever stale figure the file still holds — those two had drifted a long
+way, and handing the stale one back as "your manual target" would look like
+the toggle had re-planned the week rather than merely changed who owns it.
+
+Defaults are `auto` for both, so a config predating `TargetModes` plans
+byte-identically to before it existed.
+
+#### The header previews what the run will actually aim at
+
+`PlannerState.planning_config()` now ends with `hydrate_dynamic_targets`, so
+`planned_targets`, the review dialog's target curve and the telemetry header
+all read the engine's numbers rather than the file's. It can do this from a
+synchronous method because hydration is *pure*: `.load()` already fetched the
+latest weigh-in for `weight_kg` and now keeps it, alongside the full series
+`calculate_adaptive_tdee` needs, on `PlannerState.latest_biometrics`/
+`.biometrics`. `log=False` there, because this runs on every repaint and a
+per-keystroke `dynamic targets: ...` line would bury the per-call generation
+timing `logs/meals.log` exists for.
+
+**`targets_for` branches on what *this session staged*, not on what the
+config happens to say.** `target_is_staged(day)` is a target override or an
+edit to that day's training — deliberate acts whose whole point is seeing
+where the week is about to move. It used to branch on `has_training(day)`,
+which is the config's standing state, and with a training schedule covering
+most of the week that put six days on the live preview and one on the stored
+plan: **one row of figures computed two different ways**, so a fresh weigh-in
+read as a plan that had drifted off target on Monday and held on Thursday.
+Everything unstaged is measured against `week_plan.targets` — what the week
+was actually generated for — and re-generating is what reconciles the two
+after the body moves. The telemetry marker (amber `•` / emerald `⚡`) keys off
+the same predicate, so a dot can never appear on a day reading the stored
+plan.
+
+`has_training` itself was wrong in a second way: it counted a
+`{"type": "rest", "estimated_burn_kcal": 0}` entry as training, which drew an
+emerald bolt on an explicitly scheduled rest day. It now mirrors
+`apply_training_adjustments`' own filter, the same distinction
+`TrainingView.is_rest` already draws for the Today tab.
+
+**An override is diffed against the day's *resolved* baseline**
+(`PlannerState.baseline_targets`, which is `planning_config()` with that one
+day's overrides suppressed), not against `weekly_schedule`. On an `auto`
+macro the file's number is inert, so diffing against it marked every day
+permanently overridden and reported "Thu +800 kcal" for an edit that had
+moved the day 78 kcal. `set_target`'s clear-on-match, the staged bar's signed
+delta and the target curve's dashed ghost line all measure from it.
 
 #### TDEE is measured once there is enough data to measure it
 
@@ -1130,10 +1656,16 @@ It is called at the top of all three generation entry points
 rather than once in the CLI, because NiceGUI builds its config in the
 *synchronous* `PlannerState.planning_config()`, which cannot await storage.
 Hydrating where the repository is already in hand gets both front ends onto
-the same numbers with no UI change. The consequence worth knowing: the
-header's telemetry still previews the **file's** targets, so before a
-run it can disagree with what the run will actually aim at. Closing that gap
-means giving `planning_config()` a weigh-in, which is a `ui_app.py` change.
+the same numbers.
+
+This used to leave the header previewing the **file's** targets, so before a
+run it disagreed with what the run would actually aim at. That gap is closed:
+`planning_config()` calls `hydrate_dynamic_targets` itself, against the
+weigh-in `PlannerState.load()` now keeps — see "The header previews what the
+run will actually aim at" above. Generation still hydrates again at these
+three entry points, which is what the CLI needs and what keeps a run honest
+if the scale reported between page load and Generate; hydration is idempotent,
+so the second pass changes nothing the first already settled.
 
 Four things it deliberately does *not* compute:
 
@@ -1319,10 +1851,22 @@ hand one meal the entire day's budget.
 ### Storage goes through an async repository
 
 Nothing outside `repository.py` opens a file or touches `json` any more.
-`PlanRepository` is the interface (`load_config`, `load_history`,
-`save_history`, `load_week_plan`, `save_week_plan`); `LocalJSONRepository` is
-the only implementation today and keeps the same three files in the same
-places. Point the app at a backend by constructing a different subclass —
+`PlanRepository` is the interface (`load_config`, `save_config_keys`,
+`load_history`, `save_history`, `load_week_plan`, `save_week_plan`);
+`LocalJSONRepository` is the only implementation today and keeps the same
+three files in the same places.
+
+`save_config_keys` is the **one write path into `config/`**, and the only
+thing besides generation that persists anything. It exists for
+`target_modes` (see "Who owns a number"): a *setting* is not a per-week
+input, and a toggle that reset on every page reload would answer "where do
+my numbers come from" differently each time you looked. It merges the keys
+it is handed into the file `CONFIG_FILES` says owns each one, read-modify-
+write per file, so a hand-added key the app has never heard of survives the
+next settings change. It is deliberately not a "save the config" call — the
+config held in memory is a *merged* dict carrying runtime-injected keys
+(`training_uplift`, `target_locks`, `nudge_foods`, `openrouter_model`) that
+must never reach disk. Point the app at a backend by constructing a different subclass —
 `planner.main()` and `REPOSITORY` in `ui_app.py` are the only two places that
 name one.
 
@@ -1437,14 +1981,17 @@ not because they don't fit.
   is private and lives in a UI widget module this phase doesn't touch. A real
   shared home for it (it has no `PlannerState` dependency and never did) is a
   good small follow-up.
-- **`PlannerState.targets_for`'s live preview can disagree with
-  `/api/targets`.** The UI reads static `weekly_schedule` values plus any
-  staged overrides and never calls `hydrate_config` — see "Targets come from
-  the body", which already documents this as a pre-existing gap
-  ("the header's telemetry still previews the file's targets... before a run
-  it can disagree with what the run will actually aim at"). `/api/targets`
-  always reflects the dynamic, biometrics-driven number; the drawer's preview
-  does not. This phase didn't introduce the gap and doesn't close it.
+- **`PlannerState.targets_for`'s live preview could disagree with
+  `/api/targets`** — recorded here by phase 5 and **since fixed**, so this
+  entry is kept only because the reasoning is still worth having. The UI read
+  static `weekly_schedule` values plus staged overrides and never called
+  `hydrate_config`, while `/api/targets` always reflected the dynamic figure.
+  `planning_config()` now hydrates too (see "Who owns a number"), so both
+  sides read one number. They still answer subtly different questions and are
+  right to: `/api/targets` reports what disk says, the header reports what
+  *this tab* would generate, which includes overrides no route can see. That
+  is the same `PlannerState`-is-a-session-concept line the section above
+  draws, not a gap.
 
 ### Portion sizing — three layers, because models can't size meals
 
@@ -1561,7 +2108,7 @@ so the day shows up as a visible shortfall rather than crashing.
 pops every cook slot on the day out of `failures`; `regenerate_single_meal`
 pops its one slot. Forgetting this doesn't show up on the card (which reads
 `cook_events`, so it turns green) — it shows up in the Plan destination's
-failure list (`ui_plan.week_summary`) and the shopping drawer's "nothing for
+failure list (`ui_plan.week_failures`) and the shopping drawer's "nothing for
 those meals is on this list" note, which keep naming a meal that now exists.
 The per-card regenerate button is offered *on* NOT GENERATED cards, so that
 is the common path, not an edge case.
@@ -1787,10 +2334,58 @@ Three consequences worth knowing:
   nothing landing Thursday or later, `validate_week` clean and byte-identical
   across repeated runs.
 
-One thing this deliberately does **not** fix, still measured from the anchor
-day rather than prep day: `storage_note`'s `keeps_for_days` (so a prep-session
-candidate's "eaten across N day(s)" line under-reports, and
-`generate_sunday_prep_session`'s prompt then says "do not recompute it").
+**The reporting side counts from prep day too, and for a while it didn't.**
+`storage_note`'s `keeps_for_days` was measured from the anchor's own grid day,
+which is the same blind spot `max_day_index` was added to fix on the planning
+side — and since every anchor is day 0, it was short by exactly one on every
+prep batch. That under-reported the span ("eaten across 2 day(s)" for food
+three days out of the fridge) and, worse, flipped the advice at exactly the
+wrong point: `storage_note` chooses between "refrigerate in airtight
+containers" and "freeze the rest" on `keeps_for_days < fridge_safe_days`, so
+the maximum-span batch reported 2, compared `2 < 3`, and told you to
+refrigerate the one batch in the week sitting at the fridge limit — the whole
+reason the freeze branch exists. `apply_batch_selections`' own
+`fridge_safe_days - 1` bound guarantees that case on every week both toggles
+run, and it can't be papered over downstream because
+`generate_sunday_prep_session`'s prompt tells the model not to recompute the
+note.
+
+`week.PREP_DAY_INDEX` (-1) is the fix, and it is one idea used in four places
+rather than four adjustments: `week.cook_day_index(spec, day, prepped_ahead)`
+answers "which day was this actually cooked on", `span_days` takes the same
+flag, and the callers each supply it from the handle they have —
+`build_cook_event` from `planner.prep_day_batch_slot_ids(config)` (the two
+anchors, which are known before the first call), everything after generation
+from `planner.is_prepped_ahead(event, week_plan)` (the stamped
+`candidate_slot_ids`). The two lookups exist because of ordering, not
+duplication: `generate_sunday_prep_session` runs *after* every cook event is
+built, so the session doesn't exist yet when the first one needs the answer.
+
+Three things about it are decisions:
+
+- **`is_prepped_ahead` is `is_sunday_prepped` minus the shake.** The shake
+  rides along in the same session but is only *portioned* ahead — each
+  training morning blends it fresh — so its food is exactly as old as its own
+  day says. The anchors are a lunch and a dinner and the shake is always a
+  breakfast, which is what lets one `meal_type` test separate them, the same
+  discriminator `slot_views` already uses for the reheat estimate.
+- **`span_days` defaults to the anchor day, so `validate_week` is
+  untouched.** That backstop bounds a hand-built chain of "Link to next lunch"
+  clicks; the prep batches are bounded on the planning side by
+  `max_day_index`, and making the backstop prep-aware would start rejecting
+  the very weeks `apply_batch_selections` deliberately builds.
+- **`ui_state.apply_spec` and `swap_slot_with_favorite` had to move with
+  it.** `scale_to_servings` rewrites the storage note whenever a batch is
+  rescaled, so fixing only generation would have let a single grid edit put
+  the off-by-one straight back. The per-card fridge/freezer badge counts from
+  the same origin for the same reason — a note saying "freeze the rest" over a
+  row of cards all badged "fridge" is two surfaces disagreeing about one
+  batch.
+
+Still measured from the anchor day, deliberately: `slot_views`' collapse to
+`SUNDAY_PREP_REHEAT_MINUTES` tests `event.meal_type == "dinner"`, so the
+bulk-prep **lunch** anchor keeps showing its from-scratch prep time. That is a
+different question (how long it takes, not how old it is) and a separate fix.
 
 `spread_batch` returns `None` for an anchor that never grew past what an
 ordinary dinner already gets for free, which is the same "no batch happened"
@@ -2268,10 +2863,22 @@ contradict "never in front of it" the same way a blocking confirmation
 would. A plain `fixed` div is a real element tree with ordinary `on_click`
 callbacks, and it floats regardless of where in the page it's built, the
 same reason `ui.header`'s own fixed positioning doesn't care about DOM
-nesting. Scoped to the per-card regenerate only, not the day-level one — a
-day regenerates four recipes at once, which doesn't fit one four-option
-prompt naturally, and a card that was previously NOT_GENERATED (a prior
-failure, not a real suggestion) offers nothing to name as rejected.
+nesting. Scoped to the per-card regenerate and the swap-with-favorite
+dialog, not the day-level regenerate — a day regenerates four recipes at
+once, which doesn't fit one four-option prompt naturally, and a card that
+was previously NOT_GENERATED (a prior failure, not a real suggestion) offers
+nothing to name as rejected.
+
+**The swap dialog was the original gap, closed after the fact.** A favorite
+swap is exactly as deliberate a "not this one" as the regenerate icon —
+arguably more so, since the user picked what replaces it rather than trusting
+another roll — but `offer_rejection_prompt` started life as a closure-local
+helper inside `build_generation`'s `regenerate_meal`, unreachable from
+`ui_cards.py`'s `confirm_swap`. It is now exposed on `GenerationHandles`
+instead, and `confirm_swap` captures `state.swap_target.recipe` (the outgoing
+recipe, read before the swap mutates state) and calls it the same way
+`regenerate_meal` does. The prompt's own copy changed from "Why regenerate
+…" to "Why replace …" to read correctly from both call sites.
 
 **No decay, deliberately left open.** Every recorded rejection is sent,
 unbounded, forever — the phase that added this said explicitly not to
@@ -2295,7 +2902,7 @@ methods. Neither invents storage, and the CLI reports each source
 independently — a Garmin outage must not cost a Cronometer sync that would
 have worked, the same policy as "a failed meal must not fail the week".
 
-Six things here are decisions, not detail:
+Seven things here are decisions, not detail:
 
 - **It is the only code in `src/` living in a subdirectory**, which breaks the
   flat-sibling import rule at the top of this file: `python
@@ -2340,6 +2947,46 @@ Six things here are decisions, not detail:
   and which the `source` tag alone was enough to fool: a day the scale never
   saw was written as a weigh-in with no weight, and `get_latest_biometrics`
   handed that empty row back as the newest reading.
+- **Cronometer is fetched a span at a time; Garmin a day at a time.** One
+  Cronometer day is not one HTTP request. `CronometerClient.export_raw`
+  calls `authenticate()` — which, even resuming a saved session,
+  re-discovers the GWT build hashes and re-mints an auth token — and then
+  mints a *second* token before the export GET: roughly five requests warm,
+  seven cold. `CronometerSyncService` also built a fresh client per day, so
+  nothing was reused across a range, and a six-day catchup spent about
+  thirty requests to retrieve six CSV rows. Against an account that
+  rate-limits, that walk was itself provoking the 429s `_is_rate_limited`
+  exists to survive. The export endpoint takes a real `start`/`end` span
+  and returns a row per day, so `fetch_range_summaries` asks once and
+  `_daily_summary_row` folds the one CSV into each date —
+  `sync_cronometer_range` no longer loops over `sync_cronometer` at all,
+  and the two share `_persist_cronometer_day` so they can't disagree about
+  when a row is worth keeping. Garmin keeps its per-day loop: it has no
+  comparable limit, and the loop buys real per-day failure isolation.
+
+  Two consequences. **One request has one outcome**, so a Cronometer
+  failure is no longer isolable to a single date — it is reported against
+  the first one, nothing is checkpointed, and `get_sync_date_range` finds
+  the whole span still missing next run. That costs little, since every
+  Cronometer failure seen in the wild was an account-level 429 that already
+  short-circuited the walk. And **`_daily_summary_row`'s undated-row
+  fallback is only sound for a single day** — "a range of one has nothing
+  else it could be" stops being true the moment one CSV is folded into
+  seven dates, where taking the row would copy the same figures onto every
+  one of them. `single_day_request` is the guard, and `TestCronometer
+  RequestCost` pins both halves.
+
+- **`--date` means that day, not "catch up to that day".** Catchup defaults
+  to on, which is right for the bare, scheduled-sync shape where a missed
+  day must not be lost forever — but `--date` also defaulted to today, so
+  nothing downstream could tell a named day from an unnamed one, and
+  `--sync-cronometer --date 2026-08-26` announced "Catching up 6 missing
+  day(s)" and fetched five other days as well. `--date` now defaults to
+  `None` and `--catchup` to `None`, so the resolved default is "catch up
+  unless a date was named"; an explicit `--catchup` still backfills up to
+  the named day. Combined with the span fetch above, asking for one day is
+  now one export request.
+
 - **Cronometer is reverse-engineered, and that is the only option.** There is
   no public Cronometer API for individual accounts; `cronometer-mcp` drives
   the same GWT-RPC protocol the web app uses, and re-discovers the protocol's
@@ -2483,12 +3130,27 @@ whole suite is under a tenth of a second because **nothing in it touches the
 network, a model, or the clock**: every module reaches its outside world
 through one seam, and the tests substitute at that seam.
 
+**The clock half of that had two exceptions, and they were only found when
+the date rolled over mid-session.** `test_ui_state.py`'s day-picker fixtures
+legitimately call `date.today()` — the Today tab's whole question is whether
+a week covers today, and a frozen date would test a different question — but
+two assertions on top of them were quietly weekday-dependent, and the suite
+went from 646 passing to one failure with no code touched.
+`test_browsing_away_from_today_stops_being_today` stepped three days from
+`days[0]`, which is Thursday, and
+`test_covering_today_is_about_the_columns_not_the_span` asserted against its
+own unrotated day list where `week_days` rotates the grid, so it disagreed on
+Friday and Saturday. Both now measure from today and from the grid's first
+column rather than from a fixed offset. **A fixture may read the clock; an
+assertion may not depend on what it said** — and the check is cheap: re-run
+the module under seven frozen weekdays before trusting it.
+
 | file | covers |
 |---|---|
 | `test_week_composition.py` | style/cuisine resolution, cuisine blocks, workout breakfasts |
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
-| `test_planner_dynamic_targets.py` | target hydration, the protein floor, logged-intake substitution, adaptive TDEE |
+| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the protein floor, logged-intake substitution, adaptive TDEE |
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate, the current-weight fallback, and the MET-based training-burn estimate |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
@@ -2497,7 +3159,7 @@ through one seam, and the tests substitute at that seam.
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, and the day inspector's open/closed state |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, and the Settings destination's sync-status and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics, and derived targets/`tdee_source` |
@@ -2540,6 +3202,14 @@ because something broke, record the failure in the test, not just the fix.
   the hard 400 in "Some providers reject the disable switch outright". A
   per-run `--model` is deliberately *not* checked — trying an unrecorded id is
   the flag's whole purpose.
+- **A number the UI displays and a number a run plans against must come from
+  one call, not two.** `weekly_schedule`'s calories and protein are inert
+  while their `target_modes` entry is `auto` — `hydrate_dynamic_targets`
+  replaces them — so anything reading the file directly is reading a value
+  nothing plans from. The shipped config's 1000 kcal Thursday against a
+  computed 1722 is the live example. Reach for `PlannerState.planned_targets`
+  (or `baseline_targets`, for what a day would aim at unoverridden), never
+  `config["weekly_schedule"][day]`.
 - **Testing a "fails before any call" guard requires a populated
   environment.** See the sync-credentials note under "Biometric sync": a guard
   test that constructs its subject with `""` and runs against an empty `.env`

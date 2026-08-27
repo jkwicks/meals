@@ -302,6 +302,10 @@
       "Aldi"
     ]
   },
+  "target_modes": {
+    "calories": "auto",
+    "protein_g": "auto"
+  },
   "training_schedule": [
     {
       "day": "Monday",

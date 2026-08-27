@@ -611,6 +611,57 @@ class TestSundayPrepBadges(unittest.TestCase):
         self.assertEqual(views["Wednesday:dinner"].prep_badge, "")
 
 
+class TestPrepDayFridgeDaysSurviveAGridEdit(unittest.TestCase):
+    """A prep-session batch is cooked the day *before* the week starts, so its
+    fridge days are counted from there — and `apply_spec` rewrites the storage
+    note `build_cook_event` wrote at generation, so a single "Link to next
+    lunch" click is enough to put the off-by-one back if this side doesn't
+    count the same way.
+
+    The badge on each card reads from the same origin for the same reason:
+    a note saying "freeze the rest" over a row of cards all badged "fridge" is
+    two surfaces disagreeing about how old one batch is.
+    """
+
+    def state_with_session(self, fridge_safe_days=4):
+        state = make_state()
+        state.config = dict(CONFIG, inventory_rules={"fridge_safe_days": fridge_safe_days})
+        state.link_to_next_lunch("Monday:dinner")
+        state.week_plan = state.week_plan.model_copy(
+            update={
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=90,
+                    candidate_slot_ids=["Monday:dinner"],
+                ),
+            }
+        )
+        return state
+
+    def test_a_rescale_counts_the_batch_from_prep_day(self):
+        state = self.state_with_session()
+        state.apply_spec(link_leftover(state.spec, "Wednesday:lunch", "Monday:dinner"))
+        notes = state.week_plan.by_slot()["Monday:dinner"].recipe.prep_notes
+        # Monday cook eaten through Wednesday: 2 days by the grid, 3 out of
+        # the fridge, because it came out of the pan on Sunday.
+        self.assertIn("eaten across 3 day(s)", notes)
+
+    def test_an_ordinary_batch_is_unchanged_by_the_same_edit(self):
+        """No session, so nobody cooked it ahead and the grid days are the
+        real ones — the case every non-prep week is."""
+        state = make_state()
+        state.link_to_next_lunch("Monday:dinner")
+        state.apply_spec(link_leftover(state.spec, "Wednesday:lunch", "Monday:dinner"))
+        notes = state.week_plan.by_slot()["Monday:dinner"].recipe.prep_notes
+        self.assertIn("eaten across 2 day(s)", notes)
+
+    def test_the_badge_counts_from_prep_day_too(self):
+        """Tuesday's portion of a Sunday-cooked batch is 2 days old, not 1 —
+        which is what tips it past a 2-day fridge window."""
+        views = self.state_with_session(fridge_safe_days=2).slot_views()
+        self.assertEqual(views["Tuesday:lunch"].prep_badge, "freezer")
+        self.assertEqual(views["Monday:dinner"].prep_badge, "fridge")
+
+
 # `base_schedule`/`location_rules` shaped after the shipped `schedule.json`,
 # plus one unrecognised restriction tag that file doesn't have — a config
 # token with no `LOCATION_RESTRICTION_PHRASES` entry is exactly what the
@@ -872,9 +923,22 @@ class TestViewedDay(unittest.TestCase):
         self.assertEqual(state.viewed_day(), "Wednesday")
 
     def test_browsing_away_from_today_stops_being_today(self):
+        """One step off today, in whichever direction has room.
+
+        Written as "days[0], then step 3" and it passed for months, because
+        that lands on Thursday and the suite had never run on one. It is the
+        only clock-dependent assertion in a file whose fixture
+        (`make_current_state`) deliberately rebuilds the week around the real
+        `date.today()` — so the offset has to be measured from today, not from
+        the start of the week. Stepping exactly one clamps back onto today
+        only at the end it started from, which is what picking the direction
+        by index avoids.
+        """
         state = make_current_state()
-        state.select_day(state.days[0])
-        state.step_viewed_day(3)
+        today = state.today_day()
+        state.select_day(today)
+        state.step_viewed_day(1 if state.days.index(today) == 0 else -1)
+        self.assertNotEqual(state.viewed_day(), today)
         self.assertFalse(state.viewing_today())
         self.assertTrue(state.week_covers_today())
 
@@ -925,6 +989,17 @@ class TestViewedDay(unittest.TestCase):
         which here is true while the grid has no column for it — and it is the
         columns a picker can navigate to. Built so today's own weekday is
         deliberately excluded, so the assertion holds on any day of the week.
+
+        The fallback is asserted against `state.days[0]`, not `elsewhere[0]`,
+        and the difference is not cosmetic: `days` is `week_days(config,
+        week_start)`, which *rotates* the config's weekday keys to start on
+        `week_start` ("Monday" here). On a Friday `elsewhere` is
+        [Sat, Sun, Mon] and that rotates to [Mon, Sat, Sun], so the two
+        disagree on exactly the two days of the week where Monday lands inside
+        the three-day window. Written against `elsewhere[0]`, this passed on
+        five days out of seven and failed on Friday and Saturday — and
+        `viewed_day`'s documented fallback is the grid's first *column*, which
+        is what `days[0]` is and `elsewhere[0]` only usually happens to be.
         """
         from datetime import date, timedelta
 
@@ -943,7 +1018,7 @@ class TestViewedDay(unittest.TestCase):
         )
         self.assertIsNotNone(state.today_day())
         self.assertFalse(state.week_covers_today())
-        self.assertEqual(state.viewed_day(), elsewhere[0])
+        self.assertEqual(state.viewed_day(), state.days[0])
 
 
 class TestDayDates(unittest.TestCase):
@@ -1134,5 +1209,425 @@ class TestDayInspector(unittest.TestCase):
         self.assertIsNone(state.inspector_day)
 
 
+class TestSyncStatus(unittest.TestCase):
+    """`sync_status` — the Settings destination's sync view (phase 6e of
+    `ui-redesign.md`).
+
+    The rule worth pinning is the three-way split, because two of its states
+    look identical in `biometrics.json`: a date with no row is either a day
+    the sync asked about and found nothing or a day nobody has asked about,
+    and `sync_checkpoints` is the only thing that tells them apart. Collapsing
+    them would make a forgotten weigh-in indistinguishable from an unsynced
+    week — the same distinction `repository.save_sync_checkpoint` exists to
+    record, read from the other end.
+
+    Clock-free: `today` is a parameter, so these assert the same thing
+    whichever day the suite runs on. That is not a hypothetical concern in
+    this file — see `TestViewedDay`, where two assertions were quietly
+    weekday-dependent.
+    """
+
+    def statuses(self, biometrics, today=None, **kwargs):
+        from datetime import date
+
+        return {
+            status.source: status
+            for status in ui_state.sync_status(
+                biometrics, today or date(2026, 8, 26), **kwargs
+            )
+        }
+
+    def test_a_row_is_recorded_a_gap_inside_the_checkpoint_is_empty(self):
+        found = self.statuses(
+            {
+                "weigh_ins": [
+                    {"date": "2026-08-24", "weight_kg": 99.7},
+                    {"date": "2026-08-26", "weight_kg": 99.6},
+                ],
+                "daily_actuals": [],
+                "sync_checkpoints": {"garmin": "2026-08-26"},
+            },
+            window_days=4,
+        )
+        garmin = found["garmin"]
+        self.assertEqual(
+            [(day.date, day.state) for day in garmin.days],
+            [
+                ("2026-08-23", ui_state.SYNC_CHECKED),
+                ("2026-08-24", ui_state.SYNC_RECORDED),
+                ("2026-08-25", ui_state.SYNC_CHECKED),
+                ("2026-08-26", ui_state.SYNC_RECORDED),
+            ],
+        )
+        self.assertEqual(garmin.last_checked, "2026-08-26")
+        self.assertEqual(garmin.last_recorded, "2026-08-26")
+        self.assertEqual(garmin.recorded_total, 2)
+
+    def test_past_the_checkpoint_is_unchecked_not_empty(self):
+        """The distinction the whole view exists for. Cronometer checked
+        through the 20th has four days nobody has asked about, which is a
+        different report from four days it looked at and found empty."""
+        found = self.statuses(
+            {
+                "weigh_ins": [],
+                "daily_actuals": [{"date": "2026-08-19", "calories": 2000.0}],
+                "sync_checkpoints": {"cronometer": "2026-08-20"},
+            },
+            window_days=8,
+        )
+        cronometer = found["cronometer"]
+        # 19th (a row) · 20th (the checkpoint, nothing logged) · six days
+        # ending on the 26th that nobody has asked about.
+        self.assertEqual(
+            [day.state for day in cronometer.days],
+            [ui_state.SYNC_RECORDED, ui_state.SYNC_CHECKED]
+            + [ui_state.SYNC_UNCHECKED] * 6,
+        )
+        self.assertEqual(cronometer.count(ui_state.SYNC_UNCHECKED), 6)
+        self.assertEqual(cronometer.last_checked, "2026-08-20")
+        self.assertEqual(cronometer.last_recorded, "2026-08-19")
+
+    def test_a_row_past_the_checkpoint_still_counts_as_checked(self):
+        """`sync_checkpoints` postdates the two lists, so a file written
+        before it existed — or hand-edited since — has rows a checkpoint
+        doesn't cover. A stored row is proof the day was asked about, which
+        is why the effective checkpoint is the later of the two. Mirrors
+        `get_sync_date_range`'s own `max(dates + [checkpoint])`."""
+        found = self.statuses(
+            {
+                "weigh_ins": [{"date": "2026-08-25", "weight_kg": 99.6}],
+                "daily_actuals": [],
+                "sync_checkpoints": {"garmin": "2026-08-23"},
+            },
+            window_days=4,
+        )
+        # The 24th is the assertion: past the stored checkpoint (the 23rd),
+        # but before a row on the 25th proves the sync got that far.
+        self.assertEqual(
+            [day.state for day in found["garmin"].days],
+            [
+                ui_state.SYNC_CHECKED,
+                ui_state.SYNC_CHECKED,
+                ui_state.SYNC_RECORDED,
+                ui_state.SYNC_UNCHECKED,
+            ],
+        )
+
+    def test_a_source_that_never_ran_is_not_connected(self):
+        """A fresh checkout: no checkpoint, no rows. Every day is unchecked,
+        and `connected` is what lets the UI say "never synced" instead of
+        drawing 14 identical outlines."""
+        found = self.statuses(
+            {"weigh_ins": [], "daily_actuals": [], "sync_checkpoints": {}},
+            window_days=3,
+        )
+        self.assertFalse(found["garmin"].connected)
+        self.assertFalse(found["cronometer"].connected)
+        self.assertEqual(
+            [day.state for day in found["garmin"].days], [ui_state.SYNC_UNCHECKED] * 3
+        )
+
+    def test_an_empty_file_still_reports_both_sources(self):
+        """`load_biometrics` promises all three keys, but a hand-written or
+        partial file may not — and a source silently missing from this list
+        would read as "nothing to sync" rather than "never synced"."""
+        self.assertEqual(sorted(self.statuses({})), ["cronometer", "garmin"])
+
+    def test_sources_come_from_the_repository_not_a_second_copy(self):
+        """The section->source mapping has two readers now (the catchup walk
+        and this view), so it lives in `repository.py`. A local copy here
+        would be free to disagree about which source writes which list."""
+        from repository import BIOMETRIC_SECTION_SOURCES
+
+        found = self.statuses({})
+        self.assertEqual(
+            {status.section: source for source, status in found.items()},
+            {section: source for section, source in BIOMETRIC_SECTION_SOURCES.items()},
+        )
+
+
+class TestLocationView(unittest.TestCase):
+    """`location_view` — split out of `day_context` for phase 6e's location
+    page, which needs the same answer for seven days without seven
+    `apply_training_adjustments` passes over the week."""
+
+    def config(self, **rules):
+        return dict(
+            CONFIG,
+            base_schedule={"Monday": "Office", "Tuesday": "Home"},
+            location_rules=rules,
+        )
+
+    def test_it_scopes_modes_to_the_meals_the_rule_declares(self):
+        location = ui_state.location_view(
+            self.config(
+                Office={
+                    "lunch_mode": MODE_LEFTOVER,
+                    "restrictions": ["portable"],
+                    "max_prep_minutes": 0,
+                }
+            ),
+            MEAL_TYPES,
+            "Monday",
+        )
+        self.assertEqual(location.name, "Office")
+        self.assertEqual(location.meal_modes, {"lunch": MODE_LEFTOVER})
+        self.assertTrue(location.constrains("lunch"))
+        # The breakfast eaten at home before leaving is not an office meal.
+        self.assertFalse(location.constrains("breakfast"))
+        self.assertEqual(location.max_prep_minutes, 0)
+
+    def test_a_named_location_with_no_rule_still_renders(self):
+        """"Home" in the shipped schedule. It says where the day is spent,
+        which is the question; an empty rule simply constrains nothing."""
+        location = ui_state.location_view(self.config(), MEAL_TYPES, "Tuesday")
+        self.assertEqual(location.name, "Home")
+        self.assertEqual(location.meal_modes, {})
+        self.assertEqual(location.skip_estimates, {})
+
+    def test_no_base_schedule_means_no_location(self):
+        location = ui_state.location_view(dict(CONFIG), MEAL_TYPES, "Monday")
+        self.assertIsNone(location)
+
+    def test_a_skip_estimate_is_carried_only_for_a_skipped_meal(self):
+        """A skip that carries an estimate is a meal that was eaten, not one
+        that was missed — so the page can say so rather than printing "not
+        planned" over 795 kcal of dinner out. An estimate on a meal the rule
+        does not skip is ignored: `apply_location_modes` only ever stamps one
+        onto a MODE_SKIP slot, and honouring it here would let the page claim
+        a constraint the grid never got."""
+        location = ui_state.location_view(
+            self.config(
+                Office={
+                    "lunch_mode": MODE_SKIP,
+                    "lunch_skip_estimate": {
+                        "calories": 795,
+                        "protein_g": 36,
+                        "net_carbs_g": 62,
+                        "fat_g": 44,
+                    },
+                    "dinner_skip_estimate": {"calories": 500},
+                }
+            ),
+            MEAL_TYPES,
+            "Monday",
+        )
+        self.assertEqual(list(location.skip_estimates), ["lunch"])
+        self.assertEqual(location.skip_estimates["lunch"]["calories"], 795)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+# A profile and weigh-in that make `hydrate_dynamic_targets` actually compute.
+# The base CONFIG deliberately carries no `user_profile`, which is what makes
+# hydration a no-op for every other test in this file — so these tests opt in
+# rather than the rest opting out.
+HYDRATING_PROFILE = {
+    "birth_date": "1971-01-10",
+    "height_cm": 183,
+    "gender": "male",
+    "target_weight_kg": 80.0,
+    "protein_multiplier": 1.8,
+    "activity_level": "light_office",
+}
+HYDRATING_WEIGH_IN = {"date": "2026-08-16", "weight_kg": 98.4, "body_fat_pct": 27.5}
+
+
+def make_hydrating_state(**kw) -> ui_state.PlannerState:
+    """A state whose targets come from the body, as the real app's do."""
+    state = make_state(**kw)
+    state.config = dict(state.config, user_profile=dict(HYDRATING_PROFILE))
+    state.latest_biometrics = dict(HYDRATING_WEIGH_IN)
+    return state
+
+
+class TestRestDaysAreNotTraining(unittest.TestCase):
+    """`has_training` counts sessions that actually buy calories back.
+
+    Written after the bug: a `{"type": "rest", "estimated_burn_kcal": 0}`
+    entry counted as training, which drew an emerald bolt on an explicitly
+    scheduled rest day and — because `targets_for` used to branch on this —
+    put every day of a week carrying one onto the live-preview path, making
+    the stored plan's own targets unreachable from the telemetry header.
+    """
+
+    def test_a_rest_entry_is_not_training(self):
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "00:00", "type": "rest",
+             "duration_minutes": 0, "estimated_burn_kcal": 0}
+        ]
+        self.assertFalse(state.has_training("Monday"))
+
+    def test_a_zero_burn_session_is_not_training(self):
+        """`apply_training_adjustments` skips it, so nothing was bought."""
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "06:00", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 0}
+        ]
+        self.assertFalse(state.has_training("Monday"))
+
+    def test_a_real_session_still_counts(self):
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "06:00", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        ]
+        self.assertTrue(state.has_training("Monday"))
+
+
+class TestTargetsForPicksOneBasisForTheWholeRow(unittest.TestCase):
+    """A day is measured against the plan unless *this session* staged
+    something that changes what it would aim at.
+
+    It used to branch on "does this day have a workout", which is the
+    config's standing state rather than a staged change. With a training
+    schedule covering most of the week that put six days on the live preview
+    and one on the stored plan — one row of figures computed two different
+    ways — so a fresh weigh-in read as a plan that had drifted off target on
+    Monday and held on Thursday.
+    """
+
+    def test_nothing_staged_reads_the_plan_it_was_generated_for(self):
+        state = make_hydrating_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "06:00", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        ]
+        state._original_training_schedule = [dict(s) for s in state.training_schedule]
+        for day in state.days:
+            self.assertFalse(state.target_is_staged(day), day)
+            self.assertEqual(
+                state.targets_for(day)["calories"],
+                state.week_plan.targets[day]["calories"],
+                day,
+            )
+
+    def test_an_override_moves_that_day_to_the_preview(self):
+        state = make_hydrating_state()
+        state.set_target("Monday", "calories", 2500)
+        self.assertTrue(state.target_is_staged("Monday"))
+        self.assertEqual(state.targets_for("Monday")["calories"], 2500)
+        # And only that day.
+        self.assertFalse(state.target_is_staged("Tuesday"))
+
+    def test_an_edited_session_moves_that_day_to_the_preview(self):
+        state = make_hydrating_state()
+        state._original_training_schedule = []
+        state.training_schedule = [
+            {"day": "Monday", "time": "06:00", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        ]
+        self.assertTrue(state.training_edited_for("Monday"))
+        self.assertFalse(state.training_edited_for("Tuesday"))
+
+
+class TestOverridesAreDiffedAgainstTheLiveBaseline(unittest.TestCase):
+    """An override is a difference from what the day would *otherwise* aim
+    at, which on an `auto` macro is the engine's figure and not the one
+    written in `weekly_schedule`.
+
+    Diffing against the file marked every day permanently overridden the
+    moment the two drifted apart — the shipped config states 1000 kcal on a
+    Thursday the engine puts at 1722 — and made typing the real target look
+    like an edit.
+    """
+
+    def test_typing_the_baseline_back_clears_the_override(self):
+        state = make_hydrating_state()
+        baseline = state.baseline_targets("Monday")["calories"]
+        self.assertNotEqual(
+            baseline, state.config["weekly_schedule"]["Monday"]["calories"],
+            "fixture must actually exercise the drift this guards",
+        )
+        state.set_target("Monday", "calories", 3000)
+        self.assertIn("Monday", state.target_overrides)
+        state.set_target("Monday", "calories", baseline)
+        self.assertNotIn("Monday", state.target_overrides)
+
+    def test_the_staged_bar_measures_from_the_baseline(self):
+        state = make_hydrating_state()
+        baseline = state.baseline_targets("Monday")["calories"]
+        state.set_target("Monday", "calories", baseline + 150)
+        summaries = [change.summary for change in state.pending_changes()]
+        self.assertIn("Mon +150 kcal", summaries)
+
+    def test_an_override_is_the_days_final_target(self):
+        """The dialog shows the uplifted total, so the number typed back in
+        is that same total — the workout must not be added to it again."""
+        state = make_hydrating_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        ]
+        state.set_target("Monday", "calories", 2200)
+        self.assertEqual(state.planned_targets("Monday")["calories"], 2200)
+
+
+class _RecordingRepository:
+    """Just enough repository for `set_target_mode` — it only ever writes."""
+
+    def __init__(self) -> None:
+        self.saved = {}
+
+    async def save_config_keys(self, updates: dict) -> None:
+        self.saved.update(updates)
+
+
+class TestTargetModesChangeWhoDecidesNotTheNumber(unittest.TestCase):
+    """Switching a macro to manual must leave every figure where it was.
+
+    Seeding `weekly_schedule` from the engine is what makes that true:
+    handing back the file's stale number instead would look like the toggle
+    had re-planned the week rather than merely changed who owns it.
+    """
+
+    def run_async(self, coroutine):
+        import asyncio
+
+        return asyncio.run(coroutine)
+
+    def test_flipping_to_manual_moves_no_number(self):
+        state = make_hydrating_state()
+        repository = _RecordingRepository()
+        before = {day: state.planned_targets(day)["protein_g"] for day in state.days}
+        self.run_async(state.set_target_mode(repository, "protein_g", "manual"))
+        after = {day: state.planned_targets(day)["protein_g"] for day in state.days}
+        self.assertEqual(before, after)
+
+    def test_the_mode_and_the_seeded_values_are_both_persisted(self):
+        state = make_hydrating_state()
+        repository = _RecordingRepository()
+        self.run_async(state.set_target_mode(repository, "protein_g", "manual"))
+        self.assertEqual(repository.saved["target_modes"]["protein_g"], "manual")
+        self.assertIn("weekly_schedule", repository.saved)
+
+    def test_switching_back_to_auto_writes_only_the_mode(self):
+        """Nothing to seed on the way out — the engine takes over again."""
+        state = make_hydrating_state()
+        repository = _RecordingRepository()
+        self.run_async(state.set_target_mode(repository, "protein_g", "manual"))
+        repository.saved.clear()
+        self.run_async(state.set_target_mode(repository, "protein_g", "auto"))
+        self.assertEqual(list(repository.saved), ["target_modes"])
+
+    def test_a_manual_macro_reads_the_file_and_the_other_stays_computed(self):
+        state = make_hydrating_state()
+        repository = _RecordingRepository()
+        self.run_async(state.set_target_mode(repository, "protein_g", "manual"))
+        computed_calories = state.planned_targets("Monday")["calories"]
+        state.set_manual_target("Monday", "protein_g", 120)
+        self.assertEqual(state.planned_targets("Monday")["protein_g"], 120)
+        self.assertEqual(state.planned_targets("Monday")["calories"], computed_calories)
+
+    def test_an_unswitchable_macro_is_refused(self):
+        """Carbs have no computed form and fat is always derived, so neither
+        has a mode to set — a caller asking for one is a bug, not a no-op."""
+        state = make_hydrating_state()
+        with self.assertRaises(ValueError):
+            self.run_async(
+                state.set_target_mode(_RecordingRepository(), "net_carbs_g", "manual")
+            )

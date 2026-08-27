@@ -131,6 +131,8 @@ class GenerationHandles:
     reload_from_disk: Callable
     regenerate_day: Callable
     regenerate_meal: Callable
+    save_grid: Callable
+    offer_rejection_prompt: Callable
 
 
 def build_generation(ctx: UIContext) -> GenerationHandles:
@@ -180,8 +182,14 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
 
     # ---- rejection capture ---------------------------------------------
     # See CLAUDE.md's "Rejection capture" — the point of this phase.
-    # Hitting regenerate on a card is thrown away today; this is what asks
-    # why, without getting in the way of the retry that already ran.
+    # Discarding a recipe — whether by hitting regenerate or by swapping in a
+    # favorite — is thrown away today; this is what asks why, without getting
+    # in the way of the retry/swap that already ran. `offer_rejection_prompt`
+    # is exposed on `GenerationHandles` (rather than staying regenerate_meal's
+    # private helper) so ui_cards.py's swap handler can raise the same
+    # prompt for the same reason: a swap is exactly as deliberate a "no" to
+    # the old recipe as the regenerate icon is, and was silently exempt from
+    # capture before.
     #
     # A plain `fixed`-positioned div, not `ui.notify`/`ui.dialog`: NiceGUI's
     # `ui.notify` only ever forwards its `actions` to Quasar as serialized
@@ -210,7 +218,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             f"fixed bottom-4 right-4 z-50 flex flex-row flex-wrap items-center gap-{SPACE_TIGHT} "
             f"p-{SPACE_TIGHT} {RADIUS_CARD} border border-slate-700 bg-slate-900 shadow-lg max-w-sm"
         ):
-            ui.label(f"Why regenerate \"{_pending_rejection['recipe_name']}\"?").classes(
+            ui.label(f"Why replace \"{_pending_rejection['recipe_name']}\"?").classes(
                 f"{TEXT_MICRO} text-slate-400"
             )
             for reason, label in REJECTION_REASON_LABELS.items():
@@ -442,6 +450,52 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             button.props(remove="loading")
             progress_dialog.close()
 
+    # ---- save without generating ----------------------------------------
+
+    async def save_grid(button) -> None:
+        """Write the grid exactly as it stands, with no model call.
+
+        A favorite swap, a leftover link/unlink or a skip estimate are all
+        deterministic edits — `state.week_plan` already reflects them the
+        instant they're clicked (`PlannerState.swap_slot_with_favorite` and
+        siblings) — so nothing about them needs the LLM in the loop. Before
+        this, the *only* way to make one stick was `run_generation`, which
+        pays for a full multi-minute re-plan of every meal type just to
+        write down an edit that was already fully decided.
+
+        `state.week_plan`'s object identity is unchanged here — this isn't
+        adopting a new plan, just persisting the one already on screen — so
+        it deliberately does not call `state.adopt_plan`: that method's own
+        job is discarding unsaved edits (it resets `_spec`), the opposite of
+        what a same-plan persist is doing. Setting `edited` False directly is
+        the whole of what's needed to clear the staged-changes bar's "grid
+        edited" line.
+
+        Deliberately does **not** call `record_week_history` — that records
+        what the *model* chose, for next week's rotation, and a grid edit
+        makes no new choice for it to remember; the favorite/leftover it
+        wrote down already came from history-aware selection.
+        """
+        if state.week_plan is None or not state.edited:
+            return
+        button.props("loading")
+        try:
+            await REPOSITORY.save_week_plan(state.week_plan.model_dump(), state.week_selection)
+        except Exception as exc:
+            ui.notify(
+                f"Save failed: {short_error(exc)}",
+                type="negative",
+                multi_line=True,
+                close_button=True,
+                timeout=0,
+            )
+            return
+        finally:
+            button.props(remove="loading")
+        state.edited = False
+        refreshables.refresh("plan")
+        ui.notify(f"Saved {WEEK_SELECTION_LABELS[state.week_selection]}", type="positive")
+
     # ---- narrower retries -----------------------------------------------
 
     async def regenerate_day(day: str, button) -> None:
@@ -595,4 +649,6 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         reload_from_disk=reload_from_disk,
         regenerate_day=regenerate_day,
         regenerate_meal=regenerate_meal,
+        save_grid=save_grid,
+        offer_rejection_prompt=offer_rejection_prompt,
     )

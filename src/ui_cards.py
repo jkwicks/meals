@@ -7,7 +7,7 @@ both trigger it, and because both live in `meal_card`/`canvas` here.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 from nicegui import ui
 
@@ -409,13 +409,24 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         )
         if favorite is None:
             return
-        error = state.swap_slot_with_favorite(state.swap_target.id, favorite["recipe"])
+        # Captured before the swap mutates state: `state.swap_target` is the
+        # SlotView from when the modal opened, so its `.recipe` is still the
+        # one about to be discarded.
+        target_id = state.swap_target.id
+        outgoing_recipe = state.swap_target.recipe
+        error = state.swap_slot_with_favorite(target_id, favorite["recipe"])
         if error:
             ui.notify(error, type="warning")
             return
         swap_dialog.close()
         refreshables.refresh("plan")
         ui.notify(f"Swapped in \"{favorite['recipe']['name']}\"", type="positive")
+        # Same negative signal a discarded regenerate captures — see
+        # CLAUDE.md's "Rejection capture". A swap is an equally deliberate
+        # "not this one", and was silently exempt before
+        # `offer_rejection_prompt` was exposed on `GenerationHandles`.
+        if outgoing_recipe is not None:
+            generation.offer_rejection_prompt(target_id, outgoing_recipe.name)
 
     @ui.refreshable
     def swap_matches() -> None:
@@ -629,10 +640,10 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             # of it — same reasoning as the "Link to next lunch" button: a
             # click on the favorite/swap buttons would otherwise bubble up
             # through `body`'s click handler and open the detail dialog too.
-            with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
-                ui.label(meal_type[:5].upper()).classes(
-                    f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
-                )
+            # No meal-type label here any more (phase 2b of `ui-redesign.md`)
+            # — the swim-lane gutter in `canvas()` says which meal type this
+            # row is, once per row rather than once per card.
+            with ui.element("div").classes(f"flex flex-row items-center justify-end gap-{SPACE_TIGHT}"):
                 with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_HAIR}"):
                     if view.recipe is not None:
                         if view.mode == MODE_COOK:
@@ -855,88 +866,311 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
     # `planner.generate_sunday_prep_session`), done ahead of the week rather
     # than repeated per cook day. It is prep work, not an eating slot, so it
     # gets its own indigo accent (`PREP_COLUMN_ACCENT`) rather than any
-    # `STATUS_STYLES` treatment, and sits outside `state.days` entirely —
-    # there is no slot_id, regen button, or macro target for it.
+    # `STATUS_STYLES` treatment, and the column *itself* sits outside
+    # `state.days` entirely — there is no slot_id or macro target for the
+    # session as a whole.
+    #
+    # The dishes it batches are a different matter, and phase 6c of
+    # `ui-redesign.md` is that distinction. Each one is an ordinary
+    # `MODE_COOK` slot with a real recipe on it — the anchor lives on day 1
+    # (CLAUDE.md's "the anchor day is therefore always day 1") and the shake
+    # candidate on its own training morning — so "batch-cooked meals can't be
+    # opened, swapped or regenerated" was never true, only unreachable from
+    # the one column that exists to say what is cooking for the week ahead.
+    # These cards are that second entry point: the same `open_detail`,
+    # `open_swap_modal` and `generation.regenerate_meal` every day card
+    # already gets, wired to handles this closure was already holding.
 
-    def prep_day_column() -> None:
-        session = state.week_plan.sunday_prep_session if state.week_plan else None
-        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} min-w-0"):
+    def prep_candidate_card(view: SlotView) -> None:
+        """One dish this prep session covers, as an actionable card.
+
+        Indigo, not `STATUS_STYLES` emerald: this is still the prep column,
+        and borrowing the cook accent for a card sitting inside it would read
+        as a fifth slot status (`.claude/rules/ui.md`'s colour contract). The
+        icon row is a *sibling* of the clickable body rather than its parent,
+        for the same reason `meal_card` splits them — a click on swap or
+        regenerate would otherwise bubble into the body's handler and open
+        the recipe dialog on its way past.
+        """
+        # `flex-nowrap` on the card's own column, for the second half of the
+        # same Quasar `.flex` trap the column container above hits: a
+        # *wrapping* column flex container stretches its children to the flex
+        # line's cross size, which is the widest child's max-content — not to
+        # the container's own width. Measured without it: the shake's "MON
+        # BREAKFAST" eyebrow plus two icons has a 126px max-content against a
+        # 123px content box, so the header row refused to shrink (its label's
+        # `truncate` never engaged) and dragged the title and portions rows
+        # out to 126px with it. `nowrap` makes the container single-line, and
+        # a single-line column stretches to its own content box instead.
+        with ui.element("div").classes(
+            f"{RADIUS_CARD} p-{SPACE_TIGHT} {PREP_COLUMN_ACCENT} flex flex-col flex-nowrap "
+            f"gap-{SPACE_HAIR} min-w-0 w-full overflow-hidden shrink-0"
+        ):
+            # `flex-nowrap` because Quasar's own `.flex` sets `flex-wrap: wrap`
+            # and Tailwind's `flex-row` doesn't undo it; `min-w-0`/`truncate`
+            # on the label because a flex item won't shrink past its longest
+            # word. Both are the standing trap for any icon-plus-text row in
+            # this UI, and this column is the narrowest one on the page.
             with ui.element("div").classes(
-                f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-indigo-400/40 flex flex-row "
-                "justify-between items-baseline"
+                f"flex flex-row flex-nowrap items-center justify-between gap-{SPACE_HAIR} min-w-0"
             ):
-                ui.label("PREP DAY").classes(
-                    f"{TEXT_BODY} font-semibold text-indigo-300 tracking-wide"
+                ui.label(slot_label(view.id, short=True).upper()).classes(
+                    f"{TEXT_MICRO} font-semibold tracking-wide text-indigo-400 truncate min-w-0"
                 )
-                ui.icon("checklist").classes(f"{TEXT_BODY} text-indigo-400")
-            if session is None:
                 with ui.element("div").classes(
-                    f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT} border-dashed"
+                    f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} shrink-0"
                 ):
-                    ui.label("Not generated").classes(f"{TEXT_MICRO} text-slate-500")
-                    ui.label(
-                        "Turn on Bulk prep or Long cook meal in the Generate popup "
-                        "for a batch-prep timeline here (or set enable_sunday_prep "
-                        "in config.json to do it every week)."
-                    ).classes(f"{TEXT_MICRO} text-slate-600 mt-1")
-                return
-            # What this session is for, before how — a shopper glancing at the
-            # column should see which dishes it batches without opening any
-            # of the phase timeline below.
-            if session.meals_included:
-                with ui.element("div").classes(f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT}"):
-                    ui.label("Batching for").classes(
-                        f"{TEXT_MICRO} uppercase tracking-wide text-indigo-400 mb-1"
+                    swap_button = ui.button(
+                        icon="swap_horiz", on_click=lambda v=view: open_swap_modal(v)
                     )
-                    for meal in session.meals_included:
-                        ui.label(f"• {meal}").classes(
-                            f"{TEXT_MICRO} text-indigo-200 leading-tight"
+                    swap_button.props("dense flat round size=xs").classes(
+                        f"min-h-0 p-{SPACE_HAIR} text-indigo-400/70 hover:text-sky-300"
+                    )
+                    with swap_button:
+                        ui.tooltip("Swap with a favorite")
+                    regen_button = ui.button(icon="refresh")
+                    regen_button.props("dense flat round size=xs").classes(
+                        f"min-h-0 p-{SPACE_HAIR} text-indigo-400/70 hover:text-emerald-300"
+                    )
+                    regen_button.on_click(
+                        lambda v=view, btn=regen_button: generation.regenerate_meal(v, btn)
+                    )
+                    with regen_button:
+                        # Says what it costs, because from *this* column the
+                        # cost is the column: `regenerate_single_meal` drops
+                        # `sunday_prep_session` outright whenever the slot it
+                        # re-cooks was a prep candidate ("drop rather than
+                        # risk a stale plan"), so this timeline goes back to
+                        # its empty state until the week is generated again.
+                        ui.tooltip(
+                            "Regenerate this meal — clears the prep timeline "
+                            "until the week is regenerated"
                         )
-            for phase in session.timeline:
-                with ui.expansion(
-                    phase.name,
-                    caption=f"{phase.active_minutes} active / {phase.passive_minutes} passive min",
-                ).classes(f"{RADIUS_CARD} {PREP_COLUMN_ACCENT} {TEXT_BODY} w-full").props(
-                    f"dense header-class='text-indigo-200 {TEXT_BODY} font-medium'"
+
+            body = ui.element("div").classes(
+                f"flex flex-col gap-{SPACE_HAIR} min-w-0 cursor-pointer"
+            )
+            body.on("click", lambda v=view: open_detail(v))
+            with body:
+                # Same two-line clamp plus overflow tooltip `meal_card` gives
+                # its own titles, and for the same reason: this column is
+                # narrower than a day column, so a batch dish's full name
+                # reliably doesn't fit.
+                title_label = ui.label(view.title).classes(
+                    f"{TEXT_BODY} leading-tight font-semibold text-indigo-100 line-clamp-2"
+                )
+                title_tooltip_chars = state.config["ui_settings"]["title_tooltip_chars"]
+                if len(view.title) > title_tooltip_chars:
+                    with title_label:
+                        ui.tooltip(view.title)
+                if view.portions:
+                    ui.label(f"{view.portions} portions").classes(
+                        f"{TEXT_MICRO} text-indigo-300/70 truncate"
+                    )
+
+    def prep_day_column(total_rows: int, views: Dict[str, SlotView]) -> None:
+        session = state.week_plan.sunday_prep_session if state.week_plan else None
+        # Column 2 (column 1 is the meal-type gutter, phase 2b of
+        # `ui-redesign.md`), spanning every row the grid has this repaint —
+        # the header row plus one per meal type — because prep work isn't
+        # decomposed by meal type the way the day columns are.
+        #
+        # **The spanning cell is deliberately empty of in-flow content**, and
+        # that is load-bearing rather than an extra wrapper for its own sake.
+        # A grid item spanning N auto-sized rows still has to *fit*, and auto
+        # rows size to their items' max-content, so this column's natural
+        # height — its "Batching for" box plus one expansion per prep phase,
+        # measured at ~1420px against ~750px of actual cards — was inflating
+        # every meal row proportionally and putting ~640px of dead space
+        # between a single day's cards. `overflow-y: auto` alone does *not*
+        # fix that: it zeroes an item's automatic *minimum* size, which is a
+        # different quantity from the max-content contribution auto rows
+        # actually use. Taking the content out of flow (`absolute inset-0`)
+        # is what drops the contribution to a real zero, so the rows size off
+        # the day cards alone and the timeline scrolls inside whatever height
+        # they come to. `self-stretch` on the outer cell is the other half:
+        # the grid sets `items-start` (so a short card sits at its row's top
+        # edge rather than stretching), which would otherwise leave this cell
+        # at zero height with nothing for `inset-0` to fill.
+        with ui.element("div").classes("relative self-stretch min-w-0").style(
+            f"grid-column: 2; grid-row: 1 / span {total_rows};"
+        ):
+            # `flex-nowrap` is not tidiness — without it this column silently
+            # renders *outside itself*. Quasar's own `.flex` sets
+            # `flex-wrap: wrap` and Tailwind's `flex-col` doesn't undo it
+            # (the standing trap in `.claude/rules/ui.md`, here in its
+            # column-direction form): a wrapping column flex container whose
+            # content is taller than its box starts a *second column* beside
+            # the first rather than overflowing, so `overflow-y: auto` above
+            # never has anything to scroll. Measured at 1440px once phase 6c
+            # added the batching cards: the last prep phase laid itself out
+            # at x=423, which is the Monday day column, on top of Monday's
+            # own cards and 143px clear of this cell's 135px track. The
+            # `absolute` positioning is what makes it invisible rather than
+            # merely wrong — nothing reflows to reveal it.
+            with ui.element("div").classes(
+                f"absolute inset-0 flex flex-col flex-nowrap gap-{SPACE_BASE} min-w-0 "
+                "overflow-y-auto"
+            ):
+                with ui.element("div").classes(
+                    f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-indigo-400/40 flex flex-row "
+                    "justify-between items-baseline shrink-0"
                 ):
-                    if phase.description:
-                        ui.label(phase.description).classes(
-                            f"{TEXT_MICRO} text-slate-400 mb-1"
+                    ui.label("PREP DAY").classes(
+                        f"{TEXT_BODY} font-semibold text-indigo-300 tracking-wide"
+                    )
+                    ui.icon("checklist").classes(f"{TEXT_BODY} text-indigo-400")
+                if session is None:
+                    with ui.element("div").classes(
+                        f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT} border-dashed shrink-0"
+                    ):
+                        ui.label("Not generated").classes(f"{TEXT_MICRO} text-slate-500")
+                        ui.label(
+                            "Turn on Bulk prep or Long cook meal in the Generate popup "
+                            "for a batch-prep timeline here (or set enable_sunday_prep "
+                            "in config.json to do it every week)."
+                        ).classes(f"{TEXT_MICRO} text-slate-600 mt-1")
+                    return
+                # What this session is for, before how — a shopper glancing at
+                # the column should see which dishes it batches without opening
+                # any of the phase timeline below.
+                #
+                # Resolved through `candidate_slot_ids` rather than rendered
+                # from `meals_included`, which is the model's own prose list
+                # and is frozen at generation time: the slot ids are what
+                # Python actually folded into the session (see
+                # `generate_sunday_prep_session`, which stamps them on after
+                # the call precisely so nothing downstream has to trust the
+                # model's self-report), and they are also the only handle a
+                # click can act on. A dish whose slot has since been swapped
+                # therefore shows its *current* recipe here, where the string
+                # list would still be naming the one it replaced.
+                candidates = [
+                    view
+                    for view in (views.get(cid) for cid in session.candidate_slot_ids)
+                    if view is not None and view.recipe is not None
+                ]
+                if candidates:
+                    ui.label("Batching for").classes(
+                        f"{TEXT_MICRO} uppercase tracking-wide text-indigo-400 shrink-0"
+                    )
+                    for view in candidates:
+                        prep_candidate_card(view)
+                elif session.meals_included:
+                    # A session saved before `candidate_slot_ids` existed has
+                    # an empty list, and one saved against a different week
+                    # start has ids that no longer resolve — the same
+                    # pre-migration tolerance `is_sunday_prepped` extends to
+                    # exactly this field. Both fall back to the model's prose
+                    # list, inert as it was before phase 6c, rather than to a
+                    # column that silently stops saying what it batches.
+                    with ui.element("div").classes(
+                        f"{RADIUS_CARD} p-{SPACE_BASE} {PREP_COLUMN_ACCENT} shrink-0"
+                    ):
+                        ui.label("Batching for").classes(
+                            f"{TEXT_MICRO} uppercase tracking-wide text-indigo-400 mb-1"
                         )
-                    ui.checkbox(f"Done: {phase.name}").props(
-                        "dense size=xs color=indigo"
-                    ).classes(f"{TEXT_MICRO} text-indigo-200")
+                        for meal in session.meals_included:
+                            ui.label(f"• {meal}").classes(
+                                f"{TEXT_MICRO} text-indigo-200 leading-tight"
+                            )
+                for phase in session.timeline:
+                    with ui.expansion(
+                        phase.name,
+                        caption=f"{phase.active_minutes} active / {phase.passive_minutes} passive min",
+                    ).classes(
+                        f"{RADIUS_CARD} {PREP_COLUMN_ACCENT} {TEXT_BODY} w-full shrink-0"
+                    ).props(
+                        f"dense header-class='text-indigo-200 {TEXT_BODY} font-medium'"
+                    ):
+                        if phase.description:
+                            ui.label(phase.description).classes(
+                                f"{TEXT_MICRO} text-slate-400 mb-1"
+                            )
+                        ui.checkbox(f"Done: {phase.name}").props(
+                            "dense size=xs color=indigo"
+                        ).classes(f"{TEXT_MICRO} text-indigo-200")
+
+    def meal_type_gutter_cell(row: int, meal_type: str) -> None:
+        """One sticky swim-lane label, column 1, one row per meal type.
+
+        `sticky left-0` keeps it in view while the grid scrolls horizontally
+        beneath it — the same `overflow-x: auto` wrapper phase 2a already
+        gives this canvas (`ui_theme.week_grid_scroll()`), which is what
+        `sticky` positions itself against here. An opaque background is what
+        stops a scrolled-under card showing through it, and `z-10` is what
+        keeps that background above the cards rather than beneath them.
+        """
+        with ui.element("div").classes(
+            f"sticky left-0 z-10 flex items-center px-{SPACE_TIGHT} bg-slate-950"
+        ).style(f"grid-column: 1; grid-row: {row};"):
+            ui.label(meal_type.upper()).classes(
+                f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
+            )
 
     @ui.refreshable
     def canvas() -> None:
+        """The week grid: a real CSS grid, not 7 independent flex columns.
+
+        Phase 2b of `ui-redesign.md`. Before this, each day was its own
+        `flex flex-col` of 4 cards — a long title in one card made its whole
+        column taller with nothing keeping the next day's same meal type
+        level with it; they lined up by luck, not by structure. Now every
+        cell (a day's header, and each of its meal-type cards) is placed
+        explicitly by `grid-column`/`grid-row`, so cells sharing a row are
+        genuinely in that row — the browser sizes the row to the tallest one
+        and, with `items-start` on the grid, aligns every other cell in it to
+        the same top edge regardless of its own height.
+
+        Column 1 is the meal-type gutter, column 2 is the prep-day column
+        (spanning every row, since prep work isn't split by meal type), and
+        columns 3.. are the days — `WEEK_GRID_COLS` reserves all of this,
+        including the gutter track the header's `telemetry()` also carries as
+        an empty spacer, which is what keeps this grid's day columns aligned
+        with the header's above it.
+        """
         views = state.slot_views()
+        meal_types = state.meal_types
+        total_rows = len(meal_types) + 1  # the header row, plus one per meal type
         with ui.element("div").classes(f"meal-canvas grid {WEEK_GRID_COLS} gap-{SPACE_BASE} w-full items-start"):
-            prep_day_column()
-            for day in state.days:
-                with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} min-w-0"):
-                    with ui.element("div").classes(
-                        f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-slate-800 flex flex-row "
-                        "justify-between items-baseline"
+            for meal_index, meal_type in enumerate(meal_types):
+                meal_type_gutter_cell(meal_index + 2, meal_type)
+            prep_day_column(total_rows, views)
+            for day_index, day in enumerate(state.days):
+                day_column = day_index + 3  # 1 = gutter, 2 = prep, 3.. = days
+                with ui.element("div").classes(
+                    f"px-{SPACE_TIGHT} py-{SPACE_HAIR} border-b border-slate-800 flex flex-row "
+                    "justify-between items-baseline min-w-0"
+                ).style(f"grid-column: {day_column}; grid-row: 1;"):
+                    # Phase 6a: no day-name label here. The telemetry header
+                    # cell directly above this column already prints the day
+                    # (with its date), and the two grids share one horizontal
+                    # scroll position (`week_grid_scroll`, phase 2a), so the
+                    # identity stays overhead at every viewport width — a
+                    # second copy was repetition, not hierarchy. The row keeps
+                    # what only it has: the day-regenerate icon and the day's
+                    # 1-indexed position in the week.
+                    with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
+                        # Only offered once a week exists and this day has
+                        # something to cook — regenerating a leftover/skip-only
+                        # day would be a no-op API call for nothing.
+                        if state.week_plan is not None and state.spec.cook_slots_on(day):
+                            regen_button = ui.button(icon="refresh")
+                            regen_button.props("dense flat round size=xs").classes(
+                                f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-emerald-300"
+                            )
+                            regen_button.on_click(
+                                lambda day=day, btn=regen_button: generation.regenerate_day(day, btn)
+                            )
+                            with regen_button:
+                                ui.tooltip(f"Regenerate {day} — re-cooks just this day")
+                    ui.label(str(day_index + 1)).classes(
+                        f"{TEXT_MICRO} font-mono text-slate-600"
+                    )
+                for meal_index, meal_type in enumerate(meal_types):
+                    with ui.element("div").classes("min-w-0").style(
+                        f"grid-column: {day_column}; grid-row: {meal_index + 2};"
                     ):
-                        with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
-                            ui.label(day).classes(f"{TEXT_BODY} font-semibold text-slate-200")
-                            # Only offered once a week exists and this day has
-                            # something to cook — regenerating a leftover/skip-only
-                            # day would be a no-op API call for nothing.
-                            if state.week_plan is not None and state.spec.cook_slots_on(day):
-                                regen_button = ui.button(icon="refresh")
-                                regen_button.props("dense flat round size=xs").classes(
-                                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-emerald-300"
-                                )
-                                regen_button.on_click(
-                                    lambda day=day, btn=regen_button: generation.regenerate_day(day, btn)
-                                )
-                                with regen_button:
-                                    ui.tooltip(f"Regenerate {day} — re-cooks just this day")
-                        ui.label(str(state.days.index(day) + 1)).classes(
-                            f"{TEXT_MICRO} font-mono text-slate-600"
-                        )
-                    for meal_type in state.meal_types:
                         meal_card(views.get(slot_id(day, meal_type)), meal_type)
 
     return CardHandles(

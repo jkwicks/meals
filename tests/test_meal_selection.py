@@ -689,6 +689,53 @@ class TestSundayPrepLabelling(unittest.TestCase):
         self.assertFalse(planner.is_sunday_prepped(event, plan))
 
 
+class TestPreppedAheadExcludesTheShake(unittest.TestCase):
+    """`is_prepped_ahead` is `is_sunday_prepped` minus the shake, and the gap
+    is what decides how old a dish's food is.
+
+    Both batch anchors come out of the pan on prep day — the day before
+    `spec.days[0]` — so their fridge days are counted from there
+    (`week.PREP_DAY_INDEX`). The shake rides along in the same session but is
+    only *portioned* ahead: each training morning genuinely blends it fresh
+    (`build_shake_prep_brief`), so its food is exactly as old as its own day
+    says. Crediting it prep day would age a fresh drink by 24 hours and, on a
+    two-person week, invent a storage note for a meal that never had one.
+    """
+
+    def _session(self):
+        return planner.SundayPrepSession(
+            total_active_minutes=90,
+            candidate_slot_ids=["Monday:lunch", "Monday:dinner", "Monday:breakfast"],
+        )
+
+    def test_both_batch_anchors_are_cooked_ahead(self):
+        lunch = cook_event(
+            "Monday:lunch", "Monday", "lunch", recipe("Lentil Soup", "lunch", servings=6)
+        )
+        dinner = cook_event(
+            "Monday:dinner", "Monday", "dinner", recipe("Beef Cheeks", "dinner", servings=6)
+        )
+        plan = week_plan_with([lunch, dinner], sunday_prep_session=self._session())
+        self.assertTrue(planner.is_prepped_ahead(lunch, plan))
+        self.assertTrue(planner.is_prepped_ahead(dinner, plan))
+
+    def test_the_shake_is_portioned_ahead_not_cooked_ahead(self):
+        shake = cook_event(
+            "Monday:breakfast", "Monday", "breakfast",
+            recipe("Berry Shake", "breakfast"), portions=1,
+        )
+        plan = week_plan_with([shake], sunday_prep_session=self._session())
+        self.assertTrue(planner.is_sunday_prepped(shake, plan))
+        self.assertFalse(planner.is_prepped_ahead(shake, plan))
+
+    def test_a_dish_outside_the_session_is_never_cooked_ahead(self):
+        stray = cook_event(
+            "Saturday:dinner", "Saturday", "dinner", recipe("Stray Roast", "dinner")
+        )
+        plan = week_plan_with([stray], sunday_prep_session=self._session())
+        self.assertFalse(planner.is_prepped_ahead(stray, plan))
+
+
 class TestSundayPrepStalenessGuardUsesGroundTruth(unittest.IsolatedAsyncioTestCase):
     """`regenerate_single_day`/`regenerate_single_meal` decide whether a saved
     `SundayPrepSession` is now stale by testing `event.recipe.prep_notes` for

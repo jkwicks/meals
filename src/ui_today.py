@@ -291,19 +291,19 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
     # ---- the day picker ----------------------------------------------------
 
     def tab_label() -> str:
-        """What the tab itself says — "Today · Sun 23 Aug", or "Mon 24 Aug".
+        """What the tab itself says — "Daily View · Sun 23 Aug", or "Mon 24 Aug".
 
-        The "Today ·" prefix appears only when the day on screen really is
-        today. Dropping it while browsing is what keeps the tab honest: its
-        `today` icon and its name would otherwise both still claim "today"
-        three days into the week, which is exactly the confident-but-wrong
-        rendering `today_in_week` exists to prevent.
+        The "Daily View ·" prefix appears only when the day on screen really
+        is today. Dropping it while browsing is what keeps the tab honest:
+        its `today` icon and its name would otherwise both still claim
+        "today" three days into the week, which is exactly the
+        confident-but-wrong rendering `today_in_week` exists to prevent.
         """
         day = state.viewed_day()
         if day is None:
-            return "Today"
+            return "Daily View"
         label = format_day_label(day, state.day_date_iso(day), short=True)
-        return f"Today · {label}" if state.viewing_today() else label
+        return f"Daily View · {label}" if state.viewing_today() else label
 
     def sync_tab_label() -> None:
         if tab is not None:

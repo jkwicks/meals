@@ -123,6 +123,56 @@ never raise on an unknown key.
   needs `min-w-0` — a flex item's default `min-width: auto` will not shrink
   past its longest word. A step long enough to fill its row otherwise wraps
   *below* its number and runs back underneath it.
+- **The same wrap, in a `flex-col`, renders content outside its own box.**
+  `flex-col` does not undo `flex-wrap: wrap` either, and a wrapping *column*
+  container whose content outgrows its height does not overflow — it starts a
+  second column beside the first, so any `overflow-y: auto` on it never
+  fires. `ui_cards.prep_day_column` is the precedent: measured at 1440px,
+  the prep column's last timeline phase laid itself out at x=423, inside the
+  Monday day column and 143px clear of its own 135px track, and the cell's
+  `absolute` positioning made that invisible rather than merely wrong. Any
+  `flex flex-col` that is expected to scroll needs `flex-nowrap`.
+- **A flex or grid item's default `min-width`/`min-height` is `auto`, which
+  refuses to shrink below its content's natural size — including a wrapper
+  that's just passing width down to an `overflow-x: auto` grid inside it.**
+  Several Quasar containers (`.q-tab-panel` among them) are themselves flex,
+  so a plain `div` wrapper with no `min-w-0` grows to its content's
+  min-content width regardless of how little room its parent actually has —
+  the wrapper's own `overflow-x: auto` then never overflows, and a
+  *different*, outer ancestor ends up scrolling instead. `ui_plan.panel()`
+  hit exactly this (phase 2b of `ui-redesign.md`): its wrapper had no
+  `min-w-0`, so `week_grid_scroll()`'s canvas never actually needed to
+  scroll — a Quasar container two levels up silently scrolled the whole
+  panel instead, which would have left the meal-type gutter's `sticky`
+  positioning nothing to stick against. `w-full min-w-0` on the wrapper is
+  the fix — same shape as `meal_card`'s own `w-full`/`overflow-hidden` fix
+  for a sibling sizing trap, documented in CLAUDE.md's phase-1 writeup.
+- **A stretched child of a *wrapping* column flex container sizes to the
+  widest sibling's max-content, not to the container's own width.** Quasar's
+  `.flex` sets `flex-wrap: wrap` (see the trap above), and in a column
+  container that also changes what `align-items: stretch` stretches to: the
+  flex *line's* cross size, which is the widest item's hypothetical width.
+  `ui.header()` is such a container, so a `w-auto` wrapper around
+  `WEEK_GRID_COLS` measured 1024px — all nine columns at their 110px floor —
+  inside a 1000px viewport, with nothing left to overflow while the canvas
+  below scrolled normally. An explicit percentage width
+  (`width: calc(100% - <inset>)`, `ui_theme.WEEK_GRID_HEADER_INSET_STYLE`)
+  resolves against the container's content box and is immune to it. Reach
+  for a definite width, not stretch, for anything that has to match a box
+  elsewhere on the page.
+- **A grid item spanning several auto rows sizes those rows to its own
+  content, and `overflow-y: auto` does not stop it.** Auto rows size to
+  their items' *max-content*; `overflow` only zeroes an item's automatic
+  *minimum* size, which is a different quantity, so reaching for it here
+  measures as no change whatsoever. To make a tall spanning item stop
+  driving row heights, take its content out of flow — the cell becomes
+  `relative self-stretch` and empty, the content an `absolute inset-0
+  overflow-y-auto` child. `ui_cards.prep_day_column` is the precedent, and
+  the symptom there was ~640px of dead space appearing between one day's
+  meal cards, which looked like the grid restructure's fault and wasn't.
+  `self-stretch` is required alongside it wherever the grid sets
+  `items-start`, or the cell sits at zero height and `inset-0` fills
+  nothing.
 - **`ui.add_css` from inside a `@ui.refreshable` stacks another copy into the
   head on every repaint.** Emit page CSS once, from the page function.
 - **Never call `repository.run_sync()` here.** NiceGUI page handlers run *on*
@@ -142,9 +192,39 @@ every module is built. Before adding a topic, check whether an existing one
 already covers the change — and before adding a section to `"plan"`, check it
 does not own a focused input.
 
+## Targets: read the resolved number, never the file
+
+`config["weekly_schedule"][day]["calories"]` and `["protein_g"]` are **inert**
+while that macro's `target_modes` entry is `auto` — `hydrate_dynamic_targets`
+replaces them with the engine's figure, and the shipped config states 1000
+kcal on a Thursday every run plans at 1722. A widget reading the file is
+therefore displaying a number nothing plans from, which is exactly the bug
+that had the telemetry header measuring the week against targets no run had
+ever used.
+
+- `state.planned_targets(day)` — what the next run will aim at.
+- `state.baseline_targets(day)` — what it would aim at with that day's own
+  overrides suppressed. This is what an override is a *difference from*, so
+  it is what a signed delta, a clear-on-match, or a ghost line measures
+  against. It costs a `planning_config()` rebuild, so compute it only for the
+  days that need one.
+- `state.targets_for(day)` — the telemetry denominator, which is the *stored
+  plan's* target unless `target_is_staged(day)`. Do not branch on
+  `has_training(day)` for this: a workout already in the config is not a
+  staged change, and branching on it put six days of one row on a live
+  preview and the seventh on the plan.
+
+The Settings destination's Daily Targets panel is the only place that writes
+to `config/` (`PlannerState.set_target_mode` → `repository.save_config_keys`).
+Everything else here stays session-only.
+
 ## State lives per client
 
 `PlannerState` is created *inside* the page function. Module-level state would
-be shared by every browser tab connected to the server. Generating is the only
-thing in this UI that writes to disk; grid edits live in the client's state
-until discarded.
+be shared by every browser tab connected to the server. A generation is the
+only thing that calls the model, but it is no longer the only thing that
+writes `week_plan.json` — `ui_generation.save_grid` persists a deterministic
+grid edit (a swap, a leftover link, a skip estimate) straight to disk with no
+model call, via the staged bar's "Save changes" button (`state.edited` gates
+whether it's shown). Grid edits still live only in the client's state until
+one of Save/Generate/Discard acts on them.

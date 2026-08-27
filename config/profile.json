@@ -7,6 +7,10 @@
     "protein_multiplier": 1.8,
     "activity_level": "light_office"
   },
+  "target_modes": {
+    "calories": "auto",
+    "protein_g": "auto"
+  },
   "weekly_schedule": {
     "Monday": {
       "calories": 1500,

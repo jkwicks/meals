@@ -9,8 +9,12 @@ persisted: this is a scratch list for one trip, not another piece of state
 that could disagree with week_plan.json.
 
 `build_shopping(ctx)` constructs the `ui.right_drawer(...)` itself (nothing
-else needs to build it) and returns the drawer element so the header's
-shopping-cart button (in `ui_app.py`) can toggle it.
+else needs to build it) and returns the drawer element so the rail's
+Shopping button (the action block in `ui_app.py`) can toggle it. That button
+was in `ui.header()` until phase 6b of `ui-redesign.md`; the rail is global
+in the same way the header was, which is what that finding required of it —
+Daily View and the day inspector show slots worth shopping against too, so
+this could not become a Plan-only control.
 """
 
 import json

@@ -69,17 +69,64 @@ RADIUS_PILL = "rounded-full"  # bars, dots, pills
 # effect.
 WEEK_GRID_SCROLL_CLASS = "week-grid-scroll"
 
-# `minmax(110px, 1fr)` per column, not a flat min-width on the wrapper — 110px
-# is the day column's own natural width (see CLAUDE.md's phase-1 "cards
-# visually overlapping" note). At any normal desktop width the `1fr` still
-# splits the available space evenly across all eight columns exactly as
-# `grid-cols-8` always did; only a viewport too narrow for eight 110px
-# columns triggers the scroll. And because `ui_telemetry`'s two rows and
-# `ui_cards.canvas` all use this identical template inside identically-wide
-# wrappers (both sit `px-3`/`0.75rem` in from the same full-width page — see
-# `ui_app.py`'s page CSS), their columns resolve to identical pixel widths,
-# which is what keeps them aligned *while scrolled* and not just at rest.
-WEEK_GRID_COLS = "grid-cols-[repeat(8,minmax(110px,1fr))]"
+# How far the header's copy of the grid has to be pushed right to sit over the
+# canvas's copy. Phase 2a could assume the two started at the same x — both
+# were `px-3` in from the same full-width page — but phase 3 put a vertical
+# rail to the left of the destination panels, and only the canvas is inside
+# one. Measured before this constant existed: the header's grid started at
+# x=12 with 159px day columns while the canvas's started at x=192 with 135px
+# ones, which put every day's telemetry above its *neighbour's* meals. The
+# inset makes both scroll viewports the same width as well as the same left
+# edge, so the columns resolve to identical pixel widths and the scroll sync
+# below mirrors like for like.
+#
+# `RAIL_WIDTH_CLASS` is what makes the arithmetic hold: `ui.tabs()` sizes a
+# vertical rail to its widest tab, and the Daily View tab's label is the day
+# being browsed ("Daily View · Sun 30 Aug", "Fri 28 Aug"), so an intrinsic
+# width would shift the whole canvas sideways as you stepped through the
+# week. 168px is what it measured at; pinning it changes nothing on screen
+# and stops it moving.
+RAIL_WIDTH_PX = 168
+# `ui_plan.panel()`'s own `p-{SPACE_SECTION}` inside its tab panel — the one
+# padding the header doesn't already have.
+PANEL_PAD_PX = 12
+RAIL_WIDTH_CLASS = f"w-[{RAIL_WIDTH_PX}px]"
+# An explicit width, not `w-auto` plus margins. Quasar's `.flex` puts
+# `flex-wrap: wrap` on the header, and a wrapping column flex container sizes
+# its line — and therefore every stretched child — to the *widest* item's
+# max-content, not to its own content box. The grid's max-content is all nine
+# columns at their 110px floor, so a stretched wrapper stayed 1024px wide at a
+# 1000px viewport: wider than the page, nothing left to overflow, and the
+# canvas below scrolling on its own with the header frozen. A percentage
+# resolves against the header's content box instead, which is the box that
+# actually matches the destination panel's.
+WEEK_GRID_HEADER_INSET_STYLE = (
+    f"margin-left: {RAIL_WIDTH_PX + PANEL_PAD_PX}px; "
+    f"width: calc(100% - {RAIL_WIDTH_PX + 2 * PANEL_PAD_PX}px)"
+)
+
+# `minmax(110px, 1fr)` per day/prep column, not a flat min-width on the
+# wrapper — 110px is the day column's own natural width (see CLAUDE.md's
+# phase-1 "cards visually overlapping" note). At any normal desktop width the
+# `1fr` still splits the available space evenly across those eight columns
+# exactly as `grid-cols-8` always did; only a viewport too narrow for eight
+# 110px columns triggers the scroll. And because `ui_telemetry`'s two rows and
+# `ui_cards.canvas` use this identical template inside wrappers made
+# identically wide by `WEEK_GRID_HEADER_INSET_CLASS` above, their columns
+# resolve to identical pixel widths, which is what keeps them aligned *while
+# scrolled* and not just at rest. (That used to follow from both sitting
+# `px-3` in from the same full-width page; the rail broke it, and the inset
+# is what restores it.)
+#
+# The leading `minmax(80px,auto)` track is phase 2b of `ui-redesign.md`'s
+# meal-type gutter — real content (BREAKFAST/LUNCH/DINNER/SNACK) only in
+# `ui_cards.canvas()`, an empty spacer cell in `ui_telemetry.telemetry()` that
+# exists purely so both grids keep nine tracks and stay aligned. 80px is
+# comfortably past "BREAKFAST" (the longest meal-type name in the shipped
+# config) at the gutter's tracking-wide 10px label; `auto` lets it grow for a
+# longer name rather than truncating one, the same way the day columns never
+# truncate below 110px.
+WEEK_GRID_COLS = "grid-cols-[minmax(80px,auto)_repeat(8,minmax(110px,1fr))]"
 
 # `e.currentTarget` (the listening element itself), not `e.target`: a native
 # `scroll` event doesn't bubble, but `currentTarget` is the correct handle
@@ -94,7 +141,7 @@ WEEK_GRID_SCROLL_SYNC_JS = (
 )
 
 
-def week_grid_scroll():
+def week_grid_scroll(inset: bool = False):
     """One `overflow-x: auto` region around a `WEEK_GRID_COLS` grid.
 
     Two call sites use this — the header's `telemetry()` row and the Plan
@@ -104,10 +151,19 @@ def week_grid_scroll():
     what keeps a scroll on either one visually moving the other. Living here
     rather than duplicated at each call site is what stops the two from
     drifting apart.
+
+    `inset=True` is the header's call: it is the one of the two that is *not*
+    inside a destination panel, so it has to be pushed past the rail by hand
+    to line up with the canvas (`WEEK_GRID_HEADER_INSET_STYLE`). The margin
+    sits outside the scroll box and the width is the box itself, so the two
+    regions end up the same number of pixels wide — without that, one can
+    scroll while the other has nothing to scroll, and mirroring `scrollLeft`
+    between them moves one grid out from under the other.
     """
-    return ui.element("div").classes(f"{WEEK_GRID_SCROLL_CLASS} w-full overflow-x-auto").on(
-        "scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS
-    )
+    element = ui.element("div").classes(f"{WEEK_GRID_SCROLL_CLASS} w-full overflow-x-auto")
+    if inset:
+        element.style(WEEK_GRID_HEADER_INSET_STYLE)
+    return element.on("scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS)
 
 
 # The two cached weeks the app keeps on disk at once (see
@@ -184,6 +240,53 @@ PREP_BADGE_STYLES = {
         "classes": "bg-cyan-400/15 text-cyan-200 ring-1 ring-inset ring-cyan-300/30",
     },
 }
+
+# `ui_state.SyncDay.state` — what one date in the Settings sync strip is, from
+# one source's point of view. Here rather than in `ui_state.py` for the same
+# reason `STATUS_COOK`..`STATUS_MISSING` are: the view model sets the value and
+# a widget module renders it, so the two need one vocabulary, and the module
+# with no `PlannerState` dependency is the one both can import.
+#
+# Three states, and the third is the whole reason `sync_checkpoints` exists
+# (see `repository.save_sync_checkpoint`): a date with no row is either a day
+# the sync looked at and found nothing — a forgotten weigh-in, an unlogged
+# meal, a real answer — or a day nobody has asked about yet. Collapsing them
+# into one grey cell would discard the only thing that file records.
+SYNC_RECORDED = "recorded"
+SYNC_CHECKED = "checked"
+SYNC_UNCHECKED = "unchecked"
+
+# Fill and outline carry the distinction, not three hues — the same call
+# `TRAINING_TYPE_ICONS` makes just below, and for the same reason: every
+# colour in this UI already means something specific, and a third one here
+# would collide before it read as a scale. Emerald is "there is data", which
+# is what it already means on the "Connected" pill this strip sits under; a
+# filled slate cell is an answered day with nothing in it; an outline is a day
+# nobody has asked about.
+#
+# Two labels per state, not one. `phrase` completes "Fri 14 Aug — ..." in a
+# cell's tooltip and wants to be a clause; `count` completes "11 ..." in the
+# strip's summary line and wants to be a noun. One string doing both produced
+# "Fri 14 Aug — checked — nothing recorded", which reads as two dashes and one
+# thought too many.
+SYNC_DAY_STYLES = {
+    SYNC_RECORDED: {
+        "classes": "bg-emerald-400/70",
+        "phrase": "recorded",
+        "count": "recorded",
+    },
+    SYNC_CHECKED: {
+        "classes": "bg-slate-700",
+        "phrase": "checked, nothing recorded",
+        "count": "empty",
+    },
+    SYNC_UNCHECKED: {
+        "classes": "ring-1 ring-inset ring-slate-700",
+        "phrase": "not checked yet",
+        "count": "unchecked",
+    },
+}
+
 
 def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
     """A day's name with its calendar date — "Thursday 28 August", "Thu 28 Aug".
@@ -394,6 +497,34 @@ TARGET_FIELDS = [
     ("net_carbs_g", "carbs g"),
 ]
 
+# How the Settings destination's Daily Targets section labels each macro, and
+# what it is allowed to say about where the number comes from. The fourth
+# element is the unit; the third is None for the two switchable macros (the
+# toggle speaks for them) and a fixed sentence for the two that have no mode
+# to switch — carbs because the engine has no carb model and hands
+# `weekly_schedule`'s figure straight back, fat because `derive_fat_g` always
+# computes it from the other three. Stating those two outright is the point
+# of the section: "where does this number come from" has an answer for all
+# four macros, not only the two with a control beside them.
+TARGET_SOURCE_ROWS = [
+    ("calories", "Calories", None, "kcal"),
+    ("protein_g", "Protein", None, "g"),
+    (
+        "net_carbs_g",
+        "Carbs",
+        "Always yours — the engine has no carb model, so this is the week's "
+        "cycling lever and fat absorbs the difference.",
+        "g",
+    ),
+    (
+        "fat_g",
+        "Fat",
+        "Always derived — whatever energy is left once protein and carbs are "
+        "paid for.",
+        "g",
+    ),
+]
+
 # Indigo marks the Sunday prep column everywhere it appears (telemetry header,
 # canvas, pipeline row) — deliberately outside the emerald/sky/slate/rose
 # palette STATUS_STYLES and BAND_COLOURS already use for day statuses, since
@@ -408,14 +539,26 @@ TRAINING_TYPES = list(TRAINING_INTENSITY_SPLIT) + ["rest"]
 TRAINING_TYPE_LABELS = {value: humanize(value) for value in TRAINING_TYPES}
 
 # What's supposed to feed a day's plan, in dependency order. (key, label,
-# icon, description, connected). Shown on the Settings destination as a
-# static integrations status list (`ui_settings.py`) — `connected=False`
-# stages render "Not connected" until something real lands. Used to be a
-# per-day chip row above the telemetry header (28 chips: 3 unconnected
-# stages x 7 days, plus workout x 7 days); phase 3 of `ui-redesign.md` moved
-# it here since workout, the one connected stage, already has its per-day
-# detail in the Today destination's day-context strip. "Meal Plan" isn't a
-# fifth stage here because `telemetry()` already shows it directly.
+# icon, description, connected). Shown on the Settings destination as an
+# integrations list (`ui_settings.py`) — `connected=False` stages render "Not
+# connected" until something real lands, and three of the four now open a
+# read-only detail dialog over the data they actually carry (phase 6e of
+# `ui-redesign.md`). Used to be a per-day chip row above the telemetry header
+# (28 chips: 3 unconnected stages x 7 days, plus workout x 7 days); phase 3
+# moved it here since workout, then the one connected stage, already has its
+# per-day detail in the Today destination's day-context strip. "Meal Plan"
+# isn't a fifth stage here because `telemetry()` already shows it directly.
+#
+# **Two of these said "not built yet" long after they were built**, which is
+# what phase 6e's detail dialogs made impossible to leave standing: `sync` was
+# written when Health Connect was the plan and describes a Garmin sleep/Body
+# Battery feed that never landed, while the Garmin/Cronometer sync that *did*
+# has been writing `biometrics.json` since (CLAUDE.md's "Biometric sync"), and
+# `context` predates `week.apply_location_modes`, which reads `base_schedule`/
+# `location_rules` on every generation. `connected` here means "something real
+# reaches a plan from this", not "this is finished" — hence the descriptions
+# below naming what each one still doesn't do rather than a flag with a third
+# state to interpret.
 PIPELINE_STAGES = [
     (
         "readiness",
@@ -426,17 +569,18 @@ PIPELINE_STAGES = [
     ),
     (
         "sync",
-        "Health Connect Sync",
+        "Biometric Sync",
         "monitor_heart",
-        "Garmin sleep/Body Battery — not built yet.",
-        False,
+        "Garmin weigh-ins and Cronometer intake, from the sync CLI.",
+        True,
     ),
     (
         "context",
         "Calendar/Location",
         "event",
-        "WFH vs. in-office, meeting load — not built yet.",
-        False,
+        "Where each day is spent, from schedule.json's defaults — no "
+        "calendar integration.",
+        True,
     ),
     (
         "workout",

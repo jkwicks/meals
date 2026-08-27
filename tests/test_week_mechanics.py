@@ -499,6 +499,100 @@ class TestStorageNote(unittest.TestCase):
         self.assertIn("freeze the rest", planner.storage_note(4, 3, config))
 
 
+class TestPrepDayStorageSpan(unittest.TestCase):
+    """A batch-prep batch is cooked the day *before* the week starts, so its
+    fridge days are counted from there and not from the grid slot it is
+    parked on.
+
+    Written against the shipped config, where this is not an edge case: both
+    toggles anchor on day 1 and `apply_batch_selections` bounds them at
+    `fridge_safe_days - 1`, so the maximum-span batch reported
+    `fridge_safe_days - 1` days, compared it against `fridge_safe_days`, and
+    told you to refrigerate the one batch in the week that is sitting at the
+    limit — the exact case `storage_note`'s freeze branch exists for.
+    `generate_sunday_prep_session`'s prompt tells the model not to recompute
+    the note, so the number Python passes is the number the user reads.
+    """
+
+    CONFIG = {"inventory_rules": {"fridge_safe_days": 3}}
+
+    def _recipe(self):
+        return planner.Recipe(
+            name="Braised beef",
+            meal_type="dinner",
+            servings=1,
+            prep_time_minutes=20,
+            instructions=["Cook it."],
+            ingredients=[
+                planner.Ingredient(
+                    name="beef", quantity_g=200.0, nova_group=1,
+                    calories=400.0, protein_g=40.0, net_carbs_g=5.0, fat_g=20.0,
+                )
+            ],
+        )
+
+    def _event(self, spec, anchor_slot_id, config):
+        slot = spec.by_id()[anchor_slot_id]
+        return planner.build_cook_event(
+            slot, self._recipe(), spec, wk.portions_for(spec), wk.eaten_on(spec), config
+        )
+
+    def _batch_spec(self):
+        """Monday dinner feeding Tuesday and Wednesday — the shape both
+        toggles produce on the shipped config."""
+        return spec_with({
+            "Tuesday:dinner": {"mode": MODE_LEFTOVER, "source": "Monday:dinner"},
+            "Wednesday:dinner": {"mode": MODE_LEFTOVER, "source": "Monday:dinner"},
+        })
+
+    def test_a_prep_anchored_batch_counts_from_prep_day(self):
+        config = dict(self.CONFIG, long_cook_anchor="Monday:dinner")
+        note = self._event(self._batch_spec(), "Monday:dinner", config).recipe.prep_notes
+        self.assertIn("eaten across 3 day(s)", note)
+        self.assertIn("freeze the rest", note)
+
+    def test_the_same_batch_without_an_anchor_is_unchanged(self):
+        """No anchor means nobody cooked it ahead — a CLI week, or a chain of
+        "Link to next lunch" clicks — so it still counts from its own day."""
+        note = self._event(self._batch_spec(), "Monday:dinner", self.CONFIG).recipe.prep_notes
+        self.assertIn("eaten across 2 day(s)", note)
+        self.assertIn("refrigerate in airtight containers", note)
+
+    def test_an_ordinary_cook_feeding_the_next_day_is_unchanged(self):
+        """The Saturday dinner feeding Sunday lunch that `apply_location_modes`
+        and an ordinary link both produce: cooked on Saturday, eaten Sunday,
+        1 day — and deliberately given no prep-day backstop."""
+        spec = spec_with({
+            "Sunday:lunch": {"mode": MODE_LEFTOVER, "source": "Saturday:dinner"},
+        })
+        config = dict(self.CONFIG, long_cook_anchor="Monday:dinner")
+        note = self._event(spec, "Saturday:dinner", config).recipe.prep_notes
+        self.assertIn("eaten across 1 day(s)", note)
+        self.assertIn("refrigerate in airtight containers", note)
+
+    def test_span_days_measures_from_prep_day_only_when_told_to(self):
+        spec = self._batch_spec()
+        self.assertEqual(wk.span_days(spec, "Monday:dinner"), 2)
+        self.assertEqual(wk.span_days(spec, "Monday:dinner", prepped_ahead=True), 3)
+
+    def test_validate_weeks_backstop_still_measures_from_the_anchor(self):
+        """`span_days` defaults to the anchor day so this check keeps passing
+        the weeks `apply_batch_selections` deliberately builds — the prep-day
+        bound is enforced there, by `max_day_index`, not here."""
+        config = dict(TestValidateWeek.CONFIG, inventory_rules={"fridge_safe_days": 2})
+        self.assertEqual(wk.validate_week(self._batch_spec(), config), [])
+
+    def test_prep_day_batch_slot_ids_reads_both_anchors(self):
+        self.assertEqual(planner.prep_day_batch_slot_ids(None), set())
+        self.assertEqual(planner.prep_day_batch_slot_ids({}), set())
+        self.assertEqual(
+            planner.prep_day_batch_slot_ids(
+                {"long_cook_anchor": "Monday:dinner", "bulk_prep_anchor": "Monday:lunch"}
+            ),
+            {"Monday:dinner", "Monday:lunch"},
+        )
+
+
 class TestNextChoice(unittest.TestCase):
     """Strict LRU, not "unused in the last N" — the latter starves the tail of
     the list, cycling through the first 4 of 5 styles forever."""

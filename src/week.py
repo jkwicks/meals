@@ -1251,17 +1251,43 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
     return errors
 
 
-def span_days(spec: WeekSpec, cook_id: str) -> int:
+# The batch-prep session cooks the day *before* `spec.days[0]` — the eighth
+# column `ui_cards.prep_day_column` draws — so a batch it produces is already
+# a day out of the fridge by the time day 0 eats it. Day index -1 is that day.
+# It exists so "how old is this food" is counted from the pan rather than from
+# the grid slot the recipe happens to be parked on: an anchor is always day 0
+# (see `ui_generation.apply_batch_selections`), so measuring from its own slot
+# is short by exactly one on every prep-session batch.
+PREP_DAY_INDEX = -1
+
+
+def cook_day_index(spec: WeekSpec, day: str, prepped_ahead: bool = False) -> int:
+    """The day index a cook actually happened on, which is not always its slot's.
+
+    `prepped_ahead` is the batch-prep case above; everything else is cooked on
+    the day its slot sits on.
+    """
+    return PREP_DAY_INDEX if prepped_ahead else spec.day_index(day)
+
+
+def span_days(spec: WeekSpec, cook_id: str, prepped_ahead: bool = False) -> int:
     """Days between cooking and the last meal that eats it.
 
     Public because editing the week changes it: re-pointing a leftover moves
     the last meal a batch has to survive to, which is what decides whether its
     storage note says "refrigerate" or "freeze the rest".
+
+    `prepped_ahead` says the food came out of the batch-prep session rather
+    than out of its own grid day — see `PREP_DAY_INDEX`. It defaults to False
+    so `validate_week`'s backstop keeps measuring what it always has: that
+    check bounds a hand-built leftover chain, and the prep-session batches are
+    bounded on the planning side by `apply_batch_selections`' own
+    `max_day_index` instead.
     """
     claims = eaten_on(spec).get(cook_id, [])
     if not claims:
         return 0
-    cook_index = spec.day_index(parse_slot_id(cook_id)[0])
+    cook_index = cook_day_index(spec, parse_slot_id(cook_id)[0], prepped_ahead)
     last_index = max(spec.day_index(parse_slot_id(value)[0]) for value in claims)
     return last_index - cook_index
 
