@@ -288,6 +288,33 @@ SYNC_DAY_STYLES = {
 }
 
 
+# `ui_state.SyncFreshness.state` — whether anything is syncing *at all*, which
+# is a different question from what any one card below it reports. Same
+# vocabulary-in-the-theme-module split as `SYNC_RECORDED` above.
+#
+# There is deliberately **no colour here**. Amber already carries five
+# meanings in this app and violet two (see `LOCATION_ACCENT`'s collision note
+# and CHANGE-QUEUE.md item 3), and "a scheduled job has stopped" is exactly
+# the sixth amber meaning `.claude/rules/ui.md` names as the specific thing
+# not to add. The icon carries it instead — the same call
+# `TRAINING_TYPE_ICONS` and `SYNC_DAY_STYLES` already made.
+SYNC_FRESH_NEVER = "never"
+SYNC_FRESH_CURRENT = "current"
+SYNC_FRESH_STALE = "stale"
+
+SYNC_FRESHNESS_STYLES = {
+    SYNC_FRESH_CURRENT: {"icon": "o_sync", "phrase": "The sync is keeping up."},
+    SYNC_FRESH_STALE: {
+        "icon": "o_sync_problem",
+        "phrase": "Nothing has run recently — the scheduled job may be off.",
+    },
+    SYNC_FRESH_NEVER: {
+        "icon": "o_sync_disabled",
+        "phrase": "Nothing has ever synced.",
+    },
+}
+
+
 # What each stored list is called on the sync page. Here rather than derived
 # from the section key because `humanize("weigh_ins").title()` is "Weigh Ins",
 # and because the card headings are the one thing that has to distinguish two

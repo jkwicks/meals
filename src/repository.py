@@ -273,6 +273,50 @@ def recipe_content_key(recipe: dict) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+# The meal-type spelling that means "don't filter by meal type". The Library
+# destination's select needs a real option to sit in its list, so it says
+# "All"; a query string just leaves the parameter off, so the API says None.
+# Both spellings are handled by `catalog_matches` below rather than by its
+# callers, which is the whole point of there being one function.
+CATALOG_MEAL_TYPE_ANY = "All"
+
+
+def catalog_matches(
+    entry: dict,
+    *,
+    favorites_only: bool = False,
+    meal_type: Optional[str] = None,
+    search: Optional[str] = None,
+) -> bool:
+    """Whether one `recipe_catalog` record passes the three filters every
+    catalog reader offers: favorites-only, meal-type equality, and a
+    case-insensitive substring on the name.
+
+    It lives here, beside `recipe_content_key`, for the reason
+    `BIOMETRIC_SECTION_SOURCES` does: it is a fact about the shape of a
+    stored record, and it now has two readers with nothing else in common —
+    `api.py`'s `/api/recipes` and `ui_catalog_browser`'s grid. Those two used
+    to carry a copy each, free to disagree *silently*, since a drifted filter
+    returns a differently-filtered list rather than an error. They had
+    already drifted over what "no meal-type filter" is spelled as; that is
+    now one constant above rather than two conventions.
+
+    A UI module would have been the other home, but the API deliberately
+    imports nothing from `ui_*` — see `api.py`'s docstring — and this needs
+    no `PlannerState`, no `UIContext` and no NiceGUI.
+    """
+    if favorites_only and not entry.get("is_favorite"):
+        return False
+    recipe = entry.get("recipe") or {}
+    if meal_type and meal_type != CATALOG_MEAL_TYPE_ANY:
+        if recipe.get("meal_type") != meal_type:
+            return False
+    needle = (search or "").strip().lower()
+    if needle and needle not in (recipe.get("name") or "").lower():
+        return False
+    return True
+
+
 class PlanRepository(abc.ABC):
     """Everything the planner needs to persist, as an async interface.
 

@@ -160,6 +160,7 @@ The other scripts, none of which the app itself calls:
 | script | does |
 |---|---|
 | `server.sh` | the NiceGUI server — venv, nohup, PID file, log (above) |
+| `sync.sh` | the biometric sync — `run` it, or `install` it as a daily launchd job (see "Biometric sync") |
 | `prepare.sh` | regenerates `python_codebase.md`, `project_context.md`, `data_schemas.md` (all gitignored) |
 | `upload.sh` | the same bundles plus `test_suite.md`, for pasting into an assistant |
 | `release.sh` | `<patch\|minor\|major>` version bump, tag and release notes |
@@ -1179,9 +1180,16 @@ Four details are decisions:
 - **It never computes what a sync *would* fetch.** That is
   `get_sync_date_range`'s job — it caps its walk and anchors on whichever
   *requested* source is furthest behind — and a second answer to the same
-  question is exactly the duplication the `/api/recipes` finding records.
+  question is exactly the duplication the `/api/recipes` finding recorded.
   `SYNC_WINDOW_DAYS` (14) is deliberately the same horizon as the CLI's
   `--lookback-days` default, but as a display choice, not a coupling.
+
+One line sits above those cards and answers a question none of them can:
+`sync_freshness`, whether the scheduled job is running at all. It is a
+separate view model rather than a fourth card because it reads checkpoints
+alone where these read rows and checkpoints together — see "Nothing syncs
+from the app" under "Biometric sync" for why that difference is the whole
+point of it.
 
 `BIOMETRIC_SECTION_SOURCES` (which source fills which list) moved from
 `sync_service.py` to `repository.py` for this — it is a fact about the file's
@@ -2021,14 +2029,28 @@ not because they don't fit.
   *scopes data* — nothing in this app's storage is per-user today, so auth
   here is a lock on the door, not a multi-tenancy foundation.
 
-**Two findings recorded, not fixed, per the phase's own instruction:**
+**Two findings recorded by phase 5, both since fixed** — kept because the
+reasoning is still worth having:
 
-- **`/api/recipes`'s filter duplicates `ui_catalog_browser._matches`**
+- **`/api/recipes`'s filter duplicated `ui_catalog_browser._matches`**
   (favorites-only, meal-type equality, case-insensitive substring on name) —
-  about four lines, reimplemented rather than imported, because the original
-  is private and lives in a UI widget module this phase doesn't touch. A real
-  shared home for it (it has no `PlannerState` dependency and never did) is a
-  good small follow-up.
+  four lines, reimplemented rather than imported, because the original was
+  private and lived in a UI widget module phase 5 wasn't touching. Both now
+  call `repository.catalog_matches`, which sits beside `recipe_content_key`
+  for the same reason `BIOMETRIC_SECTION_SOURCES` does: it is a fact about
+  the shape of a stored record with two readers that have nothing else in
+  common. `ui_catalog.py` was the other candidate home and lost on one
+  point — `api.py` deliberately imports nothing from `ui_*`, and this needs
+  no `PlannerState`, no `UIContext` and no NiceGUI.
+
+  **The two had already drifted, in the way this class of duplication always
+  does: silently.** `_matches` treated `"All"` as the no-filter meal type
+  and the route treated `None` as it, so `/api/recipes?meal_type=All`
+  returned nothing while the Library grid's own default returned everything.
+  Neither side was wrong on its own and no error was ever raised —
+  a differently-filtered list is a perfectly well-formed response.
+  `CATALOG_MEAL_TYPE_ANY` now names the UI's spelling and the shared
+  function accepts both.
 - **`PlannerState.targets_for`'s live preview could disagree with
   `/api/targets`** — recorded here by phase 5 and **since fixed**, so this
   entry is kept only because the reasoning is still worth having. The UI read
@@ -3109,6 +3131,61 @@ that fails — not merely a speed optimisation, since Garmin rate-limits and
 MFA-challenges repeated password logins, so a timer-driven sync that logged in
 fresh every run would start failing after days of working fine.
 
+#### Nothing syncs from the app — `scripts/sync.sh` does, on a schedule
+
+`./scripts/sync.sh run` is the CLI above with both sources and no `--date`,
+and `./scripts/sync.sh install` writes a launchd agent that runs it daily
+(07:30 by default; `MEALS_SYNC_HOUR`/`MEALS_SYNC_MINUTE` at install time),
+logging to `logs/sync.log`. `uninstall` and `status` do what they say —
+`status` also prints each source's stored checkpoint, which is the same field
+the Settings dialog reads.
+
+**Neither the server nor any page ever triggers a sync, and that is the
+decision rather than an omission.** The question behind it — should starting
+the server sync? — had three real answers, and this is the one taken:
+
+- **On server start**, as a fire-and-forget task. Simplest, and matches how
+  the app is used, but it puts a Garmin outage and a rate-limited Cronometer
+  inside the UI process and does nothing on days the server never starts.
+- **A scheduled job.** Zero sync code in the app, failures stay in a log
+  rather than a page, and it covers the days you never plan.
+- **A button in Settings.** The integrations rows are deliberately read-only
+  (phase 6e: "the row that owns a piece of state keeps owning it"), and a
+  write action there reopens that call.
+
+**The rate-limit worry that prompted the question was already handled**, and
+is worth recording because it is the reason the schedule can be dumb: a
+restart could not cause redundant fetches even if a sync *were* wired to one.
+`sync_checkpoints` records each source's last-checked date and
+`get_sync_date_range` anchors on whichever requested source is furthest
+behind, so a second run the same day resolves to an empty range and issues no
+requests at all. Cronometer's per-call cost was the real exposure and
+`fetch_range_summaries` fixed it separately.
+
+**What the app owes a job it doesn't run is saying when it stopped**, which
+is `ui_state.sync_freshness` and the line it draws above the sync dialog's
+per-list cards. Two questions, and they need separate answers:
+
+- **Is anything running at all** — the *newest* checkpoint across every
+  source, since that is the last time anything asked anyone anything.
+  `SYNC_STALE_AFTER_DAYS` is 2, not 1: the job runs once at a fixed hour, so
+  a checkpoint dated yesterday is the normal state all morning and a
+  one-day threshold would cry wolf daily.
+- **Is one source failing while the others advance** — a source whose own
+  checkpoint sits that far behind the newest one, reported separately.
+  A single date across the top cannot say it, and the two have entirely
+  different fixes (reload the agent vs. re-auth an account).
+
+It reads `sync_checkpoints` and **never the stored rows**, unlike
+`sync_status` beside it, which folds the two together on purpose. A scale
+nobody stood on for a week records nothing while the job runs perfectly, so
+reading rows here would report a working sync as a broken one — the exact
+confusion `sync_checkpoints` was added to end, arrived at from the other
+direction. No colour carries any of it: amber already means five things in
+this app, and "the scheduler stopped" would be the sixth
+(`.claude/rules/ui.md`, "Known collisions"), so the icon and the wording do
+the work.
+
 Tests are `tests/test_sync_service.py`, `unittest` like the rest. Nothing there
 touches the network: both clients are reached through one seam each, and the
 fakes speak the real payload dialect (grams for Garmin mass, `Energy (kcal)`
@@ -3252,10 +3329,10 @@ the module under seven frozen weekdays before trusting it.
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, the sleep/HRV readiness row and its two independent endpoints, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, and the Settings destination's sync-status and location read views |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, and the Settings destination's sync-status, sync-freshness and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
-| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log`), and derived targets/`tdee_source` |
+| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those

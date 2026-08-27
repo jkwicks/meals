@@ -27,6 +27,7 @@ saves, which is the contract `edited` exists to advertise.
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -1398,6 +1399,84 @@ class TestSyncStatus(unittest.TestCase):
 
         labels = [status.label for status in ui_state.sync_status({}, date(2026, 8, 26))]
         self.assertEqual(len(set(labels)), len(labels))
+
+
+class TestSyncFreshness(unittest.TestCase):
+    """`sync_freshness` — the "is anything actually syncing" line above the
+    per-list cards (CHANGE-QUEUE.md item 2).
+
+    The item chose a scheduled launchd job over syncing from the app, which
+    means the app can no longer *cause* a sync and its whole responsibility
+    toward one is saying when it stopped. Two rules are worth pinning: it
+    reads checkpoints and never rows (a scale nobody stood on for a week
+    records nothing while the job runs perfectly, and reporting that as a
+    broken sync is precisely the confusion `sync_checkpoints` ended), and a
+    source lagging behind its siblings is a separate verdict from a stopped
+    job.
+
+    Clock-free, like every other view model here: `today` is a parameter, so
+    "three days stale" is testable without waiting three days.
+    """
+
+    def test_no_checkpoints_at_all_is_never(self):
+        for biometrics in ({}, {"sync_checkpoints": {}}, {"sync_checkpoints": {"garmin": None}}):
+            freshness = ui_state.sync_freshness(biometrics, date(2026, 8, 28))
+            self.assertEqual(freshness.state, ui_state.SYNC_FRESH_NEVER)
+            self.assertIsNone(freshness.last_checked)
+            self.assertIsNone(freshness.days_since)
+
+    def test_yesterday_is_current_because_today_may_not_have_run_yet(self):
+        """The job runs once, at a fixed hour. Yesterday's date is the normal
+        state for the whole morning before it fires, so one day cannot mean
+        stale without crying wolf daily."""
+        freshness = ui_state.sync_freshness(
+            {"sync_checkpoints": {"garmin": "2026-08-27"}}, date(2026, 8, 28)
+        )
+        self.assertEqual(freshness.state, ui_state.SYNC_FRESH_CURRENT)
+        self.assertEqual(freshness.days_since, 1)
+
+    def test_two_days_without_a_checkpoint_is_stale(self):
+        freshness = ui_state.sync_freshness(
+            {"sync_checkpoints": {"garmin": "2026-08-26"}}, date(2026, 8, 28)
+        )
+        self.assertEqual(freshness.state, ui_state.SYNC_FRESH_STALE)
+        self.assertEqual(freshness.days_since, 2)
+
+    def test_it_reads_checkpoints_never_rows(self):
+        """A fortnight of recorded rows and a checkpoint nobody has advanced
+        is a stopped job, not a healthy one — and the opposite case, a current
+        checkpoint with no rows behind it, is a scale nobody stood on, which
+        is not this line's business."""
+        rows = [{"date": "2026-08-27", "weight_kg": 99.6}]
+        stalled = ui_state.sync_freshness(
+            {"weigh_ins": rows, "sync_checkpoints": {"garmin": "2026-08-14"}},
+            date(2026, 8, 28),
+        )
+        self.assertEqual(stalled.state, ui_state.SYNC_FRESH_STALE)
+
+        empty_but_current = ui_state.sync_freshness(
+            {"weigh_ins": [], "sync_checkpoints": {"garmin": "2026-08-28"}},
+            date(2026, 8, 28),
+        )
+        self.assertEqual(empty_but_current.state, ui_state.SYNC_FRESH_CURRENT)
+        self.assertEqual(empty_but_current.lagging, [])
+
+    def test_the_newest_checkpoint_answers_is_the_job_running(self):
+        """One source failing must not read as a stopped scheduler — the job
+        plainly ran, and Garmin's checkpoint proves it."""
+        freshness = ui_state.sync_freshness(
+            {"sync_checkpoints": {"garmin": "2026-08-28", "cronometer": "2026-08-14"}},
+            date(2026, 8, 28),
+        )
+        self.assertEqual(freshness.state, ui_state.SYNC_FRESH_CURRENT)
+        self.assertEqual(freshness.lagging, ["cronometer"])
+
+    def test_sources_moving_together_are_not_lagging(self):
+        freshness = ui_state.sync_freshness(
+            {"sync_checkpoints": {"garmin": "2026-08-28", "cronometer": "2026-08-27"}},
+            date(2026, 8, 28),
+        )
+        self.assertEqual(freshness.lagging, [])
 
 
 class TestLocationView(unittest.TestCase):

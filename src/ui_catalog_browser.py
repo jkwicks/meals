@@ -24,6 +24,7 @@ from typing import Callable, Optional
 from nicegui import ui
 
 from planner import Recipe, api_key_error, import_external_recipe, short_error
+from repository import catalog_matches
 from ui_catalog import RenameDialogHandles, delete_recipe, toggle_favorite
 from ui_cards import CardHandles
 from ui_context import UIContext
@@ -80,17 +81,6 @@ def _detail_view(entry: dict) -> Optional[SlotView]:
         macros=recipe.per_serving_macros,
         recipe=recipe,
     )
-
-
-def _matches(entry: dict, search: str, meal_type: str, favorites_only: bool) -> bool:
-    if favorites_only and not entry.get("is_favorite"):
-        return False
-    recipe = entry["recipe"]
-    if meal_type != "All" and recipe.get("meal_type") != meal_type:
-        return False
-    if search and search not in recipe.get("name", "").lower():
-        return False
-    return True
 
 
 def build_catalog_browser(
@@ -219,11 +209,16 @@ def build_catalog_browser(
         matches = [
             entry
             for entry in state.recipe_catalog
-            if _matches(
+            # `repository.catalog_matches` — the same function `/api/recipes`
+            # filters with. This was a private `_matches` here and four
+            # inline lines there, already disagreeing about whether "no meal
+            # type" is spelled "All" or None; the shared helper owns both
+            # spellings. CHANGE-QUEUE.md item 1.
+            if catalog_matches(
                 entry,
-                state.catalog_browser_search.lower(),
-                state.catalog_browser_meal_type,
-                state.catalog_browser_favorites_only,
+                favorites_only=state.catalog_browser_favorites_only,
+                meal_type=state.catalog_browser_meal_type,
+                search=state.catalog_browser_search,
             )
         ]
         # Favorites first, then grouped by meal type — the shape a "make sure

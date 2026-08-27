@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from planner import WeekPlan, hydrate_config, load_config_with_models
-from repository import PlanRepository
+from repository import PlanRepository, catalog_matches
 
 
 class CatalogRecipe(BaseModel):
@@ -70,13 +70,20 @@ def build_api_router(repository: PlanRepository) -> APIRouter:
         search: Optional[str] = None,
     ) -> List[CatalogRecipe]:
         catalog = await repository.load_recipe_catalog()
-        needle = (search or "").strip().lower()
+        # `repository.catalog_matches`, not a copy of it — the Library
+        # destination's grid filters the same three ways over the same
+        # records, and two inline copies of that would disagree silently
+        # (a differently-filtered list, never an error). See CHANGE-QUEUE.md
+        # item 1, which is what this closes.
         matches = [
             entry
             for entry in catalog
-            if (not favorite or entry.get("is_favorite"))
-            and (not meal_type or entry.get("recipe", {}).get("meal_type") == meal_type)
-            and (not needle or needle in entry.get("recipe", {}).get("name", "").lower())
+            if catalog_matches(
+                entry,
+                favorites_only=bool(favorite),
+                meal_type=meal_type,
+                search=search,
+            )
         ]
         return [CatalogRecipe.model_validate(entry) for entry in matches]
 

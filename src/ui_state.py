@@ -67,6 +67,9 @@ from ui_theme import (
     STATUS_MISSING,
     STATUS_SKIP,
     SYNC_CHECKED,
+    SYNC_FRESH_CURRENT,
+    SYNC_FRESH_NEVER,
+    SYNC_FRESH_STALE,
     SYNC_RECORDED,
     SYNC_SECTION_LABELS,
     SYNC_UNCHECKED,
@@ -1869,6 +1872,97 @@ def sync_status(
             )
         )
     return statuses
+
+
+# The scheduled job (`./scripts/sync.sh install`) runs once a day, so a
+# checkpoint dated yesterday is the normal state for the whole morning — the
+# job at 07:30 has simply not run yet when you look at 07:00. Two days without
+# one is not normal, and is the first visible sign that the launchd job was
+# never loaded, the laptop has been shut rather than asleep, or a credential
+# expired and every run since has failed.
+SYNC_STALE_AFTER_DAYS = 2
+
+
+@dataclass
+class SyncFreshness:
+    """Whether anything is syncing at all, above the per-list cards.
+
+    A different question from what any one `SyncSourceStatus` answers, and the
+    reason it needed its own line: those cards report what each *stored list*
+    knows, and a reader with three cards all saying "Last checked 21 Aug" has
+    to notice the date is a week old and then work out that they are all one
+    week old for one reason. CHANGE-QUEUE.md item 2 chose a scheduled job over
+    syncing from the app, so the failure mode this app can actually have is
+    "the scheduler stopped", and the app's whole responsibility toward it is
+    making that visible. See `scripts/sync.sh`.
+
+    `last_checked` is the **newest** checkpoint across every source — the last
+    time anything asked anyone anything — because that is what answers "is the
+    job running". `lagging` is the separate question stacked on top of it: a
+    source whose own checkpoint sits `stale_after_days` behind that newest one
+    has been failing while its sibling kept advancing, which a single date
+    could not say. A source that has never run at all is not lagging; it is
+    unconfigured, and its own card already says so.
+    """
+
+    last_checked: Optional[str]
+    days_since: Optional[int]
+    stale_after_days: int
+    lagging: List[str]
+
+    @property
+    def state(self) -> str:
+        if self.last_checked is None or self.days_since is None:
+            return SYNC_FRESH_NEVER
+        if self.days_since >= self.stale_after_days:
+            return SYNC_FRESH_STALE
+        return SYNC_FRESH_CURRENT
+
+
+def sync_freshness(
+    biometrics: dict, today: date, stale_after_days: int = SYNC_STALE_AFTER_DAYS
+) -> SyncFreshness:
+    """When anything last synced, and which source is behind the others.
+
+    Pure and clock-free like every other view model here — `today` is a
+    parameter, which is what lets the suite test "three days stale" without
+    waiting three days.
+
+    It reads `sync_checkpoints` alone, never the stored rows. A row is proof a
+    day was *recorded*, and a scale nobody stood on for a week records nothing
+    while the sync runs perfectly — reading rows here would report a
+    functioning job as a broken one, which is the exact confusion
+    `sync_checkpoints` was added to end. (`sync_status` folds the two together
+    deliberately, for the opposite reason: there, a stored row past a
+    checkpoint is a day that was plainly asked about.)
+    """
+    checkpoints = {
+        source: stamp
+        for source, stamp in (biometrics.get("sync_checkpoints") or {}).items()
+        if stamp
+    }
+    if not checkpoints:
+        return SyncFreshness(
+            last_checked=None,
+            days_since=None,
+            stale_after_days=stale_after_days,
+            lagging=[],
+        )
+
+    newest = max(checkpoints.values())
+    days_since = (today - date.fromisoformat(newest)).days
+    lagging = sorted(
+        source
+        for source, stamp in checkpoints.items()
+        if (date.fromisoformat(newest) - date.fromisoformat(stamp)).days
+        >= stale_after_days
+    )
+    return SyncFreshness(
+        last_checked=newest,
+        days_since=days_since,
+        stale_after_days=stale_after_days,
+        lagging=lagging,
+    )
 
 
 # What the adaptive TDEE is currently doing, as one word. The first three are
