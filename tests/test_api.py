@@ -171,6 +171,27 @@ class TestBiometricsRoute(APITestCase):
         self.assertEqual(len(body["daily_actuals"]), 1)
         self.assertEqual(body["latest"]["date"], "2026-08-20")
 
+    def test_readiness_is_mirrored_not_summarised(self):
+        """The third stored list reaches the route as rows.
+
+        A route that reduced it to a "last night's readiness" figure would be
+        a second answer to what the Settings sync page reads off the same
+        file, which is the duplication the `/api/recipes` finding records.
+        """
+        run_sync(self.repo.save_readiness_entry({
+            "date": "2026-08-20", "sleep_score": 83.0, "sleep_hours": 7.33,
+            "hrv_ms": 42.0, "readiness_label": "excellent", "source": "garmin",
+        }))
+        body = self.client.get("/api/biometrics").json()
+        self.assertEqual(body["readiness_log"], [{
+            "date": "2026-08-20", "sleep_score": 83.0, "sleep_hours": 7.33,
+            "hrv_ms": 42.0, "readiness_label": "excellent", "source": "garmin",
+        }])
+        # It is not folded into the weigh-in, and `latest` still means the
+        # scale — a watch reading must never answer "what do you weigh".
+        self.assertEqual(body["weigh_ins"], [])
+        self.assertIsNone(body["latest"])
+
 
 class TestTargetsRoute(APITestCase):
     def test_falls_back_to_file_schedule_without_biometrics(self):

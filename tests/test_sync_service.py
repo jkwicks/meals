@@ -41,10 +41,11 @@ class FakeGarminClient:
     sends — the unit conversion is one of the things most likely to regress.
     """
 
-    def __init__(self, weight_list=None, activities=None, sleep=None):
+    def __init__(self, weight_list=None, activities=None, sleep=None, hrv=None):
         self._weight_list = weight_list
         self._activities = activities if activities is not None else []
         self._sleep = sleep
+        self._hrv = hrv
 
     def get_body_composition(self, startdate, enddate=None):
         if self._weight_list is None:
@@ -58,6 +59,17 @@ class FakeGarminClient:
         if self._sleep is None:
             raise RuntimeError("no sleep data")
         return self._sleep
+
+    def get_hrv_data(self, cdate):
+        """The second readiness endpoint, and a separate failure.
+
+        Sleep and HRV are fetched independently by the service, so the fake
+        has to be able to fail one without the other — that isolation is the
+        thing being tested, not an incidental detail of the fake.
+        """
+        if self._hrv is None:
+            raise RuntimeError("no hrv data")
+        return self._hrv
 
 
 def garmin_service(**kwargs):
@@ -227,22 +239,49 @@ SLEEP = {
     }
 }
 
+# `/hrv-service/hrv/{date}`'s shape, as the installed garminconnect 0.3.10
+# returns it. `lastNightAvg` is the figure a morning readiness read is about;
+# the other two are here because they are what a careless mapping would grab
+# instead — a weekly average would store one number under seven dates.
+HRV = {
+    "hrvSummary": {
+        "lastNightAvg": 42,
+        "lastNight5MinHigh": 61,
+        "weeklyAvg": 39,
+        "status": "BALANCED",
+    }
+}
+
 
 class TestReadiness(unittest.TestCase):
     def test_sleep_score_is_reported(self):
-        readiness = garmin_service(sleep=SLEEP).fetch_readiness("2026-08-16")
+        readiness = garmin_service(sleep=SLEEP, hrv=HRV).fetch_readiness("2026-08-16")
         self.assertEqual(readiness["sleep_score"], 83.0)
-        self.assertEqual(readiness["readiness"], "excellent")
+        self.assertEqual(readiness["readiness_label"], "excellent")
         self.assertEqual(readiness["sleep_hours"], 7.33)
 
-    def test_readiness_carries_no_energy_figure(self):
-        """The rule this method exists to enforce.
+    def test_hrv_is_last_nights_average_not_the_weekly_one(self):
+        """`lastNightAvg`, not `weeklyAvg` or `lastNight5MinHigh`.
 
-        A sleep score is a unitless index; anything here that looked like
-        kcal would be an invitation to add it to a day's energy, and there is
-        no conversion that would make that legitimate.
+        The row is keyed by date, so a weekly figure would store the same
+        number under seven dates and read as seven measurements; a five-minute
+        peak answers a different question from the one a morning readiness
+        read asks. All three are in the payload, which is why this is worth
+        pinning rather than assuming.
         """
-        readiness = garmin_service(sleep=SLEEP).fetch_readiness("2026-08-16")
+        readiness = garmin_service(sleep=SLEEP, hrv=HRV).fetch_readiness("2026-08-16")
+        self.assertEqual(readiness["hrv_ms"], 42.0)
+
+    def test_readiness_carries_no_energy_figure(self):
+        """The rule this method exists to enforce, and storing the row does
+        not relax it.
+
+        A sleep score is a unitless index and HRV is milliseconds; anything
+        here that looked like kcal would be an invitation to add it to a
+        day's energy, and there is no conversion that would make that
+        legitimate.
+        """
+        readiness = garmin_service(sleep=SLEEP, hrv=HRV).fetch_readiness("2026-08-16")
         for key in readiness:
             self.assertNotIn("calor", key.lower())
             self.assertNotIn("energy", key.lower())
@@ -259,9 +298,36 @@ class TestReadiness(unittest.TestCase):
 
     def test_sleep_failure_does_not_propagate(self):
         """Supplementary data must not fail a weigh-in sync that worked."""
-        readiness = garmin_service(sleep=None).fetch_readiness("2026-08-16")
-        self.assertIsNone(readiness["sleep_score"])
-        self.assertIsNone(readiness["readiness"])
+        readiness = garmin_service(sleep=None, hrv=None).fetch_readiness("2026-08-16")
+        self.assertEqual(readiness, {"date": "2026-08-16"})
+
+    def test_a_sleep_failure_keeps_an_hrv_reading_that_worked(self):
+        """The two endpoints are caught separately, and this is why.
+
+        One `try` around both would discard a perfectly good HRV reading
+        because the sleep call happened to fail — and `save_readiness_entry`
+        merges by date, so the half that failed lands on a later re-sync
+        rather than being owed forever.
+        """
+        readiness = garmin_service(sleep=None, hrv=HRV).fetch_readiness("2026-08-16")
+        self.assertEqual(readiness["hrv_ms"], 42.0)
+        self.assertNotIn("sleep_score", readiness)
+
+    def test_an_hrv_failure_keeps_the_sleep_reading(self):
+        readiness = garmin_service(sleep=SLEEP, hrv=None).fetch_readiness("2026-08-16")
+        self.assertEqual(readiness["sleep_score"], 83.0)
+        self.assertNotIn("hrv_ms", readiness)
+
+    def test_a_night_with_nothing_measured_is_not_a_row(self):
+        """`_prune` plus `has_measurements`, the same pair the weigh-in uses.
+
+        A row of Nones tagged `source: garmin` would look like a measured
+        night to anything counting rows, which is exactly the failure
+        `has_measurements` was written for on the weigh-in side.
+        """
+        readiness = garmin_service(sleep=None, hrv=None).fetch_readiness("2026-08-16")
+        self.assertFalse(sync.has_measurements(readiness))
+        self.assertNotIn("source", readiness)
 
 
 class TestCronometerMapping(unittest.TestCase):
@@ -560,6 +626,76 @@ class TestPersistence(unittest.TestCase):
         run_sync(self.repo.save_biometric_entry(service.fetch_body_composition("2026-08-16")))
         run_sync(self.repo.save_biometric_entry(service.fetch_body_composition("2026-08-16")))
         self.assertEqual(len(self.stored()["weigh_ins"]), 1)
+
+    def test_sync_garmin_stores_readiness_in_its_own_list(self):
+        """The whole of change-queue item 1: this was fetched on every sync
+        and printed, and `biometrics.json` kept no record of it."""
+        with replace_garmin_client(
+            FakeGarminClient(weight_list=[FULL_READING], sleep=SLEEP, hrv=HRV)
+        ):
+            sync.sync_garmin("2026-08-16", self.repo)
+
+        stored = self.stored()
+        self.assertEqual(len(stored["readiness_log"]), 1)
+        row = stored["readiness_log"][0]
+        self.assertEqual(row["sleep_score"], 83.0)
+        self.assertEqual(row["sleep_hours"], 7.33)
+        self.assertEqual(row["hrv_ms"], 42.0)
+        self.assertEqual(row["readiness_label"], "excellent")
+        self.assertEqual(row["source"], "garmin")
+        # A third list, not a few more keys on the weigh-in: a scale and a
+        # watch both reporting for one date is the collision this split
+        # exists to avoid.
+        self.assertNotIn("sleep_score", stored["weigh_ins"][0])
+
+    def test_a_second_readiness_sync_updates_rather_than_appends(self):
+        with replace_garmin_client(FakeGarminClient(sleep=SLEEP, hrv=HRV)):
+            sync.sync_garmin("2026-08-16", self.repo)
+            sync.sync_garmin("2026-08-16", self.repo)
+        self.assertEqual(len(self.stored()["readiness_log"]), 1)
+
+    def test_a_re_sync_fills_in_the_endpoint_that_failed_last_time(self):
+        """Why the row is merged rather than replaced, and why the two
+        endpoints are caught separately: a night whose HRV call failed keeps
+        its sleep score when a later run gets the HRV."""
+        with replace_garmin_client(FakeGarminClient(sleep=SLEEP, hrv=None)):
+            sync.sync_garmin("2026-08-16", self.repo)
+        with replace_garmin_client(FakeGarminClient(sleep=None, hrv=HRV)):
+            sync.sync_garmin("2026-08-16", self.repo)
+
+        rows = self.stored()["readiness_log"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["sleep_score"], 83.0)
+        self.assertEqual(rows[0]["hrv_ms"], 42.0)
+
+    def test_a_night_the_watch_reported_nothing_for_stores_no_row(self):
+        """`has_measurements` at the call site, the same guard the weigh-in
+        got after `source` alone once passed for a measurement."""
+        with replace_garmin_client(
+            FakeGarminClient(weight_list=[FULL_READING], sleep=None, hrv=None)
+        ):
+            sync.sync_garmin("2026-08-16", self.repo)
+
+        self.assertEqual(self.stored()["readiness_log"], [])
+        self.assertEqual(len(self.stored()["weigh_ins"]), 1)
+
+    def test_readiness_rows_do_not_drag_a_caught_up_garmin_backwards(self):
+        """`get_sync_date_range` folds a source's lists together rather than
+        ranking them independently.
+
+        Garmin fills two lists off one checkpoint, and a fortnight of
+        weigh-ins with no readiness beside them (every file written before
+        `readiness_log` existed) would otherwise put the empty list into the
+        `min` and re-walk days Garmin has already answered for — the same
+        re-fetch-forever bug `sources` was added to fix, arriving by a second
+        route.
+        """
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-18", "weight_kg": 99.1}))
+        run_sync(self.repo.save_sync_checkpoint("garmin", "2026-08-18"))
+        self.assertEqual(
+            sync.get_sync_date_range(self.repo, "2026-08-19", sources=["garmin"]),
+            ["2026-08-19"],
+        )
 
     def test_sync_garmin_stores_nothing_when_the_scale_was_not_used(self):
         """Regression: `source` alone once passed for a measurement.

@@ -38,6 +38,11 @@ class CatalogRecipe(BaseModel):
 class BiometricsResponse(BaseModel):
     weigh_ins: List[Dict[str, Any]]
     daily_actuals: List[Dict[str, Any]]
+    # Mirrors the third stored list rather than computing anything from it —
+    # `readiness_log` is sleep and HRV, which nothing in this app turns into a
+    # target, and a route that summarised it would be a route free to disagree
+    # with the Settings page that reads the same rows.
+    readiness_log: List[Dict[str, Any]]
     latest: Optional[Dict[str, Any]] = None
 
 
@@ -86,6 +91,7 @@ def build_api_router(repository: PlanRepository) -> APIRouter:
         return BiometricsResponse(
             weigh_ins=data["weigh_ins"],
             daily_actuals=data["daily_actuals"],
+            readiness_log=data["readiness_log"],
             latest=latest,
         )
 

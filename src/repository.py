@@ -115,23 +115,41 @@ CONFIG_KEY_OWNER = {
 
 T = TypeVar("T")
 
-# The two lists biometrics.json holds, and the shape `load_biometrics` promises
-# its callers even when the file is absent or half-written. Both are keyed by
-# an ISO "YYYY-MM-DD" `date`, which is what makes a re-post for a day an update
-# rather than a duplicate row.
-BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals")
+# The three lists biometrics.json holds, and the shape `load_biometrics`
+# promises its callers even when the file is absent or half-written. All three
+# are keyed by an ISO "YYYY-MM-DD" `date`, which is what makes a re-post for a
+# day an update rather than a duplicate row.
+#
+# `readiness_log` is the newest and is a third *signal*, not a field on a
+# weigh-in: a scale and a watch can both report for the same date, and folding
+# sleep into `weigh_ins` would let the two silently overwrite each other with
+# no way to tell which won — the identical reasoning that keeps `weigh_ins`
+# and `daily_actuals` apart. A file written before it existed simply has no
+# such key, which `_read_biometrics` reads as an empty list.
+BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals", "readiness_log")
 
-# Which sync source fills which of those two lists. Here rather than in
+# Which sync source fills which of those lists. Here rather than in
 # `integrations/sync_service.py`, where it started, because it is a fact about
 # the file's layout — the same kind of thing `BIOMETRIC_SECTIONS` above already
 # states — and it now has two readers with nothing else in common: the catchup
-# walk (`get_sync_date_range`, deciding which section's latest date anchors a
-# source's range) and the Settings destination's sync-status view (deciding
-# which section's rows a source's checkpoint should be diffed against). A
-# second copy in the UI would be free to disagree about which source writes
-# what, and would do so silently — the read view would simply report the wrong
-# list as empty.
-BIOMETRIC_SECTION_SOURCES = {"weigh_ins": "garmin", "daily_actuals": "cronometer"}
+# walk (`get_sync_date_range`, deciding which dates anchor a source's range)
+# and the Settings destination's sync-status view (deciding which section's
+# rows a source's checkpoint should be diffed against). A second copy in the
+# UI would be free to disagree about which source writes what, and would do so
+# silently — the read view would simply report the wrong list as empty.
+#
+# **It is one-to-many, and has been since `readiness_log` arrived**: one
+# Garmin sync fills both `weigh_ins` and `readiness_log`, off the same login
+# and under the same `sync_checkpoints["garmin"]` entry. Both readers were
+# written against a one-section-per-source assumption and both had to stop
+# assuming it — `get_sync_date_range` now folds a source's sections together
+# before taking its latest date, and the sync view names its cards by section
+# rather than by source, or two of the three would have read "Garmin".
+BIOMETRIC_SECTION_SOURCES = {
+    "weigh_ins": "garmin",
+    "daily_actuals": "cronometer",
+    "readiness_log": "garmin",
+}
 
 
 @dataclass(frozen=True)
@@ -358,9 +376,10 @@ class PlanRepository(abc.ABC):
 
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
-        """Measured body composition and logged macro actuals, as
-        `{"weigh_ins": [...], "daily_actuals": [...], "sync_checkpoints": {...}}`,
-        each list oldest first.
+        """Measured body composition, logged macro actuals and overnight
+        readiness, as `{"weigh_ins": [...], "daily_actuals": [...],
+        "readiness_log": [...], "sync_checkpoints": {...}}`, each list oldest
+        first.
 
         The measured counterpart to `config.json`'s `user_profile`: the profile
         says what the body is aiming at, this says where it actually is, and an
@@ -368,7 +387,14 @@ class PlanRepository(abc.ABC):
         an ISO `date` — `weigh_ins` records what the scale reported
         (`weight_kg` plus optional `body_fat_pct`, `muscle_mass_kg`,
         `water_pct`, `bmi`), `daily_actuals` what was really eaten
-        (`calories`, `protein_g`, `net_carbs_g`, `fat_g`).
+        (`calories`, `protein_g`, `net_carbs_g`, `fat_g`), and `readiness_log`
+        how the night before went (`sleep_score`, `sleep_hours`, `hrv_ms`,
+        `readiness_label`).
+
+        **Nothing in `readiness_log` is energy**, and its separation from the
+        other two is what keeps it that way: a sleep score is a unitless
+        0-100 index and an HRV figure is milliseconds, so no arithmetic could
+        legitimately turn either into kcal. See `sync_service.fetch_readiness`.
 
         `sync_checkpoints` (`{"garmin": "2026-08-25", ...}`) is not a
         measurement at all — see `save_sync_checkpoint`.
@@ -405,6 +431,23 @@ class PlanRepository(abc.ABC):
         """
 
     @abc.abstractmethod
+    async def save_readiness_entry(self, entry: dict) -> None:
+        """Record how a night went, replacing any existing entry for its
+        `date`. Same upsert-by-date and same merge semantics as
+        `save_biometric_entry`.
+
+        Its own list rather than a few more keys on the weigh-in row, for the
+        reason `BIOMETRIC_SECTIONS` states: the scale and the watch are two
+        devices reporting about one date, and one merged row would let a
+        partial answer from either blank the other's.
+
+        Merging is what makes the split fetch safe, too — sleep and HRV come
+        from two different Garmin endpoints and either can fail on its own, so
+        a re-sync that gets the one that failed last time refines the row
+        rather than starting a second one.
+        """
+
+    @abc.abstractmethod
     async def get_latest_biometrics(self) -> Optional[dict]:
         """The most recent weigh-in by `date`, or None if there are none yet.
 
@@ -419,13 +462,22 @@ class PlanRepository(abc.ABC):
         """Record that `source` (e.g. `"garmin"`, `"cronometer"`) was checked
         through `checked_date`, independent of whether anything was found.
 
-        `weigh_ins`/`daily_actuals` only ever hold a *measured* day — a
-        forgotten weigh-in or an unlogged day writes no row at all, by design
-        (see `save_biometric_entry`). That is correct for the two lists, and
-        wrong for `sync_service.get_sync_date_range`'s gap-finding: without a
+        Every list here only ever holds a *measured* day — a forgotten
+        weigh-in, an unlogged day, a night the watch wasn't worn — none of
+        them write a row at all, by design (see `save_biometric_entry`). That
+        is correct for the lists, and wrong for
+        `sync_service.get_sync_date_range`'s gap-finding: without a
         separate record of what was actually *looked at*, a genuinely empty
         day is indistinguishable from one nobody ever checked, and the
         catchup walk re-requests it forever.
+
+        One checkpoint per *source*, not per list, which is what a
+        one-to-many `BIOMETRIC_SECTION_SOURCES` implies: one Garmin login
+        answers for the scale and the watch in a single pass, so there is one
+        "asked about this date" fact to record. The consequence is that a
+        date checked before `readiness_log` existed is marked checked for it
+        too — see `ui_state.sync_status`, which says so on the page rather
+        than inventing a second checkpoint to paper over it.
 
         Monotonic — never moves `source`'s checkpoint backward. A manual
         `--date` re-sync of an older day, or a catchup run that resolves an
@@ -667,6 +719,9 @@ class LocalJSONRepository(PlanRepository):
 
     async def save_daily_actuals(self, entry: dict) -> None:
         await asyncio.to_thread(self._upsert_dated_entry, "daily_actuals", entry)
+
+    async def save_readiness_entry(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_dated_entry, "readiness_log", entry)
 
     async def get_latest_biometrics(self) -> Optional[dict]:
         weigh_ins = (await self.load_biometrics())["weigh_ins"]
