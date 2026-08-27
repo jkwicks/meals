@@ -288,6 +288,23 @@ SYNC_DAY_STYLES = {
 }
 
 
+# What each stored list is called on the sync page. Here rather than derived
+# from the section key because `humanize("weigh_ins").title()` is "Weigh Ins",
+# and because the card headings are the one thing that has to distinguish two
+# sections filled by one source — `BIOMETRIC_SECTION_SOURCES` is one-to-many
+# since `readiness_log` arrived, so labelling these by source would print
+# "Garmin" twice and leave the reader to guess which card was which.
+#
+# The source is still named, first, because "last checked" on both Garmin
+# cards moves together (one login, one checkpoint) and a reader who can't see
+# they share a source can't see why.
+SYNC_SECTION_LABELS = {
+    "weigh_ins": "Garmin · weigh-ins",
+    "daily_actuals": "Cronometer · logged intake",
+    "readiness_log": "Garmin · sleep & HRV",
+}
+
+
 def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
     """A day's name with its calendar date — "Thursday 28 August", "Thu 28 Aug".
 
@@ -571,7 +588,7 @@ PIPELINE_STAGES = [
         "sync",
         "Biometric Sync",
         "monitor_heart",
-        "Garmin weigh-ins and Cronometer intake, from the sync CLI.",
+        "Garmin weigh-ins and sleep/HRV, Cronometer intake, from the sync CLI.",
         True,
     ),
     (

@@ -4,11 +4,12 @@ The input side of the adaptive loop. `config.json`'s `user_profile` says what
 the body is aiming at and `nutrition_engine.py` does the arithmetic between
 them, but both are useless without today's numbers — this module is what puts
 those numbers in `biometrics.json` without a phone in the loop. It writes the
-two lists `PlanRepository.load_biometrics` already promises and invents no
+three lists `PlanRepository.load_biometrics` already promises and invents no
 storage of its own:
 
     weigh_ins     <- GarminSyncService.fetch_body_composition
     daily_actuals <- CronometerSyncService.fetch_daily_summary
+    readiness_log <- GarminSyncService.fetch_readiness
 
 Six things here are decisions rather than detail, and each is load-bearing.
 
@@ -36,12 +37,16 @@ gross exercise calories to a TDEE estimate double-counts the overlap and
 quietly inflates the day's allowance by a few hundred kcal, which is most of
 a deficit. `EXERCISE_RECOVERY_FACTOR` halves it. See the constant.
 
-**Sleep and HRV are readiness, not energy.** `fetch_readiness` exists and
-returns a sleep score; nothing in it reaches a calorie figure. A sleep score
-is a 0-100 index with no energy units behind it, so there is no arithmetic
-that could legitimately turn it into kcal — the separation is enforced by
-these being different methods writing different keys, not by a comment asking
-the next caller nicely.
+**Sleep and HRV are readiness, not energy.** `fetch_readiness` returns a
+sleep score, sleep hours and an HRV figure, and nothing in it reaches a
+calorie figure. A sleep score is a 0-100 index with no energy units behind it
+and HRV is milliseconds, so there is no arithmetic that could legitimately
+turn either into kcal — the separation is enforced by these being different
+methods writing a different list, not by a comment asking the next caller
+nicely. It is stored now (`readiness_log`) where it used to be printed and
+thrown away, and storing it changes nothing about that rule: whether a
+readiness figure should *adjust* a target is a separate, larger question, and
+`apply_training_adjustments` still never sees this data.
 
 **Cronometer runs in-process.** `cronometer-mcp` requires Python >= 3.11,
 which this project's Homebrew 3.14 venv satisfies, so `CronometerSyncService`
@@ -411,17 +416,35 @@ class GarminSyncService:
         return sessions
 
     def fetch_readiness(self, target_date: str) -> dict:
-        """Sleep score for `target_date`, as a readiness flag only.
+        """Sleep and HRV for `target_date`, as a `readiness_log` row.
 
         Deliberately separate from every other method here, and deliberately
-        not summed into anything. A sleep score is a unitless 0-100 index —
-        there is no conversion from it to kcal, so any energy equation that
-        consumed it would be inventing one. Its legitimate use is deciding
-        whether today is a day to train hard, which is a human's call.
+        not summed into anything. A sleep score is a unitless 0-100 index and
+        HRV is milliseconds — there is no conversion from either to kcal, so
+        any energy equation that consumed one would be inventing it. Their
+        legitimate use is deciding whether today is a day to train hard,
+        which is a human's call.
 
-        HRV is not returned at all, for the same reason and more strongly:
-        it is the metric most likely to be mistaken for a recovery-cost
-        number by a future caller looking for one.
+        **HRV used to be withheld outright**, on the reasoning that it is the
+        metric most likely to be mistaken for a recovery *cost* by a future
+        caller looking for one. Withholding it turned out to protect nothing
+        the list separation doesn't already protect — `readiness_log` is not
+        an input to any target — while costing the one number a readiness
+        read is actually about. It is fetched now; the rule it was protecting
+        is unchanged and is stated above.
+
+        Returns `{"date": ...}` alone when the watch reported neither, rather
+        than a row of Nones — the same `_prune`/`has_measurements` pair the
+        weigh-in uses, so a night nobody wore the watch stores nothing
+        instead of a readiness row with no readiness in it.
+
+        **Sleep and HRV are two endpoints and are caught separately.** They
+        fail independently (a watch worn but with HRV still baselining is a
+        real state, and Garmin has moved either endpoint before), and one
+        `try` around both would let a sleep failure silently discard an HRV
+        reading that arrived fine. `save_readiness_entry` merges by date, so
+        the half that failed lands on a later re-sync without disturbing the
+        half that didn't.
         """
         day = _iso(target_date)
         try:
@@ -429,7 +452,7 @@ class GarminSyncService:
         except Exception:
             # Sleep is supplementary — a watch not worn overnight, or an
             # endpoint change, must not fail a weigh-in sync that succeeded.
-            return {"date": day, "sleep_score": None, "readiness": None}
+            payload = {}
 
         daily = payload.get("dailySleepDTO") or {}
         scores = daily.get("sleepScores") or {}
@@ -437,14 +460,42 @@ class GarminSyncService:
         score = _as_float(overall.get("value"))
         sleep_seconds = _as_float(daily.get("sleepTimeSeconds"))
 
-        return {
-            "date": day,
-            "sleep_score": score,
-            "sleep_hours": round(sleep_seconds / 3600.0, 2) if sleep_seconds else None,
-            # A label, not a coefficient. Nothing multiplies by this.
-            "readiness": _readiness_label(score),
-            "source": "garmin",
-        }
+        entry = _prune(
+            {
+                "date": day,
+                "sleep_score": score,
+                "sleep_hours": round(sleep_seconds / 3600.0, 2) if sleep_seconds else None,
+                "hrv_ms": self._fetch_hrv(day),
+                # A label, not a coefficient. Nothing multiplies by this.
+                "readiness_label": _readiness_label(score),
+            }
+        )
+        # Tagged only once there is something to attribute, exactly as the
+        # weigh-in is: a `source` on an otherwise empty row would make a night
+        # with no data look like a night with data to `has_measurements`.
+        if has_measurements(entry):
+            entry["source"] = "garmin"
+        return entry
+
+    def _fetch_hrv(self, day: str) -> Optional[float]:
+        """Last night's average HRV in milliseconds, or None.
+
+        `get_hrv_data` is what the installed garminconnect (0.3.10) calls it —
+        checked against the installed package rather than copied from an
+        example, per the project's standing rule about this dependency, which
+        has already changed shape once between 0.2.8 and 0.3.x.
+
+        `lastNightAvg` rather than `weeklyAvg` or `lastNight5MinHigh`: the row
+        is keyed by date, so a weekly figure would store the same number under
+        seven dates and a five-minute peak answers a different question from
+        the one a morning readiness read asks.
+        """
+        try:
+            payload = self.client().get_hrv_data(day) or {}
+        except Exception:
+            return None
+        summary = payload.get("hrvSummary") or {}
+        return _as_float(summary.get("lastNightAvg"))
 
 
 def _is_cardio(type_key: str) -> bool:
@@ -620,7 +671,7 @@ def get_sync_date_range(
     A sync that only ever runs on demand misses days: a missed Monday and
     Tuesday, run on Wednesday, must not silently leave Monday and Tuesday
     empty forever just because nobody ran it on time. This looks at both
-    `weigh_ins` and `daily_actuals` for their own latest `date` — not just
+    every list a requested source writes for its latest `date` — not just
     `get_latest_biometrics`, which only reads `weigh_ins`.
 
     **`sources` scopes that lookup to the sync(es) actually about to run, and
@@ -678,20 +729,30 @@ def get_sync_date_range(
 
     biometrics = run_sync(repository.load_biometrics())
     checkpoints = biometrics.get("sync_checkpoints") or {}
-    section_latest_dates = []
+    # Folded per *source*, not per section, because the mapping is one-to-many:
+    # one Garmin sync fills `weigh_ins` and `readiness_log` off a single login
+    # and a single checkpoint. Ranking sections independently would put the
+    # emptier of the two into the `min` below and walk a fully caught-up
+    # Garmin back through days it has already answered for — the same
+    # re-fetch-forever bug `sources` was added to fix, arriving by a second
+    # route. A source's latest known date is the latest across everything it
+    # writes plus its checkpoint.
+    source_dates: Dict[str, List[str]] = {}
     for section, source in BIOMETRIC_SECTION_SOURCES.items():
         if source not in requested:
             continue
-        dates = [row["date"] for row in biometrics.get(section, []) if row.get("date")]
+        dates = source_dates.setdefault(source, [])
+        dates.extend(row["date"] for row in biometrics.get(section, []) if row.get("date"))
+    for source in list(source_dates):
         checkpoint = checkpoints.get(source)
         if checkpoint:
-            dates.append(checkpoint)
-        if dates:
-            section_latest_dates.append(max(dates))
-    if not section_latest_dates:
+            source_dates[source].append(checkpoint)
+
+    source_latest_dates = [max(dates) for dates in source_dates.values() if dates]
+    if not source_latest_dates:
         return [end_date.isoformat()]
 
-    latest = datetime.strptime(min(section_latest_dates), "%Y-%m-%d").date()
+    latest = datetime.strptime(min(source_latest_dates), "%Y-%m-%d").date()
     start_date = latest + timedelta(days=1)
     if start_date > end_date:
         return []
@@ -706,12 +767,17 @@ def get_sync_date_range(
 def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     """Fetch a day from Garmin and persist what it found.
 
-    The weigh-in is the only part that becomes a stored row: cardio and
-    readiness are returned for the caller to print, because `biometrics.json`
-    has exactly two lists and neither of them is "activities". Adding a third
-    would be a schema change reaching into `nutrition_engine` and the UI, and
-    nothing consumes exercise calories yet — the discount they carry is what
-    this sync is responsible for getting right when something does.
+    Two of the three parts become stored rows — the weigh-in into `weigh_ins`
+    and the sleep/HRV reading into `readiness_log`. Each is written only when
+    it actually measured something, and each into its own list, because a
+    scale and a watch both reporting for one date is precisely the collision
+    `BIOMETRIC_SECTIONS` keeps them apart to avoid.
+
+    **Cardio is still returned for the caller to print and stored nowhere.**
+    That is not an oversight left over from readiness: nothing consumes
+    exercise calories yet, and a list of activities would be a schema whose
+    only reader is a `print`. The discount those figures carry is what this
+    sync is responsible for getting right when something does consume them.
     """
     garmin_config = run_sync(repository.load_integrations_config()).get("garmin") or {}
     service = GarminSyncService(
@@ -728,6 +794,12 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     # a weigh-in row with no weight in it for `get_latest_biometrics` to find.
     if has_measurements(weigh_in):
         run_sync(repository.save_biometric_entry(weigh_in))
+
+    # Same guard, same reason, one list over: a night the watch wasn't worn
+    # produces a bare `{"date": ...}`, and storing that would be a readiness
+    # row with no readiness in it.
+    if has_measurements(readiness):
+        run_sync(repository.save_readiness_entry(readiness))
 
     # Checkpointed regardless of whether the scale reported anything.
     # `target_date` reaching this line at all means Garmin was genuinely
@@ -906,7 +978,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--sync-garmin",
         action="store_true",
-        help="Pull scale weigh-in, cardio sessions and sleep readiness from Garmin Connect.",
+        help=(
+            "Pull scale weigh-in, cardio sessions and overnight sleep/HRV "
+            "readiness from Garmin Connect."
+        ),
     )
     parser.add_argument(
         "--sync-cronometer",
@@ -997,11 +1072,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                     f"{session['net_calories']} kcal net"
                 )
             readiness = outcome["readiness"]
-            if readiness.get("sleep_score") is not None:
-                print(
-                    f"  readiness: {readiness['readiness']} "
-                    f"(sleep score {readiness['sleep_score']:.0f}) - not counted as energy"
-                )
+            if has_measurements(readiness):
+                parts = []
+                if readiness.get("sleep_score") is not None:
+                    parts.append(
+                        f"{readiness.get('readiness_label')} "
+                        f"(sleep score {readiness['sleep_score']:.0f})"
+                    )
+                if readiness.get("hrv_ms") is not None:
+                    parts.append(f"HRV {readiness['hrv_ms']:.0f} ms")
+                print(f"  readiness: {', '.join(parts)} - not counted as energy")
 
     if args.sync_cronometer:
         cronometer_results = sync_cronometer_range(dates, repository)

@@ -1100,7 +1100,7 @@ reads on every generation and displayed nowhere:
 
 | row | dialog | reads |
 |---|---|---|
-| Biometric Sync | which days each source has | `biometrics.json`'s `weigh_ins`/`daily_actuals`/`sync_checkpoints` |
+| Biometric Sync | which days each stored list has | `biometrics.json`'s `weigh_ins`/`daily_actuals`/`readiness_log`/`sync_checkpoints` |
 | Calendar/Location | where each day is spent, and what that constrains | `schedule.json`'s `base_schedule`/`location_rules` |
 | Adaptive Workout | the week's sessions, type/time/duration/burn | `PlannerState.training_schedule` |
 
@@ -1138,9 +1138,9 @@ a plain, unopenable row.
 
 `ui_state.sync_status(biometrics, today, window_days)` is the view model —
 pure, clock-free (today is a parameter) and tested, per the standing rule
-that logic worth testing leaves the widget module. It reports each source's
-checkpoint, its newest stored row, and the last 14 days classified three
-ways:
+that logic worth testing leaves the widget module. It reports each stored
+list's source checkpoint, its own newest row, and the last 14 days classified
+three ways:
 
 - `SYNC_RECORDED` — a row exists for that date.
 - `SYNC_CHECKED` — inside the checkpoint, no row: the sync asked and found
@@ -1157,8 +1157,15 @@ styles live in `ui_theme.py` beside `STATUS_*`/`STATUS_STYLES`, same split
 and same reason; fill and outline carry the distinction rather than three
 hues, per that file's own "icon, not colour" rule.
 
-Three details are decisions:
+Four details are decisions:
 
+- **One card per stored list, not per source.** `weigh_ins` and
+  `readiness_log` come from one Garmin login and share its checkpoint, but a
+  morning nobody stood on the scale is not a night nobody wore the watch, and
+  one merged row could only report the weaker of the two. `shares_source` is
+  true for exactly those cards so the page can say once that a `last checked`
+  they hold in common comes from a single sync, and `SYNC_SECTION_LABELS`
+  names them, since labelling by source would print "Garmin" twice.
 - **`last_checked` and `last_recorded` are separate fields, not one
   "latest".** The gap between them is the information: checked through
   Wednesday with the last weigh-in on Sunday is three mornings nobody stood
@@ -1181,7 +1188,9 @@ Three details are decisions:
 layout, the same kind of thing `BIOMETRIC_SECTIONS` beside it already states,
 and it now has two readers with nothing else in common. A second copy in the
 UI would be free to disagree about which source writes what, and would do so
-silently: the read view would simply report the wrong list as empty.
+silently: the read view would simply report the wrong list as empty. **It is
+one-to-many since `readiness_log` arrived**, and both readers had to stop
+assuming otherwise — see "Biometric sync" for what each had to change.
 
 #### The location and workout views
 
@@ -1931,7 +1940,7 @@ relies on. No new port, no new deployment.
 | `/api/weeks/{"current"\|"next"}` | `repository.load_week_plan(id)` → `WeekPlan.model_validate` |
 | `/api/recipes?favorite=&meal_type=&search=` | `repository.load_recipe_catalog()`, filtered |
 | `/api/history` | `repository.load_history()` |
-| `/api/biometrics` | `repository.load_biometrics()` + `get_latest_biometrics()` |
+| `/api/biometrics` | `repository.load_biometrics()` (all three lists, `readiness_log` included) + `get_latest_biometrics()` |
 | `/api/targets` | `load_config_with_models` → `hydrate_config`, returning `weekly_schedule` + `dynamic_basis` (which carries `tdee_source`) |
 
 Every route calls an existing repository method or an existing pure
@@ -2890,17 +2899,18 @@ decay policy picked silently. See `future-ideas.md` for the open question.
 
 ### Biometric sync — Garmin Connect and Cronometer
 
-`src/integrations/sync_service.py` fills the two lists `biometrics.json`
+`src/integrations/sync_service.py` fills the three lists `biometrics.json`
 holds, with no phone-side app in the loop:
 
     ./venv/bin/python src/integrations/sync_service.py --sync-garmin
     ./venv/bin/python src/integrations/sync_service.py --sync-cronometer --date 2026-08-16
 
-`GarminSyncService` writes `weigh_ins`, `CronometerSyncService` writes
-`daily_actuals`, both through `LocalJSONRepository`'s existing upsert-by-date
-methods. Neither invents storage, and the CLI reports each source
-independently — a Garmin outage must not cost a Cronometer sync that would
-have worked, the same policy as "a failed meal must not fail the week".
+`GarminSyncService` writes `weigh_ins` and `readiness_log`,
+`CronometerSyncService` writes `daily_actuals`, all through
+`LocalJSONRepository`'s existing upsert-by-date methods. Neither invents
+storage, and the CLI reports each source independently — a Garmin outage must
+not cost a Cronometer sync that would have worked, the same policy as "a
+failed meal must not fail the week".
 
 Seven things here are decisions, not detail:
 
@@ -2934,11 +2944,51 @@ Seven things here are decisions, not detail:
   preference. The file is thin on purpose — it is the declared home for the
   next such setting, so it doesn't land back in a module constant.
 - **Sleep and HRV never reach an energy equation.** `fetch_readiness` returns
-  a sleep score and a word; HRV isn't returned at all, being the metric most
-  likely to be mistaken for a recovery-cost number. A sleep score is a
-  unitless 0–100 index, so no conversion to kcal could be legitimate. The
-  separation is enforced by these being different methods writing different
-  keys, not by a comment.
+  a sleep score, sleep hours, an HRV figure and a bucketed word, and stores
+  them in `readiness_log`. A sleep score is a unitless 0–100 index and HRV is
+  milliseconds, so no conversion of either to kcal could be legitimate — the
+  separation is enforced by these being different methods writing a different
+  list, not by a comment. Nothing in `nutrition_engine` or
+  `apply_training_adjustments` reads that list; whether a readiness figure
+  should *adjust* a target is a separate and much larger question (see
+  `future-ideas.md`'s 5d), and this is deliberately only the storage-plus-one-
+  read-surface half of it.
+
+  **This was fetched on every sync and thrown away for months** — printed by
+  the CLI, kept nowhere — which is what made "I would expect to see the sleep
+  data downloaded previously" exactly right. It is a third list rather than a
+  few more keys on the weigh-in row, for the reason the section below gives
+  for keeping `weigh_ins` and `daily_actuals` apart: a scale and a watch can
+  both report for one date, and one merged row would let a partial answer
+  from either blank the other's.
+
+  **HRV used to be withheld on purpose**, being the metric most likely to be
+  mistaken for a recovery *cost* by a future caller looking for one.
+  Withholding it protected nothing the list separation doesn't already
+  protect, and cost the number a readiness read is actually about. It comes
+  from `get_hrv_data`'s `hrvSummary.lastNightAvg` — the method name checked
+  against the installed garminconnect (0.3.10) rather than copied from an
+  example, per the standing rule about this dependency, and `lastNightAvg`
+  rather than `weeklyAvg` because the row is keyed by date and a weekly figure
+  would store one number under seven of them.
+
+  **Sleep and HRV are two endpoints, caught separately.** Either fails on its
+  own — a watch worn with HRV still baselining is a real state — and one
+  `try` around both would discard a good HRV reading because the sleep call
+  failed. `save_readiness_entry` merges by date, so the half that failed lands
+  on a later re-sync without disturbing the half that didn't.
+
+  **One checkpoint per source, not per list**, which makes
+  `BIOMETRIC_SECTION_SOURCES` one-to-many and cost two readers their
+  one-section-per-source assumption: `get_sync_date_range` now folds a
+  source's lists together before taking its latest date (ranking them apart
+  would put the emptier list into its `min` and re-walk days Garmin has
+  already answered for — the same re-fetch-forever bug `sources` was added to
+  fix, by a second route), and `ui_state.sync_status` names its cards by
+  section, or two of three would read "Garmin". The one wrinkle, stated on the
+  page rather than papered over: a date checked before `readiness_log` existed
+  reads as "checked, nothing recorded" for readiness. `--date` re-syncs it,
+  since Garmin keeps the history.
 - **Absent metrics are omitted, never zeroed.** `save_biometric_entry` merges
   on `date`, so a scale that reported only weight must not send
   `body_fat_pct: 0.0` and overwrite a real reading. `_prune` drops the Nones
@@ -3023,7 +3073,11 @@ fresh every run would start failing after days of working fine.
 Tests are `tests/test_sync_service.py`, `unittest` like the rest. Nothing there
 touches the network: both clients are reached through one seam each, and the
 fakes speak the real payload dialect (grams for Garmin mass, `Energy (kcal)`
-headers for the CSV) because the unit and key mapping *is* the module.
+headers for the CSV, `hrvSummary.lastNightAvg` beside the weekly average and
+the five-minute peak a careless mapping would grab instead) because the unit
+and key mapping *is* the module. The Garmin fake can fail sleep and HRV
+independently, because that isolation is a decision being tested rather than
+an incidental of the fake.
 
 **That was not always true, and the way it failed is worth keeping.** Both
 constructors used to read `username or os.environ.get("CRONOMETER_USERNAME")`.
@@ -3156,13 +3210,13 @@ the module under seven frozen weekdays before trusting it.
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule, and `rejections.json`'s storage round trip |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
-| `test_sync_service.py` | Garmin/Cronometer unit and key mapping, and the credential guards |
+| `test_sync_service.py` | Garmin/Cronometer unit and key mapping, the sleep/HRV readiness row and its two independent endpoints, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, and the Settings destination's sync-status and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
-| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics, and derived targets/`tdee_source` |
+| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log`), and derived targets/`tdee_source` |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those

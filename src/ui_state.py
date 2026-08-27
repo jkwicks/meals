@@ -10,6 +10,7 @@ computes and returns a value or mutates `self`, and the caller (still in
 the monolith; this file just draws the module boundary where it already was.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -58,6 +59,7 @@ from ui_theme import (
     STATUS_SKIP,
     SYNC_CHECKED,
     SYNC_RECORDED,
+    SYNC_SECTION_LABELS,
     SYNC_UNCHECKED,
     TRAINING_TYPE_LABELS,
     TRAINING_TYPES,
@@ -1750,11 +1752,20 @@ class SyncSourceStatus:
     nobody stood on the scale, which is a different situation from a Garmin
     nobody has synced since Sunday, and only these two numbers side by side
     tell them apart.
+
+    One row per stored *list*, not per source. `weigh_ins` and `readiness_log`
+    are both filled by one Garmin sync and share its checkpoint, but they
+    answer different questions — a morning nobody stood on the scale is not a
+    night nobody wore the watch — and a merged row could only report the
+    weaker of the two. `shares_source` is true for exactly those rows, so the
+    page can say once that a `last checked` they hold in common comes from one
+    login rather than leaving two identical dates to look like a coincidence.
     """
 
     source: str
     section: str
     label: str
+    shares_source: bool
     last_checked: Optional[str]
     last_recorded: Optional[str]
     recorded_total: int
@@ -1790,14 +1801,26 @@ def sync_status(
 
     **A source's effective checkpoint is the later of its stored checkpoint
     and its newest row**, mirroring `get_sync_date_range`'s own `max(dates +
-    [checkpoint])`. `sync_checkpoints` postdates the two lists, so a
+    [checkpoint])`. `sync_checkpoints` postdates the two original lists, so a
     `biometrics.json` written before it existed — or hand-edited since — has
     rows past a checkpoint that would otherwise mark them as never-checked.
     A stored row is proof the day was asked about, whatever the checkpoint
     says.
+
+    **One card per stored list, and two of them share a source.** A Garmin
+    sync fills `weigh_ins` and `readiness_log` under one
+    `sync_checkpoints["garmin"]` entry, so both cards report the same
+    `last_checked` — which is honest (the login did ask about that date) but
+    has one pre-migration wrinkle worth knowing: a date checked before
+    `readiness_log` existed reads as "checked, nothing recorded" for
+    readiness, when in truth nothing asked. `--date` re-syncs it, since
+    Garmin keeps the history. Inventing a second checkpoint to draw that
+    distinction would mean a second thing for a sync to forget to advance,
+    for one fortnight of one-time ambiguity.
     """
     checkpoints = biometrics.get("sync_checkpoints") or {}
     window = [today - timedelta(days=offset) for offset in range(window_days - 1, -1, -1)]
+    sections_per_source = Counter(BIOMETRIC_SECTION_SOURCES.values())
 
     statuses = []
     for section, source in BIOMETRIC_SECTION_SOURCES.items():
@@ -1828,7 +1851,8 @@ def sync_status(
             SyncSourceStatus(
                 source=source,
                 section=section,
-                label=humanize(source).title(),
+                label=SYNC_SECTION_LABELS.get(section) or humanize(section).title(),
+                shares_source=sections_per_source[source] > 1,
                 last_checked=checkpoint,
                 last_recorded=last_recorded,
                 recorded_total=len(recorded),

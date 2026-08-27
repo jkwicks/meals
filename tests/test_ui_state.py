@@ -1228,10 +1228,16 @@ class TestSyncStatus(unittest.TestCase):
     """
 
     def statuses(self, biometrics, today=None, **kwargs):
+        """Keyed by *section*, not by source.
+
+        One Garmin sync fills two lists, so a source key would collapse
+        `weigh_ins` and `readiness_log` onto each other and quietly assert
+        about whichever came last.
+        """
         from datetime import date
 
         return {
-            status.source: status
+            status.section: status
             for status in ui_state.sync_status(
                 biometrics, today or date(2026, 8, 26), **kwargs
             )
@@ -1249,7 +1255,7 @@ class TestSyncStatus(unittest.TestCase):
             },
             window_days=4,
         )
-        garmin = found["garmin"]
+        garmin = found["weigh_ins"]
         self.assertEqual(
             [(day.date, day.state) for day in garmin.days],
             [
@@ -1275,7 +1281,7 @@ class TestSyncStatus(unittest.TestCase):
             },
             window_days=8,
         )
-        cronometer = found["cronometer"]
+        cronometer = found["daily_actuals"]
         # 19th (a row) · 20th (the checkpoint, nothing logged) · six days
         # ending on the 26th that nobody has asked about.
         self.assertEqual(
@@ -1304,7 +1310,7 @@ class TestSyncStatus(unittest.TestCase):
         # The 24th is the assertion: past the stored checkpoint (the 23rd),
         # but before a row on the 25th proves the sync got that far.
         self.assertEqual(
-            [day.state for day in found["garmin"].days],
+            [day.state for day in found["weigh_ins"].days],
             [
                 ui_state.SYNC_CHECKED,
                 ui_state.SYNC_CHECKED,
@@ -1321,17 +1327,21 @@ class TestSyncStatus(unittest.TestCase):
             {"weigh_ins": [], "daily_actuals": [], "sync_checkpoints": {}},
             window_days=3,
         )
-        self.assertFalse(found["garmin"].connected)
-        self.assertFalse(found["cronometer"].connected)
+        self.assertFalse(found["weigh_ins"].connected)
+        self.assertFalse(found["daily_actuals"].connected)
+        self.assertFalse(found["readiness_log"].connected)
         self.assertEqual(
-            [day.state for day in found["garmin"].days], [ui_state.SYNC_UNCHECKED] * 3
+            [day.state for day in found["weigh_ins"].days], [ui_state.SYNC_UNCHECKED] * 3
         )
 
-    def test_an_empty_file_still_reports_both_sources(self):
-        """`load_biometrics` promises all three keys, but a hand-written or
-        partial file may not — and a source silently missing from this list
+    def test_an_empty_file_still_reports_every_list(self):
+        """`load_biometrics` promises every key, but a hand-written or
+        partial file may not — and a list silently missing from this view
         would read as "nothing to sync" rather than "never synced"."""
-        self.assertEqual(sorted(self.statuses({})), ["cronometer", "garmin"])
+        self.assertEqual(
+            sorted(self.statuses({})),
+            ["daily_actuals", "readiness_log", "weigh_ins"],
+        )
 
     def test_sources_come_from_the_repository_not_a_second_copy(self):
         """The section->source mapping has two readers now (the catchup walk
@@ -1341,9 +1351,53 @@ class TestSyncStatus(unittest.TestCase):
 
         found = self.statuses({})
         self.assertEqual(
-            {status.section: source for source, status in found.items()},
-            {section: source for section, source in BIOMETRIC_SECTION_SOURCES.items()},
+            {section: status.source for section, status in found.items()},
+            dict(BIOMETRIC_SECTION_SOURCES),
         )
+
+    def test_readiness_is_its_own_card_and_says_it_shares_a_checkpoint(self):
+        """Two of the three lists are filled by one Garmin login.
+
+        They need separate cards — a morning nobody stood on the scale is not
+        a night nobody wore the watch, and a merged row could only report the
+        weaker of the two — but their `last_checked` moves together, and
+        `shares_source` is what lets the page say so rather than leaving two
+        identical dates to look like a coincidence.
+        """
+        found = self.statuses(
+            {
+                "weigh_ins": [{"date": "2026-08-26", "weight_kg": 99.6}],
+                "readiness_log": [{"date": "2026-08-25", "sleep_score": 83.0}],
+                "sync_checkpoints": {"garmin": "2026-08-26"},
+            },
+            window_days=2,
+        )
+        readiness = found["readiness_log"]
+        self.assertEqual(readiness.source, "garmin")
+        self.assertTrue(readiness.shares_source)
+        self.assertTrue(found["weigh_ins"].shares_source)
+        self.assertFalse(found["daily_actuals"].shares_source)
+        self.assertEqual(readiness.last_checked, "2026-08-26")
+        self.assertEqual(readiness.last_recorded, "2026-08-25")
+        # The 26th: a weigh-in landed, the watch reported nothing. The two
+        # cards disagree about that date, which is the point of two cards.
+        self.assertEqual(
+            [day.state for day in readiness.days],
+            [ui_state.SYNC_RECORDED, ui_state.SYNC_CHECKED],
+        )
+        self.assertEqual(
+            [day.state for day in found["weigh_ins"].days],
+            [ui_state.SYNC_CHECKED, ui_state.SYNC_RECORDED],
+        )
+
+    def test_every_card_is_named_distinctly(self):
+        """Labels were `humanize(source).title()` while one source filled one
+        list. Two Garmin cards both headed "Garmin" would leave the reader to
+        guess which was which."""
+        from datetime import date
+
+        labels = [status.label for status in ui_state.sync_status({}, date(2026, 8, 26))]
+        self.assertEqual(len(set(labels)), len(labels))
 
 
 class TestLocationView(unittest.TestCase):

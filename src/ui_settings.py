@@ -308,9 +308,18 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 # weigh-in on Sunday is three mornings nobody stood on the
                 # scale, which is a different situation from a source nobody
                 # has synced since Sunday.
-                ui.label(f"Last checked {_stamp(status.last_checked)}").classes(
-                    f"{TEXT_BODY} text-slate-400"
-                )
+                checked = f"Last checked {_stamp(status.last_checked)}"
+                label = ui.label(
+                    f"{checked} (shared)" if status.shares_source else checked
+                ).classes(f"{TEXT_BODY} text-slate-400")
+                if status.shares_source:
+                    # One Garmin login answers for the scale and the watch, so
+                    # both cards move together. Said here rather than left as
+                    # two identical dates that look like a coincidence.
+                    label.tooltip(
+                        f"One {status.source} sync checkpoint, shared by every "
+                        "list it fills."
+                    )
                 ui.label(f"Last recorded {_stamp(status.last_recorded)}").classes(
                     f"{TEXT_BODY} text-slate-400"
                 )
@@ -333,11 +342,12 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
 
         with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION}"):
             ui.label(
-                "The last 14 days, per source, as data/biometrics.json records "
-                "them. A filled cell is a day with a row; a dim cell is a day "
-                "the sync asked about and found nothing — a forgotten weigh-in "
-                "or an unlogged day, which is a real answer; an outline is a "
-                "day nobody has asked about yet."
+                "The last 14 days, one card per stored list, as "
+                "data/biometrics.json records them. A filled cell is a day "
+                "with a row; a dim cell is a day the sync asked about and "
+                "found nothing — a forgotten weigh-in, an unlogged day, a "
+                "night the watch wasn't worn, all real answers; an outline is "
+                "a day nobody has asked about yet."
             ).classes(f"{TEXT_BODY} text-slate-400")
 
             for status in statuses:
