@@ -20,15 +20,18 @@ was one of those, and is now closed.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.28.0**, which closed what this queue originally ranked first. Three of
-the source docs' claims turned out to be stale and are corrected in the
-entries: `ISSUES.md` item 9 is fixed, `future-ideas.md`'s 5c biometric counts
-are out of date, and `ui-redesign.md`'s phase 4 aside is still unfiled.
+**v0.29.0**. Two releases have now closed the item this queue ranked first:
+**v0.28.0** the fridge-day origin, **v0.29.0** the discarded Garmin
+sleep/readiness. Three of the source docs' claims turned out to be stale and
+are corrected in the entries: `ISSUES.md` item 9 is fixed,
+`future-ideas.md`'s 5c biometric counts are out of date, and
+`ui-redesign.md`'s phase 4 aside is still unfiled.
 
-**Items 2 and 6 were added on 2026-08-28**, and neither came from a source
-doc — both were found by asking what the Garmin and Cronometer syncs actually
-feed, and both were verified against the running engine and the live
-`biometrics.json` rather than against any document's account of itself.
+**Items 1 and 5 were added on 2026-08-28** (they ranked 2 and 6 before
+v0.29.0 shipped), and neither came from a source doc — both were found by
+asking what the Garmin and Cronometer syncs actually feed, and both were
+verified against the running engine and the live `biometrics.json` rather
+than against any document's account of itself.
 
 ## Size scale
 
@@ -44,85 +47,28 @@ feed, and both were verified against the running engine and the live
 
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
-| 1 | [Garmin sleep/readiness is fetched every sync and thrown away](#1--garmin-sleepreadiness-is-fetched-every-sync-and-thrown-away) | Bug | S | — |
-| 2 | [The adaptive TDEE has never fired, and nothing says why](#2--the-adaptive-tdee-has-never-fired-and-nothing-says-why) | Bug | S | — |
-| 3 | [`/api/recipes` reimplements the catalog filter](#3--apirecipes-reimplements-the-catalog-filter) | Tech debt | XS | — |
-| 4 | [Nothing syncs on server start, and nothing is scheduled](#4--nothing-syncs-on-server-start-and-nothing-is-scheduled) | Feature | S | one decision |
-| 5 | [Amber carries five meanings, violet two](#5--amber-carries-five-meanings-violet-two) | Design debt | S–M | — |
-| 6 | [Cronometer logs no fibre, so the fibre readout has no denominator](#6--cronometer-logs-no-fibre-so-the-fibre-readout-has-no-denominator) | Feature | S | — |
-| 7 | [Propose the training schedule from Garmin activity history](#7--propose-the-training-schedule-from-garmin-activity-history) | Feature | L | one decision |
-| 8 | [Rejection list has no decay](#8--rejection-list-has-no-decay) | Feature | M | one decision |
-| 9 | [Morning readiness check-in](#9--morning-readiness-check-in) | Feature | M | #1, one decision |
-| 10 | [Adherence and workout-completion tracking (5b)](#10--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
-| 11 | [Pantry inventory ledger with real quantities](#11--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 12 | [Trend charts / the Insights destination (5c)](#12--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 13 | [Write and generation routes on the API](#13--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 14 | [OpenAPI schema is off, so there are no generated types](#14--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 15 | [No auth on `/api`](#15--no-auth-on-api) | Feature | S | only if exposed |
-| 16 | [Food waste tracking](#16--food-waste-tracking) | Feature | XL | not scoped |
+| 1 | [The adaptive TDEE has never fired, and nothing says why](#1--the-adaptive-tdee-has-never-fired-and-nothing-says-why) | Bug | S | — |
+| 2 | [`/api/recipes` reimplements the catalog filter](#2--apirecipes-reimplements-the-catalog-filter) | Tech debt | XS | — |
+| 3 | [Nothing syncs on server start, and nothing is scheduled](#3--nothing-syncs-on-server-start-and-nothing-is-scheduled) | Feature | S | one decision |
+| 4 | [Amber carries five meanings, violet two](#4--amber-carries-five-meanings-violet-two) | Design debt | S–M | — |
+| 5 | [Cronometer logs no fibre, so the fibre readout has no denominator](#5--cronometer-logs-no-fibre-so-the-fibre-readout-has-no-denominator) | Feature | S | — |
+| 6 | [Propose the training schedule from Garmin activity history](#6--propose-the-training-schedule-from-garmin-activity-history) | Feature | L | one decision |
+| 7 | [Rejection list has no decay](#7--rejection-list-has-no-decay) | Feature | M | one decision |
+| 8 | [Morning readiness check-in](#8--morning-readiness-check-in) | Feature | M | one decision |
+| 9 | [Adherence and workout-completion tracking (5b)](#9--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
+| 10 | [Pantry inventory ledger with real quantities](#10--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
+| 11 | [Trend charts / the Insights destination (5c)](#11--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
+| 12 | [Write and generation routes on the API](#12--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 13 | [OpenAPI schema is off, so there are no generated types](#13--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 14 | [No auth on `/api`](#14--no-auth-on-api) | Feature | S | only if exposed |
+| 15 | [Food waste tracking](#15--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed), each XS–M
 and none urgent.
 
 ---
 
-## 1 — Garmin sleep/readiness is fetched every sync and thrown away
-
-**Type:** Bug (silent data loss) &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp;
-**Source:** `ISSUES.md` item 11 · `future-ideas.md` 5d (step 1 only)
-
-`GarminSyncService.fetch_readiness` (`sync_service.py:413`) returns a sleep
-score, sleep hours and a bucketed readiness word on **every** `--sync-garmin`
-run. `main()` prints it to stdout and nothing else ever sees it:
-`repository.BIOMETRIC_SECTIONS` is `("weigh_ins", "daily_actuals")` and there
-is no third list. The reported symptom — "I would expect to see the sleep
-data that has been downloaded previously" — is exactly right, and
-`future-ideas.md` 5d is right that it isn't a regression: it was never
-stored. That does not make it not worth fixing. It makes it a feature that
-has been paying its fetch cost for months and returning nothing.
-
-Confirmed on disk today: `biometrics.json` holds `weigh_ins` (5),
-`daily_actuals` (5) and `sync_checkpoints`. No readiness anywhere.
-
-**The storage decision is already made in the source doc** and needs no
-further call: a **third list**, not a field on the weigh-in row. `weigh_ins`
-is merged by `save_biometric_entry` on `date`, and a scale and a watch can
-both report for the same date — the identical reasoning that keeps
-`weigh_ins` and `daily_actuals` apart. Proposed shape, from 5d:
-
-```
-readiness_log: [{date, sleep_score, sleep_hours, hrv_ms, readiness_label}]
-```
-
-upserted by date through the existing `_upsert_dated_entry`.
-
-**HRV is the one genuinely new fetch.** `fetch_readiness`'s docstring says
-HRV "is not returned at all," deliberately — it is the metric most likely to
-be mistaken for a recovery *cost*. The Fenix makes it real data now. Check
-what the installed `garminconnect` actually names the endpoint rather than
-copying an example: that package already changed shape once between 0.2.8
-and 0.3.x (CLAUDE.md's `hasattr(client, "garth")` guard is the scar), and the
-project convention is `inspect.signature` first.
-
-**Scope this to storage plus one read surface, and stop.** Whether a
-readiness figure should *adjust* anything is item 9 below and is a materially
-bigger question — CLAUDE.md is explicit that sleep and HRV are "readiness,
-not energy," and a feature that quietly turns a sleep score into a calorie
-adjustment is precisely the conflation that line exists to prevent. The read
-surface is nearly free: the Biometric Sync dialog shipped in phase 6e already
-renders per-source per-date coverage, and a third source row is what
-`ui_state.sync_status` was shaped to take.
-
-**Acceptance:** `--sync-garmin` writes a `readiness_log` row; a second run
-for the same date updates rather than appends; a day the watch reported no
-sleep for stores nothing rather than zeroes (`has_measurements`' existing
-rule — count *measured* keys, not `len(entry)`); the sync dialog shows
-readiness coverage beside the other two sources; backfilling an earlier date
-via `--date` works, since Garmin retains the history.
-
----
-
-## 2 — The adaptive TDEE has never fired, and nothing says why
+## 1 — The adaptive TDEE has never fired, and nothing says why
 
 **Type:** Bug (silent no-op) &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp;
 **Source:** not previously filed — found 2026-08-28 while auditing what the
@@ -176,7 +122,7 @@ would not have fixed it.
 returns a bare `Optional[float]`; the fix is for it (or a thin sibling beside
 it, so the pure function keeps its signature) to say *which* precondition
 failed and by how much, and for the two surfaces above to print that. Note
-this is upstream of item 12 — trend charts are blocked on data, and this is
+this is upstream of item 11 — trend charts are blocked on data, and this is
 the check that says whether the data has arrived.
 
 **Acceptance:** the four states are distinguishable — no data / insufficient
@@ -188,7 +134,7 @@ something honest rather than erroring; `calculate_adaptive_tdee`'s existing
 
 ---
 
-## 3 — `/api/recipes` reimplements the catalog filter
+## 2 — `/api/recipes` reimplements the catalog filter
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** XS &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, recorded as a finding and deliberately not fixed
@@ -216,7 +162,7 @@ assertions unchanged and passing.
 
 ---
 
-## 4 — Nothing syncs on server start, and nothing is scheduled
+## 3 — Nothing syncs on server start, and nothing is scheduled
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ISSUES.md` item 8, first bullet — asked as a question, never answered
@@ -259,7 +205,7 @@ sync, which is the line phase 6e drew on purpose.
 
 ---
 
-## 5 — Amber carries five meanings, violet two
+## 4 — Amber carries five meanings, violet two
 
 **Type:** Design debt &nbsp;·&nbsp; **Size:** S–M &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 1, recorded rather than resolved · `.claude/rules/ui.md`
@@ -295,7 +241,7 @@ rewritten to name what survived and why.
 
 ---
 
-## 6 — Cronometer logs no fibre, so the fibre readout has no denominator
+## 5 — Cronometer logs no fibre, so the fibre readout has no denominator
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S (XS capture + S readout)
 &nbsp;·&nbsp; **Source:** not previously filed — raised 2026-08-28
@@ -305,7 +251,7 @@ Cronometer's daily-summary export carries fibre and the capture is one entry
 in that dict.
 
 **File the capture and the readout together, or file neither.** Capture alone
-reproduces exactly the shape that makes item 1 a bug: `daily_actuals`'s only
+reproduces exactly the shape v0.29.0 closed for sleep: `daily_actuals`'s only
 consumers are `calculate_adaptive_tdee` (calories alone) and
 `logged_intake_for` (`MACRO_KEYS` alone), so a stored `fiber_g` would be
 written on every sync and read by nothing — a second field paying its fetch
@@ -351,7 +297,7 @@ denominator — for a day with no log.
 
 ---
 
-## 7 — Propose the training schedule from Garmin activity history
+## 6 — Propose the training schedule from Garmin activity history
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 4 aside — *"a loose thread in an otherwise finished
@@ -381,12 +327,12 @@ critically, *the same field*, so nothing downstream can tell a derived
 session from a typed one. `estimate_burn`'s calculator-icon button is the
 interaction to copy.
 
-**Dependency worth noting:** it wants the same Garmin plumbing as item 1 and
+**Dependency worth noting:** it wants the same Garmin plumbing v0.29.0 built for readiness, and
 naturally follows it.
 
 ---
 
-## 8 — Rejection list has no decay
+## 7 — Rejection list has no decay
 
 **Type:** Feature (product decision) &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp;
 **Source:** `future-ideas.md`, "Rejection-list decay"
@@ -420,14 +366,17 @@ the filtering or weighting lands in `build_rejection_rule` (a pure function of
 
 ---
 
-## 9 — Morning readiness check-in
+## 8 — Morning readiness check-in
 
-**Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** item 1
-&nbsp;·&nbsp; **Source:** `ISSUES.md` item 10 · `future-ideas.md` 5d
+**Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** one
+decision &nbsp;·&nbsp; **Source:** `ISSUES.md` item 10 · `future-ideas.md` 5d
 (decision 2)
 
-The half of 5d that item 1 above deliberately defers. Once readiness is
-stored, the question is what a check-in *does*.
+The half of 5d that v0.29.0 deliberately deferred, and the storage half of
+that blocker is now gone: `readiness_log` holds sleep score, sleep hours, HRV
+and a bucketed label per date, and Settings' Biometric Sync dialog reports
+which nights have one. What is left is the decision, not the plumbing — the
+question is what a check-in *does*.
 
 **Two products, and the doc is firm that they should be settled in order:**
 
@@ -448,7 +397,7 @@ argue about; the doc does not settle it.
 
 ---
 
-## 10 — Adherence and workout-completion tracking (5b)
+## 9 — Adherence and workout-completion tracking (5b)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md` 5b
@@ -465,7 +414,7 @@ logging a deviation from it.
    and `data/workout_log.json` (`WorkoutCompletion`: `date`, `session_type`,
    `scheduled`, `completed`, `source`). Neither folds into `daily_actuals` —
    a manual mark and a Cronometer sync writing the same key would silently
-   overwrite each other. Same reasoning as items 3 and 5 above; this codebase
+   overwrite each other. Same reasoning as items 2 and 4 above; this codebase
    has now made that call three times, which is a good sign it is the right
    default rather than a coincidence.
 2. **What "click a card" means.** A Today-tab click opens recipe detail
@@ -479,12 +428,12 @@ logging a deviation from it.
 upsert-by-`date`+`slot_id` shape as `_upsert_dated_entry`) before any UI. The
 write path is the design question; the read path is not.
 
-**It gates part of item 12** — two of 5c's five proposed charts (7-day
+**It gates part of item 11** — two of 5c's five proposed charts (7-day
 adherence, gym completion) have no data source without this.
 
 ---
 
-## 11 — Pantry inventory ledger with real quantities
+## 10 — Pantry inventory ledger with real quantities
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md`, "Pantry photo → an inventory ledger"
@@ -522,7 +471,7 @@ behaviour and is what permits four meal types to claim the same tin.
 
 ---
 
-## 12 — Trend charts / the Insights destination (5c)
+## 11 — Trend charts / the Insights destination (5c)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Blocked by:**
 runtime data &nbsp;·&nbsp; **Source:** `future-ideas.md` 5c ·
@@ -552,13 +501,13 @@ against 5 points is thin; a 30-day one is misleading. Suggest revisiting once
 `calculate_adaptive_tdee` returns non-`None` **and** there are ~14 daily rows
 in both lists.
 
-**Two of the five charts additionally depend on item 10** (adherence, gym
+**Two of the five charts additionally depend on item 9** (adherence, gym
 completion) and should be dropped from a first version rather than waiting
 for it.
 
 ---
 
-## 13 — Write and generation routes on the API
+## 12 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -580,7 +529,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 14 — OpenAPI schema is off, so there are no generated types
+## 13 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -592,12 +541,12 @@ openapi_url=None` regardless of what is passed to `ui.run()`, so
 Only worth doing if a real front end is ever built against `/api` — but then
 it is worth doing *first*, because the alternative is a hand-maintained
 second copy of `Recipe`, which is the duplication this codebase reliably
-regrets (see item 3, and `/api/recipes` before it). Re-enabling it is a small
+regrets (see item 2, and `/api/recipes` before it). Re-enabling it is a small
 separate task against the NiceGUI app object.
 
 ---
 
-## 15 — No auth on `/api`
+## 14 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -614,14 +563,14 @@ not before.
 
 ---
 
-## 16 — Food waste tracking
+## 15 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
 
 Flagged in the original architecture review as having no data source
 whatsoever. It would need a new logging entry point of its own — a separate
-product decision from both item 10 and item 12, and the only item in this
+product decision from both item 9 and item 11, and the only item in this
 queue with no proposed schema, no proposed surface and no proposed
 interaction.
 
@@ -663,8 +612,10 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |
 | `ISSUES.md` 8, bullets 2–4 | Sync / location / workout pages | Phase 6e — three read-only dialogs off the integrations rows |
 | `ISSUES.md` 9 | `--date` fetched a whole catchup range | Fixed — `--date` defaults to `None`, `--catchup` to `None`, resolved as "catch up unless a date was named"; Cronometer now costs one export request per span |
+| `ISSUES.md` 11 · `future-ideas.md` 5d (step 1) | Garmin sleep/readiness fetched every sync and thrown away | Shipped in **v0.29.0** — `readiness_log` in biometrics.json (`sleep_score`, `sleep_hours`, `hrv_ms`, `readiness_label`) via `PlanRepository.save_readiness_entry`; `fetch_readiness` gained HRV from `get_hrv_data`'s `hrvSummary.lastNightAvg`, caught separately from sleep so one endpoint failing keeps the other. `BIOMETRIC_SECTION_SOURCES` became one-to-many, so `get_sync_date_range` folds a source's lists before ranking them and `sync_status` returns one card per stored list. Settings' Biometric Sync dialog shows the third coverage row; `/api/biometrics` mirrors the list. Deliberately storage-plus-one-read-surface: 5d's decision 2 is item 8 above and is untouched — nothing reads `readiness_log` into a target |
 | CLAUDE.md, "Batch cooking on purpose" | `storage_note` counted fridge days from the anchor day, not prep day | Shipped in **v0.28.0** — `week.PREP_DAY_INDEX`/`cook_day_index`, `span_days(prepped_ahead=)`, `planner.prep_day_batch_slot_ids` (generation side) and `planner.is_prepped_ahead` (after it). `ui_state`'s rescale, favourite swap and fridge/freezer badge count from the same origin, so a grid edit can't put the off-by-one back |
 | `ui-redesign.md` | Phases 1, 2a, 2b, 3, 4, 5, 6a–6e | All shipped; CLAUDE.md's "NiceGUI front end" is the source of truth |
 
-`ISSUES.md` 8's first bullet is item 4 above, 10 is item 9, and 11 is item 1.
+`ISSUES.md` 8's first bullet is item 3 above and 10 is item 8; 11 is closed
+(v0.29.0).
 Nothing else in that register is open.
