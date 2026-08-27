@@ -45,9 +45,11 @@ from planner import (
 )
 from ui_context import UIContext
 from ui_state import (
+    SyncFreshness,
     SyncSourceStatus,
     adaptive_tdee_view,
     location_view,
+    sync_freshness,
     sync_status,
 )
 from ui_today import location_row, session_chip
@@ -62,6 +64,7 @@ from ui_theme import (
     SPACE_SECTION,
     SPACE_TIGHT,
     SYNC_DAY_STYLES,
+    SYNC_FRESHNESS_STYLES,
     TARGET_FIELDS,
     TARGET_SOURCE_ROWS,
     TEXT_BODY,
@@ -377,14 +380,64 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
             )
             ui.label(summary).classes(f"{TEXT_MICRO} text-slate-500")
 
+    def freshness_line(freshness: SyncFreshness) -> None:
+        """When anything last synced, above the three per-list cards.
+
+        The cards each answer "what does this list know"; a reader with all
+        three reading a week old has to notice that and then work out they are
+        all one week old for one reason. CHANGE-QUEUE.md item 2 put the sync on
+        a schedule *outside* this process, so "the job stopped" is the failure
+        this page exists to make visible — see `scripts/sync.sh`.
+
+        No colour: an icon and the wording carry it, because amber already
+        means five things here and this would be the sixth (`.claude/rules/ui.md`,
+        "Known collisions").
+        """
+        look = SYNC_FRESHNESS_STYLES[freshness.state]
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_HAIR} p-{SPACE_BASE} {RADIUS_CARD} "
+            "border border-slate-800 bg-slate-950/30"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+            ):
+                ui.icon(look["icon"]).classes("text-slate-400 text-base")
+                if freshness.days_since is None:
+                    headline = "Never synced"
+                elif freshness.days_since <= 0:
+                    headline = "Last synced today"
+                elif freshness.days_since == 1:
+                    headline = "Last synced yesterday"
+                else:
+                    headline = f"Last synced {freshness.days_since} days ago"
+                ui.label(headline).classes(
+                    f"{TEXT_BODY} font-semibold text-slate-300"
+                )
+                if freshness.last_checked:
+                    ui.label(_stamp(freshness.last_checked)).classes(
+                        f"{TEXT_MICRO} font-mono text-slate-500"
+                    )
+            ui.label(look["phrase"]).classes(f"{TEXT_MICRO} text-slate-500")
+            if freshness.lagging:
+                # One source advancing while another sits still is a failing
+                # credential or a rate-limited account, not a stopped
+                # scheduler — a single date across the top cannot say it.
+                ui.label(
+                    f"{', '.join(freshness.lagging)} is behind the others by "
+                    f"{freshness.stale_after_days}+ days — that source is "
+                    "failing while the job itself runs."
+                ).classes(f"{TEXT_MICRO} text-slate-500")
+
     @ui.refreshable
     def sync_body() -> None:
         # `date.today()` here rather than at build time: the body is
         # repainted on open, so a tab left open overnight draws the window
         # ending on the day it is actually being read.
-        statuses = sync_status(biometrics, date.today())
+        today = date.today()
+        statuses = sync_status(biometrics, today)
 
         with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION}"):
+            freshness_line(sync_freshness(biometrics, today))
             ui.label(
                 "The last 14 days, one card per stored list, as "
                 "data/biometrics.json records them. A filled cell is a day "
@@ -406,15 +459,23 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 )
                 ui.label(
                     "Nothing on it reaches Garmin or Cronometer — starting the "
-                    "server doesn't either. Fetching a missing day is the sync "
-                    "CLI's job, and it walks back from each source's own "
-                    "checkpoint, so re-running it costs nothing for days "
-                    "already checked:"
+                    "server doesn't either. That is deliberate: the sync runs "
+                    "as a daily launchd job outside this process, so an outage "
+                    "or a rate-limited account can't reach a page, and days "
+                    "the server is never started are still covered. Install it "
+                    "once, then this line reports whether it is still running:"
                 ).classes(f"{TEXT_MICRO} text-slate-500")
+                ui.label("./scripts/sync.sh install").classes(
+                    f"{TEXT_MICRO} font-mono text-slate-400 break-all"
+                )
                 ui.label(
-                    "./venv/bin/python src/integrations/sync_service.py "
-                    "--sync-garmin --sync-cronometer"
-                ).classes(f"{TEXT_MICRO} font-mono text-slate-400 break-all")
+                    "Or run it by hand. Either way it walks back from each "
+                    "source's own checkpoint, so re-running costs nothing for "
+                    "days already checked:"
+                ).classes(f"{TEXT_MICRO} text-slate-500")
+                ui.label("./scripts/sync.sh run").classes(
+                    f"{TEXT_MICRO} font-mono text-slate-400 break-all"
+                )
 
     # ---- location defaults ------------------------------------------------
 

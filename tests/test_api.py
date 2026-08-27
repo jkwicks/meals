@@ -25,7 +25,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from api import build_api_router  # noqa: E402
 from planner import CookEvent, Ingredient, Recipe  # noqa: E402
-from repository import LocalJSONRepository, run_sync  # noqa: E402
+from repository import (  # noqa: E402
+    CATALOG_MEAL_TYPE_ANY,
+    LocalJSONRepository,
+    catalog_matches,
+    run_sync,
+)
 from week import MODE_COOK, SlotSpec  # noqa: E402
 
 DAYS = ["Monday", "Tuesday", "Wednesday"]
@@ -145,6 +150,49 @@ class TestRecipesRoute(APITestCase):
         response = self.client.get("/api/recipes", params={"search": "stew"})
         names = [entry["recipe"]["name"] for entry in response.json()]
         self.assertEqual(names, ["Beef Stew"])
+
+
+class TestCatalogFilter(unittest.TestCase):
+    """`repository.catalog_matches` — the one filter `/api/recipes` and the
+    Library destination's grid now share (CHANGE-QUEUE.md item 1).
+
+    Written because the two used to carry a copy each and had already
+    drifted: `ui_catalog_browser._matches` treated `"All"` as the no-filter
+    meal type, the route treated `None` as it, and neither knew the other's
+    spelling. A drift like that returns a differently-filtered list rather
+    than an error, so nothing would have caught a third filter landing on
+    one side only. Both spellings are pinned here.
+    """
+
+    ENTRY = {
+        "is_favorite": True,
+        "recipe": {"name": "Beef Stew", "meal_type": "dinner"},
+    }
+
+    def test_both_no_meal_type_spellings_mean_no_filter(self):
+        self.assertTrue(catalog_matches(self.ENTRY, meal_type=None))
+        self.assertTrue(catalog_matches(self.ENTRY, meal_type=CATALOG_MEAL_TYPE_ANY))
+        self.assertFalse(catalog_matches(self.ENTRY, meal_type="breakfast"))
+
+    def test_search_is_case_insensitive_and_stripped(self):
+        self.assertTrue(catalog_matches(self.ENTRY, search="  sTeW "))
+        self.assertTrue(catalog_matches(self.ENTRY, search="   "))
+        self.assertFalse(catalog_matches(self.ENTRY, search="curry"))
+
+    def test_favorites_only(self):
+        plain = {"is_favorite": False, "recipe": {"name": "Berry Smoothie"}}
+        self.assertTrue(catalog_matches(plain))
+        self.assertFalse(catalog_matches(plain, favorites_only=True))
+        self.assertTrue(catalog_matches(self.ENTRY, favorites_only=True))
+
+    def test_a_record_missing_its_recipe_is_filtered_not_a_crash(self):
+        """The grid's copy read `entry["recipe"]` outright. A hand-edited
+        catalog is exactly the input this app tolerates elsewhere (see
+        `_detail_view`'s own fallback for a stored recipe that no longer
+        validates), so the shared helper reads it the tolerant way."""
+        self.assertTrue(catalog_matches({}))
+        self.assertFalse(catalog_matches({}, meal_type="dinner"))
+        self.assertFalse(catalog_matches({}, search="stew"))
 
 
 class TestHistoryRoute(APITestCase):
