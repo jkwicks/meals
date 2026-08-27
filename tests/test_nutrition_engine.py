@@ -615,5 +615,69 @@ class TestAdaptiveTdeeInMacroTargets(unittest.TestCase):
         self.assertEqual(adaptive["protein_g"], formula["protein_g"])
 
 
+class TestMeasureAdaptiveTdee(unittest.TestCase):
+    """Which precondition stopped the measurement, not merely that one did.
+
+    Written after the fact this queue item names: measured against the live
+    `biometrics.json`, five weigh-ins and five logged days returned `None`
+    and read through to `basis["tdee_source"]` as `"formula"` — the same
+    string an empty file produces — because the weigh-ins spanned three days
+    against a floor of seven. The rejection was right; nothing said so.
+    """
+
+    def test_a_clean_series_reports_ready_and_the_same_figure(self):
+        logs, weigh_ins = _series(100.0, 1.0, 14, 2000)
+        status = ne.measure_adaptive_tdee(logs, weigh_ins)
+        self.assertEqual(status.state, ne.ADAPTIVE_READY)
+        self.assertTrue(status.ready)
+        self.assertEqual(status.estimate, ne.calculate_adaptive_tdee(logs, weigh_ins))
+
+    def test_a_short_span_is_not_the_same_state_as_an_empty_file(self):
+        """The one the bare `Optional[float]` could not express, and the one
+        the live database was actually in."""
+        logs, weigh_ins = _series(100.0, 0.3, 3, 2000)
+        short = ne.measure_adaptive_tdee(logs, weigh_ins)
+        empty = ne.measure_adaptive_tdee([], [])
+        self.assertEqual(short.state, ne.ADAPTIVE_SHORT_SPAN)
+        self.assertEqual(empty.state, ne.ADAPTIVE_NO_WEIGH_INS)
+        self.assertIsNone(short.estimate)
+        self.assertIsNone(empty.estimate)
+
+    def test_a_short_span_reports_the_span_it_measured_and_the_floor(self):
+        """"3 days, needs 7" is the sentence the surfaces print, so the two
+        numbers behind it have to be on the status rather than re-derived."""
+        logs, weigh_ins = _series(100.0, 0.3, 3, 2000)
+        status = ne.measure_adaptive_tdee(logs, weigh_ins)
+        self.assertEqual(status.span_days, 3)
+        self.assertEqual(status.required_span_days, ne.MIN_TREND_SPAN_DAYS)
+        self.assertEqual(status.weigh_ins, 4)
+
+    def test_no_logs_is_distinct_from_no_weigh_ins(self):
+        logs, weigh_ins = _series(100.0, 1.0, 14, 2000)
+        status = ne.measure_adaptive_tdee([], weigh_ins)
+        self.assertEqual(status.state, ne.ADAPTIVE_NO_LOGS)
+        self.assertEqual(status.logged_days, 0)
+        # The weigh-in side is healthy, and says so — which is what stops a
+        # reader chasing the scale when the gap is the food log.
+        self.assertGreaterEqual(status.span_days, ne.MIN_TREND_SPAN_DAYS)
+
+    def test_counts_are_taken_inside_the_window_not_across_the_file(self):
+        """A whole-file total would flatter the database: 57 weigh-ins on
+        record says nothing about whether the last fortnight can be read."""
+        logs, weigh_ins = _series(110.0, 10.0, 56, 2000)
+        status = ne.measure_adaptive_tdee(logs, weigh_ins, window_days=14)
+        self.assertEqual(status.window_days, 14)
+        self.assertLessEqual(status.weigh_ins, 15)
+        self.assertLessEqual(status.logged_days, 15)
+        self.assertLess(status.weigh_ins, len(weigh_ins))
+
+    def test_the_bare_function_still_returns_a_float_or_none(self):
+        """The contract every existing caller was written against, unchanged
+        — this sibling exists beside it, not in front of it."""
+        logs, weigh_ins = _series(100.0, 1.0, 14, 2000)
+        self.assertIsInstance(ne.calculate_adaptive_tdee(logs, weigh_ins), float)
+        self.assertIsNone(ne.calculate_adaptive_tdee(logs, weigh_ins[:1]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

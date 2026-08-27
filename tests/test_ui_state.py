@@ -1685,3 +1685,96 @@ class TestTargetModesChangeWhoDecidesNotTheNumber(unittest.TestCase):
             self.run_async(
                 state.set_target_mode(_RecordingRepository(), "net_carbs_g", "manual")
             )
+
+
+class TestAdaptiveTdeeView(unittest.TestCase):
+    """`adaptive_tdee_view` — why the week is planned on the TDEE it is.
+
+    Written after the bug it closes: `calculate_adaptive_tdee`'s three unmet
+    preconditions all return `None`, and `basis["tdee_source"]` spells every
+    one of them `"formula"` — the same string a fresh checkout with an empty
+    `biometrics.json` produces. Measured against the live file on 2026-08-28,
+    five weigh-ins and five logged days sat in a span of three days against a
+    floor of seven, so the estimate had never once fired and both surfaces
+    that mentioned it reported the state of a database with nothing in it.
+
+    Clock-free: the series below carry their own dates and the view anchors
+    on the newest weigh-in, never on today.
+    """
+
+    def series(self, days, calories=2000, first="2026-08-01"):
+        """A weigh-in a day for `days`, losing 1 kg over the whole stretch."""
+        from datetime import date, timedelta
+
+        start = date.fromisoformat(first)
+        weigh_ins = [
+            {"date": str(start + timedelta(days=i)), "weight_kg": 100.0 - i / days}
+            for i in range(days + 1)
+        ]
+        logs = [
+            {"date": str(start + timedelta(days=i)), "calories": calories}
+            for i in range(days + 1)
+        ]
+        return {"weigh_ins": weigh_ins, "daily_actuals": logs}
+
+    def test_an_empty_file_and_a_short_span_are_different_states(self):
+        """The whole item: both were `"formula"`, and one of them is a
+        database that looks by every visible count like it should work."""
+        empty = ui_state.adaptive_tdee_view({})
+        short = ui_state.adaptive_tdee_view(self.series(3))
+        self.assertEqual(empty.state, "no_weigh_ins")
+        self.assertEqual(short.state, "short_span")
+        self.assertNotEqual(empty.headline, short.headline)
+        self.assertFalse(empty.measuring)
+        self.assertFalse(short.measuring)
+
+    def test_a_short_span_names_the_span_and_the_floor_it_needs(self):
+        """"weigh-in span 3 days, needs 7" is the acceptance sentence, so the
+        two numbers have to appear in the text a surface prints verbatim."""
+        view = ui_state.adaptive_tdee_view(self.series(3))
+        self.assertIn("3 days", view.detail)
+        self.assertIn("needs 7", view.detail)
+        # And it says which way out of it: more weigh-ins bunched into the
+        # same three days do not clear this one.
+        self.assertIn("more day(s) of weighing in", view.detail)
+
+    def test_no_logged_intake_points_at_cronometer_not_the_scale(self):
+        biometrics = self.series(10)
+        biometrics["daily_actuals"] = []
+        view = ui_state.adaptive_tdee_view(biometrics)
+        self.assertEqual(view.state, "no_logs")
+        self.assertIn("Cronometer", view.detail)
+
+    def test_a_believed_measurement_says_the_week_is_planned_on_it(self):
+        view = ui_state.adaptive_tdee_view(
+            self.series(10), {"tdee_source": "adaptive", "tdee_formula": 2400.0}
+        )
+        self.assertEqual(view.state, "adaptive")
+        self.assertTrue(view.measuring)
+
+    def test_a_rejected_measurement_is_its_own_state_not_a_missing_one(self):
+        """`reconcile_adaptive_tdee` already told these two apart; the view
+        has to keep them apart, or the fix only moves the collapse."""
+        view = ui_state.adaptive_tdee_view(
+            self.series(10),
+            {"tdee_source": "formula_adaptive_rejected", "tdee_formula": 2472.0},
+        )
+        self.assertEqual(view.state, "rejected")
+        self.assertFalse(view.measuring)
+        self.assertIn("2472", view.detail)
+
+    def test_enough_data_but_no_basis_claims_nothing_about_a_verdict(self):
+        """A basis is legitimately absent — every switchable macro manual, or
+        no body profile — and there is then no formula to have reconciled
+        anything against. Reporting that as "adaptive" would be a claim about
+        arithmetic that never ran."""
+        view = ui_state.adaptive_tdee_view(self.series(10))
+        self.assertEqual(view.state, "measured")
+        self.assertFalse(view.measuring)
+
+    def test_a_fresh_checkout_says_something_honest_rather_than_erroring(self):
+        for biometrics in (None, {}, {"weigh_ins": [], "daily_actuals": []}):
+            view = ui_state.adaptive_tdee_view(biometrics)
+            self.assertEqual(view.state, "no_weigh_ins")
+            self.assertTrue(view.headline)
+            self.assertTrue(view.detail)

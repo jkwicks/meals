@@ -39,6 +39,7 @@ Three ideas are worth reading before changing anything:
   is known, and rarely binds outside a lean, heavy, or long-running cut.
 """
 
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Sequence, Tuple
 
@@ -632,12 +633,60 @@ def _in_window(rows: List[dict], end: date, window_days: int) -> List[Tuple[date
     dated.sort(key=lambda pair: pair[0])
     return dated
 
+# Which precondition stopped the measurement, or `ADAPTIVE_READY` when none
+# of them did. All four are legitimate states of a real database — the first
+# three are simply what a young or gappy history looks like — and telling them
+# apart is the entire reason this sibling exists. As a bare `Optional[float]`,
+# "nobody has stood on the scale" and "four weigh-ins this week, but all
+# within three days of each other" are the same `None`, and both read through
+# to `basis["tdee_source"]` as the same `"formula"` a fresh checkout with an
+# empty `biometrics.json` produces.
+ADAPTIVE_READY = "ready"
+ADAPTIVE_NO_WEIGH_INS = "no_weigh_ins"
+ADAPTIVE_SHORT_SPAN = "short_span"
+ADAPTIVE_NO_LOGS = "no_logs"
 
-def calculate_adaptive_tdee(
+
+@dataclass(frozen=True)
+class AdaptiveTDEEStatus:
+    """What `calculate_adaptive_tdee` answered, and what it measured to decide.
+
+    `estimate` is exactly what the bare function returns — None whenever
+    `state` is not `ADAPTIVE_READY` — so a caller that only wants the number
+    is unaffected by this type existing. The counts beside it are what a
+    caller needs in order to say *why*, in the units the person can act on:
+    stand on the scale again a week from the last time, or log the days you
+    have already eaten.
+
+    `span_days` is the gap between the first and last weigh-in **inside the
+    window**, and it is the precondition worth naming loudest. It is the one
+    that collapses while every visible count still looks healthy — five
+    weigh-ins and five logged days, all bunched into three days — and the one
+    a fully caught-up Cronometer cannot fix.
+
+    Every count is taken inside the same window the estimate would have used,
+    so a reported figure is one the arithmetic actually saw rather than a
+    whole-file total that flatters it.
+    """
+
+    state: str
+    estimate: Optional[float]
+    weigh_ins: int
+    span_days: int
+    logged_days: int
+    window_days: int
+    required_span_days: int = MIN_TREND_SPAN_DAYS
+
+    @property
+    def ready(self) -> bool:
+        return self.state == ADAPTIVE_READY
+
+
+def measure_adaptive_tdee(
     daily_logs: list,
     weigh_in_history: list,
     window_days: int = 14,
-) -> Optional[float]:
+) -> AdaptiveTDEEStatus:
     """Expenditure inferred from what was actually eaten and what the scale did.
 
         adaptive TDEE = mean logged calories + (kg lost per day x 7700)
@@ -669,45 +718,64 @@ def calculate_adaptive_tdee(
       intake — which is to say, toward concluding you eat at maintenance
       whenever your history is short. `window_days` selects *which* rows
       count; it is not a unit of time the rate is expressed in.
-    - **A span under `MIN_TREND_SPAN_DAYS` returns None.** Multiplying a
-      two-day wobble by 7700 is noise amplification, not measurement.
+    - **A span under `MIN_TREND_SPAN_DAYS` returns no estimate.** Multiplying
+      a two-day wobble by 7700 is noise amplification, not measurement.
 
-    Returns None whenever the inputs can't support an estimate — no logs, no
-    dated weigh-ins, fewer than two of them, or too short a span. That is a
-    "keep using the formula estimate" signal, not an error.
+    The three unmet-precondition states are a "keep using the formula
+    estimate" signal, not an error, and `calculate_adaptive_tdee` collapses
+    all three back to the `None` its callers have always received. They are
+    reported separately here because the *reporting* was the gap: measured
+    against a real `biometrics.json` carrying five weigh-ins and five logged
+    days, this returns `ADAPTIVE_SHORT_SPAN` with a three-day span against a
+    floor of seven — a database that looks by every visible count like it
+    should be measuring, and isn't.
 
-    The result is returned unclamped. Systematic under-logging (the common
+    The estimate is returned unclamped. Systematic under-logging (the common
     case) depresses it, and a caller wiring this into a live target should
-    sanity-check it against `calculate_tdee` rather than trusting it blind;
-    clamping here would hide bad data inside a plausible-looking number.
+    sanity-check it against `calculate_tdee` — `reconcile_adaptive_tdee` is
+    that check — rather than trusting it blind; clamping here would hide bad
+    data inside a plausible-looking number.
     """
     weigh_ins = [row for row in (weigh_in_history or []) if (row or {}).get("weight_kg")]
-    if len(weigh_ins) < 2:
-        return None
+    dates = [
+        d
+        for d in (_parse_iso_date((row or {}).get("date", "")) for row in weigh_ins)
+        if d
+    ]
 
     # Anchored on the most recent weigh-in rather than on today, so a series
     # that stops a month before it is read still yields the trend it actually
     # recorded instead of an empty window.
-    dates = [d for d in (_parse_iso_date(row.get("date", "")) for row in weigh_ins) if d]
-    if not dates:
-        return None
+    windowed = _in_window(weigh_ins, max(dates), window_days) if dates else []
+    span_days = (windowed[-1][0] - windowed[0][0]).days if len(windowed) >= 2 else 0
 
-    windowed = _in_window(weigh_ins, max(dates), window_days)
-    if len(windowed) < 2:
-        return None
-
-    span_days = (windowed[-1][0] - windowed[0][0]).days
-    if span_days < MIN_TREND_SPAN_DAYS:
-        return None
-
-    logs = _in_window(daily_logs, windowed[-1][0], window_days)
+    # Anchored on the newest windowed weigh-in for the same reason: without
+    # one there is no window to count logs in, and 0 is then the honest count
+    # rather than a whole-file total nothing would have read.
+    logs = _in_window(daily_logs, windowed[-1][0], window_days) if windowed else []
     calories = [
         row["calories"]
         for _, row in logs
         if isinstance(row.get("calories"), (int, float))
     ]
+
+    def unmet(state: str) -> AdaptiveTDEEStatus:
+        return AdaptiveTDEEStatus(
+            state=state,
+            estimate=None,
+            weigh_ins=len(windowed),
+            span_days=span_days,
+            logged_days=len(calories),
+            window_days=window_days,
+        )
+
+    if len(windowed) < 2:
+        return unmet(ADAPTIVE_NO_WEIGH_INS)
+    if span_days < MIN_TREND_SPAN_DAYS:
+        return unmet(ADAPTIVE_SHORT_SPAN)
     if not calories:
-        return None
+        return unmet(ADAPTIVE_NO_LOGS)
+
     mean_calories = sum(calories) / len(calories)
 
     # Days measured from the first weigh-in, so the regression's x-axis is
@@ -720,4 +788,32 @@ def calculate_adaptive_tdee(
     # delta is defined as weight *lost*.
     kg_lost_per_day = -_trend_slope_kg_per_day(days, weights)
 
-    return round(mean_calories + kg_lost_per_day * KCAL_PER_KG_TISSUE, 1)
+    return AdaptiveTDEEStatus(
+        state=ADAPTIVE_READY,
+        estimate=round(mean_calories + kg_lost_per_day * KCAL_PER_KG_TISSUE, 1),
+        weigh_ins=len(windowed),
+        span_days=span_days,
+        logged_days=len(calories),
+        window_days=window_days,
+    )
+
+
+def calculate_adaptive_tdee(
+    daily_logs: list,
+    weigh_in_history: list,
+    window_days: int = 14,
+) -> Optional[float]:
+    """`measure_adaptive_tdee`'s figure alone — see there for the arithmetic.
+
+    Returns None whenever the inputs can't support an estimate — no logs, no
+    dated weigh-ins, fewer than two of them, or too short a span. That is a
+    "keep using the formula estimate" signal, not an error, and it is the
+    contract every existing caller was written against.
+
+    Which of those it was is deliberately not expressible in the return type,
+    which is exactly why the status sibling exists: a surface that wants to
+    tell a cold start from a three-day weigh-in span calls
+    `measure_adaptive_tdee` instead, and one that only wants a number stays
+    here.
+    """
+    return measure_adaptive_tdee(daily_logs, weigh_in_history, window_days).estimate
