@@ -19,7 +19,8 @@ and a bad one for ever getting back to them. The first item this queue ranked
 was one of those, and is now closed.
 
 **Everything here was verified against the code on 2026-08-27**, not against
-the documents' own account of themselves. Three of the source docs' claims
+the documents' own account of themselves, and re-checked against `main` at
+**v0.28.0**, which closed what this queue originally ranked first. Three of the source docs' claims
 turned out to be stale and are corrected in the entries: `ISSUES.md` item 9
 is fixed, `future-ideas.md`'s 5c biometric counts are out of date, and
 `ui-redesign.md`'s phase 4 aside is still unfiled.
@@ -533,7 +534,7 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |
 | `ISSUES.md` 8, bullets 2–4 | Sync / location / workout pages | Phase 6e — three read-only dialogs off the integrations rows |
 | `ISSUES.md` 9 | `--date` fetched a whole catchup range | Fixed — `--date` defaults to `None`, `--catchup` to `None`, resolved as "catch up unless a date was named"; Cronometer now costs one export request per span |
-| CLAUDE.md, "Batch cooking on purpose" | `storage_note` counted fridge days from the anchor day, not prep day | Fixed 2026-08-27 — `week.PREP_DAY_INDEX`/`cook_day_index`, `span_days(prepped_ahead=)`, `planner.prep_day_batch_slot_ids` (generation side) and `planner.is_prepped_ahead` (after it). `ui_state`'s rescale, favourite swap and fridge/freezer badge count from the same origin, so a grid edit can't put the off-by-one back |
+| CLAUDE.md, "Batch cooking on purpose" | `storage_note` counted fridge days from the anchor day, not prep day | Shipped in **v0.28.0** — `week.PREP_DAY_INDEX`/`cook_day_index`, `span_days(prepped_ahead=)`, `planner.prep_day_batch_slot_ids` (generation side) and `planner.is_prepped_ahead` (after it). `ui_state`'s rescale, favourite swap and fridge/freezer badge count from the same origin, so a grid edit can't put the off-by-one back |
 | `ui-redesign.md` | Phases 1, 2a, 2b, 3, 4, 5, 6a–6e | All shipped; CLAUDE.md's "NiceGUI front end" is the source of truth |
 
 `ISSUES.md` 8's first bullet is item 3 above, 10 is item 7, and 11 is item 1.
