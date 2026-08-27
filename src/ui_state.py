@@ -1891,10 +1891,10 @@ class SyncFreshness:
     reason it needed its own line: those cards report what each *stored list*
     knows, and a reader with three cards all saying "Last checked 21 Aug" has
     to notice the date is a week old and then work out that they are all one
-    week old for one reason. CHANGE-QUEUE.md item 2 chose a scheduled job over
-    syncing from the app, so the failure mode this app can actually have is
-    "the scheduler stopped", and the app's whole responsibility toward it is
-    making that visible. See `scripts/sync.sh`.
+    week old for one reason. v0.31.0 chose a scheduled job over syncing from
+    the app, so the failure mode this app can actually have is "the scheduler
+    stopped", and the app's whole responsibility toward it is making that
+    visible. See `scripts/sync.sh`.
 
     `last_checked` is the **newest** checkpoint across every source — the last
     time anything asked anyone anything — because that is what answers "is the

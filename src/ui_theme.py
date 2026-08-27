@@ -294,9 +294,9 @@ SYNC_DAY_STYLES = {
 #
 # There is deliberately **no colour here**. Amber already carries five
 # meanings in this app and violet two (see `LOCATION_ACCENT`'s collision note
-# and CHANGE-QUEUE.md item 3), and "a scheduled job has stopped" is exactly
-# the sixth amber meaning `.claude/rules/ui.md` names as the specific thing
-# not to add. The icon carries it instead — the same call
+# and CHANGE-QUEUE.md's amber/violet collision item), and "a scheduled job
+# has stopped" is exactly the sixth amber meaning `.claude/rules/ui.md` names
+# as the specific thing not to add. The icon carries it instead — the same call
 # `TRAINING_TYPE_ICONS` and `SYNC_DAY_STYLES` already made.
 SYNC_FRESH_NEVER = "never"
 SYNC_FRESH_CURRENT = "current"

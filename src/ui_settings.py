@@ -385,9 +385,9 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
 
         The cards each answer "what does this list know"; a reader with all
         three reading a week old has to notice that and then work out they are
-        all one week old for one reason. CHANGE-QUEUE.md item 2 put the sync on
-        a schedule *outside* this process, so "the job stopped" is the failure
-        this page exists to make visible — see `scripts/sync.sh`.
+        all one week old for one reason. v0.31.0 put the sync on a schedule
+        *outside* this process, so "the job stopped" is the failure this page
+        exists to make visible — see `scripts/sync.sh`.
 
         No colour: an icon and the wording carry it, because amber already
         means five things here and this would be the sixth (`.claude/rules/ui.md`,

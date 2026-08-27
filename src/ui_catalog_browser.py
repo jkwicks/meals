@@ -213,7 +213,8 @@ def build_catalog_browser(
             # filters with. This was a private `_matches` here and four
             # inline lines there, already disagreeing about whether "no meal
             # type" is spelled "All" or None; the shared helper owns both
-            # spellings. CHANGE-QUEUE.md item 1.
+            # spellings. Closed in v0.31.0 — see CHANGE-QUEUE.md's
+            # "Verified closed" table.
             if catalog_matches(
                 entry,
                 favorites_only=state.catalog_browser_favorites_only,

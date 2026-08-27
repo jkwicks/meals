@@ -45,16 +45,15 @@ Flat inside each, with two deliberate exceptions: `src/integrations/` (see
 "Biometric sync", which explains the `sys.path` insert that buys the
 subdirectory back) and `tests/fixtures/`.
 
-Root holds README.md, CLAUDE.md, future-ideas.md, ui-redesign.md, .env,
-.gitignore and requirements.txt. The two planning documents are split by
-whether the work is *blocked*: `future-ideas.md` is scoped work waiting on a
-product decision or on weeks of runtime data, `ui-redesign.md` is scoped work
-waiting on nothing. Keeping them apart is what stops the second being read as
-a wishlist. It also accumulates four **gitignored** AI-assistant bundles
-— `python_codebase.md`, `project_context.md`, `data_schemas.md` (written by
-`./scripts/prepare.sh`) and `test_suite.md` (written by `./scripts/upload.sh`).
-They are generated, never edited: a change belongs in the source they
-concatenate.
+Root holds README.md, CLAUDE.md, CHANGE-QUEUE.md, ISSUES.md, two deprecated
+planning documents, .env, .gitignore and requirements.txt. It also
+accumulates four **gitignored** AI-assistant bundles — `python_codebase.md`,
+`project_context.md`, `data_schemas.md` (written by `./scripts/prepare.sh`)
+and `test_suite.md` (written by `./scripts/upload.sh`). They are generated,
+never edited: a change belongs in the source they concatenate. `Keep/` is a
+transient eighth directory when it exists at all — a Google Takeout export
+dropped in for the once-off catalog bootstrap, gitignored and deleted once
+the import is done (see "Bootstrapping the catalog from Google Keep").
 
 **The four-way split is by who writes the file, not by what the file is
 about**, because "which file do I edit to change X" is the question a reader
@@ -77,6 +76,46 @@ bare `python planner.py` runs it from `src/`, and a cwd-relative `data/…`
 would resolve in only one of those. The shell scripts each `cd` to the project
 root for the same reason. Anything new that needs a file should go through
 `StoragePaths`, not spell out a relative path.
+
+### Which document to read, of the four
+
+**`CHANGE-QUEUE.md` is the only current one**, and the only one that answers
+"what should I work on next". It ranks every unfinished item and known defect
+in a single list — each with its type, size, what blocks it, and where it was
+first recorded — plus a "Verified closed" table so a shipped item is not
+re-filed as a new idea. It is verified against the *code*, not against the
+other documents' account of themselves, which is how three of their claims
+turned out to have been stale for phases.
+
+Cite its entries **by name, never by number**. The numbers renumber on every
+release that closes something — twice already — so "CHANGE-QUEUE.md item 3"
+in a comment is a reference with a shelf life. The queue's own internal
+cross-references have had to be repaired after both renumbers, and v0.31.0
+closed two items at once, which moved everything below them by two.
+
+The other three are history, and all three are kept rather than deleted:
+
+- **`future-ideas-deprecated.md`** and **`ui-redesign-deprecated.md`** were
+  the two planning documents, split by whether the work was *blocked* —
+  scoped work waiting on a product decision or on weeks of runtime data,
+  versus scoped work waiting on nothing. Keeping them apart stopped the
+  second being read as a wishlist, but the split answered "may I start
+  this?" and never "what should I start?", because neither file ranked
+  against the other and neither held the defects recorded in this file at
+  the moment they were found. CHANGE-QUEUE.md replaced them on exactly that
+  point, and points back at them for an item's full reasoning rather than
+  restating it — which is what the `-deprecated` suffix means here:
+  superseded as a to-do list, still the place the reasoning lives.
+
+  **Every "phase 6b of `ui-redesign.md`" citation below names that document
+  by its original title**, deliberately. The phases are real, shipped and
+  worth citing; writing "phase 6b of `ui-redesign-deprecated.md`" would read
+  as the phase having been deprecated rather than the file it was planned in.
+- **`ISSUES.md`** is the maintainer's own defect register, written before
+  phases 6a–6e and stale by design: nearly everything in it is now fixed, and
+  CHANGE-QUEUE.md's closed table records which phase or release closed each.
+  Read it for the original wording of a complaint, never for what is still
+  open.
 
 ### config/ is seven files — five merged into one dict, two loaded apart
 
@@ -456,7 +495,7 @@ one topic map. The concerns:
 | `ui_plan.py` | the Plan destination — `ui_cards`' canvas, plus the generation-failure list above it |
 | `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below); its day-rendering helpers are module-level so `ui_inspector.py` reuses them |
 | `ui_catalog_browser.py` | the Library destination — the recipe catalog, its filters, and recipe import |
-| `ui_insights.py` | the Insights destination — a stub honest-empty-state, see `future-ideas.md`'s 5c |
+| `ui_insights.py` | the Insights destination — a stub honest-empty-state, see CHANGE-QUEUE.md's trend-charts item (5c) |
 | `ui_settings.py` | the Settings destination — week start, shopping days, model, the Daily Targets source panel (see below), and an integrations list whose rows open three read-only detail dialogs |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
@@ -2894,9 +2933,9 @@ something.
 regenerating the same slot twice must record twice, not overwrite, which is
 exactly why `_append_rejection` (unlike `_upsert_dated_entry`) carries no
 merge key at all. This is a genuinely different signal from
-`future-ideas.md`'s proposed 5b (`AdherenceEntry`, whether a *served* plan
-was eaten, skipped or swapped) — a rejection happens *before* a recipe ever
-becomes the plan — and the two must not share a file for the same reason
+CHANGE-QUEUE.md's adherence item (5b — `AdherenceEntry`, whether a *served*
+plan was eaten, skipped or swapped) — a rejection happens *before* a recipe
+ever becomes the plan — and the two must not share a file for the same reason
 `weigh_ins` and `daily_actuals` don't: two different signals writing the
 same key would silently overwrite each other with no way to tell which won.
 
@@ -2956,7 +2995,8 @@ settle the decay question, only to raise it: a dislike honoured forever
 would starve the rotation the same way an "unused in the last N" rule
 starves the tail of a list (see `planner.next_choice`'s note on why it's
 strict LRU instead), but capping to "most recent N" would just be that same
-decay policy picked silently. See `future-ideas.md` for the open question.
+decay policy picked silently. CHANGE-QUEUE.md's rejection-decay item is
+where that question is now ranked and still open.
 
 ### Biometric sync — Garmin Connect and Cronometer
 
@@ -3011,9 +3051,9 @@ Seven things here are decisions, not detail:
   separation is enforced by these being different methods writing a different
   list, not by a comment. Nothing in `nutrition_engine` or
   `apply_training_adjustments` reads that list; whether a readiness figure
-  should *adjust* a target is a separate and much larger question (see
-  `future-ideas.md`'s 5d), and this is deliberately only the storage-plus-one-
-  read-surface half of it.
+  should *adjust* a target is a separate and much larger question
+  (CHANGE-QUEUE.md's morning-readiness item, 5d's second decision), and this
+  is deliberately only the storage-plus-one-read-surface half of it.
 
   **This was fetched on every sync and thrown away for months** — printed by
   the CLI, kept nowhere — which is what made "I would expect to see the sleep

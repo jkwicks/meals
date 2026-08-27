@@ -73,8 +73,8 @@ def build_api_router(repository: PlanRepository) -> APIRouter:
         # `repository.catalog_matches`, not a copy of it — the Library
         # destination's grid filters the same three ways over the same
         # records, and two inline copies of that would disagree silently
-        # (a differently-filtered list, never an error). See CHANGE-QUEUE.md
-        # item 1, which is what this closes.
+        # (a differently-filtered list, never an error). Closed in v0.31.0;
+        # CHANGE-QUEUE.md's "Verified closed" table has the reasoning.
         matches = [
             entry
             for entry in catalog
