@@ -44,7 +44,12 @@ from planner import (
     selectable_models,
 )
 from ui_context import UIContext
-from ui_state import SyncSourceStatus, location_view, sync_status
+from ui_state import (
+    SyncSourceStatus,
+    adaptive_tdee_view,
+    location_view,
+    sync_status,
+)
 from ui_today import location_row, session_chip
 from ui_theme import (
     PIPELINE_STAGES,
@@ -146,9 +151,13 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
         low, high = min(values), max(values)
         return f"{low:.0f}" if low == high else f"{low:.0f}–{high:.0f}"
 
-    def basis_note(macro: str) -> Optional[str]:
-        """How an `auto` macro got its number, in the engine's own figures."""
-        basis = state.planning_config().get("dynamic_basis")
+    def basis_note(macro: str, basis: Optional[dict]) -> Optional[str]:
+        """How an `auto` macro got its number, in the engine's own figures.
+
+        Handed the basis rather than fetching it, so one `planning_config()`
+        serves the whole section — it hydrates targets and runs the training
+        pass, and the adaptive readout below wants the same dict.
+        """
         if not basis:
             return None
         if macro == "calories":
@@ -211,6 +220,13 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
 
     @ui.refreshable
     def targets_source() -> None:
+        # Once for the section: `planning_config()` hydrates every day's
+        # targets and re-runs the training pass, and both the per-macro basis
+        # note and the adaptive readout read the same `dynamic_basis` out of
+        # it. `adaptive_tdee_view` re-measures nothing the hydration did not —
+        # it reads the same `biometrics` series the state was loaded with.
+        basis = state.planning_config().get("dynamic_basis")
+        adaptive = adaptive_tdee_view(biometrics, basis)
         for macro, label, fixed_note, unit in TARGET_SOURCE_ROWS:
             switchable = macro in TARGET_MODE_MACROS
             mode = state.target_modes.get(macro, TARGET_MODE_AUTO)
@@ -243,13 +259,41 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 note = fixed_note
                 if switchable:
                     note = (
-                        basis_note(macro)
+                        basis_note(macro, basis)
                         if mode == TARGET_MODE_AUTO
                         else "Your number — the engine leaves it alone, and a "
                         "workout no longer adds to it."
                     )
                 if note:
                     ui.label(note).classes(f"{TEXT_MICRO} text-slate-500")
+                # Why the *other* TDEE lost. The line above names the winner —
+                # "TDEE 2472 (formula)" — and that reads as a settled choice
+                # rather than as a measurement that never fired: every unmet
+                # precondition of `calculate_adaptive_tdee` is spelled
+                # "formula", the same word a fresh checkout with an empty
+                # biometrics.json produces. Only on `auto` calories, because
+                # that is the only row a TDEE reaches: protein is locked to
+                # the target weight and a manual macro never consults the
+                # engine at all.
+                if macro == "calories" and mode == TARGET_MODE_AUTO:
+                    with ui.element("div").classes(
+                        f"flex flex-row flex-nowrap items-start gap-{SPACE_TIGHT} min-w-0"
+                    ):
+                        # Icon, not colour (`.claude/rules/ui.md`): amber
+                        # carries five meanings already and emerald is the
+                        # cook status. The trend glyph is the distinction.
+                        ui.icon(
+                            "trending_up" if adaptive.measuring else "trending_flat"
+                        ).classes(f"{TEXT_BODY} shrink-0 text-slate-500")
+                        with ui.element("div").classes(
+                            f"flex flex-col gap-{SPACE_HAIR} min-w-0"
+                        ):
+                            ui.label(adaptive.headline).classes(
+                                f"{TEXT_MICRO} font-semibold text-slate-400"
+                            )
+                            ui.label(adaptive.detail).classes(
+                                f"{TEXT_MICRO} text-slate-500"
+                            )
                 # Carbs are always per-day editable; a switchable macro only
                 # once it is manual. Fat has no inputs at all — an editable
                 # fat would be a second answer to what `derive_fat_g` already

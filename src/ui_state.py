@@ -47,7 +47,16 @@ from planner import (
 # reading that decides which meal gets the post-workout pin; a second parser
 # is a second answer to "what time is `7:3o`?".
 from planner import clock_minutes
-from nutrition_engine import estimate_session_burn_kcal, resolve_current_weight_kg
+from nutrition_engine import (
+    ADAPTIVE_NO_LOGS,
+    ADAPTIVE_NO_WEIGH_INS,
+    ADAPTIVE_SHORT_SPAN,
+    ADAPTIVE_TDEE_TOLERANCE,
+    AdaptiveTDEEStatus,
+    estimate_session_burn_kcal,
+    measure_adaptive_tdee,
+    resolve_current_weight_kg,
+)
 from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository
 from ui_theme import (
     LINK_COLOURS,
@@ -1860,3 +1869,154 @@ def sync_status(
             )
         )
     return statuses
+
+
+# What the adaptive TDEE is currently doing, as one word. The first three are
+# `nutrition_engine`'s own unmet-precondition states passed straight through;
+# the last three are what `reconcile_adaptive_tdee` did with a figure that
+# cleared them, which the engine records as `basis["tdee_source"]`.
+ADAPTIVE_VIEW_MEASURED = "measured"
+ADAPTIVE_VIEW_REJECTED = "rejected"
+ADAPTIVE_VIEW_ADAPTIVE = "adaptive"
+
+
+@dataclass
+class AdaptiveTDEEView:
+    """Why the week is planned on the TDEE it is, in one headline and one line.
+
+    The gap this closes: `calculate_adaptive_tdee` returns a bare
+    `Optional[float]`, and `basis["tdee_source"]` spells every one of its
+    `None` cases `"formula"` — the same string a fresh checkout with an empty
+    `biometrics.json` produces. So a database with five weigh-ins and five
+    logged days, which by every visible count should be measuring, reported
+    itself identically to one with nothing in it. The two surfaces that
+    talked about the estimate made that worse rather than better: Insights
+    printed the counts and then stated the *rule* without ever evaluating it,
+    so a reader with five of each concluded it was on, and Settings named the
+    winner (`"(formula)"`) without saying why the alternative lost.
+
+    One view model for both, per the standing rule that logic worth testing
+    leaves the widget module — the alternative is two surfaces free to phrase
+    the same state differently, which for a diagnostic readout is the whole
+    failure being fixed.
+
+    `headline` is the state in a few words; `detail` is the measured evidence
+    and, for a blocked state, what would clear it. Nothing here is a claim
+    about what a sync *would* fetch — that is `get_sync_date_range`'s job, the
+    same line `sync_status` draws.
+    """
+
+    state: str
+    measuring: bool
+    headline: str
+    detail: str
+    status: AdaptiveTDEEStatus
+
+
+def adaptive_tdee_view(
+    biometrics: Optional[dict], basis: Optional[dict] = None
+) -> AdaptiveTDEEView:
+    """The current adaptive-TDEE state, from the same series hydration reads.
+
+    `basis` is `config["dynamic_basis"]` — `hydrate_dynamic_targets`'
+    diagnostic record of the run it just computed. It is what separates a
+    measured figure that was *used* from one `reconcile_adaptive_tdee`
+    disbelieved, which is a verdict only the formula can supply. It is
+    legitimately absent — every switchable macro manual, or a profile with
+    nothing in it, means no engine call was made — and a measured estimate
+    with no basis beside it is reported as exactly that rather than as an
+    adaptive week.
+    """
+    status = measure_adaptive_tdee(
+        (biometrics or {}).get("daily_actuals") or [],
+        (biometrics or {}).get("weigh_ins") or [],
+    )
+    window = status.window_days
+
+    if status.state == ADAPTIVE_NO_WEIGH_INS:
+        return AdaptiveTDEEView(
+            state=ADAPTIVE_NO_WEIGH_INS,
+            measuring=False,
+            headline="Measured TDEE off — not enough weigh-ins",
+            detail=(
+                f"{status.weigh_ins} weigh-in(s) in the last {window} days. "
+                f"The weight trend needs at least 2, spanning "
+                f"{status.required_span_days} days."
+            ),
+            status=status,
+        )
+    if status.state == ADAPTIVE_SHORT_SPAN:
+        # Named in days rather than in weigh-ins on purpose: this is the
+        # precondition that collapses while every count looks healthy, and
+        # more weigh-ins bunched into the same three days do not clear it.
+        short_by = status.required_span_days - status.span_days
+        return AdaptiveTDEEView(
+            state=ADAPTIVE_SHORT_SPAN,
+            measuring=False,
+            headline="Measured TDEE off — weigh-in span too short",
+            detail=(
+                f"Weigh-in span {status.span_days} days, needs "
+                f"{status.required_span_days} ({status.weigh_ins} weigh-ins in the "
+                f"last {window}). About {short_by} more day(s) of weighing in "
+                "clears it."
+            ),
+            status=status,
+        )
+    if status.state == ADAPTIVE_NO_LOGS:
+        return AdaptiveTDEEView(
+            state=ADAPTIVE_NO_LOGS,
+            measuring=False,
+            headline="Measured TDEE off — no logged intake",
+            detail=(
+                f"{status.weigh_ins} weigh-ins spanning {status.span_days} days, but "
+                f"no logged calories inside the same {window}. Sync Cronometer for "
+                "a day in that window."
+            ),
+            status=status,
+        )
+
+    source = (basis or {}).get("tdee_source")
+    estimate = status.estimate or 0.0
+    evidence = (
+        f"{status.logged_days} logged day(s) and a {status.span_days}-day "
+        "weigh-in span"
+    )
+    if source == "formula_adaptive_rejected":
+        return AdaptiveTDEEView(
+            state=ADAPTIVE_VIEW_REJECTED,
+            measuring=False,
+            headline="Measured TDEE rejected — planning on the formula",
+            detail=(
+                f"Measured {estimate:.0f} kcal from {evidence}, against the "
+                f"formula's {(basis or {}).get('tdee_formula', 0):.0f} — more than "
+                f"{ADAPTIVE_TDEE_TOLERANCE * 100:.0f}% out, so the formula was kept. "
+                "Usually under-logged intake, or a weigh-in series dominated by "
+                "water weight."
+            ),
+            status=status,
+        )
+    if source == ADAPTIVE_VIEW_ADAPTIVE:
+        return AdaptiveTDEEView(
+            state=ADAPTIVE_VIEW_ADAPTIVE,
+            measuring=True,
+            headline="Measured from intake and weight trend",
+            detail=(
+                f"{estimate:.0f} kcal from {evidence} — this is what the week is "
+                "planned against, not the formula."
+            ),
+            status=status,
+        )
+    # Enough data, and no verdict to report: either nothing called the engine
+    # this run, or it was called without the series. Saying "adaptive" here
+    # would claim a reconciliation that never happened.
+    return AdaptiveTDEEView(
+        state=ADAPTIVE_VIEW_MEASURED,
+        measuring=False,
+        headline="Measured, but nothing is planning from it yet",
+        detail=(
+            f"{estimate:.0f} kcal from {evidence}. No engine figure to reconcile it "
+            "against — the week's calories and protein are both set manually, or "
+            "there is no body profile to compute a formula from."
+        ),
+        status=status,
+    )

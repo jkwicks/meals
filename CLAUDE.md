@@ -1660,6 +1660,45 @@ So a fresh checkout plans exactly as it did before this existed, and protein
 stays locked to the target weight whichever TDEE wins: a measurement buys back
 energy, not protein.
 
+#### Which of those three `None`s it is, and why that needed saying
+
+`measure_adaptive_tdee` holds the arithmetic and returns an
+`AdaptiveTDEEStatus` — the estimate plus the weigh-in count, the span, the
+logged-day count and the floor, all measured *inside* the window the estimate
+would have used. `calculate_adaptive_tdee` is now a one-line wrapper over it
+returning `.estimate`, so every existing caller keeps the bare
+`Optional[float]` contract it was written against.
+
+**The rejection path was always right; the reporting was the bug.** All three
+unmet preconditions are legitimate cold-start states, and all three read
+through to `basis["tdee_source"]` as `"formula"` — the same string an empty
+`biometrics.json` produces. Measured against the live file on 2026-08-28:
+five weigh-ins, five `daily_actuals` rows, both sources checkpointed to the
+day before, and an estimate that had never once fired, because the weigh-ins
+sat inside a span of four days against a floor of seven. "Enough data to look
+like it should work, and it doesn't" was spelled identically to "nothing to
+measure yet".
+
+**The span is the precondition worth naming loudest**, and it is why the
+status reports days rather than counts: it collapses while every visible
+count looks healthy, more weigh-ins bunched into the same few days do not
+clear it, and a fully caught-up Cronometer cannot fix it. Chasing missing
+logged days would not have found this.
+
+`ui_state.adaptive_tdee_view(biometrics, basis)` is the one view model both
+surfaces read — a headline and one line of evidence, over six states: the
+engine's three unmet preconditions, `rejected` and `adaptive` from
+`basis["tdee_source"]`, and `measured` for a figure with no basis beside it
+(every switchable macro manual, or no body profile, so no engine call was
+made and nothing reconciled anything). Reporting that last case as
+`adaptive` would claim arithmetic that never ran. Settings' Daily Targets
+panel prints it under the calories row, where the basis note already names
+the winner and now says why the alternative lost; Insights prints the same
+verdict instead of stating the rule and leaving it unevaluated, which is what
+had a reader holding five of each concluding the estimate was on. Colour
+carries none of it — the trend glyph does, per `.claude/rules/ui.md`, since
+amber already means five things here and emerald is the cook status.
+
 It is called at the top of all three generation entry points
 (`generate_week_plan`, `regenerate_single_day`, `regenerate_single_meal`)
 rather than once in the CLI, because NiceGUI builds its config in the
@@ -3205,7 +3244,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
 | `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the protein floor, logged-intake substitution, adaptive TDEE |
-| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate, the current-weight fallback, and the MET-based training-burn estimate |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, and the MET-based training-burn estimate |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule, and `rejections.json`'s storage round trip |
@@ -3213,7 +3252,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping, the sleep/HRV readiness row and its two independent endpoints, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, and the Settings destination's sync-status and location read views |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, and the Settings destination's sync-status and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log`), and derived targets/`tdee_source` |
