@@ -30,6 +30,7 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 sys.path.insert(0, str(_SRC))
 sys.path.insert(0, str(_SRC / "integrations"))
 
+import planner  # noqa: E402
 import sync_service as sync  # noqa: E402
 from repository import LocalJSONRepository, run_sync  # noqa: E402
 
@@ -391,6 +392,37 @@ class TestCronometerMapping(unittest.TestCase):
             [{"Energy (kcal)": "1"}, {"Energy (kcal)": "2"}], "2026-08-16"
         )
         self.assertEqual(entry, {"date": "2026-08-16"})
+
+    def test_fibre_is_captured_under_the_repositorys_key(self):
+        """`fiber_g`, matching `Ingredient.fiber_g` and `NUTRIENT_KEYS` —
+        never the CSV's `Fiber`, which is the exact failure the `protein_g`
+        test above records. It is what gives the telemetry header's planned
+        fibre figure a measured counterpart to sit beside."""
+        entry = sync._daily_summary_row(
+            [{"Date": "2026-08-16", "Energy (kcal)": "2010", "Fiber (g)": "38.4"}],
+            "2026-08-16",
+        )
+        self.assertEqual(entry["fiber_g"], 38.4)
+        self.assertNotIn("fiber", entry)
+
+    def test_an_export_without_the_column_omits_fibre_rather_than_zeroing_it(self):
+        """`ROWS` predates the column, like every row already synced. Absent
+        means "no news" — a stored 0.0 would read as a day with no fibre in
+        it, which is `_prune`'s whole reason for existing."""
+        entry = sync._daily_summary_row(self.ROWS, "2026-08-16")
+        self.assertNotIn("fiber_g", entry)
+
+    def test_fibre_stays_out_of_the_budgeted_macros(self):
+        """The separation CLAUDE.md's "Fibre is reported, never budgeted"
+        draws on the planning side has to hold on the measured side too:
+        `logged_intake_for` walks `MACRO_KEYS` and every reconciling check
+        is `calories ~= 4p + 4c + 9f`, which has no term for fibre."""
+        self.assertNotIn("fiber_g", planner.MACRO_KEYS)
+        self.assertIn("fiber_g", planner.NUTRIENT_KEYS)
+        self.assertEqual(
+            sorted(sync.CRONOMETER_MACRO_COLUMNS),
+            sorted(planner.NUTRIENT_KEYS),
+        )
 
 
 class TestCoercion(unittest.TestCase):

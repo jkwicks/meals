@@ -171,6 +171,10 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                 # the stored plan (or fail to appear on one that isn't).
                 training = state.training_edited_for(day)
                 staged = state.target_is_staged(day)
+                # Planned fibre, and what Cronometer logged for that calendar
+                # date if anything — the one macro with a measured figure and
+                # no target to divide it by. See `ui_state.fibre_view`.
+                fibre = state.fibre_for(day)
                 # Opens the day inspector (`ui_inspector.py`) — a floating
                 # overlay, so this never reflows the grid it's clicked from.
                 with ui.element("div").classes(
@@ -179,12 +183,16 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                     with ui.element("div").classes(
                         f"flex flex-row justify-between items-baseline gap-{SPACE_HAIR} min-w-0"
                     ):
-                        # A dot is why the denominator moved: amber for a
-                        # target override, emerald for an edited training
-                        # session — either way this day is being measured
-                        # against a live preview, not the numbers the week
-                        # was actually generated for. An unmarked day is
-                        # measured against the plan itself.
+                        # A mark is why the denominator moved: this day is
+                        # being measured against a live preview, not the
+                        # numbers the week was actually generated for. An
+                        # unmarked day is measured against the plan itself.
+                        # **One colour, two glyphs.** Both cases mean the
+                        # same thing, so both are amber and the glyph says
+                        # which — • a target override, ⚡ an edited training
+                        # session. The training case used to be emerald,
+                        # which was emerald's fourth meaning and implied a
+                        # distinction that was never real.
                         marker = "•" if overridden else ("⚡" if training else "")
                         # Phase 6a: this is now the *only* place a day's
                         # identity is printed — `ui_cards.canvas()`'s swim-lane
@@ -200,8 +208,8 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                             f"{TEXT_BODY} font-semibold tracking-wider truncate min-w-0 "
                             + (
                                 "text-amber-300"
-                                if overridden
-                                else "text-emerald-300" if training else "text-slate-300"
+                                if (overridden or training)
+                                else "text-slate-300"
                             )
                         )
                         # The date makes this pair too wide for one line at
@@ -240,11 +248,24 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         # denominator, because there is no fibre target to
                         # divide by (`planner.NUTRIENT_KEYS`) — printing one
                         # would invent a goal the planner never aimed at.
-                        # `.get` because a plan generated before `fiber_g`
-                        # existed totals without the key.
-                        ui.label(f"FIB {totals.get('fiber_g', 0.0):.0f}g").classes(
+                        # `fibre_view` holds that rule; the widget only
+                        # prints what it returns, including the tolerance for
+                        # a plan generated before `fiber_g` existed.
+                        ui.label(fibre.label).classes(
                             f"{TEXT_MICRO} font-mono {MACRO_TINTS['fiber_g']}"
                         )
+                        if fibre.logged_label:
+                            # The Cronometer figure for the same day, once
+                            # `CRONOMETER_MACRO_COLUMNS` captures fibre. A
+                            # second label rather than a second number in the
+                            # one above, so it can never be read as the
+                            # denominator the line above refuses to print —
+                            # and slate rather than cyan because it is the
+                            # subordinate half of the pair, per the palette
+                            # contract in the `ui-work` skill.
+                            ui.label(fibre.logged_label).classes(
+                                f"{TEXT_MICRO} font-mono text-slate-400"
+                            )
                     with ui.tooltip():
                         for key, short, unit in MACRO_LABELS:
                             delta = totals[key] - float(target[key])
@@ -252,9 +273,7 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                                 f"{short}: {totals[key]:.0f}{unit} "
                                 f"({delta:+.0f} vs {float(target[key]):.0f})"
                             )
-                        ui.label(
-                            f"fibre: {totals.get('fiber_g', 0.0):.0f}g (tracked, no target)"
-                        )
+                        ui.label(fibre.detail)
                         if overridden:
                             ui.label("target overridden — applies on next generation")
                         if training:

@@ -80,11 +80,11 @@ def build_insights(ctx: UIContext, biometrics: dict) -> InsightsHandles:
                 with ui.element("div").classes(
                     f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} min-w-0"
                 ):
-                    # Icon, not colour, per `.claude/rules/ui.md`: amber
-                    # already carries five meanings here and emerald is the
-                    # cook status, so a sixth and a second would each read as
-                    # something they aren't. The trend glyph is the whole
-                    # distinction, and it is the same pair Settings draws.
+                    # Icon, not colour, per the `ui-work` skill: amber is
+                    # staged-vs-stored and emerald is the cook status, so
+                    # either would read as something this isn't. The trend
+                    # glyph is the whole distinction, and it is the same
+                    # pair Settings draws.
                     ui.icon(
                         "trending_up" if adaptive.measuring else "trending_flat"
                     ).classes(f"{TEXT_BODY} shrink-0 text-slate-400")

@@ -1,13 +1,31 @@
 ---
-paths: ["ui_*.py"]
+name: ui-work
+description: The NiceGUI front-end contract for this project — the type/spacing/radius scale, what each colour is allowed to mean, the NiceGUI and Quasar traps that have each cost a debugging session, refresh topics, and which module a change belongs in. Load before editing any ui_*.py file (ui_app, ui_theme, ui_state, ui_cards, ui_plan, ui_today, ui_review, ui_settings, ui_telemetry, ui_shopping, ui_inspector, ui_catalog_browser, ui_insights, ui_staged_bar, ui_generation, ui_context, ui_catalog), or when changing anything about the web UI's layout, styling, colours or widgets.
 ---
 
-# The NiceGUI front end
+# The NiceGUI front end — contract and traps
 
 `ui_app.py` is a page shell; every other `ui_*.py` is one concern exposing a
-`build_*(ctx)` factory. CLAUDE.md's "NiceGUI front end" section is the
-architecture. This file is the presentation contract and the traps — the
-things a cold session will otherwise get wrong twice.
+`build_*(ctx)` factory. This file is the presentation contract and the traps —
+the things a cold session will otherwise get wrong twice. **Read it before
+touching any `ui_*.py`.**
+
+`architecture.md` beside this file is the design record for the surfaces
+themselves — what each destination is and why it is shaped that way. Read the
+section you need from it; you rarely need all of it:
+
+| if you are changing | read in `architecture.md` |
+|---|---|
+| the week grid, the header, scroll alignment | "NiceGUI front end" |
+| any card, the recipe dialog | "The expanded recipe card", "Module layout" |
+| the rail, its buttons, a destination | "The rail's action block", "Module layout" |
+| the Today / Daily View destination | "The Today tab" and its two subsections |
+| the day inspector | "The day inspector" |
+| the review dialog, staged-changes bar, target curve | "The review dialog and the staged-changes bar" |
+| Settings | "Settings' Daily Targets panel", "Settings' three read views" |
+| the shopping drawer | "Shopping list drawer" |
+| PDF / Markdown export | "Printing and PDF export" |
+| tokens, the scale's history | "The type, spacing and radius scale" |
 
 ## Where a change goes
 
@@ -81,25 +99,55 @@ Three roles, and they must not borrow each other's hues:
   going*.
 - **Categorical** — `MACRO_TINTS` (which macro). These say *which of several*.
 
-### Known collisions — do not paper over these
+### The palette — each hue means at most two things
 
-Recorded rather than silently worked around, because resolving them is a
-design decision for phase 3 of `ui-redesign.md`, when the surfaces using them
-are being rebuilt anyway:
+Resolved by CHANGE-QUEUE.md's amber/violet pass. Before it, amber carried
+**eight** meanings (the five that were documented, plus the favourite star,
+the shopping list's buy-late flag and the recipe dialog's prep note) and
+emerald had quietly reached four. Both grew *after* the collision was first
+recorded, which is the argument for keeping this list current.
 
-- **Amber means five things**: near-target (`BAND_COLOURS`), carbs
-  (`MACRO_TINTS`), training (`TRAINING_ACCENT`), a target override (the
-  telemetry marker), and fridge storage (`PREP_BADGE_STYLES`).
-- **Violet means two**: fat (`MACRO_TINTS`) and location (`LOCATION_ACCENT`).
+| hue | may mean | and nothing else |
+|---|---|---|
+| **amber** | a staged/overridden reading · `BAND_COLOURS`' near-target band | the two never co-occur: the band only fills a telemetry bar, the other only marks a label or chip |
+| **emerald** | a cook slot (`STATUS_STYLES`) · on-target (`BAND_COLOURS`) | |
+| **sky** | a leftover slot · protein | |
+| **rose** | a failed slot · off-target | |
+| **violet** | fat · location (`LOCATION_ACCENT`) | |
+| **orange** | carbs | |
+| **cyan** | fibre | |
+| **indigo** | the prep column | |
+| **slate** | *the neutral ground, not a meaning* | anything subtracted from a hue lands here |
 
-Adding a sixth meaning to amber is the specific thing not to do. If a new
-element needs an accent, check this list first.
+**Adding a third meaning to any of these is the specific thing not to do.** If
+a new element needs an accent, check this table first; the answer is usually a
+glyph and `slate`.
+
+What moved, and what carried the meaning instead — every one of these had a
+shape already doing the work, which is why the hue was removable:
+
+| was | now | carried by |
+|---|---|---|
+| training (amber, everywhere) | slate | `TRAINING_TYPE_ICONS`' glyph, which already distinguished the *kind* |
+| fridge / freezer badge (amber / cyan) | both slate | the ⚡ and ❄️ already in the labels — this is what freed cyan for fibre |
+| favourite star (amber) | slate | `bookmark` vs `bookmark_border` — filled vs outline |
+| buy-late (amber) | slate | the ⏳ and the "buy fresh closer to the day" annotation |
+| recipe prep note (amber box) | slate | the `inventory_2` icon |
+| carbs (amber) | orange | — a macro is categorical; it needed a hue, just not that one |
+| fibre (emerald) | cyan | — same |
+| edited training session (emerald marker) | amber | the glyph: • override, ⚡ training. Both mean "measured against a live preview", so one colour and two glyphs is the honest encoding |
 
 **Icon, not colour, distinguishes members of a set.** `TRAINING_TYPE_ICONS`
-is the precedent and the reasoning is in its comment: eight hues are already
+is the precedent and the reasoning is in its comment: every hue above is
 spoken for, so seven new ones would collide with an existing meaning long
 before they read as a scale. Match exactly first, then longest prefix, and
 never raise on an unknown key.
+
+**Known residue, outside `ui_theme.py`.** Emerald still marks an integration
+as connected (`ui_settings.py`), a ticked step in the recipe dialog
+(`ui_cards.py`), and several `hover:` affordances. The pass was scoped to the
+theme module's constants, which is where the acceptance criterion drew the
+line; these are named here rather than silently left.
 
 ## NiceGUI traps — every one of these cost a debugging session
 
@@ -146,7 +194,7 @@ never raise on an unknown key.
   panel instead, which would have left the meal-type gutter's `sticky`
   positioning nothing to stick against. `w-full min-w-0` on the wrapper is
   the fix — same shape as `meal_card`'s own `w-full`/`overflow-hidden` fix
-  for a sibling sizing trap, documented in CLAUDE.md's phase-1 writeup.
+  for a sibling sizing trap, documented in `architecture.md`'s phase-1 writeup.
 - **A stretched child of a *wrapping* column flex container sizes to the
   widest sibling's max-content, not to the container's own width.** Quasar's
   `.flex` sets `flex-wrap: wrap` (see the trap above), and in a column

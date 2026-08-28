@@ -1,7 +1,7 @@
 """The staged-changes bar: one persistent strip reading "N pending changes —
 <summaries> · Review · Generate week" (plus "Save changes" when a grid edit
 is among them), replacing three separate "Applies to the next generation
-only" disclaimers, the amber telemetry override dot, and the old "edited —
+only" disclaimers, the telemetry override dot, and the old "edited —
 not saved" chip with a single honest statement. Sits between the header and
 the rail — not inside the header (which stays macro telemetry and the week
 selector) and not inside any one destination panel, because what's pending

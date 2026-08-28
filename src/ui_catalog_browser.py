@@ -147,7 +147,7 @@ def build_catalog_browser(
                 ).props("dense flat round size=xs")
                 fav_button.classes(
                     f"min-h-0 p-{SPACE_HAIR} "
-                    + ("text-amber-300" if favorited else "text-slate-500 hover:text-amber-300")
+                    + ("text-slate-200" if favorited else "text-slate-500 hover:text-slate-300")
                 )
                 ui.button(
                     icon="edit", on_click=lambda e=entry: rename_dialog.open(e)

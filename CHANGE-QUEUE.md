@@ -37,8 +37,9 @@ taking the one this file already recommended, a launchd job outside the app
 process rather than anything the server or a page does. So the queue is now
 led by its first genuine design-debt item.
 
-**Item 2 (fibre) was added on 2026-08-28** (it ranked 6 before v0.29.0, 5
-before v0.30.0 and 4 before v0.31.0), and it did not come from a source doc —
+**The fibre item was added on 2026-08-28** (it ranked 6 before v0.29.0, 5
+before v0.30.0, 4 before v0.31.0 and 2 until the amber/violet pass closed the
+design-debt item above it, which is why it now leads), and it did not come from a source doc —
 it was found by asking what the Garmin and Cronometer syncs actually feed, and
 verified against the running engine and the live `biometrics.json` rather than
 against any document's account of itself. The item v0.30.0 closed was its
@@ -58,61 +59,24 @@ twin, found the same way and on the same day.
 
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
-| 1 | [Amber carries five meanings, violet two](#1--amber-carries-five-meanings-violet-two) | Design debt | S–M | — |
-| 2 | [Cronometer logs no fibre, so the fibre readout has no denominator](#2--cronometer-logs-no-fibre-so-the-fibre-readout-has-no-denominator) | Feature | S | — |
-| 3 | [Propose the training schedule from Garmin activity history](#3--propose-the-training-schedule-from-garmin-activity-history) | Feature | L | one decision |
-| 4 | [Rejection list has no decay](#4--rejection-list-has-no-decay) | Feature | M | one decision |
-| 5 | [Morning readiness check-in](#5--morning-readiness-check-in) | Feature | M | one decision |
-| 6 | [Adherence and workout-completion tracking (5b)](#6--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
-| 7 | [Pantry inventory ledger with real quantities](#7--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 8 | [Trend charts / the Insights destination (5c)](#8--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 9 | [Write and generation routes on the API](#9--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 10 | [OpenAPI schema is off, so there are no generated types](#10--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 11 | [No auth on `/api`](#11--no-auth-on-api) | Feature | S | only if exposed |
-| 12 | [Food waste tracking](#12--food-waste-tracking) | Feature | XL | not scoped |
+| 1 | [Cronometer logs no fibre, so the fibre readout has no denominator](#1--cronometer-logs-no-fibre-so-the-fibre-readout-has-no-denominator) | Feature | S | — |
+| 2 | [Propose the training schedule from Garmin activity history](#2--propose-the-training-schedule-from-garmin-activity-history) | Feature | L | one decision |
+| 3 | [Rejection list has no decay](#3--rejection-list-has-no-decay) | Feature | M | one decision |
+| 4 | [Morning readiness check-in](#4--morning-readiness-check-in) | Feature | M | one decision |
+| 5 | [Adherence and workout-completion tracking (5b)](#5--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
+| 6 | [Pantry inventory ledger with real quantities](#6--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
+| 7 | [Trend charts / the Insights destination (5c)](#7--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
+| 8 | [Write and generation routes on the API](#8--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 9 | [OpenAPI schema is off, so there are no generated types](#9--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 10 | [No auth on `/api`](#10--no-auth-on-api) | Feature | S | only if exposed |
+| 11 | [Food waste tracking](#11--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed), each XS–M
 and none urgent.
 
 ---
 
-## 1 — Amber carries five meanings, violet two
-
-**Type:** Design debt &nbsp;·&nbsp; **Size:** S–M &nbsp;·&nbsp; **Source:**
-`ui-redesign.md` phase 1, recorded rather than resolved · `.claude/rules/ui.md`
-"Known collisions"
-
-Still exactly as recorded. Amber is near-target (`BAND_COLOURS`), carbs
-(`MACRO_TINTS`), training (`TRAINING_ACCENT`), a target override (the
-telemetry marker) and fridge storage (`PREP_BADGE_STYLES`). Violet is fat
-(`MACRO_TINTS`) and location (`LOCATION_ACCENT`).
-
-Phase 1 deferred this to "phase 3, when the surfaces using them are rebuilt
-anyway." Phase 3 shipped, then 6a–6e shipped, and the collisions came through
-untouched — which is the useful signal here: this will not get resolved as a
-side effect of a rebuild, because every rebuild so far has had a reason not
-to widen its own scope. It needs to be its own small pass.
-
-It is genuinely visible, not theoretical: a training day's telemetry column
-can show an amber bolt (training), an amber dot (override) and an amber carb
-figure simultaneously, none of which are related.
-
-**What the codebase already decided about how to fix it.** `.claude/rules/ui.md`
-records the precedent: *icon, not colour, distinguishes members of a set* —
-`TRAINING_TYPE_ICONS` chose six glyphs over six hues for exactly this reason.
-So the fix is likely to be subtraction: pick which one or two of amber's five
-meanings genuinely need a hue and move the rest to shape, weight or position.
-The rule file's own instruction — "adding a sixth meaning to amber is the
-specific thing not to do" — is the constraint, and it means this item blocks
-nothing but does quietly tax every new surface.
-
-**Acceptance:** no colour in `ui_theme.py` carries more than two meanings;
-`.claude/rules/ui.md`'s "Known collisions" section is either emptied or
-rewritten to name what survived and why.
-
----
-
-## 2 — Cronometer logs no fibre, so the fibre readout has no denominator
+## 1 — Cronometer logs no fibre, so the fibre readout has no denominator
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S (XS capture + S readout)
 &nbsp;·&nbsp; **Source:** not previously filed — raised 2026-08-28
@@ -168,7 +132,7 @@ denominator — for a day with no log.
 
 ---
 
-## 3 — Propose the training schedule from Garmin activity history
+## 2 — Propose the training schedule from Garmin activity history
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 4 aside — *"a loose thread in an otherwise finished
@@ -203,7 +167,7 @@ naturally follows it.
 
 ---
 
-## 4 — Rejection list has no decay
+## 3 — Rejection list has no decay
 
 **Type:** Feature (product decision) &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp;
 **Source:** `future-ideas.md`, "Rejection-list decay"
@@ -237,7 +201,7 @@ the filtering or weighting lands in `build_rejection_rule` (a pure function of
 
 ---
 
-## 5 — Morning readiness check-in
+## 4 — Morning readiness check-in
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** one
 decision &nbsp;·&nbsp; **Source:** `ISSUES.md` item 10 · `future-ideas.md` 5d
@@ -268,7 +232,7 @@ argue about; the doc does not settle it.
 
 ---
 
-## 6 — Adherence and workout-completion tracking (5b)
+## 5 — Adherence and workout-completion tracking (5b)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md` 5b
@@ -285,7 +249,7 @@ logging a deviation from it.
    and `data/workout_log.json` (`WorkoutCompletion`: `date`, `session_type`,
    `scheduled`, `completed`, `source`). Neither folds into `daily_actuals` —
    a manual mark and a Cronometer sync writing the same key would silently
-   overwrite each other. Same reasoning as item 2 above (fibre) and
+   overwrite each other. Same reasoning as the fibre item above and
    `readiness_log` before it; this codebase has now made that call three
    times, which is a good sign it is the right default rather than a
    coincidence.
@@ -305,7 +269,7 @@ adherence, gym completion) have no data source without this.
 
 ---
 
-## 7 — Pantry inventory ledger with real quantities
+## 6 — Pantry inventory ledger with real quantities
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md`, "Pantry photo → an inventory ledger"
@@ -343,7 +307,7 @@ behaviour and is what permits four meal types to claim the same tin.
 
 ---
 
-## 8 — Trend charts / the Insights destination (5c)
+## 7 — Trend charts / the Insights destination (5c)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Blocked by:**
 runtime data &nbsp;·&nbsp; **Source:** `future-ideas.md` 5c ·
@@ -382,7 +346,7 @@ for it.
 
 ---
 
-## 9 — Write and generation routes on the API
+## 8 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -404,7 +368,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 10 — OpenAPI schema is off, so there are no generated types
+## 9 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -423,7 +387,7 @@ against the NiceGUI app object.
 
 ---
 
-## 11 — No auth on `/api`
+## 10 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -440,7 +404,7 @@ not before.
 
 ---
 
-## 12 — Food waste tracking
+## 11 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
@@ -484,6 +448,7 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ISSUES.md` 2 | All controls from the left panel | Phase 6b — the rail's action block |
 | `ISSUES.md` 3 | Dates on day names | Phase 6a — `format_day_label(day, day_date_iso, short=True)` |
 | `ISSUES.md` 4 | No swap/regenerate for batch cooking | Phase 6c — `prep_candidate_card`'s icon row |
+| `ui-redesign.md` phase 1, recorded rather than resolved | Amber carried five documented meanings (eight in fact) and violet two | **Closed 2026-08-28** — role separation: training, fridge/freezer, the favourite star, buy-late and the prep note all gave up their hue to a glyph already doing the work; carbs → orange, fibre → cyan, and the telemetry marker's emerald training case folded into amber. No hue in `ui_theme.py` now carries more than two meanings; the `ui-work` skill's collisions section is rewritten as "The palette". |
 | `ISSUES.md` 5 | Can't open a batch-cooking recipe | Phase 6c — body opens the shared `open_detail` |
 | `ISSUES.md` 6 | Rename "Today" to "Daily View" | Shipped post-phase-3 (rail label only; function names unchanged) |
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |

@@ -163,7 +163,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
             with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
-                ui.icon("bolt").classes(f"{TEXT_HEAD} text-amber-300")
+                ui.icon("bolt").classes(f"{TEXT_HEAD} text-slate-300")
                 ui.label("Generating week").classes(f"{TEXT_HEAD} font-semibold")
             progress_status = ui.label("Starting…").classes(f"{TEXT_BODY} text-slate-300")
             progress_bar = ui.linear_progress(value=0.0, size="10px", show_value=False).props(
@@ -206,7 +206,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
     # `_pending_rejection` is closure-local, not a `PlannerState` field: it
     # is presentation-only scratch state for one widget (which recipe this
     # prompt is currently about), never read by another module or refresh
-    # topic, so it doesn't belong on the one UI object `.claude/rules/ui.md`
+    # topic, so it doesn't belong on the one UI object the `ui-work` skill
     # says is tested.
     _pending_rejection: Dict[str, str] = {}
 

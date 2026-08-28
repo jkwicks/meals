@@ -282,9 +282,10 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     with ui.element("div").classes(
                         f"flex flex-row flex-nowrap items-start gap-{SPACE_TIGHT} min-w-0"
                     ):
-                        # Icon, not colour (`.claude/rules/ui.md`): amber
-                        # carries five meanings already and emerald is the
-                        # cook status. The trend glyph is the distinction.
+                        # Icon, not colour (the `ui-work` skill): amber is
+                        # staged-vs-stored and emerald is the cook status,
+                        # and this is neither. The trend glyph is the
+                        # whole distinction.
                         ui.icon(
                             "trending_up" if adaptive.measuring else "trending_flat"
                         ).classes(f"{TEXT_BODY} shrink-0 text-slate-500")
@@ -389,9 +390,9 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
         *outside* this process, so "the job stopped" is the failure this page
         exists to make visible — see `scripts/sync.sh`.
 
-        No colour: an icon and the wording carry it, because amber already
-        means five things here and this would be the sixth (`.claude/rules/ui.md`,
-        "Known collisions").
+        No colour: an icon and the wording carry it. Amber is reserved for a
+        staged reading and "the job stopped" is not one (the `ui-work`
+        skill, "The palette").
         """
         look = SYNC_FRESHNESS_STYLES[freshness.state]
         with ui.element("div").classes(
@@ -549,7 +550,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                                 with ui.element("div").classes("shrink-0"):
                                     ui.label(
                                         f"~{float(estimate['calories']):.0f} kcal counted"
-                                    ).classes(f"{TEXT_MICRO} text-amber-300/70")
+                                    ).classes(f"{TEXT_MICRO} text-slate-400")
                                     ui.tooltip(
                                         "Counted into the day's totals so the "
                                         "meals that are cooked aren't briefed "
@@ -590,7 +591,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 ).classes(f"{TEXT_BODY} text-slate-400")
                 ui.label(
                     f"+{sum(session.burn_kcal for session in active):.0f} kcal across the week"
-                ).classes(f"{TEXT_BODY} text-amber-300/70")
+                ).classes(f"{TEXT_BODY} text-slate-400")
 
             for day, sessions in by_day.items():
                 with ui.element("div").classes(

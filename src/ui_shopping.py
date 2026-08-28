@@ -175,10 +175,10 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
                         # days yet. Annotated, never moved to another trip —
                         # whether to make a second run is the shopper's call.
                         if item.buy_late:
-                            text += "  ← buy fresh closer to the day"
+                            text += "  ⏳ buy fresh closer to the day"
                         ui.checkbox(text).props("dense size=xs color=teal").classes(
                             f"{TEXT_BODY} "
-                            + ("text-amber-300" if item.buy_late else "text-slate-200")
+                            + ("text-slate-300" if item.buy_late else "text-slate-200")
                         )
 
     with ui.right_drawer(value=False, bordered=True).classes(
