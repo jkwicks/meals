@@ -614,10 +614,11 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                             session_chip(session)
 
             ui.label(
-                "Proposing sessions from Garmin activity history, and anything "
-                "that scores adherence against them, is future-ideas.md's 5b — "
-                "it needs a completion schema this page deliberately doesn't "
-                "invent."
+                "Garmin's recorded activity is compared against this schedule "
+                "in Review → Training Schedule, which proposes sessions to add "
+                "or drop and applies nothing without a click. Scoring adherence "
+                "against a served plan is a separate, unbuilt thing — it needs a "
+                "completion schema this page deliberately doesn't invent."
             ).classes(f"{TEXT_MICRO} text-slate-500")
 
     # ---- the dialogs ------------------------------------------------------

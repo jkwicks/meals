@@ -11,9 +11,9 @@ the monolith; this file just draws the module boundary where it already was.
 """
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from pydantic import ValidationError
 
@@ -52,9 +52,16 @@ from nutrition_engine import (
     ADAPTIVE_NO_WEIGH_INS,
     ADAPTIVE_SHORT_SPAN,
     ADAPTIVE_TDEE_TOLERANCE,
+    MIN_PROPOSAL_OCCURRENCES,
+    PROPOSAL_DROP,
+    TRAINING_PROPOSAL_NO_ACTIVITY,
+    TRAINING_PROPOSAL_SHORT_HISTORY,
     AdaptiveTDEEStatus,
+    ProposedSession,
+    TrainingScheduleProposal,
     estimate_session_burn_kcal,
     measure_adaptive_tdee,
+    propose_training_schedule,
     resolve_current_weight_kg,
 )
 from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository
@@ -475,6 +482,14 @@ class PlannerState:
     # left it, the same way `set_target` diffs an override against
     # `config["weekly_schedule"]`. Never touched after `.load()`.
     _original_training_schedule: List[dict] = field(default_factory=list)
+
+    # `ProposedSession.key` for every schedule proposal waved away this
+    # session. Deliberately session-local and deliberately not persisted: a
+    # dismissal says "not now", where accepting says "this is my week", and
+    # only the second is a standing fact worth a file. A proposal dismissed
+    # today comes back next week if the watch is still recording it, which is
+    # the honest behaviour — the evidence for it has grown, not gone.
+    dismissed_proposals: Set[str] = field(default_factory=set)
 
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
@@ -1213,6 +1228,110 @@ class PlannerState:
     def remove_training_session(self, index: int) -> None:
         if 0 <= index < len(self.training_schedule):
             self.training_schedule.pop(index)
+
+    def training_proposals(self) -> TrainingScheduleProposal:
+        """What Garmin's recorded activity suggests this week should be.
+
+        Reads `activity_log` off the biometrics `.load()` already fetched, so
+        it costs no I/O and can be called from a synchronous repaint — the
+        same reason `planning_config()` keeps the weigh-in series around.
+
+        Diffed against the **staged** `training_schedule`, not the file's, so
+        a session accepted (or typed in by hand) a moment ago stops being
+        proposed immediately rather than at the next page load. Dismissed
+        proposals are filtered here rather than inside the engine: which
+        suggestions this tab has waved away is a session fact, and
+        `propose_training_schedule` is a pure function of stored data — the
+        same line `PlannerState` already draws against the API's read routes.
+        """
+        biometrics = self.biometrics or {}
+        proposal = propose_training_schedule(
+            biometrics.get("activity_log") or [],
+            self.training_schedule,
+            date.today(),
+            weight_kg=self.weight_kg,
+            checked_through=(biometrics.get("sync_checkpoints") or {}).get("garmin"),
+        )
+        # A drop is an edit to the *file*, so it may only name a session the
+        # file actually holds. Without this, a session typed into the drawer
+        # moments ago — which Garmin has of course never recorded — is offered
+        # for removal on the next repaint, which reads as the app arguing with
+        # an edit still under the cursor. Additions keep diffing against the
+        # staged list, so accepting one stops it being re-offered immediately.
+        declared = {
+            (session.get("day"), session.get("time"), session.get("type"))
+            for session in self.config["training_schedule"]
+        }
+        kept = [
+            session
+            for session in proposal.proposals
+            if session.key not in self.dismissed_proposals
+            and (
+                session.kind != PROPOSAL_DROP
+                or (session.day, session.time, session.type) in declared
+            )
+        ]
+        if len(kept) == len(proposal.proposals):
+            return proposal
+        return replace(proposal, proposals=kept)
+
+    def dismiss_training_proposal(self, proposal: ProposedSession) -> None:
+        """Wave one proposal away for the rest of this session. Writes nothing."""
+        self.dismissed_proposals.add(proposal.key)
+
+    async def accept_training_proposal(
+        self, repository: LocalJSONRepository, proposal: ProposedSession
+    ) -> None:
+        """Apply one proposal to the declared schedule, and save it.
+
+        **This persists**, and it is the second thing in the UI that writes to
+        `config/` — `set_target_mode` was the first, on identical reasoning.
+        `training_schedule` lives in `config/schedule.json` because it is the
+        *standing* week, not an input to the next run: accepting "I train
+        Thursday evenings now" and having it evaporate on reload would make
+        the accept button a no-op with an animation, and the same proposal
+        would be offered again forever. Everything else in the review dialog
+        stays session-only and is right to.
+
+        The change is applied to the **file's** list and to the staged one
+        separately, rather than persisting whatever the drawer currently
+        holds. Those two differ whenever something else is staged, and a
+        click on "accept" must not quietly write out an unrelated half-typed
+        session sitting two rows below it.
+
+        `_original_training_schedule` moves with the file, so the staged bar
+        reports no phantom change for the row that was just accepted while
+        still reporting every genuine edit beside it.
+        """
+        declared = self._apply_proposal(self.config["training_schedule"], proposal)
+        self.training_schedule = self._apply_proposal(self.training_schedule, proposal)
+        self._original_training_schedule = [dict(session) for session in declared]
+        self.config = dict(self.config, training_schedule=declared)
+        self.dismissed_proposals.discard(proposal.key)
+        await repository.save_config_keys({"training_schedule": declared})
+
+    @staticmethod
+    def _apply_proposal(schedule: List[dict], proposal: ProposedSession) -> List[dict]:
+        """`schedule` with `proposal` added, or its matching session removed.
+
+        Matched on day/time/type rather than on list position: the drawer's
+        rows and the file's are two different lists by the time this runs, and
+        an index into one means nothing in the other. A drop that matches
+        nothing is a no-op — the session may already have been deleted by
+        hand, which is the same outcome the click was asking for.
+        """
+        if proposal.kind == PROPOSAL_DROP:
+            return [
+                dict(session)
+                for session in schedule
+                if (
+                    session.get("day"),
+                    session.get("time"),
+                    session.get("type"),
+                )
+                != (proposal.day, proposal.time, proposal.type)
+            ]
+        return [dict(session) for session in schedule] + [proposal.session()]
 
     def pending_changes(self) -> List[PendingChange]:
         """Everything staged for the next run that config.json doesn't know
@@ -2215,4 +2334,124 @@ def adaptive_tdee_view(
             "there is no body profile to compute a formula from."
         ),
         status=status,
+    )
+
+
+@dataclass
+class ProposedSessionView:
+    """One accept/dismiss row, already worded.
+
+    Three strings and the proposal behind them, so the widget prints what it
+    is handed and the phrasing stays testable — the same split
+    `AdaptiveTDEEView` draws, and for the same reason: a proposal is a
+    sentence the user is being asked to agree to, and two surfaces (or two
+    edits) free to word it differently is exactly how "seen 2 of 4" turns
+    into a claim the evidence never made.
+    """
+
+    session: ProposedSession
+    title: str
+    detail: str
+    evidence: str
+
+    @property
+    def adds(self) -> bool:
+        return self.session.kind != PROPOSAL_DROP
+
+
+@dataclass
+class TrainingProposalsView:
+    """What the schedule proposal has to say, and what it looked at.
+
+    `headline` is the state in a few words and `evidence` is the span behind
+    it, exactly as `AdaptiveTDEEView` splits them — and for the same reason
+    that view model exists at all: three of this feature's states produce an
+    empty list, and "the watch has recorded nothing yet", "not enough history
+    to see a pattern" and "your declared week already matches what was
+    recorded" are three different answers that a bare empty list spells
+    identically. The last one is the *good* one, and is the one a reader is
+    most likely to misread as broken.
+    """
+
+    state: str
+    headline: str
+    evidence: str
+    rows: List[ProposedSessionView]
+
+    @property
+    def has_proposals(self) -> bool:
+        return bool(self.rows)
+
+
+def training_proposals_view(proposal: TrainingScheduleProposal) -> TrainingProposalsView:
+    """`propose_training_schedule`'s answer, in words.
+
+    Pure, and takes the proposal rather than the state, so a test can hand it
+    a hand-built status without a `PlannerState` — same shape as
+    `sync_status`/`fibre_view`.
+    """
+    if proposal.state == TRAINING_PROPOSAL_NO_ACTIVITY:
+        return TrainingProposalsView(
+            state=proposal.state,
+            headline="Nothing recorded to compare against",
+            evidence=(
+                f"No Garmin activity stored in the last {proposal.window_days} days. "
+                "The daily sync fills this in — ./scripts/sync.sh status says "
+                "whether it is running."
+            ),
+            rows=[],
+        )
+    if proposal.state == TRAINING_PROPOSAL_SHORT_HISTORY:
+        return TrainingProposalsView(
+            state=proposal.state,
+            headline="Not enough history to see a pattern yet",
+            evidence=(
+                f"{proposal.observed_days} day(s) observed, "
+                f"{proposal.activity_days} with recorded activity. A weekday has "
+                f"to come round at least {MIN_PROPOSAL_OCCURRENCES} times before "
+                "what happens on it is a routine."
+            ),
+            rows=[],
+        )
+
+    rows = [
+        ProposedSessionView(
+            session=session,
+            title=(
+                f"{session.day} {session.time} · "
+                f"{TRAINING_TYPE_LABELS.get(session.type, humanize(session.type))}"
+            ),
+            detail=(
+                f"declared {session.duration_minutes} min · "
+                f"{session.estimated_burn_kcal:.0f} kcal"
+                if session.kind == PROPOSAL_DROP
+                else f"{session.duration_minutes} min · "
+                f"{session.estimated_burn_kcal:.0f} kcal"
+            ),
+            evidence=(
+                f"never recorded on {session.observations} observed {session.day}s"
+                if session.kind == PROPOSAL_DROP
+                else f"recorded {session.occurrences} of {session.observations} "
+                f"{session.day}s"
+            ),
+        )
+        for session in proposal.proposals
+    ]
+    observed = (
+        f"{proposal.observed_days} day(s) observed "
+        f"({proposal.observed_from} to {proposal.observed_to}), "
+        f"{proposal.activity_days} with recorded activity"
+    )
+    if not rows:
+        return TrainingProposalsView(
+            state=proposal.state,
+            headline="Your schedule matches what the watch recorded",
+            evidence=observed,
+            rows=[],
+        )
+    return TrainingProposalsView(
+        state=proposal.state,
+        headline=f"{len(rows)} suggestion(s) from recorded activity",
+        evidence=observed,
+        rows=rows,
     )

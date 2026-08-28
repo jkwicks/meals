@@ -43,6 +43,13 @@ class BiometricsResponse(BaseModel):
     # target, and a route that summarised it would be a route free to disagree
     # with the Settings page that reads the same rows.
     readiness_log: List[Dict[str, Any]]
+    # And the fourth, on the same terms. `activity_log` is what the schedule
+    # proposal reads (`nutrition_engine.propose_training_schedule`), and this
+    # route deliberately does not run it: a proposal is a diff against a
+    # *staged* schedule and an accept/dismiss state, which is a session
+    # concept — the same line every other route here already draws around
+    # `PlannerState`.
+    activity_log: List[Dict[str, Any]]
     latest: Optional[Dict[str, Any]] = None
 
 
@@ -99,6 +106,7 @@ def build_api_router(repository: PlanRepository) -> APIRouter:
             weigh_ins=data["weigh_ins"],
             daily_actuals=data["daily_actuals"],
             readiness_log=data["readiness_log"],
+            activity_log=data["activity_log"],
             latest=latest,
         )
 

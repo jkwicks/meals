@@ -914,10 +914,40 @@ This button lived in the Plan destination's own header row until phase 6b
 moved it to the rail. Same reason, better satisfied: a rail button is
 visible from all five destinations, not only from Plan.
 
+### Garmin's recorded week, offered against the declared one
+
+The Training Schedule section opens with a proposals block above its editable
+rows — `proposals_block()` inside `training_editor`, deliberately not a
+refreshable of its own: accepting a proposal changes the rows underneath it,
+and a separately-refreshed block would leave a suggestion on screen for a
+session already in the list below.
+
+Each row is an icon pair, a title, its evidence and two buttons. **Colour
+carries none of it** — `add`/`remove` says which direction the proposal goes
+and `training_icon` says what kind of session it is, which is the same
+division `TRAINING_TYPE_ICONS` already relies on and the reason no new hue
+was needed: every hue in `ui_theme.py` is spoken for twice over.
+
+The wording lives in `ui_state.training_proposals_view`, not here, on the
+`adaptive_tdee_view` precedent: three of the feature's states produce no
+proposals — nothing recorded, not enough history, and "your week already
+matches" — and a bare empty list spells all three identically, with the good
+one the most likely to be misread as broken. All three print.
+
+Accept is the one control in this dialog that writes to disk
+(`PlannerState.accept_training_proposal` → `save_config_keys`), and its own
+copy says so. Dismiss is session-local. Both refresh `"training"`; accept
+also refreshes `"targets"`, because an accepted session expands that day's
+budget and pins a meal exactly as a typed one does. The engine behind them is
+CLAUDE.md's "Proposing the week you actually trained".
+
 ## Settings' Daily Targets panel
 
-Where each macro's number comes from, and the only control in the app that
-writes to `config/`. Four rows — calories, protein, carbs, fat — each naming
+Where each macro's number comes from, and one of the two controls in the app
+that write to `config/` — the other is accepting a Garmin schedule proposal
+in the review dialog's Training Schedule section, which persists
+`training_schedule` on the same "a standing setting is not a per-week input"
+reasoning. Four rows — calories, protein, carbs, fat — each naming
 its source, its current figure for the week (collapsed to one number when
 every day agrees, a range when they don't) and, for the two on `auto`, the
 engine's own arithmetic behind it: "Katch-Mcardle BMR 1798 → TDEE 2472

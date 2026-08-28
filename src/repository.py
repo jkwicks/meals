@@ -120,13 +120,19 @@ T = TypeVar("T")
 # are keyed by an ISO "YYYY-MM-DD" `date`, which is what makes a re-post for a
 # day an update rather than a duplicate row.
 #
-# `readiness_log` is the newest and is a third *signal*, not a field on a
+# `readiness_log` is a third *signal*, not a field on a
 # weigh-in: a scale and a watch can both report for the same date, and folding
 # sleep into `weigh_ins` would let the two silently overwrite each other with
 # no way to tell which won — the identical reasoning that keeps `weigh_ins`
 # and `daily_actuals` apart. A file written before it existed simply has no
 # such key, which `_read_biometrics` reads as an empty list.
-BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals", "readiness_log")
+#
+# `activity_log` is the newest, and the one section that is **not** one row
+# per date: a Saturday with a lift and a ride is two rows, so it is written
+# by `save_activity_entries` (replace a date wholesale) rather than by
+# `_upsert_dated_entry` (merge a date's one row). Everything else about it
+# is the same — ISO `date` keys, oldest first, absent means "never synced".
+BIOMETRIC_SECTIONS = ("weigh_ins", "daily_actuals", "readiness_log", "activity_log")
 
 # Which sync source fills which of those lists. Here rather than in
 # `integrations/sync_service.py`, where it started, because it is a fact about
@@ -149,6 +155,7 @@ BIOMETRIC_SECTION_SOURCES = {
     "weigh_ins": "garmin",
     "daily_actuals": "cronometer",
     "readiness_log": "garmin",
+    "activity_log": "garmin",
 }
 
 
@@ -420,10 +427,10 @@ class PlanRepository(abc.ABC):
 
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
-        """Measured body composition, logged macro actuals and overnight
-        readiness, as `{"weigh_ins": [...], "daily_actuals": [...],
-        "readiness_log": [...], "sync_checkpoints": {...}}`, each list oldest
-        first.
+        """Measured body composition, logged macro actuals, overnight
+        readiness and recorded activity, as `{"weigh_ins": [...],
+        "daily_actuals": [...], "readiness_log": [...], "activity_log": [...],
+        "sync_checkpoints": {...}}`, each list oldest first.
 
         The measured counterpart to `config.json`'s `user_profile`: the profile
         says what the body is aiming at, this says where it actually is, and an
@@ -435,7 +442,9 @@ class PlanRepository(abc.ABC):
         four budgeted macros plus the one that is only ever reported), and
         `readiness_log`
         how the night before went (`sleep_score`, `sleep_hours`, `hrv_ms`,
-        `readiness_label`).
+        `readiness_label`), and `activity_log` what was actually trained
+        (`session_type`, `start_time`, `duration_min`, `net_calories` — see
+        `save_activity_entries`).
 
         **Nothing in `readiness_log` is energy**, and its separation from the
         other two is what keeps it that way: a sleep score is a unitless
@@ -447,8 +456,8 @@ class PlanRepository(abc.ABC):
 
         A missing file is an empty result, not an error — the same cold-start
         tolerance `load_history` extends, and for the same reason: no weigh-ins
-        yet is the normal state of a fresh install, not a failure. All three
-        keys are always present in the returned dict, so callers index them
+        yet is the normal state of a fresh install, not a failure. Every key
+        is always present in the returned dict, so callers index them
         directly.
         """
 
@@ -491,6 +500,27 @@ class PlanRepository(abc.ABC):
         from two different Garmin endpoints and either can fail on its own, so
         a re-sync that gets the one that failed last time refines the row
         rather than starting a second one.
+        """
+
+    @abc.abstractmethod
+    async def save_activity_entries(self, target_date: str, sessions: List[dict]) -> None:
+        """Replace everything recorded for `target_date` in `activity_log`
+        with `sessions` — which may be empty, meaning "the watch recorded
+        nothing that day".
+
+        **Replace, not merge, and that is the one thing here that differs
+        from its three siblings.** They hold one row per date and upsert into
+        it; a day holds *any number* of activities, so there is no row to
+        refine — a re-sync's answer for a date is the complete answer for
+        that date, and merging would leave a deleted or re-classified
+        activity behind forever with no key able to name it.
+
+        The stored rows are what `nutrition_engine.propose_training_schedule`
+        reads, and nothing else does. That is the standing rule this list was
+        added under (`sync_service.CRONOMETER_MACRO_COLUMNS` states it for
+        the other direction): before this, `fetch_cardio_activities` was
+        fetched on every sync and printed, which is precisely the shape
+        v0.29.0 closed for Garmin's sleep data.
         """
 
     @abc.abstractmethod
@@ -769,6 +799,11 @@ class LocalJSONRepository(PlanRepository):
     async def save_readiness_entry(self, entry: dict) -> None:
         await asyncio.to_thread(self._upsert_dated_entry, "readiness_log", entry)
 
+    async def save_activity_entries(self, target_date: str, sessions: List[dict]) -> None:
+        await asyncio.to_thread(
+            self._replace_dated_entries, "activity_log", target_date, sessions
+        )
+
     async def get_latest_biometrics(self) -> Optional[dict]:
         weigh_ins = (await self.load_biometrics())["weigh_ins"]
         if not weigh_ins:
@@ -938,6 +973,46 @@ class LocalJSONRepository(PlanRepository):
         else:
             rows.append(dict(entry))
         rows.sort(key=lambda row: row.get("date") or "")
+        self._write_json(self.paths.biometrics, biometrics)
+
+    def _replace_dated_entries(self, section: str, target_date: str, rows: List[dict]) -> None:
+        """Swap every row for `target_date` in `section` for `rows`.
+
+        The many-per-date counterpart to `_upsert_dated_entry`, read-modify-
+        write in one worker-thread call for the same reason: the read and the
+        write must not be separated by an `await`, or a concurrent save is
+        silently dropped by whichever landed second.
+
+        Rows carrying a different date are refused rather than filed under
+        whatever they say, because the delete half of this has already run by
+        then — a mismatched row would clear a real day and store itself
+        somewhere the next re-sync of *its* date would not clear it.
+
+        Sorted by date and then by `start_time`, so a day reads in the order
+        it was actually lived. Both are fixed-width strings, so the tuple
+        sorts lexically without parsing either.
+        """
+        if not target_date:
+            raise ValueError(f"A {section} write needs a date: got {target_date!r}")
+        for row in rows:
+            if row.get("date") != target_date:
+                raise ValueError(
+                    f"A {section} row for {target_date} carries date {row.get('date')!r}"
+                )
+
+        biometrics = self._read_biometrics()
+        kept = [row for row in biometrics[section] if row.get("date") != target_date]
+        if not rows and len(kept) == len(biometrics[section]):
+            # Nothing recorded and nothing to record. A day with no activity
+            # is the common case (`sync_garmin` calls this for every date it
+            # checks), and rewriting the whole file to say so would be a
+            # write per day of every catchup run. That the day was *checked*
+            # is `sync_checkpoints`' job, not this list's — the same division
+            # `save_biometric_entry`'s empty-row guard already relies on.
+            return
+        kept.extend(dict(row) for row in rows)
+        kept.sort(key=lambda row: (row.get("date") or "", row.get("start_time") or ""))
+        biometrics[section] = kept
         self._write_json(self.paths.biometrics, biometrics)
 
     def _append_rejection(self, entry: dict) -> None:

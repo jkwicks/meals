@@ -725,10 +725,106 @@ adjacent input the user is still mid-edit on, the identical focus-theft trap
 `training_field_handler` already sidesteps by refreshing `"targets"` rather
 than `"training"` on a plain field edit.
 
-**Proposing the schedule itself from Garmin activity history is explicitly
-not this** — `GarminSyncService` already syncs the data a recurring-pattern
-detector would need, but that is a real, separate feature (a confirmation UI
-over inferred sessions) and was deliberately left for its own change.
+**Proposing the schedule itself from Garmin activity history was deliberately
+left for its own change, and that change has now happened** — see "Proposing
+the week you actually trained" below. It follows this feature's precedent
+exactly: a derived default, into the same field, applied on an explicit click.
+
+#### Proposing the week you actually trained
+
+`training_schedule` has always been hand-declared while the watch recorded
+what really happened, and the two were never introduced.
+`nutrition_engine.propose_training_schedule` is the introduction: it reads
+`biometrics.json`'s `activity_log`, diffs four weeks of it against the
+declared week, and returns a list of `ProposedSession`s — sessions to add,
+and declared ones to drop.
+
+**The detector is the easy half; the confirmation is the feature.** A
+schedule written from a guess would move a day's calorie budget and pin its
+post-workout meal off a pattern nobody agreed to, which is the one thing a
+derived number here is never allowed to do. Nothing in `nutrition_engine`
+writes; the review dialog's Training Schedule section renders one row per
+proposal with an accept and a dismiss, and `estimate_burn`'s calculator-icon
+button is the interaction being copied — same field, explicit click, a
+default the user can overrule.
+
+**What is stored, and why the activity list had to exist first.**
+`fetch_cardio_activities` was fetched on every sync and printed — v0.29.0's
+sleep bug, reached by a second route — so `activity_log` is a fourth
+biometric section now, written by `GarminSyncService.fetch_activities`. Three
+things about it are decisions:
+
+- **It is the one section holding several rows per date**, so
+  `save_activity_entries` replaces a day wholesale where its three siblings
+  upsert one row. A re-sync's answer for a date *is* the answer for that
+  date; merging would leave a deleted or re-classified activity outliving the
+  day it happened on, with no key able to name it.
+- **Only mapped, timed activities are stored.** `GARMIN_SESSION_TYPES`
+  translates Garmin's `typeKey` into the `training_schedule` vocabulary with
+  no catch-all, and `startTimeLocal` (never `startTimeGMT`, which is silently
+  wrong by the timezone offset) supplies the clock time. A row missing either
+  cannot become a proposal, and an unmapped modality guessed at would be
+  worse than absent: a yoga class offered as "Cardio Easy, 45 min, 260 kcal"
+  is a wrong answer that looks like a right one. `MET_FALLBACK` can afford
+  that guess because it is refining a session the user already declared; this
+  invents the session.
+- **`net_calories` is finally load-bearing.** A proposal's
+  `estimated_burn_kcal` is the median of what Garmin reported, already
+  discounted by `EXERCISE_RECOVERY_FACTOR` at sync time; the MET formula is
+  the fallback for a session the watch reported no calories for. Medians
+  throughout, so one 90-minute Sunday among four 30-minute ones doesn't drag
+  the proposal to 45.
+
+**What counts as observed is the whole difficulty.** `activity_log` only
+holds days that recorded something, so silence in it is ambiguous — a rest
+day and an unsynced day look identical, which is the exact gap
+`sync_checkpoints` was added to close for weigh-ins. The observed span
+therefore runs from the first recorded activity in the window to the later of
+the last recorded one and Garmin's own checkpoint, capped at today; a stored
+row past the checkpoint still counts, because a row is proof the day was
+asked about (the rule `ui_state.sync_status` already applies). Under-claiming
+at the start is the safe direction: it costs a proposal, where over-claiming
+invents weeks of evidence that a session never happened.
+
+**A declared session Garmin never sees is proposed for removal — and only
+proposed.** That was this item's one blocking decision, and it is answered
+symmetrically with additions rather than left silent or absent, behind two
+guards. A weekday has to have come round at least `MIN_PROPOSAL_OCCURRENCES`
+times inside the observed span, and `MIN_ACTIVE_DAYS_FOR_DROP` asks whether
+the watch is being worn at all before its silence is read as evidence — a
+watch in a drawer looks exactly like a fortnight of rest. A weekday that
+recorded *something* is never proposed for a drop even when the modality
+disagrees: a Sunday ride that has become a Sunday walk is a day you plainly
+train on, and the walk arrives as its own addition instead.
+
+**Additions are diffed against the staged schedule; drops against the
+file's.** The asymmetry is deliberate. An addition accepted (or typed by
+hand) has to stop being proposed on the next repaint rather than at the next
+page load; a drop is an edit to `config/schedule.json` and may only name a
+session that file actually holds, or a row typed moments ago is argued with
+while the cursor is still in the row above it.
+
+**Accepting persists, which makes this the second thing in the UI that
+writes to `config/`** — `PlannerState.set_target_mode` was the first, on
+identical reasoning. `training_schedule` is the *standing* week, not an input
+to the next run, so an accept that evaporated on reload would be a no-op with
+an animation and the same proposal would be re-offered forever. The change is
+applied to the file's list and to the staged one separately rather than
+persisting whatever the drawer currently holds — those differ whenever
+something else is staged, and a click on "accept" must not quietly write out
+a half-typed session two rows below it. `_original_training_schedule` moves
+with the file, so the staged bar reports no phantom change for the row just
+accepted while still reporting every genuine edit beside it.
+
+**Three states produce no proposals and mean different things**, which is
+`ui_state.training_proposals_view`'s whole reason for existing — the same
+lesson `adaptive_tdee_view` was written for: "nothing recorded yet", "not
+enough history to see a pattern" and "your declared week already matches what
+was recorded" spell identically as an empty list, and the last one is the
+good answer most likely to be misread as broken. Dismissals are session-local
+and deliberately unpersisted: a dismissal says "not now" where an accept says
+"this is my week", and a proposal waved away today comes back next week
+because the evidence for it has grown, not gone.
 
 **Protein is locked to the target weight, not today's and not the day's
 activity.** 80 kg x 1.8 is 144 g every day of the week. Tying it to current
@@ -865,7 +961,11 @@ three files in the same places.
 thing besides generation that persists anything. It exists for
 `target_modes` (see "Who owns a number"): a *setting* is not a per-week
 input, and a toggle that reset on every page reload would answer "where do
-my numbers come from" differently each time you looked. It merges the keys
+my numbers come from" differently each time you looked. It has a second
+caller now — accepting a Garmin schedule proposal writes `training_schedule`
+(see "Proposing the week you actually trained"), which is a standing week on
+exactly the same reasoning. Those two are the whole list; everything else in
+the review dialog is an input to the next run and stays session-only. It merges the keys
 it is handed into the file `CONFIG_FILES` says owns each one, read-modify-
 write per file, so a hand-added key the app has never heard of survives the
 next settings change. It is deliberately not a "save the config" call — the
@@ -936,7 +1036,7 @@ relies on. No new port, no new deployment.
 | `/api/weeks/{"current"\|"next"}` | `repository.load_week_plan(id)` → `WeekPlan.model_validate` |
 | `/api/recipes?favorite=&meal_type=&search=` | `repository.load_recipe_catalog()`, filtered |
 | `/api/history` | `repository.load_history()` |
-| `/api/biometrics` | `repository.load_biometrics()` (all three lists, `readiness_log` included) + `get_latest_biometrics()` |
+| `/api/biometrics` | `repository.load_biometrics()` (all four lists, `readiness_log` and `activity_log` included) + `get_latest_biometrics()` |
 | `/api/targets` | `load_config_with_models` → `hydrate_config`, returning `weekly_schedule` + `dynamic_basis` (which carries `tdee_source`) |
 
 Every route calls an existing repository method or an existing pure
@@ -1961,20 +2061,21 @@ where that question is now ranked and still open.
 
 ### Biometric sync — Garmin Connect and Cronometer
 
-`src/integrations/sync_service.py` fills the three lists `biometrics.json`
+`src/integrations/sync_service.py` fills the four lists `biometrics.json`
 holds, with no phone-side app in the loop:
 
     ./venv/bin/python src/integrations/sync_service.py --sync-garmin
     ./venv/bin/python src/integrations/sync_service.py --sync-cronometer --date 2026-08-16
 
-`GarminSyncService` writes `weigh_ins` and `readiness_log`,
-`CronometerSyncService` writes `daily_actuals`, all through
-`LocalJSONRepository`'s existing upsert-by-date methods. Neither invents
-storage, and the CLI reports each source independently — a Garmin outage must
-not cost a Cronometer sync that would have worked, the same policy as "a
-failed meal must not fail the week".
+`GarminSyncService` writes `weigh_ins`, `readiness_log` and `activity_log`,
+`CronometerSyncService` writes `daily_actuals`. Three of the four go through
+`LocalJSONRepository`'s existing upsert-by-date methods and the fourth
+through `save_activity_entries`, which replaces a date rather than merging
+it — see below. Neither service invents storage, and the CLI reports each
+source independently: a Garmin outage must not cost a Cronometer sync that
+would have worked, the same policy as "a failed meal must not fail the week".
 
-Seven things here are decisions, not detail:
+Eight things here are decisions, not detail:
 
 - **It is the only code in `src/` living in a subdirectory**, which breaks the
   flat-sibling import rule at the top of this file: `python
@@ -2055,6 +2156,18 @@ Seven things here are decisions, not detail:
   page rather than papered over: a date checked before `readiness_log` existed
   reads as "checked, nothing recorded" for readiness. `--date` re-syncs it,
   since Garmin keeps the history.
+- **Recorded activity is stored now, and only what can be read back.** It
+  was fetched on every sync and printed for months, which is the same shape
+  v0.29.0 closed for sleep; `activity_log` exists because
+  `nutrition_engine.propose_training_schedule` reads it (see "Proposing the
+  week you actually trained"), and its arrival is what finally gives
+  `net_calories` a consumer. `fetch_activities` is unfiltered where
+  `fetch_cardio_activities` is not — a `strength_training` session is the one
+  a schedule proposal most needs, being what pins a breakfast shake — and
+  `fetch_cardio_activities` is now a filter over it rather than a second
+  fetch, so the two cannot disagree about a session's duration or its
+  discount. It is also the one section holding several rows per date, so it
+  is replaced per day rather than merged.
 - **Absent metrics are omitted, never zeroed.** `save_biometric_entry` merges
   on `date`, so a scale that reported only weight must not send
   `body_fat_pct: 0.0` and overwrite a real reading. `_prune` drops the Nones
@@ -2328,18 +2441,18 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
 | `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the protein floor, logged-intake substitution, adaptive TDEE |
-| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, and the MET-based training-burn estimate |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule, and `rejections.json`'s storage round trip |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
-| `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, and the credential guards |
+| `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, and the Settings destination's sync-status, sync-freshness and location read views |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), and the Settings destination's sync-status, sync-freshness and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
-| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |
+| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those

@@ -41,7 +41,7 @@ Three ideas are worth reading before changing anything:
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # Energy density of the macros, in kcal per gram. Atwater factors — the same
 # constants `planner.derive_fat_g` divides by, spelled out here because this
@@ -817,3 +817,404 @@ def calculate_adaptive_tdee(
     here.
     """
     return measure_adaptive_tdee(daily_logs, weigh_in_history, window_days).estimate
+
+
+# ---------------------------------------------------------------------------
+# Proposing the declared week from the observed one
+# ---------------------------------------------------------------------------
+#
+# `config/schedule.json`'s `training_schedule` is what the planner acts on:
+# `planner.apply_training_adjustments` expands a day's calorie budget from it
+# and pins that day's post-workout meal, and `planner.morning_training_days`
+# reads it to pin a breakfast shake. It has always been hand-declared, while
+# the watch has been recording what actually happened all along.
+#
+# **The detector is the easy half; the confirmation is the feature.** Nothing
+# here writes anything. A schedule inferred and applied silently would move
+# every target on the day it guessed at, which is the one thing a derived
+# number in this app is never allowed to do — the precedent is
+# `estimate_session_burn_kcal` above, whose whole discipline is that it is a
+# default a human applies with a click, into the same field a typed number
+# lives in, so nothing downstream can tell the two apart.
+
+# How far back a proposal looks. Four weeks is the shortest window that can
+# see a weekday four times, which is what makes "3 of 4 Wednesdays" a
+# sentence rather than a coin toss. Longer would keep proposing a routine
+# that has already been abandoned.
+TRAINING_PROPOSAL_WINDOW_DAYS = 28
+
+# How many times a (weekday, session type) pair has to have been recorded
+# before it is a routine rather than a one-off. Also the number of
+# observations of a weekday required before its *silence* is evidence.
+MIN_PROPOSAL_OCCURRENCES = 2
+
+# How many distinct days in the window have to carry some recorded activity
+# before a *drop* is proposed at all. A watch left in a drawer records
+# nothing, which is indistinguishable from a fortnight of rest if you only
+# look at one weekday — so the drop rule asks first whether this watch is
+# being worn at all. Additions need no such guard: an activity that was
+# recorded is evidence on its own.
+MIN_ACTIVE_DAYS_FOR_DROP = 4
+
+# Calendar order for the proposal list. Spelled out rather than derived from
+# `%A` so the order is fixed regardless of locale, and Monday-first regardless
+# of `week_start_day` — this module reads no config, and a list of suggestions
+# has nothing on screen it needs to line up with.
+WEEKDAY_ORDER = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+# What a proposal is asking for. `drop` never removes anything on its own —
+# see the module note above.
+PROPOSAL_ADD = "add"
+PROPOSAL_DROP = "drop"
+
+# Which precondition stopped a proposal, or `TRAINING_PROPOSAL_READY` when
+# none did. `ready` with an empty list is a real and good answer — "the
+# declared week already matches the recorded one" — and telling it apart from
+# "no data yet" is the whole reason this is a state rather than a bare list.
+# The same lesson `AdaptiveTDEEStatus` was written for.
+TRAINING_PROPOSAL_READY = "ready"
+TRAINING_PROPOSAL_NO_ACTIVITY = "no_activity"
+TRAINING_PROPOSAL_SHORT_HISTORY = "short_history"
+
+
+@dataclass(frozen=True)
+class ProposedSession:
+    """One accept/dismiss row: a session to add, or a declared one to drop.
+
+    The five schedule fields are spelled exactly as a `training_schedule`
+    entry spells them, so `session()` hands back something the config can
+    hold verbatim — the same "derived and typed are the same field"
+    discipline `estimate_session_burn_kcal` follows. `occurrences` and
+    `observations` are the evidence behind it, in the units a person can
+    argue with: seen 3 times, on a weekday that came round 4 times.
+
+    A `drop` carries the *declared* session's own time, duration and burn
+    rather than anything observed — there is nothing observed, which is the
+    point — so that `session()` still names the exact row to remove.
+    """
+
+    kind: str
+    day: str
+    time: str
+    type: str
+    duration_minutes: int
+    estimated_burn_kcal: float
+    occurrences: int
+    observations: int
+
+    @property
+    def key(self) -> str:
+        """A stable identity for a proposal across repaints.
+
+        Used by the UI to remember which proposals were dismissed this
+        session. Deliberately excludes the counts: the same suggestion seen
+        one more time is the same suggestion, and letting the evidence into
+        the key would resurrect a dismissed row the next time the sync ran.
+        """
+        return f"{self.kind}:{self.day}:{self.time}:{self.type}"
+
+    def session(self) -> dict:
+        """This proposal as a `training_schedule` entry."""
+        return {
+            "day": self.day,
+            "time": self.time,
+            "type": self.type,
+            "duration_minutes": self.duration_minutes,
+            "estimated_burn_kcal": self.estimated_burn_kcal,
+        }
+
+
+@dataclass(frozen=True)
+class TrainingScheduleProposal:
+    """What `propose_training_schedule` answered, and what it looked at.
+
+    `observed_days` is the span this actually had sight of — from the first
+    recorded activity in the window through to the last date Garmin was asked
+    about — not the window's own length. The two differ on every checkout
+    whose sync is younger than four weeks, and reporting the window would
+    claim evidence that was never gathered.
+
+    `activity_days` is how many of those days carried any activity at all: it
+    is the guard on drop proposals (`MIN_ACTIVE_DAYS_FOR_DROP`) and the one
+    number that separates "you rested" from "the watch was in a drawer".
+    """
+
+    state: str
+    proposals: List[ProposedSession]
+    window_days: int
+    observed_days: int
+    activity_days: int
+    observed_from: Optional[str] = None
+    observed_to: Optional[str] = None
+
+    @property
+    def ready(self) -> bool:
+        return self.state == TRAINING_PROPOSAL_READY
+
+    @property
+    def additions(self) -> List[ProposedSession]:
+        return [p for p in self.proposals if p.kind == PROPOSAL_ADD]
+
+    @property
+    def drops(self) -> List[ProposedSession]:
+        return [p for p in self.proposals if p.kind == PROPOSAL_DROP]
+
+
+def _median(values: Sequence[float]) -> float:
+    """The middle value, averaging the two middles for an even count.
+
+    Median rather than mean throughout this section: one 90-minute Sunday
+    ride among four 30-minute ones should not drag the proposed duration to
+    45, and a single mis-tagged marathon should not propose a 900 kcal
+    Tuesday. Written here rather than imported from `statistics` to keep this
+    module's imports as they are — it is three lines, and the file already
+    carries its own least-squares fit for the same reason.
+    """
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (float(ordered[middle - 1]) + float(ordered[middle])) / 2.0
+
+
+def _round_to_five(minutes: float) -> int:
+    """Minutes rounded to the nearest 5.
+
+    A proposal reading "06:12, 33 minutes" claims a precision the median of
+    four noisy starts does not have, and invites a pointless edit. Five
+    minutes is the same granularity `ui_review`'s duration input already
+    steps in.
+    """
+    return int(round(minutes / 5.0) * 5)
+
+
+def _clock(minutes: int) -> str:
+    """Minutes since midnight as "HH:MM", wrapped into the day."""
+    minutes %= 24 * 60
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _clock_minutes(value: str) -> Optional[int]:
+    """"HH:MM" as minutes since midnight, or None if it isn't one.
+
+    Tolerant like `_parse_iso_date`, and for the same reason: these strings
+    come out of `biometrics.json` and out of a free-text config field, and
+    one unreadable row must cost that row rather than the whole proposal.
+    """
+    try:
+        hours, _, mins = str(value).partition(":")
+        return int(hours) * 60 + int(mins)
+    except (TypeError, ValueError):
+        return None
+
+
+def propose_training_schedule(
+    activity_log: list,
+    declared_schedule: list,
+    today: date,
+    weight_kg: Optional[float] = None,
+    window_days: int = TRAINING_PROPOSAL_WINDOW_DAYS,
+    checked_through: Optional[str] = None,
+) -> TrainingScheduleProposal:
+    """The recorded week, diffed against the declared one.
+
+    Pure, like everything else here: it reads two lists and a date and
+    returns proposals. Applying one is `ui_state.PlannerState.
+    accept_training_proposal`'s job, and it happens on a click.
+
+    **What counts as observed.** `activity_log` only ever holds a day that
+    recorded something, so silence in it is ambiguous — a rest day and an
+    unsynced day look identical, the same gap `sync_checkpoints` was added to
+    close for weigh-ins. The observed span is therefore bounded: it starts at
+    the first recorded activity inside the window and ends at the later of
+    the last recorded activity and `checked_through` (Garmin's own
+    checkpoint), capped at `today`. A stored row past the checkpoint still
+    counts, because a row is proof the day was asked about — the identical
+    rule `ui_state.sync_status` applies. Under-claiming at the start is the
+    safe direction: it costs a proposal, where over-claiming would invent
+    weeks of evidence that a session never happened.
+
+    **Additions** need a (weekday, session type) pair recorded on at least
+    `MIN_PROPOSAL_OCCURRENCES` distinct dates *and* on at least half the
+    observations of that weekday, and no declared session of that type on
+    that day already. Half rather than all, because a fortnight's illness
+    should not erase a standing Tuesday.
+
+    **Drops** are the answer to this feature's one open question, and they
+    are deliberately symmetric with additions rather than either silent or
+    absent: a declared session whose weekday came round at least
+    `MIN_PROPOSAL_OCCURRENCES` times inside the observed span and carried no
+    recorded activity *at all* is proposed for removal, and nothing removes
+    it but a click. Two guards keep that honest — `MIN_ACTIVE_DAYS_FOR_DROP`
+    asks whether the watch is being worn at all before reading its silence as
+    evidence, and a weekday that recorded *something* is never proposed for a
+    drop even when the modality disagrees, because a Sunday ride that has
+    become a Sunday walk is a day you plainly train on. The walk arrives as
+    its own addition instead.
+
+    `weight_kg` is only a fallback: a proposal's `estimated_burn_kcal` is the
+    median of what Garmin actually reported, discounted by
+    `sync_service.EXERCISE_RECOVERY_FACTOR` at sync time, and the MET formula
+    is used only when the watch reported no calories. That makes
+    `net_calories` load-bearing for the first time, which is the whole reason
+    it was worth storing.
+    """
+    window_start = today - timedelta(days=window_days - 1)
+    windowed: List[Tuple[date, dict]] = []
+    for row in activity_log or []:
+        when = _parse_iso_date((row or {}).get("date", ""))
+        if when is None or not (window_start <= when <= today):
+            continue
+        if not row.get("session_type") or _clock_minutes(row.get("start_time")) is None:
+            # Rows `sync_service` would not have stored — a hand-edited file,
+            # or one written by a future sync with a wider idea of what is
+            # worth keeping. Skipped rather than guessed at, same as there.
+            continue
+        windowed.append((when, row))
+
+    def unmet(state: str) -> TrainingScheduleProposal:
+        return TrainingScheduleProposal(
+            state=state,
+            proposals=[],
+            window_days=window_days,
+            observed_days=0,
+            activity_days=len({when for when, _ in windowed}),
+        )
+
+    if not windowed:
+        return unmet(TRAINING_PROPOSAL_NO_ACTIVITY)
+
+    recorded_dates = {when for when, _ in windowed}
+    observed_from = min(recorded_dates)
+    last_checked = _parse_iso_date(checked_through or "")
+    observed_to = min(max([max(recorded_dates)] + ([last_checked] if last_checked else [])), today)
+    observed = [
+        observed_from + timedelta(days=offset)
+        for offset in range((observed_to - observed_from).days + 1)
+    ]
+
+    observations: Dict[str, int] = {}
+    for when in observed:
+        name = when.strftime("%A")
+        observations[name] = observations.get(name, 0) + 1
+
+    if max(observations.values(), default=0) < MIN_PROPOSAL_OCCURRENCES:
+        return TrainingScheduleProposal(
+            state=TRAINING_PROPOSAL_SHORT_HISTORY,
+            proposals=[],
+            window_days=window_days,
+            observed_days=len(observed),
+            activity_days=len(recorded_dates),
+            observed_from=observed_from.isoformat(),
+            observed_to=observed_to.isoformat(),
+        )
+
+    # One row per (weekday, type, date): two runs on one Wednesday are one
+    # Wednesday run habit, and counting them twice would let a single busy
+    # week clear a threshold four calm ones did not. The earliest start wins,
+    # since that is the session the rest of the day was planned around.
+    by_pattern: Dict[Tuple[str, str], Dict[date, dict]] = {}
+    trained_days: Dict[str, set] = {}
+    for when, row in windowed:
+        name = when.strftime("%A")
+        pattern = (name, str(row["session_type"]))
+        seen = by_pattern.setdefault(pattern, {})
+        current = seen.get(when)
+        if current is None or _clock_minutes(row["start_time"]) < _clock_minutes(
+            current["start_time"]
+        ):
+            seen[when] = row
+        trained_days.setdefault(name, set()).add(when)
+
+    declared = [
+        session
+        for session in (declared_schedule or [])
+        if session.get("type") != "rest"
+        and float(session.get("estimated_burn_kcal", 0) or 0) > 0
+    ]
+    declared_patterns = {
+        (str(session.get("day")), str(session.get("type"))) for session in declared
+    }
+
+    proposals: List[ProposedSession] = []
+    for (day, session_type), rows in by_pattern.items():
+        occurrences = len(rows)
+        seen_on = observations.get(day, 0)
+        if occurrences < MIN_PROPOSAL_OCCURRENCES or occurrences * 2 < seen_on:
+            continue
+        if (day, session_type) in declared_patterns:
+            continue
+
+        sessions = list(rows.values())
+        duration = _round_to_five(_median([row["duration_min"] for row in sessions]))
+        net = _median([float(row.get("net_calories") or 0.0) for row in sessions])
+        if net <= 0:
+            net = (
+                estimate_session_burn_kcal(session_type, duration, weight_kg)
+                if weight_kg
+                else 0.0
+            )
+        proposals.append(
+            ProposedSession(
+                kind=PROPOSAL_ADD,
+                day=day,
+                time=_clock(
+                    _round_to_five(_median([_clock_minutes(r["start_time"]) for r in sessions]))
+                ),
+                type=session_type,
+                duration_minutes=duration,
+                estimated_burn_kcal=round(net),
+                occurrences=occurrences,
+                observations=seen_on,
+            )
+        )
+
+    if len(recorded_dates) >= MIN_ACTIVE_DAYS_FOR_DROP:
+        for session in declared:
+            day = str(session.get("day"))
+            seen_on = observations.get(day, 0)
+            if seen_on < MIN_PROPOSAL_OCCURRENCES or trained_days.get(day):
+                continue
+            proposals.append(
+                ProposedSession(
+                    kind=PROPOSAL_DROP,
+                    day=day,
+                    time=str(session.get("time", "")),
+                    type=str(session.get("type", "")),
+                    duration_minutes=int(session.get("duration_minutes") or 0),
+                    estimated_burn_kcal=float(session.get("estimated_burn_kcal") or 0),
+                    occurrences=0,
+                    observations=seen_on,
+                )
+            )
+
+    return TrainingScheduleProposal(
+        state=TRAINING_PROPOSAL_READY,
+        # Calendar order, not the order the evidence happened to be walked
+        # in: this list is read top to bottom by a human deciding what their
+        # week is, and grouping by weekday is how a week is read. Monday-first
+        # rather than `week_start_day`'s rotation, because this module takes
+        # no config — and a proposal list is not a grid, so nothing has to
+        # line up with one.
+        proposals=sorted(
+            proposals,
+            key=lambda session: (
+                WEEKDAY_ORDER.index(session.day) if session.day in WEEKDAY_ORDER else len(WEEKDAY_ORDER),
+                _clock_minutes(session.time) or 0,
+                session.kind,
+            ),
+        ),
+        window_days=window_days,
+        observed_days=len(observed),
+        activity_days=len(recorded_dates),
+        observed_from=observed_from.isoformat(),
+        observed_to=observed_to.isoformat(),
+    )
