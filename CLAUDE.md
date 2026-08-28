@@ -94,10 +94,12 @@ other documents' account of themselves, which is how three of their claims
 turned out to have been stale for phases.
 
 Cite its entries **by name, never by number**. The numbers renumber on every
-release that closes something — twice already — so "CHANGE-QUEUE.md item 3"
-in a comment is a reference with a shelf life. The queue's own internal
-cross-references have had to be repaired after both renumbers, and v0.31.0
-closed two items at once, which moved everything below them by two.
+release that closes something — three times already — so "CHANGE-QUEUE.md
+item 3" in a comment is a reference with a shelf life. The queue's own
+internal cross-references have had to be repaired after every one of those
+renumbers, and both v0.31.0 and v0.32.0 closed two items at once, which
+moved everything below them by two. The queue now cites itself by name for
+the same reason, having been caught with three references stale by one.
 
 The other three are history, and all three are kept rather than deleted:
 
