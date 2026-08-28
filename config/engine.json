@@ -12,7 +12,14 @@
       4,
       3
     ],
-    "min_baseline_cuisine_share": 0.5
+    "min_baseline_cuisine_share": 0.5,
+    "rejection_decay_days": {
+      "had_it_recently": 21,
+      "too_much_prep": 60,
+      "dont_fancy_it": 90,
+      "wrong_for_slot": 180
+    },
+    "rejection_reason_window_days": 180
   },
   "ui_settings": {
     "bar_scale_limit": 1.6,

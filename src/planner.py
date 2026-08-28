@@ -661,15 +661,116 @@ REJECTION_REASON_LABELS = {
 }
 
 
-def build_rejection_rule(config: dict) -> str:
+# `RejectionEntry.reason` -> what a *run* of that answer says about how to
+# cook generally, as opposed to `REJECTION_REASON_LABELS`, which says what one
+# entry was about. The split mirrors the two halves of `build_rejection_rule`:
+# a label names a dish's veto, this names a standing preference.
+REJECTION_REASON_GUIDANCE = {
+    "too_much_prep": "favour simpler methods and shorter active prep",
+    "dont_fancy_it": (
+        "push the flavour profile and protein further from the usual — these "
+        "suggestions are not landing"
+    ),
+    "had_it_recently": (
+        "reach further back in the rotation; these suggestions are repeating "
+        "themselves"
+    ),
+    "wrong_for_slot": (
+        "match the meal type more carefully — its weight, format and time of "
+        "day"
+    ),
+}
+
+# How many entries sharing a reason count as a pattern rather than a
+# coincidence. Two is a pair of unrelated bad nights; three is a preference
+# being stated. A module constant rather than a third `planning_rules` key:
+# the two windows are the policy this feature exists to let you choose, and
+# the threshold is arithmetic in service of them.
+REJECTION_REASON_SIGNAL_MIN = 3
+
+
+def rejection_age_days(entry: dict, today: date) -> Optional[int]:
+    """How many days ago `entry` was recorded, or None if it can't be dated.
+
+    An undated or malformed entry is un-ageable, and every caller here reads
+    None as "keep it" — the same tolerant direction `recipe_last_scheduled`
+    takes for an undated history row, and the opposite reading for the
+    opposite reason: there, an unknown date must not re-serve a favourite;
+    here, it must not silently discard a preference the user actually stated.
+    """
+    raw = entry.get("date")
+    if not raw:
+        return None
+    try:
+        when = datetime.fromisoformat(str(raw)[:10]).date()
+    except ValueError:
+        return None
+    return (today - when).days
+
+
+def active_rejections(
+    rejections: List[dict], config: Optional[dict], today: Optional[date] = None
+) -> List[dict]:
+    """The entries still inside their own reason's `rejection_decay_days`.
+
+    The dish-naming half of the decay: an entry past its window stops being
+    named as a dish to avoid. It does *not* stop counting toward the reason
+    tally, which runs on the longer `rejection_reason_window_days` — see
+    `build_rejection_rule`.
+
+    A reason absent from the config dict, and an entry that cannot be dated,
+    both survive. Neither is reachable from the app itself (`reason` is a
+    `Literal` and the UI stamps `date` from the clock), so both mean a
+    hand-edited file, and dropping a real signal over an unrecognised field
+    is the worse failure.
+    """
+    today = today or date.today()
+    windows = planning_rule(config, "rejection_decay_days")
+    kept = []
+    for entry in rejections:
+        window = windows.get(entry.get("reason"))
+        age = rejection_age_days(entry, today)
+        if window is None or age is None or age < window:
+            kept.append(entry)
+    return kept
+
+
+def recurring_rejection_reasons(
+    rejections: List[dict], config: Optional[dict], today: Optional[date] = None
+) -> List[str]:
+    """Reasons given at least `REJECTION_REASON_SIGNAL_MIN` times recently.
+
+    "Recently" is `rejection_reason_window_days` (180 by default), which is
+    longer than any dish's own window on purpose — the point of the split is
+    that the tally outlives the names it was counted from.
+
+    Ordered by count, then by the reason's own decay window, so a tie is
+    broken toward the more durable kind of statement rather than by dict
+    order.
+    """
+    today = today or date.today()
+    window = planning_rule(config, "rejection_reason_window_days")
+    decay = planning_rule(config, "rejection_decay_days")
+    counts: Dict[str, int] = {}
+    for entry in rejections:
+        age = rejection_age_days(entry, today)
+        if age is not None and age >= window:
+            continue
+        reason = entry.get("reason")
+        if reason in REJECTION_REASON_GUIDANCE:
+            counts[reason] = counts.get(reason, 0) + 1
+    return sorted(
+        (r for r, n in counts.items() if n >= REJECTION_REASON_SIGNAL_MIN),
+        key=lambda r: (-counts[r], -decay.get(r, 0), r),
+    )
+
+
+def build_rejection_rule(config: dict, today: Optional[date] = None) -> str:
     """Soft guidance from previously regenerated-away suggestions.
 
     Reads `config["rejected_preferences"]` — a list of `RejectionEntry` dicts
     injected by the three generation entry points the same way
-    `select_nudge_foods` injects `nudge_foods` — and asks the model to avoid
-    repeating the named dishes and to weigh a reason that recurs (several
-    "too much prep" entries is a hint to lean simpler for that meal type, not
-    just to avoid those specific dishes).
+    `select_nudge_foods` injects `nudge_foods`.
 
     Soft, like `build_diet_style_rule`/`build_sourcing_rule`: a rejection is a
     preference, not a banned ingredient, and a validator rejecting a response
@@ -677,25 +778,57 @@ def build_rejection_rule(config: dict) -> str:
     Empty when there's nothing to say, so the prompt is byte-identical to
     before this feature existed — same convention every rule here follows.
 
-    Deliberately unbounded — every recorded rejection is sent, with no
-    recency cap or decay. Whether the list should decay is an open product
-    question (see `future-ideas.md`); this function doesn't pre-empt it.
+    **Two signals, two windows, and that is the whole shape of the decay.**
+    This shipped deliberately unbounded, to raise the policy question rather
+    than settle it silently. The answer taken:
+
+    - **The dishes to avoid decay per reason** (`active_rejections`, over
+      `planning_rules.rejection_decay_days`). Honouring one dislike forever
+      eventually starves the rotation — the same failure `next_choice`'s
+      docstring documents from the other direction — and the four reasons
+      expire at genuinely different rates, "had it recently" soonest.
+    - **The recurring-reason hint counts over a longer window**
+      (`recurring_rejection_reasons`), so a standing preference outlives the
+      individual dishes that evidenced it.
+
+    **The tally is now counted in Python, and that is a consequence of the
+    split rather than a flourish.** The old rule handed the model the whole
+    list and asked it to notice a repeated reason itself. Once the two halves
+    have different windows the model only ever sees the shorter one, so it
+    cannot do that counting — it would be weighing a subset while being told
+    to weigh the whole. Naming the conclusion is the only honest option.
+
+    `today` is the one seam onto the clock, so a test can age an entry
+    without touching it — same shape as `select_favorite_assignments`.
     """
     rejections = config.get("rejected_preferences") or []
     if not rejections:
         return ""
-    lines = "".join(
-        f'  - "{entry["recipe_name"]}" '
-        f'({REJECTION_REASON_LABELS.get(entry["reason"], entry["reason"])})\n'
-        for entry in rejections
-    )
-    return (
-        "- The user has previously hit regenerate on these suggestions — "
-        "avoid repeating the same dish, and where several entries share a "
-        "reason (e.g. multiple 'too much prep'), lean into that for this "
-        "meal type (simpler, faster, or otherwise steer away from what's "
-        "being said):\n" + lines
-    )
+    today = today or date.today()
+
+    parts = []
+    recent = active_rejections(rejections, config, today)
+    if recent:
+        lines = "".join(
+            f'  - "{entry["recipe_name"]}" '
+            f'({REJECTION_REASON_LABELS.get(entry["reason"], entry["reason"])})\n'
+            for entry in recent
+        )
+        parts.append(
+            "- The user has recently hit regenerate on these suggestions — "
+            "avoid repeating the same dish:\n" + lines
+        )
+    reasons = recurring_rejection_reasons(rejections, config, today)
+    if reasons:
+        guidance = "".join(
+            f"  - {REJECTION_REASON_GUIDANCE[reason]}\n" for reason in reasons
+        )
+        parts.append(
+            "- Across the rejections recorded so far, the same objection "
+            "keeps recurring. Treat this as a standing preference for this "
+            "meal type, not just a note about the dishes above:\n" + guidance
+        )
+    return "".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -1020,6 +1153,38 @@ class PlanningRules(BaseModel):
     # accumulated shortfall. 1.75 leaves real room for ordinary drift to be
     # absorbed where it should be, and stops only the runaway case.
     max_meal_share_multiple: float = 1.75
+    # How long a recorded rejection keeps naming its dish in the prompt, per
+    # reason — the decay `build_rejection_rule` shipped without, deliberately,
+    # so the policy could be chosen rather than defaulted into.
+    #
+    # Per reason rather than one window because the four are not the same kind
+    # of statement, which is the same argument `favorite_reuse_days` makes for
+    # its own split. "Had it recently" is self-resolving — the dish stops
+    # having been had recently whether or not anything honours the entry — so
+    # it expires soonest. "Wrong for that meal" is structural (a curry is
+    # never breakfast) and barely decays at all. The other two sit between:
+    # an effort judgement about a specific dish, and a taste one.
+    #
+    # A reason with no entry here never expires. That is the tolerant
+    # direction, and the only way to reach it is a hand-edited file —
+    # `RejectionEntry.reason` is a `Literal` of exactly these four — so the
+    # alternative would be silently discarding a signal because the file knew
+    # a word this dict did not.
+    rejection_decay_days: Dict[str, int] = Field(
+        default_factory=lambda: {
+            "had_it_recently": 21,
+            "too_much_prep": 60,
+            "dont_fancy_it": 90,
+            "wrong_for_slot": 180,
+        }
+    )
+    # The window the *reason tally* counts over, which is deliberately longer
+    # than any single dish's window above. The two halves of
+    # `build_rejection_rule` are different signals: a dish name is a veto on
+    # one recipe and should expire, while a run of "too much prep" answers is
+    # a standing statement about how you want to eat and is the more valuable
+    # half. So the tally outlives the names it was counted from.
+    rejection_reason_window_days: int = Field(default=180, ge=1)
 
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
@@ -1362,9 +1527,15 @@ def planning_rule(config: Optional[dict], key: str):
     A key missing from a present `planning_rules` also falls back rather than
     raising, which is what lets a rule added here reach a config dict some
     test or caller hand-built before it existed — `load_app_config` fills
-    defaults in, but nothing forces a dict through it.
+    defaults in, but nothing forces a dict through it. A config with no
+    `planning_rules` section *at all* falls back for the same reason and is
+    the same situation one level up: `AppConfig` already carries a
+    `default_factory` for the section, so its absence is legal rather than a
+    misconfiguration worth raising over.
     """
-    rules = DEFAULT_PLANNING_RULES if config is None else config["planning_rules"]
+    rules = DEFAULT_PLANNING_RULES if config is None else config.get("planning_rules")
+    if not rules:
+        return DEFAULT_PLANNING_RULES[key]
     if key not in rules:
         return DEFAULT_PLANNING_RULES[key]
     return rules[key]
