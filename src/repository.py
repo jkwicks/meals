@@ -431,7 +431,9 @@ class PlanRepository(abc.ABC):
         an ISO `date` — `weigh_ins` records what the scale reported
         (`weight_kg` plus optional `body_fat_pct`, `muscle_mass_kg`,
         `water_pct`, `bmi`), `daily_actuals` what was really eaten
-        (`calories`, `protein_g`, `net_carbs_g`, `fat_g`), and `readiness_log`
+        (`calories`, `protein_g`, `net_carbs_g`, `fat_g`, `fiber_g` — the
+        four budgeted macros plus the one that is only ever reported), and
+        `readiness_log`
         how the night before went (`sleep_score`, `sleep_hours`, `hrv_ms`,
         `readiness_label`).
 

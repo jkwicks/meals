@@ -261,13 +261,13 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         if view.recipe.prep_notes:
             with ui.element("div").classes(
                 f"flex flex-row flex-nowrap items-start gap-{SPACE_BASE} mt-4 px-{SPACE_SECTION} py-{SPACE_BASE} "
-                f"{RADIUS_CARD} border border-amber-400/25 bg-amber-400/[0.07]"
+                f"{RADIUS_CARD} border border-slate-700 bg-slate-800/40"
             ):
                 ui.icon("inventory_2").classes(
-                    f"shrink-0 {TEXT_HEAD} text-amber-300 mt-[3px]"
+                    f"shrink-0 {TEXT_HEAD} text-slate-300 mt-[3px]"
                 )
                 ui.label(view.recipe.prep_notes).classes(
-                    f"min-w-0 {TEXT_BODY} leading-snug text-amber-200/90"
+                    f"min-w-0 {TEXT_BODY} leading-snug text-slate-300"
                 )
 
     with ui.dialog() as detail_dialog:
@@ -656,9 +656,9 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                             fav_button.props("dense flat round size=xs").classes(
                                 f"min-h-0 p-{SPACE_HAIR} "
                                 + (
-                                    "text-amber-300"
+                                    "text-slate-200"
                                     if favorited
-                                    else "text-slate-500 hover:text-amber-300"
+                                    else "text-slate-500 hover:text-slate-300"
                                 )
                             )
                             with fav_button:
@@ -789,7 +789,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
                 if view.mode == MODE_LEFTOVER and view.prep_badge and view.prep_minutes is not None:
                     ui.label(f"{view.prep_minutes} min reheat/assemble").classes(
-                        f"{TEXT_MICRO} text-amber-300/70 truncate"
+                        f"{TEXT_MICRO} text-slate-400 truncate"
                     )
 
             if view.mode == MODE_SKIP and view.day:
@@ -886,7 +886,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
         Indigo, not `STATUS_STYLES` emerald: this is still the prep column,
         and borrowing the cook accent for a card sitting inside it would read
-        as a fifth slot status (`.claude/rules/ui.md`'s colour contract). The
+        as a fifth slot status (the `ui-work` skill's colour contract). The
         icon row is a *sibling* of the clickable body rather than its parent,
         for the same reason `meal_card` splits them — a click on swap or
         regenerate would otherwise bubble into the body's handler and open
@@ -998,7 +998,7 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
             # `flex-nowrap` is not tidiness — without it this column silently
             # renders *outside itself*. Quasar's own `.flex` sets
             # `flex-wrap: wrap` and Tailwind's `flex-col` doesn't undo it
-            # (the standing trap in `.claude/rules/ui.md`, here in its
+            # (the standing trap in the `ui-work` skill, here in its
             # column-direction form): a wrapping column flex container whose
             # content is taller than its box starts a *second column* beside
             # the first rather than overflowing, so `overflow-y: auto` above

@@ -20,8 +20,8 @@ from week import humanize
 # The type scale — four sizes, replacing nine crammed into an 8-to-14-pixel
 # band (56 uses of the smallest pixel value alone, 35 of the next) that no
 # two of were distinguishable at a glance. That was noise, not hierarchy.
-# Phase 1 of `ui-redesign.md`; the canonical statement of the scale is
-# `.claude/rules/ui.md`, which auto-loads on any `ui_*.py` touch. Weight and
+# Phase 1 of `ui-redesign.md`; the canonical statement of the scale is the
+# `ui-work` skill, loaded before any `ui_*.py` edit. Weight and
 # colour carry the rest of the hierarchy now, not a fifth size — resist
 # adding one.
 TEXT_MICRO = "text-[10px]"  # data figures, chip/badge labels, link lines, captions
@@ -227,17 +227,19 @@ STATUS_STYLES = {
 # storage note, so the badge never disagrees with the text a user would see
 # on the recipe.
 #
-# "fridge"'s amber is the fifth meaning that colour carries in this UI (see
-# the collision note beside TRAINING_ACCENT below) — recorded, not resolved,
-# per phase 1 of `ui-redesign.md`.
+# **Both badges are neutral, and the glyph in the label is the distinction.**
+# "fridge" used to be amber and "freezer" cyan; the amber was the fifth
+# meaning that colour carried, and the cyan was a whole hue spent on a
+# two-member set that ⚡ and ❄️ already tell apart. Retiring both freed
+# cyan for `MACRO_TINTS["fiber_g"]`. CHANGE-QUEUE.md's amber/violet item.
 PREP_BADGE_STYLES = {
     "fridge": {
         "label": "⚡ Prepped on Sun",
-        "classes": "bg-amber-400/15 text-amber-200 ring-1 ring-inset ring-amber-300/30",
+        "classes": "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/30",
     },
     "freezer": {
         "label": "❄️ From Freezer",
-        "classes": "bg-cyan-400/15 text-cyan-200 ring-1 ring-inset ring-cyan-300/30",
+        "classes": "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/30",
     },
 }
 
@@ -271,7 +273,7 @@ SYNC_UNCHECKED = "unchecked"
 # thought too many.
 SYNC_DAY_STYLES = {
     SYNC_RECORDED: {
-        "classes": "bg-emerald-400/70",
+        "classes": "bg-slate-300",
         "phrase": "recorded",
         "count": "recorded",
     },
@@ -292,12 +294,13 @@ SYNC_DAY_STYLES = {
 # is a different question from what any one card below it reports. Same
 # vocabulary-in-the-theme-module split as `SYNC_RECORDED` above.
 #
-# There is deliberately **no colour here**. Amber already carries five
-# meanings in this app and violet two (see `LOCATION_ACCENT`'s collision note
-# and CHANGE-QUEUE.md's amber/violet collision item), and "a scheduled job
-# has stopped" is exactly the sixth amber meaning `.claude/rules/ui.md` names
-# as the specific thing not to add. The icon carries it instead — the same call
-# `TRAINING_TYPE_ICONS` and `SYNC_DAY_STYLES` already made.
+# There is deliberately **no colour here**. Amber is now reserved for one
+# thing — "this reading is staged, not what the week was generated for" —
+# and "a scheduled job has stopped" is not that. The icon carries it
+# instead, the same call `TRAINING_TYPE_ICONS` and `SYNC_DAY_STYLES` make.
+# This comment survived the amber/violet pass unchanged in substance: it was
+# right for the wrong reason before (five meanings) and right for the stated
+# reason now.
 SYNC_FRESH_NEVER = "never"
 SYNC_FRESH_CURRENT = "current"
 SYNC_FRESH_STALE = "stale"
@@ -360,34 +363,42 @@ def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
 # — neither of these is a slot status, and a location chip that borrowed
 # "cook" green would read as a fifth one.
 #
-# Amber for training is not a new choice: the telemetry header's per-day
-# workout marker is already an amber bolt, and the generation dialog's is the
-# same icon in the same tint, so a session reads the same wherever it appears.
-# Violet is new, and only ever means "location" — here.
+# **Training carries no hue of its own, and that is the change.** It used to
+# be amber everywhere — this chip, the telemetry bolt, the generation
+# dialog, the Daily View pills, the review dialog's uplift segment — which
+# was one of five things amber meant. `TRAINING_TYPE_ICONS` below already
+# distinguishes the *kind* of session by glyph, so the hue was saying only
+# "a session exists", which the glyph's presence says by itself.
 #
-# **Known collisions, recorded per phase 1 of `ui-redesign.md` and not
-# resolved here** — resolving either is a design decision for phase 3, made
-# when the surfaces using them are rebuilt anyway:
-# - Amber means five things: near-target (`BAND_COLOURS`), carbs
-#   (`MACRO_TINTS`), training (`TRAINING_ACCENT`, here), a target override
-#   (the telemetry marker in `ui_telemetry.py`), and fridge storage
-#   (`PREP_BADGE_STYLES`).
-# - Violet means two: fat (`MACRO_TINTS`) and location (`LOCATION_ACCENT`,
-#   here).
+# **The palette contract, after CHANGE-QUEUE.md's amber/violet pass.** Each
+# hue means at most two things, and the two never appear in one place:
+# - amber   — staged/overridden: a reading measured against a live preview
+#             rather than the plan, and `BAND_COLOURS`' near-target band.
+# - emerald — a cook slot (`STATUS_STYLES`), and on-target (`BAND_COLOURS`).
+# - sky     — a leftover slot, and protein.
+# - rose    — a failed slot, and off-target.
+# - violet  — fat (`MACRO_TINTS`), and location (`LOCATION_ACCENT`, here).
+# - orange  — carbs, and nothing else.
+# - cyan    — fibre, and nothing else.
+# - indigo  — the prep column, and nothing else.
+# - slate   — the neutral ground, not a meaning. Anything subtracted from a
+#             hue lands here and leans on a glyph or on weight instead.
+#
+# Adding a third meaning to any of the above is the specific thing not to do.
 LOCATION_ACCENT = "bg-violet-400/10 text-violet-200 ring-1 ring-inset ring-violet-300/25"
-TRAINING_ACCENT = "bg-amber-400/10 text-amber-200 ring-1 ring-inset ring-amber-300/25"
+TRAINING_ACCENT = "bg-slate-700/30 text-slate-300 ring-1 ring-inset ring-slate-600/30"
 # A scheduled rest day. Explicitly muted rather than left in TRAINING_ACCENT:
 # `apply_training_adjustments` skips a rest entry, so it expands no budget and
 # pins no meal, and an amber chip would promise calories it never bought.
 REST_ACCENT = "bg-slate-700/30 text-slate-400 ring-1 ring-inset ring-slate-600/30"
 
 # Workout type -> the icon that stands for it. **Icon, not colour, is what
-# distinguishes the types**: emerald, sky, slate, rose, indigo, amber, violet
-# and cyan already each mean something specific in this UI (slot status, prep
-# column, training, location, freezer), so seven new hues would collide with
-# one of them long before they read as a scale. Every session stays amber —
-# training is amber everywhere, from the telemetry header's bolt onward — and
-# the glyph carries the type.
+# distinguishes the types**: every hue in this module already means something
+# specific (see the palette contract above), so seven new ones would collide
+# with an existing meaning long before they read as a scale. Every session is
+# now neutral — training gave up amber in the amber/violet pass, precisely
+# because this map was already doing the distinguishing — and the glyph
+# carries both the type and the fact that there is a session at all.
 #
 # Keys are matched by `training_icon` exactly first, then as a **prefix**, the
 # same widening `WORKOUT_BREAKFAST_TYPES` uses: a future `gym_strength` gets
@@ -448,15 +459,18 @@ MACRO_LABELS = [
 # on the letter, not the number: the digits are what you compare between cards,
 # so they stay one weight and one colour down the whole column.
 #
-# `net_carbs_g`'s amber and `fat_g`'s violet are each one instance of a wider
-# collision — see the note beside `LOCATION_ACCENT`/`TRAINING_ACCENT` above.
+# Carbs moved off amber (to orange) and fibre off emerald (to cyan, freed by
+# `PREP_BADGE_STYLES`) in CHANGE-QUEUE.md's amber/violet pass: amber is now
+# staged-vs-stored and emerald is the cook status, and a macro figure is
+# neither. Violet keeps fat, its second meaning being location — the two
+# never share a surface. See the palette contract beside `LOCATION_ACCENT`.
 MACRO_TINTS = {
     "protein_g": "text-sky-300",
-    "net_carbs_g": "text-amber-300",
+    "net_carbs_g": "text-orange-300",
     "fat_g": "text-violet-300",
     # Only read by the detail dialog and the day-totals row — fibre is not on
     # the card strip this dict was originally written for.
-    "fiber_g": "text-emerald-300",
+    "fiber_g": "text-cyan-300",
 }
 
 # The same four macros again, labelled for the expanded recipe card rather
@@ -510,8 +524,10 @@ DEFAULT_UI_SETTINGS = {
 # `ui.linear_progress` can draw) and the same value has to serve as the
 # overshoot segment at reduced alpha.
 #
-# "near"'s amber is one instance of a wider collision — see the note beside
-# `LOCATION_ACCENT`/`TRAINING_ACCENT` above.
+# "near"'s amber is one of the two meanings amber is allowed to keep, the
+# other being a staged/overridden reading. They never co-occur: this one
+# only ever fills a telemetry bar, that one only ever marks a label or a
+# chip. See the palette contract beside `LOCATION_ACCENT`.
 BAND_COLOURS = {
     "on": "#34d399",  # within ±5% of target
     "near": "#fbbf24",  # ±5–15%: worth seeing, not worth fixing

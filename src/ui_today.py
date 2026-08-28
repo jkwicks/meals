@@ -11,7 +11,7 @@ its own here is a real decoupling rather than a "fix later" shortcut.
 
 **What the Week tab can't show, and this tab can.** Location and training are
 per-day facts, and the Week tab has seven columns to fit into a screen — the
-best it manages is an amber bolt in the telemetry header saying *that* a day
+best it manages is a bolt in the telemetry header saying *that* a day
 has a workout. Today is one day wide, so it has the room to say which
 session, at what time, for how many calories, and where the day is spent. So
 that context strip lives here rather than being pushed up into shared chrome:
@@ -134,7 +134,7 @@ def session_chip(session: TrainingView) -> None:
             if part
         )
         if detail:
-            ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-amber-300/70")
+            ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-slate-400")
 
 
 def training_row(context: DayContext) -> None:
@@ -148,7 +148,7 @@ def training_row(context: DayContext) -> None:
         # budget, which is the denominator of the bar directly above.
         if len(context.active_sessions) > 1:
             ui.label(f"+{context.total_burn_kcal:.0f} kcal on today's budget").classes(
-                f"{TEXT_MICRO} text-amber-300/70 italic"
+                f"{TEXT_MICRO} text-slate-400 italic"
             )
 
 
@@ -392,7 +392,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                             "gap-px h-[10px]"
                         ):
                             for icon in icons:
-                                ui.icon(icon).classes(f"{TEXT_MICRO} text-amber-300/85")
+                                ui.icon(icon).classes(f"{TEXT_MICRO} text-slate-300")
 
                     tip = ([f"{s.time} {s.label.title()}" for s in sessions])
                     if is_today:

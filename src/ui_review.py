@@ -161,7 +161,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 with reset:
                     ui.tooltip(f"Reset {day} to its calculated target")
 
-            # The shape: a filled base segment, an amber training-uplift
+            # The shape: a filled base segment, a lighter training-uplift
             # segment stacked on top of it, and — only on an overridden day —
             # a dashed ghost line at the config.json value, so an override
             # reads as "how far this day now sits from the file" rather than
@@ -174,7 +174,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 )
                 if uplift_calories > 0:
                     with ui.element("div").classes(
-                        "absolute inset-x-0 bg-amber-400/70"
+                        "absolute inset-x-0 bg-slate-300/70"
                     ).style(f"height: {uplift_pct:.1f}%; bottom: {base_pct:.1f}%"):
                         ui.tooltip(f"+{uplift_calories:.0f} kcal training uplift")
                 if day in state.target_overrides:

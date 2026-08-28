@@ -28,7 +28,9 @@ are read by `nutrition_engine.calculate_macro_targets`, which indexes
 `protein_g`/`net_carbs_g`/`fat_g`. A row keyed `protein` would store, sort and
 display perfectly and contribute nothing to a single target — the failure
 would surface weeks later as an adaptive loop that never adapts. The mapping
-happens once, in `_daily_summary_row`.
+happens once, in `_daily_summary_row`. `fiber_g` follows the same rule and
+the same spelling, and is captured for the same reason every other key here
+is: something already reads it (see `CRONOMETER_MACRO_COLUMNS`).
 
 **Exercise energy is discounted, never taken at face value.** Garmin reports
 an activity's *gross* calories, which include the BMR the body would have
@@ -144,11 +146,26 @@ GARMIN_TOKEN_DIR = os.path.expanduser(os.environ.get("GARMINTOKENS", "~/.garminc
 # `daily_actuals` rows use. Several spellings per macro because the export has
 # renamed columns across Cronometer releases and an older CSV must not parse
 # into a row of zeroes — first header present wins.
+#
+# **An entry here has to assert that something reads it.** The export also
+# carries sodium, potassium and a long tail of micronutrients, and capturing
+# one of those would reproduce exactly the shape v0.29.0 closed for Garmin's
+# sleep data: a field written on every sync, paying its fetch cost, read by
+# nothing. `fiber_g` earns its place because the telemetry header already
+# prints the *planned* figure and had no measured counterpart to sit beside
+# it — see `ui_state.fibre_view`.
+#
+# `fiber_g` is the repository's key, matching `Ingredient.fiber_g` and
+# `planner.NUTRIENT_KEYS`, never the CSV's `Fiber` — the same failure this
+# module's `protein_g` note already records. It rides on `NUTRIENT_KEYS` and
+# stays out of `MACRO_KEYS`, so `logged_intake_for`'s budget arithmetic and
+# every `calories ~= 4p + 4c + 9f` check are untouched by its arrival.
 CRONOMETER_MACRO_COLUMNS = {
     "calories": ("Energy (kcal)", "Energy (Calories)", "Calories"),
     "protein_g": ("Protein (g)", "Protein"),
     "net_carbs_g": ("Net Carbs (g)", "Net Carbs"),
     "fat_g": ("Fat (g)", "Fat"),
+    "fiber_g": ("Fiber (g)", "Fiber"),
 }
 
 # Same tolerance for the date column: the servings export calls it `Day`, the

@@ -71,7 +71,7 @@ def build_plan(ctx: UIContext, cards: CardHandles) -> PlanHandles:
         # `w-full min-w-0`: `.q-tab-panel` (this div's parent) is a Quasar flex
         # container, and a flex item's default `min-width: auto` refuses to
         # shrink below its content's natural width — the same trap
-        # `.claude/rules/ui.md` documents for `flex-nowrap` rows, one level
+        # the `ui-work` skill documents for `flex-nowrap` rows, one level
         # up. Without it this wrapper grows to the grid's full min-content
         # width regardless of viewport, so `week_grid_scroll()`'s own
         # `overflow-x: auto` below never actually overflows — a *different*,

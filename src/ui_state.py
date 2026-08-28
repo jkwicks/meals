@@ -1425,6 +1425,44 @@ class PlannerState:
             return {key: 0.0 for key in NUTRIENT_KEYS}
         return self.week_plan.day_slot_macros(day)
 
+    def logged_actuals_for(self, day: str) -> Optional[dict]:
+        """The `daily_actuals` row Cronometer wrote for `day`'s date, or None.
+
+        **Dated, not weekday-matched, which is why this is not
+        `planner.logged_intake_for`.** That function answers the same
+        question during *generation*, where a `SlotSpec` carries a weekday
+        name and nothing else — so "Thursday" in a week being planned ahead
+        is not the Thursday that was logged, and it refuses every day but
+        today rather than subtract a meal from a day it was never eaten on.
+        A loaded `WeekPlan` carries `week_start_date`, so here every column
+        of the grid has a real calendar date and any of them can be matched.
+
+        None for a plan generated before `week_start_date` existed
+        (`day_date_iso` says so) and for a date nothing has been logged
+        against — the same two answers, because a reader gets the planned
+        figure alone in both cases. Last row wins, matching
+        `logged_intake_for`: `_upsert_dated_entry` keeps one row per date, so
+        a second is only possible in a hand-edited file where the later line
+        is the edit.
+        """
+        iso = self.day_date_iso(day)
+        if iso is None:
+            return None
+        rows = [
+            row
+            for row in ((self.biometrics or {}).get("daily_actuals") or [])
+            if isinstance(row, dict) and str(row.get("date") or "")[:10] == iso
+        ]
+        return rows[-1] if rows else None
+
+    def fibre_for(self, day: str) -> "FibreView":
+        """What the day's recipes carry in fibre, beside what was logged."""
+        logged = (self.logged_actuals_for(day) or {}).get("fiber_g")
+        return fibre_view(
+            float(self.totals_for(day).get("fiber_g") or 0.0),
+            float(logged) if isinstance(logged, (int, float)) else None,
+        )
+
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""
         spec = self.spec
@@ -1962,6 +2000,70 @@ def sync_freshness(
         days_since=days_since,
         stale_after_days=stale_after_days,
         lagging=lagging,
+    )
+
+
+@dataclass
+class FibreView:
+    """A day's planned fibre, and — when Cronometer logged the day — what was
+    actually eaten beside it.
+
+    **Fibre is reported, never budgeted** (`planner.NUTRIENT_KEYS`), so the
+    telemetry header prints a bare `FIB 32g` where every other figure in that
+    row carries `actual/target`: there is no fibre target, and `32/xx` would
+    invent a goal the planner never aimed at. That is still true here and is
+    what `logged` is *not* — a logged figure is not a goal, it is the same
+    quantity measured a second way, so the two sit side by side rather than
+    over a divider.
+
+    This is the only macro the app has one half of that pair and not the
+    other for: calories, protein, carbs and fat all have a target to be
+    measured against, and until `CRONOMETER_MACRO_COLUMNS` learned `fiber_g`
+    fibre had neither. `delta` is signed against the plan (`logged - planned`,
+    so negative means the day came in short of what was cooked for it) and is
+    None whenever `logged` is.
+    """
+
+    planned: float
+    logged: Optional[float]
+    delta: Optional[float]
+    label: str
+    logged_label: str
+    detail: str
+
+
+def fibre_view(planned: float, logged: Optional[float]) -> FibreView:
+    """`FibreView` for one day. Pure — the caller supplies both figures.
+
+    `logged` is None for every day nothing has been synced against, which is
+    the normal state for the whole of a week planned ahead: only days that
+    have actually happened can have been logged. Those get the planned figure
+    alone, exactly as the header printed it before this existed.
+    """
+    label = f"FIB {planned:.0f}g"
+    if logged is None:
+        return FibreView(
+            planned=planned,
+            logged=None,
+            delta=None,
+            label=label,
+            logged_label="",
+            detail=f"fibre: {planned:.0f}g planned (tracked, no target)",
+        )
+    delta = logged - planned
+    return FibreView(
+        planned=planned,
+        logged=logged,
+        delta=delta,
+        label=label,
+        logged_label=f"logged {logged:.0f}g",
+        # Named as a comparison against the plan, never against a target —
+        # the wording is the whole guard against this reading as a goal that
+        # was missed.
+        detail=(
+            f"fibre: {planned:.0f}g planned, {logged:.0f}g logged "
+            f"({delta:+.0f}g vs plan) — still no target either way"
+        ),
     )
 
 

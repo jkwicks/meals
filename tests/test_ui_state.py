@@ -1857,3 +1857,93 @@ class TestAdaptiveTdeeView(unittest.TestCase):
             self.assertEqual(view.state, "no_weigh_ins")
             self.assertTrue(view.headline)
             self.assertTrue(view.detail)
+
+
+class TestFibreAgainstWhatWasLogged(unittest.TestCase):
+    """Planned fibre beside what Cronometer logged for the same date.
+
+    CHANGE-QUEUE.md's fibre item. Fibre is the one nutrient the app holds a
+    planned figure for and — until `CRONOMETER_MACRO_COLUMNS` learned
+    `fiber_g` — no measured counterpart to, which is also the one nutrient
+    with no target to divide either figure by. So the pair sits side by side
+    and never over a divider: `32/24` would read as a goal that was missed,
+    and there is no goal.
+    """
+
+    @staticmethod
+    def state_with_fibre(fibre_g=64.0, **kw):
+        """A week whose Monday dinner carries `fibre_g` across its servings."""
+        state = make_state(**kw)
+        event = state.week_plan.cook_events[0]
+        recipe = event.recipe.model_copy(
+            update={
+                "ingredients": [
+                    event.recipe.ingredients[0].model_copy(update={"fiber_g": fibre_g})
+                ]
+            }
+        )
+        state.week_plan = state.week_plan.model_copy(
+            update={"cook_events": [event.model_copy(update={"recipe": recipe})]}
+        )
+        return state
+
+    def test_the_planned_figure_alone_when_nothing_was_logged(self):
+        view = ui_state.fibre_view(32.0, None)
+        self.assertEqual(view.label, "FIB 32g")
+        self.assertEqual(view.logged_label, "")
+        self.assertIsNone(view.delta)
+        self.assertIn("no target", view.detail)
+
+    def test_a_logged_day_sits_beside_the_plan_never_over_it(self):
+        view = ui_state.fibre_view(32.0, 24.0)
+        self.assertEqual(view.label, "FIB 32g")
+        self.assertEqual(view.logged_label, "logged 24g")
+        self.assertEqual(view.delta, -8.0)
+        # The guard the whole item turns on: no denominator anywhere, because
+        # a logged figure is a second measurement, not a goal.
+        self.assertNotIn("/", view.label + view.logged_label)
+        self.assertIn("vs plan", view.detail)
+
+    def test_the_planned_half_is_the_plans_own_fibre(self):
+        state = self.state_with_fibre()
+        view = state.fibre_for("Monday")
+        self.assertEqual(view.planned, state.totals_for("Monday")["fiber_g"])
+        self.assertGreater(view.planned, 0.0)
+        self.assertIsNone(view.logged)
+
+    def test_a_log_is_matched_by_date_not_by_weekday(self):
+        """`planner.logged_intake_for` refuses every day but today because a
+        `SlotSpec` carries a weekday name and nothing else. A loaded plan
+        carries `week_start_date`, so here the column has a real date."""
+        state = self.state_with_fibre(
+            biometrics={
+                "daily_actuals": [
+                    {"date": "2026-08-17", "calories": 1900, "fiber_g": 24.0},
+                    {"date": "2026-08-19", "calories": 2000, "fiber_g": 41.0},
+                ]
+            }
+        )
+        self.assertEqual(state.fibre_for("Monday").logged, 24.0)
+        self.assertEqual(state.fibre_for("Wednesday").logged, 41.0)
+        self.assertIsNone(state.fibre_for("Tuesday").logged)
+
+    def test_a_row_synced_before_fibre_was_captured_reads_as_no_log(self):
+        """Every `daily_actuals` row written before this item shipped has no
+        `fiber_g`, and must show the planned figure alone rather than 0g
+        logged — which would claim a day of no fibre at all."""
+        state = self.state_with_fibre(
+            biometrics={"daily_actuals": [{"date": "2026-08-17", "calories": 1900}]}
+        )
+        view = state.fibre_for("Monday")
+        self.assertIsNone(view.logged)
+        self.assertEqual(view.logged_label, "")
+
+    def test_a_plan_with_no_start_date_cannot_be_matched(self):
+        """Same pre-migration tolerance `day_date_iso` already draws: without
+        a `week_start_date` there is no date to match a log against, so the
+        planned figure stands alone."""
+        state = self.state_with_fibre(
+            biometrics={"daily_actuals": [{"date": "2026-08-17", "fiber_g": 24.0}]}
+        )
+        state.week_plan = state.week_plan.model_copy(update={"week_start_date": None})
+        self.assertIsNone(state.fibre_for("Monday").logged)

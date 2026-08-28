@@ -320,7 +320,7 @@ async def planner_page() -> None:
     # "training": `ui_review.day_target_row`'s `sync()` deliberately refreshes
     # only "telemetry" on a keystroke (refreshing "targets" would rebuild the
     # very section that owns the focused input — the focus-theft trap
-    # `.claude/rules/ui.md` documents). The bar isn't part of that section,
+    # the `ui-work` skill documents). The bar isn't part of that section,
     # so it can safely ride along without reintroducing the trap.
     refreshables.on("telemetry", telemetry.telemetry, staged_bar.bar)
     # `today_view` joins both of these because it reads the same live numbers
