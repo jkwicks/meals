@@ -10,50 +10,65 @@ this?" but not "what should I start?", because neither file ranks against
 the other and neither holds the defects recorded in CLAUDE.md as they were
 found. This file ranks everything in one list. The other two stay the place
 where an item’s full reasoning lives; entries below point at them rather
-than restating them.
+than restating them. `ui-redesign.md` now contributes exactly one open entry
+(finding 3, blocked on data); its last unfiled thread shipped in v0.33.0.
 
 **Provenance is stated per item**, because several of the entries below were
 never filed anywhere — they were recorded in CLAUDE.md prose at the moment a
 phase decided not to fix them, which is a good habit for keeping the *why*
 and a bad one for ever getting back to them. The first item this queue ranked
-was one of those, and is now closed.
+was one of those, and is now closed; so is the phase 4 aside that led it
+until v0.33.0, which was recorded in prose in two documents and filed in
+neither.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.32.0**. Five releases have now closed whatever this queue ranked first
+**v0.33.0**. Six releases have now closed whatever this queue ranked first
 at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
 Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
 and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
 nothing ever ran, **v0.32.0** the amber/violet collision *and* the fibre
-readout with no measured half. Three of the source docs' claims turned out
-to be stale and are corrected in the entries: `ISSUES.md` item 9 is fixed,
-`future-ideas.md`'s 5c biometric counts are out of date, and
-`ui-redesign.md`'s phase 4 aside is still unfiled.
+readout with no measured half, **v0.33.0** the training schedule proposed
+from Garmin activity. All three of the source docs' stale claims are now
+settled: `ISSUES.md` item 9 was already fixed, `ui-redesign.md`'s phase 4
+aside is filed *and* shipped, and only `future-ideas.md`'s out-of-date 5c
+biometric counts remain — corrected in that entry.
 
-**Two of the last two releases closed two items each**, which is worth
-noting because the top of this queue has now moved by more than one place
-twice running. v0.31.0: the `/api/recipes` duplication was an XS with no
-decision in it, and the sync item's single blocking decision — which of
-three shapes — was answered by taking the one this file already recommended,
-a launchd job outside the app process. v0.32.0: the amber/violet pass and
-the fibre item were independent, and shipped together only because the
-palette work had to touch every `ui_*` module anyway and the fibre readout
-lands in one of them.
+**`ui-redesign.md`'s last *unfiled* thread is closed.** v0.33.0 shipped the
+phase 4 aside that called proposing the schedule from Garmin activity "a
+loose thread ... worth filing there rather than leaving it here" and was
+then never filed anywhere. What that document still contributes is one
+properly-filed entry — finding 3, the trend charts, which waits on data and
+nothing else. Everything now at the top of this queue comes from
+`future-ideas.md`, and the top three are all blocked on a product decision
+rather than on work.
 
-**Both of the items found by this queue rather than inherited from a source
-doc are now closed** — the adaptive TDEE that never fired (v0.30.0) and the
-fibre readout with no measured half (v0.32.0), twins found the same way on
-the same day: by asking what the Garmin and Cronometer syncs actually feed,
-and checking the answer against the running engine and the live
-`biometrics.json` rather than against any document's account of itself.
-What leads the queue now is inherited again — `ui-redesign.md`'s phase 4
-aside, which that phase said should be filed and never was.
+**A third fetched-and-discarded signal turned out to be the enabling
+half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
+away; v0.32.0 found Cronometer's fibre column uncaptured beside a planned
+figure with no measured counterpart; v0.33.0 found `fetch_cardio_activities`
+in exactly the first shape — fetched on every sync, printed, stored nowhere
+— and it was the missing input for the schedule proposal, not a separate
+tidy-up. The pattern is worth stating because it has now paid three times:
+**ask what each sync actually feeds, and check the answer against the
+running code rather than against any document.**
+
+**Two of the last three releases closed two items each**, which is worth
+noting because the top of this queue moved by more than one place twice
+running. v0.31.0: the `/api/recipes` duplication was an XS with no decision
+in it, and the sync item's single blocking decision — which of three shapes
+— was answered by taking the one this file already recommended, a launchd
+job outside the app process. v0.32.0: the amber/violet pass and the fibre
+item were independent, and shipped together only because the palette work
+had to touch every `ui_*` module anyway and the fibre readout lands in one
+of them. v0.33.0 closed one, and it was an L.
 
 **This file's own cross-references are by name, not by number**, the same
 rule CLAUDE.md states for citing it from anywhere else. They had gone stale
-by one after the previous renumber — "item 8" pointing at what had become
+by one after an earlier renumber — "item 8" pointing at what had become
 item 7, in three places — which is the argument for the rule rather than
-against it: a number here has a shelf life of exactly one release.
+against it: a number here has a shelf life of exactly one release, and this
+renumber (2–10 → 1–9) is the fourth.
 
 ## Size scale
 
@@ -69,58 +84,22 @@ against it: a number here has a shelf life of exactly one release.
 
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
-| 1 | [Propose the training schedule from Garmin activity history](#1--propose-the-training-schedule-from-garmin-activity-history) | Feature | L | one decision |
-| 2 | [Rejection list has no decay](#2--rejection-list-has-no-decay) | Feature | M | one decision |
-| 3 | [Morning readiness check-in](#3--morning-readiness-check-in) | Feature | M | one decision |
-| 4 | [Adherence and workout-completion tracking (5b)](#4--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
-| 5 | [Pantry inventory ledger with real quantities](#5--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 6 | [Trend charts / the Insights destination (5c)](#6--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 7 | [Write and generation routes on the API](#7--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 8 | [OpenAPI schema is off, so there are no generated types](#8--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 9 | [No auth on `/api`](#9--no-auth-on-api) | Feature | S | only if exposed |
-| 10 | [Food waste tracking](#10--food-waste-tracking) | Feature | XL | not scoped |
+| 1 | [Rejection list has no decay](#1--rejection-list-has-no-decay) | Feature | M | one decision |
+| 2 | [Morning readiness check-in](#2--morning-readiness-check-in) | Feature | M | one decision |
+| 3 | [Adherence and workout-completion tracking (5b)](#3--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
+| 4 | [Pantry inventory ledger with real quantities](#4--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
+| 5 | [Trend charts / the Insights destination (5c)](#5--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
+| 6 | [Write and generation routes on the API](#6--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 7 | [OpenAPI schema is off, so there are no generated types](#7--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 8 | [No auth on `/api`](#8--no-auth-on-api) | Feature | S | only if exposed |
+| 9 | [Food waste tracking](#9--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed), each XS–M
 and none urgent.
 
 ---
 
-## 1 — Propose the training schedule from Garmin activity history
-
-**Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
-`ui-redesign.md` phase 4 aside — *"a loose thread in an otherwise finished
-phase. Worth filing there rather than leaving it here"* — and it was never
-filed. This entry is that filing.
-
-`config/schedule.json`'s `training_schedule` is hand-declared and hand-edited
-in `ui_review.py`. `GarminSyncService` already syncs the activity data a
-recurring-pattern detector would need. Phase 4 derived the *burn* for a
-session (`nutrition_engine.estimate_session_burn_kcal`, MET-based) and
-explicitly stopped short of deriving the *sessions*: "a real, separate
-feature (a confirmation UI over inferred sessions)."
-
-**The confirmation UI is the feature, not the detector.** Inferring "you
-train Monday and Saturday mornings" from a few weeks of activities is
-straightforward; what makes this L rather than M is that the schedule is a
-planning *input* — `apply_training_adjustments` reads it to expand a day's
-calorie budget and pin a post-workout meal — so a detector that wrote to it
-directly would silently move targets based on a guess. Every inferred session
-has to be proposed and accepted, which means a diff surface (proposed vs.
-declared), an accept/reject action, and a rule for what happens to a session
-the user declared that Garmin never sees.
-
-**Precedent to follow:** the derived burn one. A derived default the user can
-overrule, applied on an explicit click, never a live recompute — and
-critically, *the same field*, so nothing downstream can tell a derived
-session from a typed one. `estimate_burn`'s calculator-icon button is the
-interaction to copy.
-
-**Dependency worth noting:** it wants the same Garmin plumbing v0.29.0 built for readiness, and
-naturally follows it.
-
----
-
-## 2 — Rejection list has no decay
+## 1 — Rejection list has no decay
 
 **Type:** Feature (product decision) &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp;
 **Source:** `future-ideas.md`, "Rejection-list decay"
@@ -154,7 +133,7 @@ the filtering or weighting lands in `build_rejection_rule` (a pure function of
 
 ---
 
-## 3 — Morning readiness check-in
+## 2 — Morning readiness check-in
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** one
 decision &nbsp;·&nbsp; **Source:** `ISSUES.md` item 10 · `future-ideas.md` 5d
@@ -185,15 +164,24 @@ argue about; the doc does not settle it.
 
 ---
 
-## 4 — Adherence and workout-completion tracking (5b)
+## 3 — Adherence and workout-completion tracking (5b)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md` 5b
 
-Nothing observes whether a planned meal was eaten, skipped or swapped, or
-whether a declared training session actually happened. The nearest thing
-today is the swap-with-favourite flow, which changes the *plan* rather than
-logging a deviation from it.
+Nothing observes whether a planned meal was eaten, skipped or swapped. The
+nearest thing today is the swap-with-favourite flow, which changes the *plan*
+rather than logging a deviation from it.
+
+**The workout half of this shrank in v0.33.0 and should be re-scoped before
+it is started.** `activity_log` now records what Garmin actually did on each
+date, and `propose_training_schedule` already matches those rows against the
+declared week — which is the whole of "did a declared session happen" for
+any session the watch records. What is genuinely left is the manual mark for
+a session it *didn't* record (a lift on a day the watch was flat, a class
+with no device), and a per-date read of the match rather than the four-week
+aggregate the proposal takes. That is smaller than the `data/workout_log.json`
+schema below, and may not need it at all.
 
 **Two maintainer decisions, unchanged since the doc was written:**
 
@@ -203,9 +191,12 @@ logging a deviation from it.
    `scheduled`, `completed`, `source`). Neither folds into `daily_actuals` —
    a manual mark and a Cronometer sync writing the same key would silently
    overwrite each other. Same reasoning as the fibre capture v0.32.0 shipped
-   (see "Verified closed") and `readiness_log` before it; this codebase has
-   now made that call three times, which is a good sign it is the right
-   default rather than a coincidence.
+   (see "Verified closed"), `readiness_log` before it and `activity_log`
+   after it; this codebase has now made that call four times, which is a
+   good sign it is the right default rather than a coincidence. Note the
+   fourth also settled how a *many-per-date* list is written — replace the
+   date, don't merge the row — which is the shape an adherence log keyed by
+   `date`+`slot_id` will want.
 2. **What "click a card" means.** A Today-tab click opens recipe detail
    today. "Mark eaten" needs its own affordance — a checkbox, a swipe, a
    second target on the same card — and that changes the interaction model of
@@ -217,13 +208,13 @@ logging a deviation from it.
 upsert-by-`date`+`slot_id` shape as `_upsert_dated_entry`) before any UI. The
 write path is the design question; the read path is not.
 
-**It gates part of [Trend charts / the Insights destination](#6--trend-charts--the-insights-destination-5c)**
+**It gates part of [Trend charts / the Insights destination](#5--trend-charts--the-insights-destination-5c)**
 — two of 5c's five proposed charts (7-day adherence, gym completion) have no
 data source without this.
 
 ---
 
-## 5 — Pantry inventory ledger with real quantities
+## 4 — Pantry inventory ledger with real quantities
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md`, "Pantry photo → an inventory ledger"
@@ -261,7 +252,7 @@ behaviour and is what permits four meal types to claim the same tin.
 
 ---
 
-## 6 — Trend charts / the Insights destination (5c)
+## 5 — Trend charts / the Insights destination (5c)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Blocked by:**
 runtime data &nbsp;·&nbsp; **Source:** `future-ideas.md` 5c ·
@@ -295,13 +286,16 @@ against 5 points is thin; a 30-day one is misleading. Suggest revisiting once
 in both lists.
 
 **Two of the five charts additionally depend on
-[Adherence and workout-completion tracking](#4--adherence-and-workout-completion-tracking-5b)**
+[Adherence and workout-completion tracking](#3--adherence-and-workout-completion-tracking-5b)**
 (adherence, gym completion) and should be dropped from a first version rather
-than waiting for it.
+than waiting for it. The gym-completion one is now half-served without it:
+v0.33.0's `activity_log` records what the watch saw per date, so "sessions
+recorded against sessions declared" is chartable from stored data today, and
+only a session the watch missed needs the manual mark that item is about.
 
 ---
 
-## 7 — Write and generation routes on the API
+## 6 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -323,7 +317,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 8 — OpenAPI schema is off, so there are no generated types
+## 7 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -342,7 +336,7 @@ against the NiceGUI app object.
 
 ---
 
-## 9 — No auth on `/api`
+## 8 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -359,7 +353,7 @@ not before.
 
 ---
 
-## 10 — Food waste tracking
+## 9 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
@@ -367,8 +361,8 @@ not before.
 Flagged in the original architecture review as having no data source
 whatsoever. It would need a new logging entry point of its own — a separate
 product decision from both
-[Adherence and workout-completion tracking](#4--adherence-and-workout-completion-tracking-5b)
-and [Trend charts](#6--trend-charts--the-insights-destination-5c), and the
+[Adherence and workout-completion tracking](#3--adherence-and-workout-completion-tracking-5b)
+and [Trend charts](#5--trend-charts--the-insights-destination-5c), and the
 only item in this queue with no proposed schema, no proposed surface and no
 proposed interaction.
 
@@ -407,6 +401,7 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ISSUES.md` 4 | No swap/regenerate for batch cooking | Phase 6c — `prep_candidate_card`'s icon row |
 | `ui-redesign.md` phase 1, recorded rather than resolved | Amber carried five documented meanings (eight in fact) and violet two | Shipped in **v0.32.0** — role separation: training, fridge/freezer, the favourite star, buy-late and the prep note all gave up their hue to a glyph already doing the work; carbs → orange, fibre → cyan, and the telemetry marker's emerald training case folded into amber. No hue in `ui_theme.py` now carries more than two meanings; the `ui-work` skill's collisions section is rewritten as "The palette". |
 | not previously filed — raised 2026-08-28 | Cronometer logged no fibre, so the fibre readout had no measured half | Shipped in **v0.32.0** — `CRONOMETER_MACRO_COLUMNS` gains `fiber_g` (`Fiber (g)`/`Fiber`), keyed the repository's way rather than the CSV's. Capture and readout landed together, per this entry's own "file both or neither": capture alone reproduces the shape v0.29.0 closed for Garmin sleep. `ui_state.fibre_view(planned, logged)` is the pure view model holding the rule and both formatted halves, `PlannerState.fibre_for(day)` matches a `daily_actuals` row by the day's **calendar date** — not by weekday, which is why this is not `planner.logged_intake_for` — and `ui_telemetry.py` prints the logged figure as a second slate label beside the cyan planned one. **Side by side, never over a divider**: `32/24` in a row where every other entry is `actual/target` reads as a goal that was missed, and there is no fibre goal. `MACRO_KEYS` untouched, no budget change anywhere, `_prune`/`has_measurements` unchanged so an absent column is omitted rather than zeroed and every row synced before this reads as "no log". The appendix's **No daily fibre target** is deliberately still open and is a different, larger change |
+| `ui-redesign.md` phase 4 aside, never filed until this queue filed it | The training schedule was hand-declared while Garmin recorded what actually happened | Shipped in **v0.33.0** — `activity_log` is a fourth `biometrics.json` section (`GarminSyncService.fetch_activities` → `PlanRepository.save_activity_entries`), and `nutrition_engine.propose_training_schedule` diffs four weeks of it against the declared week. **The detector was the easy half; the confirmation is the feature**: nothing writes without a click, and the precedent copied is `estimate_session_burn_kcal`'s calculator button — a derived default, into the same field, applied explicitly. **The blocking decision — a declared session Garmin never sees — is answered symmetrically**: proposed for removal, never removed, behind two guards (the weekday must have come round at least twice inside the *observed* span, and `MIN_ACTIVE_DAYS_FOR_DROP` asks whether the watch is worn at all before its silence is evidence); a weekday that recorded *something* is never dropped, since a Sunday ride that became a Sunday walk is a day you plainly train on. **What counts as observed was the real difficulty** — `activity_log` holds only days that recorded something, the same ambiguity `sync_checkpoints` closed for weigh-ins, so the span runs from the first recorded activity to the later of the last one and Garmin's checkpoint, capped at today, and under-claiming is the safe direction. Storage is replace-per-date, not upsert: this is the one section with several rows per day. Only mapped, timed rows are stored — `GARMIN_SESSION_TYPES` has no catch-all and `startTimeLocal` is read rather than `startTimeGMT` — because a proposal is a sentence the user is asked to agree to. `net_calories` finally has a reader: it is the proposed burn, with the MET formula only as fallback. Accepting persists `training_schedule` through `save_config_keys`, making that the second UI control that writes to `config/` on `set_target_mode`'s reasoning, and applies the change to the file's list and the staged list separately so an accept never writes out someone else's half-typed session. Additions diff against the staged schedule, drops against the file's. `ui_state.training_proposals_view` carries the wording over three no-proposal states, on the `adaptive_tdee_view` precedent — "your week already matches" is the good answer and the one most likely to be misread as broken |
 | `ISSUES.md` 5 | Can't open a batch-cooking recipe | Phase 6c — body opens the shared `open_detail` |
 | `ISSUES.md` 6 | Rename "Today" to "Daily View" | Shipped post-phase-3 (rail label only; function names unchanged) |
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |
@@ -421,4 +416,6 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 
 `ISSUES.md` 8's first bullet is closed (v0.31.0) and 10 is the
 morning-readiness item; 11 is closed (v0.29.0).
-Nothing else in that register is open.
+Nothing else in that register is open. `ui-redesign.md` has one entry left
+in the queue above — finding 3, the trend charts — and no unfiled asides:
+v0.33.0 shipped the last of those.
