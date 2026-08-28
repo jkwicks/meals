@@ -269,7 +269,14 @@
       1.6
     ],
     "protein_avoid_window": 6,
-    "protein_lookback_entries": 3
+    "protein_lookback_entries": 3,
+    "rejection_decay_days": {
+      "dont_fancy_it": 90,
+      "had_it_recently": 21,
+      "too_much_prep": 60,
+      "wrong_for_slot": 180
+    },
+    "rejection_reason_window_days": 180
   },
   "regional": {
     "country": "AU",

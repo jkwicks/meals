@@ -2052,14 +2052,70 @@ recipe, read before the swap mutates state) and calls it the same way
 `regenerate_meal` does. The prompt's own copy changed from "Why regenerate
 …" to "Why replace …" to read correctly from both call sites.
 
-**No decay, deliberately left open.** Every recorded rejection is sent,
-unbounded, forever — the phase that added this said explicitly not to
-settle the decay question, only to raise it: a dislike honoured forever
-would starve the rotation the same way an "unused in the last N" rule
-starves the tail of a list (see `planner.next_choice`'s note on why it's
-strict LRU instead), but capping to "most recent N" would just be that same
-decay policy picked silently. CHANGE-QUEUE.md's rejection-decay item is
-where that question is now ranked and still open.
+#### The decay: two signals, two windows
+
+Shipped unbounded on purpose — the phase that added rejection capture said
+explicitly not to settle the decay question, only to raise it, because
+capping to "most recent N" would have been that same policy picked silently.
+It is now settled, and the answer is that **there were two questions, because
+the rule was always carrying two signals**:
+
+| | what it is | window |
+|---|---|---|
+| the **dish list** | a veto on one recipe | `planning_rules.rejection_decay_days`, per reason (21–180 days) |
+| the **reason tally** | a standing statement about how you want to eat | `planning_rules.rejection_reason_window_days` (180) |
+
+**Per reason rather than one number**, which is the same argument
+`favorite_reuse_days` already makes for its own split — the four reasons are
+not the same kind of statement. "Had it recently" is self-resolving (the dish
+stops having been had recently whether or not anything honours the entry) and
+expires soonest at 21 days; "wrong for that meal" is structural — a curry is
+never breakfast — and barely decays at 180. A dislike honoured forever would
+starve the rotation the same way an "unused in the last N" rule starves the
+tail of a list (see `planner.next_choice` on why it is strict LRU instead),
+which is the failure this bounds.
+
+**The tally's window is deliberately the longest of the four, so it outlives
+the names it was counted from.** A dish name should expire; a run of "too much
+prep" answers is the more valuable half and should not. `active_rejections`
+and `recurring_rejection_reasons` are the two halves, both pure, both reading
+the same list.
+
+**The tally is now counted in Python, and that is a consequence of the split
+rather than a flourish.** The old rule handed the model the whole list and
+asked it to notice a repeated reason itself. Once the halves have different
+windows the model only ever sees the shorter one, so it cannot do that
+counting — it would be weighing a subset while being told to weigh the whole.
+`REJECTION_REASON_GUIDANCE` is what it is told instead: reason -> the standing
+instruction a *run* of that answer implies, split from
+`REJECTION_REASON_LABELS`, which says what one entry was about.
+`REJECTION_REASON_SIGNAL_MIN` (3) is what counts as a run — two is a pair of
+unrelated bad nights — and is a module constant rather than a third config
+key, because the two windows are the policy and the threshold is arithmetic
+in service of them.
+
+Three things about it are decisions:
+
+- **No storage change, and none was needed.** Every entry already carried its
+  `date`, so the whole policy lands in `build_rejection_rule` and the two pure
+  functions beside it. `data/rejections.json` is untouched and unmigrated.
+- **An entry that cannot be dated, and a reason with no window, are both
+  kept.** Neither is reachable from the app — `RejectionEntry.reason` is a
+  `Literal` and the UI stamps `date` from the clock — so both mean a
+  hand-edited file, and discarding a preference the user actually stated
+  because the file knew a word the config did not is the worse failure. An
+  unrecognised reason is still kept out of the *tally*, since
+  `REJECTION_REASON_GUIDANCE` has no standing phrase it could be told to
+  follow.
+- **`build_rejection_rule` takes `today`**, defaulting to the clock — the same
+  seam `select_favorite_assignments` uses, and the reason the tests can age an
+  entry without touching the clock. The rejection tests previously carried
+  fixed date literals against a live clock and would have started failing
+  about six weeks later; see "Tests" for the standing rule that caught it.
+
+Once nothing survives either window the rule emits `""` again, so a list that
+has fully aged off produces a byte-identical prompt to before the feature
+existed — the same convention every rule in `build_generation_rules` follows.
 
 ### Biometric sync — Garmin Connect and Cronometer
 
@@ -2446,7 +2502,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
-| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule, and `rejections.json`'s storage round trip |
+| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |

@@ -26,6 +26,7 @@ docstring for why.
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -220,6 +221,27 @@ class TestIsSeafoodMeal(unittest.TestCase):
         self.assertFalse(planner.is_seafood_meal(recipe()))
 
 
+# A fixed "today" every rejection test measures from. The dates below are
+# ages in days relative to it, never literals: `build_rejection_rule` now
+# decides what to say from how old an entry is, so a fixture written as
+# "2026-08-20" would pass in August and start failing in October with no code
+# touched — the exact clock dependency CLAUDE.md's "Tests" section records
+# having been caught once already. `today` is the seam that makes the
+# assertion independent of when it runs.
+TODAY = date(2026, 8, 28)
+
+
+def rejection(name, reason, days_ago, slot_id="Monday:dinner"):
+    when = TODAY - timedelta(days=days_ago)
+    return {
+        "date": when.isoformat(),
+        "slot_id": slot_id,
+        "recipe_name": name,
+        "reason": reason,
+        "marked_at": f"{when.isoformat()}T18:00:00+00:00",
+    }
+
+
 class TestBuildRejectionRule(unittest.TestCase):
     """`build_rejection_rule` — the soft-guidance line rejection capture
     contributes to `build_generation_rules`, "beside banned_ingredients and
@@ -234,35 +256,21 @@ class TestBuildRejectionRule(unittest.TestCase):
     def test_one_rejection_names_the_dish_and_reason(self):
         config = {
             "rejected_preferences": [
-                {
-                    "date": "2026-08-20",
-                    "slot_id": "Monday:dinner",
-                    "recipe_name": "Slow Cooker Beef Cheeks",
-                    "reason": "too_much_prep",
-                    "marked_at": "2026-08-20T18:00:00+00:00",
-                }
+                rejection("Slow Cooker Beef Cheeks", "too_much_prep", days_ago=8)
             ]
         }
-        rule = planner.build_rejection_rule(config)
+        rule = planner.build_rejection_rule(config, today=TODAY)
         self.assertIn("Slow Cooker Beef Cheeks", rule)
         self.assertIn("too much prep", rule)
 
     def test_several_rejections_all_appear(self):
         config = {
             "rejected_preferences": [
-                {
-                    "date": "2026-08-20", "slot_id": "Monday:dinner",
-                    "recipe_name": "Dish A", "reason": "too_much_prep",
-                    "marked_at": "2026-08-20T18:00:00+00:00",
-                },
-                {
-                    "date": "2026-08-21", "slot_id": "Tuesday:lunch",
-                    "recipe_name": "Dish B", "reason": "had_it_recently",
-                    "marked_at": "2026-08-21T13:00:00+00:00",
-                },
+                rejection("Dish A", "too_much_prep", days_ago=8),
+                rejection("Dish B", "had_it_recently", days_ago=7, slot_id="Tuesday:lunch"),
             ]
         }
-        rule = planner.build_rejection_rule(config)
+        rule = planner.build_rejection_rule(config, today=TODAY)
         self.assertIn("Dish A", rule)
         self.assertIn("Dish B", rule)
         self.assertIn("had it recently", rule)
@@ -276,22 +284,153 @@ class TestBuildRejectionRule(unittest.TestCase):
             set(planner.REJECTION_REASON_LABELS),
         )
 
+    def test_every_reason_has_a_decay_window_and_a_standing_phrase(self):
+        # Three dicts keyed by the same Literal, and a reason missing from any
+        # of them fails silently rather than loudly: an absent decay window
+        # means "never expires" and an absent guidance phrase drops the entry
+        # from the tally altogether.
+        reasons = set(planner.RejectionEntry.model_fields["reason"].annotation.__args__)
+        self.assertEqual(reasons, set(planner.REJECTION_REASON_GUIDANCE))
+        self.assertEqual(
+            reasons, set(planner.DEFAULT_PLANNING_RULES["rejection_decay_days"])
+        )
+
     def test_placed_beside_diet_style_in_the_assembled_rules(self):
         config = {
             "dietary_rules": {"allowed_nova_groups": [1, 2, 3], "banned_ingredients": []},
             "diet_styles": {},
             "rejected_preferences": [
-                {
-                    "date": "2026-08-20", "slot_id": "Monday:dinner",
-                    "recipe_name": "Dish A", "reason": "wrong_for_slot",
-                    "marked_at": "2026-08-20T18:00:00+00:00",
-                },
+                rejection("Dish A", "wrong_for_slot", days_ago=8),
             ],
         }
         rules = planner.build_generation_rules(
             config, days=WEEKDAYS, style_rule="", variety_rule="", budget_rule="",
         )
         self.assertIn("Dish A", rules)
+
+
+class TestRejectionDecay(unittest.TestCase):
+    """The decay policy: a dish name expires on its own reason's window, and
+    the recurring-reason hint counts over a longer one.
+
+    CHANGE-QUEUE.md's "Rejection list has no decay" — `build_rejection_rule`
+    shipped sending every entry forever, deliberately, so the policy could be
+    chosen rather than defaulted into. Honouring a dislike forever eventually
+    starves the rotation, the same failure `next_choice` documents from the
+    other direction.
+    """
+
+    def config(self, *entries):
+        return {"rejected_preferences": list(entries)}
+
+    def test_a_dish_past_its_window_stops_being_named(self):
+        fresh = self.config(rejection("Dish A", "too_much_prep", days_ago=10))
+        stale = self.config(rejection("Dish A", "too_much_prep", days_ago=200))
+        self.assertIn("Dish A", planner.build_rejection_rule(fresh, today=TODAY))
+        self.assertNotIn("Dish A", planner.build_rejection_rule(stale, today=TODAY))
+
+    def test_the_four_reasons_expire_at_different_rates(self):
+        # The whole argument for a per-reason window rather than one number:
+        # at 30 days "had it recently" (21) has expired and the other three
+        # have not. Same age, four entries, two answers.
+        age = 30
+        rule = planner.build_rejection_rule(
+            self.config(
+                rejection("Recent Dish", "had_it_recently", days_ago=age),
+                rejection("Prep Dish", "too_much_prep", days_ago=age),
+                rejection("Fancy Dish", "dont_fancy_it", days_ago=age),
+                rejection("Slot Dish", "wrong_for_slot", days_ago=age),
+            ),
+            today=TODAY,
+        )
+        self.assertNotIn("Recent Dish", rule)
+        self.assertIn("Prep Dish", rule)
+        self.assertIn("Fancy Dish", rule)
+        self.assertIn("Slot Dish", rule)
+
+    def test_the_boundary_day_is_still_inside_the_window(self):
+        # `< window`, not `<=`: an entry exactly `window` days old has served
+        # its term. Pinned because an off-by-one here is invisible in use.
+        window = planner.DEFAULT_PLANNING_RULES["rejection_decay_days"]["had_it_recently"]
+        inside = self.config(rejection("Dish A", "had_it_recently", days_ago=window - 1))
+        outside = self.config(rejection("Dish A", "had_it_recently", days_ago=window))
+        self.assertIn("Dish A", planner.build_rejection_rule(inside, today=TODAY))
+        self.assertNotIn("Dish A", planner.build_rejection_rule(outside, today=TODAY))
+
+    def test_the_reason_tally_outlives_the_dishes_it_counted(self):
+        # The point of the split. Three "too much prep" answers old enough
+        # that no dish is named any more still say something about how the
+        # user wants to eat, and that half is the more valuable one.
+        entries = [
+            rejection(f"Dish {i}", "too_much_prep", days_ago=120) for i in range(3)
+        ]
+        rule = planner.build_rejection_rule(self.config(*entries), today=TODAY)
+        self.assertNotIn("Dish 0", rule)
+        self.assertIn(planner.REJECTION_REASON_GUIDANCE["too_much_prep"], rule)
+
+    def test_a_reason_below_the_threshold_says_nothing(self):
+        # Two is a pair of unrelated bad nights; three is a preference.
+        entries = [
+            rejection(f"Dish {i}", "too_much_prep", days_ago=120)
+            for i in range(planner.REJECTION_REASON_SIGNAL_MIN - 1)
+        ]
+        rule = planner.build_rejection_rule(self.config(*entries), today=TODAY)
+        self.assertEqual(rule, "")
+
+    def test_everything_aged_out_emits_nothing_at_all(self):
+        # Same contract as an empty list: once nothing survives either window
+        # the prompt goes back to being byte-identical to before the feature.
+        entries = [
+            rejection(f"Dish {i}", "too_much_prep", days_ago=400) for i in range(5)
+        ]
+        self.assertEqual(planner.build_rejection_rule(self.config(*entries), today=TODAY), "")
+
+    def test_the_tally_counts_past_every_dish_window_but_not_forever(self):
+        window = planner.DEFAULT_PLANNING_RULES["rejection_reason_window_days"]
+        inside = [
+            rejection(f"Dish {i}", "dont_fancy_it", days_ago=window - 1) for i in range(4)
+        ]
+        outside = [
+            rejection(f"Dish {i}", "dont_fancy_it", days_ago=window) for i in range(4)
+        ]
+        phrase = planner.REJECTION_REASON_GUIDANCE["dont_fancy_it"]
+        self.assertIn(phrase, planner.build_rejection_rule(self.config(*inside), today=TODAY))
+        self.assertNotIn(phrase, planner.build_rejection_rule(self.config(*outside), today=TODAY))
+
+    def test_an_undated_or_unknown_entry_is_kept_not_dropped(self):
+        # Neither is reachable from the app — `reason` is a Literal and the UI
+        # stamps `date` from the clock — so both mean a hand-edited file, and
+        # discarding a stated preference over an unrecognised field is the
+        # worse failure.
+        undated = rejection("Undated Dish", "too_much_prep", days_ago=400)
+        undated["date"] = ""
+        unknown = rejection("Odd Dish", "too_much_prep", days_ago=400)
+        unknown["reason"] = "some_future_reason"
+        rule = planner.build_rejection_rule(self.config(undated, unknown), today=TODAY)
+        self.assertIn("Undated Dish", rule)
+        self.assertIn("Odd Dish", rule)
+
+    def test_an_unknown_reason_never_reaches_the_tally(self):
+        # Kept as a dish (above), but `REJECTION_REASON_GUIDANCE` has no
+        # standing phrase for it, so there is nothing it could be told to do.
+        entries = []
+        for i in range(5):
+            entry = rejection(f"Dish {i}", "too_much_prep", days_ago=10)
+            entry["reason"] = "some_future_reason"
+            entries.append(entry)
+        rule = planner.build_rejection_rule(self.config(*entries), today=TODAY)
+        self.assertIn("Dish 0", rule)
+        self.assertNotIn("standing preference", rule)
+
+    def test_config_can_widen_or_narrow_a_window(self):
+        # The three questions the queue left open are answered in config, not
+        # in code — this is what makes the numbers a choice rather than a
+        # default nobody picked.
+        entry = rejection("Dish A", "had_it_recently", days_ago=30)
+        narrow = dict(self.config(entry), planning_rules={"rejection_decay_days": {"had_it_recently": 7}})
+        wide = dict(self.config(entry), planning_rules={"rejection_decay_days": {"had_it_recently": 90}})
+        self.assertNotIn("Dish A", planner.build_rejection_rule(narrow, today=TODAY))
+        self.assertIn("Dish A", planner.build_rejection_rule(wide, today=TODAY))
 
 
 class TestRejectionStorage(unittest.TestCase):
