@@ -10,8 +10,9 @@ storage of its own:
     weigh_ins     <- GarminSyncService.fetch_body_composition
     daily_actuals <- CronometerSyncService.fetch_daily_summary
     readiness_log <- GarminSyncService.fetch_readiness
+    activity_log  <- GarminSyncService.fetch_activities
 
-Six things here are decisions rather than detail, and each is load-bearing.
+Eight things here are decisions rather than detail, and each is load-bearing.
 
 **This file lives in a subdirectory, which the rest of `src/` deliberately
 does not.** CLAUDE.md's flat-sibling rule works because `python src/planner.py`
@@ -49,6 +50,20 @@ nicely. It is stored now (`readiness_log`) where it used to be printed and
 thrown away, and storing it changes nothing about that rule: whether a
 readiness figure should *adjust* a target is a separate, larger question, and
 `apply_training_adjustments` still never sees this data.
+
+**Activity is stored now, and only what can be read back.** It was fetched
+on every sync and printed for months — the same shape as the sleep data
+above, and closed the same way: `activity_log` exists because something
+reads it (`nutrition_engine.propose_training_schedule`, which turns a few
+weeks of recorded sessions into a proposed `training_schedule` for a human
+to accept), and `net_calories` is finally load-bearing as that proposal's
+default burn. Two filters keep an unreadable row out — a modality
+`GARMIN_SESSION_TYPES` cannot name, and an activity with no local start
+time — because a proposal is a sentence the user is asked to agree to, and
+neither a guessed modality nor a midnight that never happened is one this
+module is entitled to write. It is also the one section holding *several*
+rows per date, so it is replaced per day rather than merged; see
+`PlanRepository.save_activity_entries`.
 
 **Cronometer runs in-process.** `cronometer-mcp` requires Python >= 3.11,
 which this project's Homebrew 3.14 venv satisfies, so `CronometerSyncService`
@@ -137,6 +152,39 @@ CARDIO_ACTIVITY_KEYS = (
     "stair_climbing",
     "rowing",
 )
+
+# Garmin `activityType.typeKey` -> the `training_schedule` type the app speaks
+# (`planner.TRAINING_INTENSITY_SPLIT`'s keys). Matched as substrings and
+# **longest key first**, the same rule `nutrition_engine.MET_VALUES` and
+# `ui_theme.training_icon` already use, because Garmin sub-types freely:
+# `treadmill_running` has to reach `cardio_run` without an entry of its own,
+# and `indoor_cycling` has to reach `cardio_ride` rather than stopping at the
+# generic `cycling`.
+#
+# **There is deliberately no catch-all.** An unrecognised type is dropped
+# rather than mapped to a plausible neighbour, because the only thing that
+# reads this is a *proposal* the user is asked to accept, and a yoga class
+# offered as "Cardio Easy, 45 min, 260 kcal" is a wrong answer that looks
+# like a right one. `MET_FALLBACK` can afford a guess — it is refining a
+# number for a session the user already declared; this is inventing the
+# session itself. A modality that turns out to matter belongs in this table
+# by name.
+GARMIN_SESSION_TYPES = {
+    "strength_training": "gym_hypertrophy",
+    "strength": "gym_hypertrophy",
+    "hiit": "cardio_hiit",
+    "running": "cardio_run",
+    "treadmill": "cardio_run",
+    "cycling": "cardio_ride",
+    "ride": "cardio_ride",
+    "walking": "walk",
+    "hiking": "walk",
+    "elliptical": "cardio_easy",
+    "rowing": "cardio_easy",
+    "stair_climbing": "cardio_easy",
+    "indoor_cardio": "cardio_easy",
+    "swimming": "cardio_easy",
+}
 
 # Where garth caches its OAuth tokens. Overridable so a test never writes to
 # the real one; the default matches garminconnect's own documented location.
@@ -394,17 +442,35 @@ class GarminSyncService:
             entry["source"] = "garmin"
         return entry
 
-    def fetch_cardio_activities(self, target_date: str) -> list:
-        """Cardio sessions on `target_date`, with BMR-discounted calories.
+    def fetch_activities(self, target_date: str) -> list:
+        """Everything the watch recorded on `target_date`, as `activity_log` rows.
 
-        Each entry carries both `gross_calories` (what Garmin said) and
-        `net_calories` (what this app is willing to add to a day), because a
-        number that has been silently adjusted is impossible to reconcile
-        against the watch when the two disagree. `EXERCISE_RECOVERY_FACTOR`
-        explains the discount.
+        One row per activity — a Saturday with a lift and a ride is two —
+        which is what makes `activity_log` the one biometric section that is
+        not one row per date. Each carries both `gross_calories` (what Garmin
+        said) and `net_calories` (what this app is willing to add to a day),
+        because a number that has been silently adjusted is impossible to
+        reconcile against the watch when the two disagree;
+        `EXERCISE_RECOVERY_FACTOR` explains the discount.
 
-        Strength work, walks and anything else non-cardio is filtered out —
-        see `CARDIO_ACTIVITY_KEYS`.
+        Two derived fields sit beside Garmin's own, and both exist for
+        `nutrition_engine.propose_training_schedule`, which is the only thing
+        that reads this list:
+
+        - `session_type` translates `activityType.typeKey` into the
+          `training_schedule` vocabulary (`GARMIN_SESSION_TYPES`), or None
+          for a modality that table has never heard of.
+        - `start_time` is `startTimeLocal`'s "HH:MM". **Local, never GMT** —
+          a proposal says "Wednesday 06:10" to a human reading a clock, and
+          the GMT field would be silently wrong by the timezone offset,
+          which is the same class of unit error as storing Garmin's grams as
+          kilograms.
+
+        Unfiltered on purpose, unlike `fetch_cardio_activities` below: a
+        `strength_training` session is exactly the one a schedule proposal
+        most needs (it is what `WORKOUT_BREAKFAST_TYPES` pins a shake to) and
+        the cardio filter drops it. What may not be *stored* is decided in
+        `sync_garmin`, not here.
         """
         day = _iso(target_date)
         activities = self.client().get_activities_by_date(day, day) or []
@@ -412,9 +478,6 @@ class GarminSyncService:
         sessions = []
         for activity in activities:
             type_key = ((activity.get("activityType") or {}).get("typeKey") or "").lower()
-            if not _is_cardio(type_key):
-                continue
-
             gross = _as_float(activity.get("calories")) or 0.0
             duration_s = _as_float(activity.get("duration")) or 0.0
             sessions.append(
@@ -423,6 +486,8 @@ class GarminSyncService:
                     "activity_id": activity.get("activityId"),
                     "name": activity.get("activityName"),
                     "type": type_key,
+                    "session_type": _session_type(type_key),
+                    "start_time": _local_start_time(activity.get("startTimeLocal")),
                     "duration_min": round(duration_s / 60.0, 1),
                     "gross_calories": round(gross),
                     "net_calories": round(gross * self.recovery_factor),
@@ -431,6 +496,21 @@ class GarminSyncService:
                 }
             )
         return sessions
+
+    def fetch_cardio_activities(self, target_date: str) -> list:
+        """The cardio subset of `fetch_activities`, for the CLI's own report.
+
+        Strength work, walks and anything else non-cardio is filtered out —
+        see `CARDIO_ACTIVITY_KEYS`. A filter over one fetch rather than a
+        second fetch of its own: the two would otherwise be free to disagree
+        about a session's duration or its discount, and one login answering
+        one question twice is a request this account does not need to spend.
+        """
+        return [
+            session
+            for session in self.fetch_activities(target_date)
+            if _is_cardio(session["type"])
+        ]
 
     def fetch_readiness(self, target_date: str) -> dict:
         """Sleep and HRV for `target_date`, as a `readiness_log` row.
@@ -518,6 +598,38 @@ class GarminSyncService:
 def _is_cardio(type_key: str) -> bool:
     """Whether a Garmin `typeKey` is one of the cardio modalities tracked."""
     return any(key in type_key for key in CARDIO_ACTIVITY_KEYS)
+
+
+def _session_type(type_key: str) -> Optional[str]:
+    """`type_key` in the app's `training_schedule` vocabulary, or None.
+
+    Longest match wins, so `treadmill_running` resolves through `treadmill`
+    and `running` identically and `indoor_cycling` never stops at a shorter
+    key that happens to appear in it. None means "not a modality this app
+    can propose" — see `GARMIN_SESSION_TYPES` for why that is a drop rather
+    than a fallback.
+    """
+    matches = [key for key in GARMIN_SESSION_TYPES if key in type_key]
+    return GARMIN_SESSION_TYPES[max(matches, key=len)] if matches else None
+
+
+def _local_start_time(value: Any) -> Optional[str]:
+    """The "HH:MM" out of Garmin's `startTimeLocal`, or None.
+
+    Garmin sends `"2026-08-24 06:12:33"`. Tolerant rather than raising, like
+    `nutrition_engine._parse_iso_date` and for the same reason: one activity
+    with an unreadable timestamp should cost that activity, not the day's
+    sync. A row with no time is not stored (see `sync_garmin`) — a session
+    filed at a made-up midnight would be read by
+    `planner.morning_training_days` as a pre-dawn workout and could pin a
+    breakfast shake to a day nobody trained in the morning.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value.strip()[:19], "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+    except ValueError:
+        return None
 
 
 def _readiness_label(score: Optional[float]) -> Optional[str]:
@@ -784,17 +896,26 @@ def get_sync_date_range(
 def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     """Fetch a day from Garmin and persist what it found.
 
-    Two of the three parts become stored rows — the weigh-in into `weigh_ins`
-    and the sleep/HRV reading into `readiness_log`. Each is written only when
-    it actually measured something, and each into its own list, because a
-    scale and a watch both reporting for one date is precisely the collision
+    All three parts become stored rows — the weigh-in into `weigh_ins`, the
+    sleep/HRV reading into `readiness_log`, and the recorded activity into
+    `activity_log`. Each goes into its own list, because a scale and a watch
+    both reporting for one date is precisely the collision
     `BIOMETRIC_SECTIONS` keeps them apart to avoid.
 
-    **Cardio is still returned for the caller to print and stored nowhere.**
-    That is not an oversight left over from readiness: nothing consumes
-    exercise calories yet, and a list of activities would be a schema whose
-    only reader is a `print`. The discount those figures carry is what this
-    sync is responsible for getting right when something does consume them.
+    **Activity used to be fetched, printed and stored nowhere**, on the
+    honest reasoning that nothing consumed it and a list whose only reader is
+    a `print` is a schema with no purpose. That was the same shape v0.29.0
+    closed for sleep, and it closes here the same way: something reads it now
+    (`nutrition_engine.propose_training_schedule`), and the discount those
+    figures carry is finally load-bearing — `net_calories` is what a proposed
+    session's `estimated_burn_kcal` defaults to.
+
+    **Only mapped, timed activities are stored.** An activity whose modality
+    `GARMIN_SESSION_TYPES` has never heard of, or one with no readable local
+    start time, cannot become a proposal (see `_session_type` and
+    `_local_start_time`), and a row nothing can read is the thing this list
+    was added to stop writing. The full list is still returned for the
+    caller to print, so nothing is hidden — only unstored.
     """
     garmin_config = run_sync(repository.load_integrations_config()).get("garmin") or {}
     service = GarminSyncService(
@@ -803,7 +924,8 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
         )
     )
     weigh_in = service.fetch_body_composition(target_date)
-    cardio = service.fetch_cardio_activities(target_date)
+    activities = service.fetch_activities(target_date)
+    cardio = [session for session in activities if _is_cardio(session["type"])]
     readiness = service.fetch_readiness(target_date)
 
     # Only write when the scale actually reported. `_prune` leaves a bare
@@ -818,6 +940,16 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     if has_measurements(readiness):
         run_sync(repository.save_readiness_entry(readiness))
 
+    # Replaced wholesale rather than merged, and written even when the day
+    # has no activity in it — see `save_activity_entries`. That is what makes
+    # a deleted or re-classified activity disappear on a re-sync instead of
+    # outliving the day it was recorded on.
+    run_sync(
+        repository.save_activity_entries(
+            _iso(target_date), [session for session in activities if _storable(session)]
+        )
+    )
+
     # Checkpointed regardless of whether the scale reported anything.
     # `target_date` reaching this line at all means Garmin was genuinely
     # asked and answered — a forgotten weigh-in is a real, checked outcome,
@@ -825,7 +957,24 @@ def sync_garmin(target_date: str, repository: LocalJSONRepository) -> dict:
     # nobody has asked about yet. See `save_sync_checkpoint`.
     run_sync(repository.save_sync_checkpoint("garmin", target_date))
 
-    return {"weigh_in": weigh_in, "cardio": cardio, "readiness": readiness}
+    return {
+        "weigh_in": weigh_in,
+        "cardio": cardio,
+        "activities": activities,
+        "readiness": readiness,
+    }
+
+
+def _storable(session: dict) -> bool:
+    """Whether an activity row can be read back by anything.
+
+    Its own predicate rather than an inline comprehension condition because
+    it states the contract `save_activity_entries` documents: the only reader
+    is the schedule proposal, and it needs a modality it can name and a clock
+    time it can put on a weekday. Either missing makes the row unreadable,
+    not merely incomplete.
+    """
+    return bool(session.get("session_type")) and bool(session.get("start_time"))
 
 
 def sync_garmin_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
@@ -1082,11 +1231,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Garmin weigh-in {day}: {weigh_in.get('weight_kg')} kg")
             else:
                 print(f"Garmin weigh-in {day}: no reading")
-            for session in outcome["cardio"]:
+            for session in outcome["activities"]:
+                # Every activity, not just the cardio subset, and each says
+                # whether it was stored: a `strength_training` session that
+                # silently vanished between the watch and `activity_log`
+                # would be indistinguishable from one Garmin never recorded,
+                # which is exactly the question a missing schedule proposal
+                # sends someone to this output to answer.
+                mapped = (
+                    f"-> {session['session_type']}"
+                    if _storable(session)
+                    else "(not stored: unmapped type or no start time)"
+                )
                 print(
-                    f"  cardio {session['type']}: {session['duration_min']} min, "
+                    f"  {session['start_time'] or '--:--'} {session['type']}: "
+                    f"{session['duration_min']} min, "
                     f"{session['gross_calories']} kcal gross -> "
-                    f"{session['net_calories']} kcal net"
+                    f"{session['net_calories']} kcal net {mapped}"
                 )
             readiness = outcome["readiness"]
             if has_measurements(readiness):

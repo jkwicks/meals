@@ -679,5 +679,268 @@ class TestMeasureAdaptiveTdee(unittest.TestCase):
         self.assertIsNone(ne.calculate_adaptive_tdee(logs, weigh_ins[:1]))
 
 
+# A Friday, so the four-week window covers each weekday exactly four times.
+PROPOSAL_TODAY = date(2026, 8, 28)
+
+
+def _activity(when, session_type, start="06:10", minutes=32.0, net=185):
+    return {
+        "date": when.isoformat(),
+        "session_type": session_type,
+        "start_time": start,
+        "duration_min": minutes,
+        "net_calories": net,
+    }
+
+
+def _weekly(weekday, session_type, weeks=4, today=PROPOSAL_TODAY, **kwargs):
+    """One activity on `weekday` in each of the last `weeks` weeks."""
+    rows = []
+    for offset in range(28):
+        when = today - timedelta(days=27 - offset)
+        if when.strftime("%A") == weekday:
+            rows.append(_activity(when, session_type, **kwargs))
+    return rows[-weeks:]
+
+
+DECLARED_RIDE = {
+    "day": "Sunday",
+    "time": "06:00",
+    "type": "cardio_ride",
+    "duration_minutes": 90,
+    "estimated_burn_kcal": 650,
+}
+
+
+class TestProposeTrainingSchedule(unittest.TestCase):
+    """The detector behind CHANGE-QUEUE.md's Garmin-schedule item.
+
+    Every assertion here is about *evidence*, not about arithmetic: the
+    feature's whole risk is proposing a change to a planning input on too
+    little of it, since `apply_training_adjustments` moves a day's calorie
+    budget and pins a meal off whatever the schedule says.
+    """
+
+    def test_no_activity_is_its_own_state_not_an_empty_answer(self):
+        """"Nothing recorded yet" and "your week already matches" both
+        produce no proposals, and only one of them means something is
+        wrong — the same conflation `measure_adaptive_tdee` exists to end."""
+        answer = ne.propose_training_schedule([], [DECLARED_RIDE], PROPOSAL_TODAY)
+        self.assertEqual(answer.state, ne.TRAINING_PROPOSAL_NO_ACTIVITY)
+        self.assertEqual(answer.proposals, [])
+        self.assertFalse(answer.ready)
+
+    def test_a_few_days_of_history_is_short_history_not_a_pattern(self):
+        rows = [
+            _activity(PROPOSAL_TODAY - timedelta(days=1), "cardio_run"),
+            _activity(PROPOSAL_TODAY, "cardio_run"),
+        ]
+        answer = ne.propose_training_schedule(rows, [], PROPOSAL_TODAY)
+        self.assertEqual(answer.state, ne.TRAINING_PROPOSAL_SHORT_HISTORY)
+        self.assertEqual(answer.proposals, [])
+
+    def test_a_weekly_session_is_proposed(self):
+        answer = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy"), [], PROPOSAL_TODAY
+        )
+        self.assertTrue(answer.ready)
+        [session] = answer.proposals
+        self.assertEqual(session.kind, ne.PROPOSAL_ADD)
+        self.assertEqual(session.day, "Wednesday")
+        self.assertEqual(session.type, "cardio_easy")
+        self.assertEqual(session.occurrences, 4)
+
+    def test_a_one_off_is_not_a_routine(self):
+        """One Tuesday run is a Tuesday, not a Tuesday habit — and a schedule
+        entry expands that day's calorie budget every week from then on."""
+        rows = _weekly("Tuesday", "cardio_run", weeks=1)
+        self.assertEqual(
+            ne.propose_training_schedule(rows + _weekly("Wednesday", "cardio_easy"),
+                                         [], PROPOSAL_TODAY).additions[0].day,
+            "Wednesday",
+        )
+
+    def test_a_session_already_declared_is_not_proposed_again(self):
+        declared = [
+            {
+                "day": "Wednesday",
+                "time": "06:00",
+                "type": "cardio_easy",
+                "duration_minutes": 25,
+                "estimated_burn_kcal": 180,
+            }
+        ]
+        answer = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy"), declared, PROPOSAL_TODAY
+        )
+        self.assertEqual(answer.additions, [])
+
+    def test_the_proposed_session_is_a_training_schedule_entry(self):
+        """`session()` has to be storable verbatim — the precedent is
+        `estimate_session_burn_kcal`: a derived value and a typed one must be
+        indistinguishable to everything downstream."""
+        session = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy"), [], PROPOSAL_TODAY
+        ).additions[0].session()
+        self.assertEqual(
+            sorted(session),
+            ["day", "duration_minutes", "estimated_burn_kcal", "time", "type"],
+        )
+
+    def test_time_and_duration_are_medians_rounded_to_five_minutes(self):
+        """A median of four noisy starts does not know it is 06:12."""
+        rows = [
+            _activity(when["date"] and date.fromisoformat(when["date"]), "cardio_easy",
+                      start=start, minutes=minutes)
+            for when, start, minutes in zip(
+                _weekly("Wednesday", "cardio_easy"),
+                ("06:05", "06:12", "06:08", "06:14"),
+                (30.0, 33.0, 31.0, 34.0),
+            )
+        ]
+        session = ne.propose_training_schedule(rows, [], PROPOSAL_TODAY).additions[0]
+        self.assertEqual(session.time, "06:10")
+        self.assertEqual(session.duration_minutes, 30)
+
+    def test_burn_comes_from_what_garmin_reported_not_the_met_formula(self):
+        """The reason `net_calories` was worth storing at all. The MET
+        estimate for 30 minutes of `cardio_easy` at 98 kg is ~257 kcal, so a
+        fallback firing here would be visible."""
+        session = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy", minutes=30.0, net=185),
+            [],
+            PROPOSAL_TODAY,
+            weight_kg=98.0,
+        ).additions[0]
+        self.assertEqual(session.estimated_burn_kcal, 185)
+
+    def test_the_met_estimate_fills_in_when_the_watch_reported_no_calories(self):
+        session = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy", minutes=30.0, net=0),
+            [],
+            PROPOSAL_TODAY,
+            weight_kg=98.0,
+        ).additions[0]
+        self.assertAlmostEqual(
+            session.estimated_burn_kcal,
+            round(ne.estimate_session_burn_kcal("cardio_easy", 30, 98.0)),
+            delta=1,
+        )
+
+    def test_two_sessions_on_one_day_count_as_one_occurrence(self):
+        """Otherwise one busy Saturday clears a threshold four calm ones
+        did not."""
+        doubled = []
+        for row in _weekly("Saturday", "cardio_run", weeks=1):
+            doubled.append(row)
+            doubled.append(dict(row, start_time="17:30"))
+        answer = ne.propose_training_schedule(doubled, [], PROPOSAL_TODAY)
+        self.assertEqual(answer.additions, [])
+
+
+class TestProposedDrops(unittest.TestCase):
+    """The decision this feature was blocked on: what happens to a declared
+    session Garmin never sees. It is proposed for removal and never removed —
+    behind an evidence bar, because a watch in a drawer looks exactly like a
+    fortnight of rest."""
+
+    def observed_month(self, extra=()):
+        # Four weeks of recorded Wednesdays plus whatever else is asked for,
+        # so the window is genuinely observed and the watch is plainly in use.
+        return list(_weekly("Wednesday", "cardio_easy")) + list(extra)
+
+    def test_a_declared_session_never_recorded_is_proposed_for_removal(self):
+        answer = ne.propose_training_schedule(
+            self.observed_month(), [DECLARED_RIDE], PROPOSAL_TODAY
+        )
+        [drop] = answer.drops
+        self.assertEqual(drop.day, "Sunday")
+        self.assertEqual(drop.type, "cardio_ride")
+        self.assertEqual(drop.occurrences, 0)
+        # It names the declared session exactly, or nothing could remove it.
+        self.assertEqual(drop.session(), DECLARED_RIDE)
+
+    def test_a_day_that_recorded_something_else_is_never_dropped(self):
+        """A Sunday ride that has become a Sunday walk is still a day you
+        train on; the walk arrives as its own addition instead."""
+        answer = ne.propose_training_schedule(
+            self.observed_month(_weekly("Sunday", "walk")),
+            [DECLARED_RIDE],
+            PROPOSAL_TODAY,
+        )
+        self.assertEqual(answer.drops, [])
+        self.assertEqual([p.type for p in answer.additions], ["cardio_easy", "walk"])
+
+    def test_a_watch_that_records_almost_nothing_proposes_no_drops(self):
+        """Two recorded days in a month is not evidence about the other
+        twenty-six — `MIN_ACTIVE_DAYS_FOR_DROP` is the guard."""
+        answer = ne.propose_training_schedule(
+            _weekly("Wednesday", "cardio_easy", weeks=2),
+            [DECLARED_RIDE],
+            PROPOSAL_TODAY,
+        )
+        self.assertLess(answer.activity_days, ne.MIN_ACTIVE_DAYS_FOR_DROP)
+        self.assertEqual(answer.drops, [])
+
+    def test_a_rest_day_is_not_a_session_to_drop(self):
+        rest = {"day": "Thursday", "time": "00:00", "type": "rest",
+                "duration_minutes": 0, "estimated_burn_kcal": 0}
+        answer = ne.propose_training_schedule(
+            self.observed_month(), [rest], PROPOSAL_TODAY
+        )
+        self.assertEqual(answer.drops, [])
+
+
+class TestObservedWindow(unittest.TestCase):
+    """`activity_log` holds only days that recorded something, so silence in
+    it is ambiguous — the same gap `sync_checkpoints` closed for weigh-ins."""
+
+    def test_the_span_starts_at_the_first_recorded_activity_not_the_window(self):
+        """Under-claiming is the safe direction: it costs a proposal, where
+        over-claiming invents weeks of evidence a session never happened."""
+        rows = _weekly("Wednesday", "cardio_easy", weeks=2)
+        answer = ne.propose_training_schedule(rows, [], PROPOSAL_TODAY)
+        self.assertEqual(answer.observed_from, rows[0]["date"])
+        self.assertLess(answer.observed_days, answer.window_days)
+
+    def test_the_checkpoint_extends_the_span_past_the_last_recorded_day(self):
+        """Days Garmin was asked about and answered "nothing" for are
+        observed days — that is the whole point of `sync_checkpoints`."""
+        rows = _weekly("Wednesday", "cardio_easy")
+        without = ne.propose_training_schedule(rows, [], PROPOSAL_TODAY)
+        with_checkpoint = ne.propose_training_schedule(
+            rows, [], PROPOSAL_TODAY, checked_through=PROPOSAL_TODAY.isoformat()
+        )
+        self.assertGreater(with_checkpoint.observed_days, without.observed_days)
+
+    def test_a_row_past_the_checkpoint_still_counts_as_observed(self):
+        """A stored row is proof the day was asked about, whatever the
+        checkpoint says — the rule `ui_state.sync_status` already applies."""
+        rows = _weekly("Wednesday", "cardio_easy")
+        answer = ne.propose_training_schedule(
+            rows, [], PROPOSAL_TODAY, checked_through="2026-08-01"
+        )
+        self.assertEqual(answer.observed_to, rows[-1]["date"])
+
+    def test_rows_the_sync_would_not_have_stored_are_skipped(self):
+        """An unmapped modality or a missing start time can only come from a
+        hand-edited file; guessing at either is what `sync_service` refuses
+        to do, and this must not undo that."""
+        rows = [dict(row, session_type=None) for row in _weekly("Wednesday", "cardio_easy")]
+        rows += [dict(row, start_time=None) for row in _weekly("Friday", "cardio_run")]
+        self.assertEqual(
+            ne.propose_training_schedule(rows, [], PROPOSAL_TODAY).state,
+            ne.TRAINING_PROPOSAL_NO_ACTIVITY,
+        )
+
+    def test_activity_older_than_the_window_is_ignored(self):
+        """A routine abandoned two months ago is not this week's schedule."""
+        stale = _weekly("Wednesday", "cardio_easy", today=PROPOSAL_TODAY - timedelta(days=60))
+        self.assertEqual(
+            ne.propose_training_schedule(stale, [], PROPOSAL_TODAY).state,
+            ne.TRAINING_PROPOSAL_NO_ACTIVITY,
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

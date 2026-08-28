@@ -240,6 +240,25 @@ class TestBiometricsRoute(APITestCase):
         self.assertEqual(body["weigh_ins"], [])
         self.assertIsNone(body["latest"])
 
+    def test_recorded_activity_is_mirrored_not_turned_into_a_proposal(self):
+        """The fourth stored list reaches the route as rows.
+
+        Running `propose_training_schedule` here would be the same mistake:
+        a proposal is a diff against a *staged* schedule plus what one tab
+        has dismissed, which is a session concept — and a route answering it
+        would be free to disagree with the review dialog reading the same
+        rows.
+        """
+        session = {
+            "date": "2026-08-19", "activity_id": 1, "name": "Morning lift",
+            "type": "strength_training", "session_type": "gym_hypertrophy",
+            "start_time": "05:31", "duration_min": 45.0,
+            "gross_calories": 300, "net_calories": 150, "source": "garmin",
+        }
+        run_sync(self.repo.save_activity_entries("2026-08-19", [session]))
+        body = self.client.get("/api/biometrics").json()
+        self.assertEqual(body["activity_log"], [session])
+
 
 class TestTargetsRoute(APITestCase):
     def test_falls_back_to_file_schedule_without_biometrics(self):

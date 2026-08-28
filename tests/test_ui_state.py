@@ -27,13 +27,22 @@ saves, which is the contract `edited` exists to advertise.
 
 import sys
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import ui_state  # noqa: E402
+from nutrition_engine import (  # noqa: E402
+    PROPOSAL_ADD,
+    PROPOSAL_DROP,
+    TRAINING_PROPOSAL_NO_ACTIVITY,
+    TRAINING_PROPOSAL_READY,
+    TRAINING_PROPOSAL_SHORT_HISTORY,
+    ProposedSession,
+    TrainingScheduleProposal,
+)
 from ui_theme import format_day_label, training_icon  # noqa: E402
 from planner import (  # noqa: E402
     LOCATION_RESTRICTION_PHRASES,
@@ -1341,7 +1350,7 @@ class TestSyncStatus(unittest.TestCase):
         would read as "nothing to sync" rather than "never synced"."""
         self.assertEqual(
             sorted(self.statuses({})),
-            ["daily_actuals", "readiness_log", "weigh_ins"],
+            ["activity_log", "daily_actuals", "readiness_log", "weigh_ins"],
         )
 
     def test_sources_come_from_the_repository_not_a_second_copy(self):
@@ -1947,3 +1956,185 @@ class TestFibreAgainstWhatWasLogged(unittest.TestCase):
         )
         state.week_plan = state.week_plan.model_copy(update={"week_start_date": None})
         self.assertIsNone(state.fibre_for("Monday").logged)
+
+
+class TestTrainingProposals(unittest.TestCase):
+    """The Garmin-derived schedule proposal, as the review dialog reads it.
+
+    The engine's own rules are pinned in `test_nutrition_engine.py`; what is
+    tested here is the half that belongs to a session — which proposals this
+    tab has dismissed, what accepting one writes, and the wording, which two
+    surfaces must not be free to phrase differently.
+    """
+
+    def run_async(self, coroutine):
+        import asyncio
+
+        return asyncio.run(coroutine)
+
+    def activity(self, weekday="Wednesday", weeks=4, session_type="cardio_easy"):
+        rows = []
+        today = date.today()
+        for offset in range(28):
+            when = today - timedelta(days=27 - offset)
+            if when.strftime("%A") == weekday:
+                rows.append(
+                    {
+                        "date": when.isoformat(),
+                        "session_type": session_type,
+                        "start_time": "06:10",
+                        "duration_min": 30.0,
+                        "net_calories": 185,
+                    }
+                )
+        return rows[-weeks:]
+
+    def state_with_activity(self, **biometrics):
+        state = make_state()
+        state.biometrics = {"activity_log": self.activity(), **biometrics}
+        return state
+
+    def test_a_recorded_routine_is_proposed(self):
+        state = self.state_with_activity()
+        [proposal] = state.training_proposals().proposals
+        self.assertEqual(proposal.day, "Wednesday")
+        self.assertEqual(proposal.kind, PROPOSAL_ADD)
+
+    def test_it_is_diffed_against_the_staged_schedule_not_the_file(self):
+        """A session typed into the drawer a moment ago stops being proposed
+        immediately, rather than at the next page load."""
+        state = self.state_with_activity()
+        state.training_schedule = [
+            {"day": "Wednesday", "time": "06:10", "type": "cardio_easy",
+             "duration_minutes": 30, "estimated_burn_kcal": 185}
+        ]
+        self.assertEqual(state.training_proposals().proposals, [])
+
+    def test_dismissing_hides_it_without_writing_anything(self):
+        state = self.state_with_activity()
+        [proposal] = state.training_proposals().proposals
+        state.dismiss_training_proposal(proposal)
+        self.assertEqual(state.training_proposals().proposals, [])
+        self.assertEqual(state.config["training_schedule"], [])
+
+    def test_accepting_writes_the_session_to_config(self):
+        """The second thing in the UI that writes to `config/`, on the same
+        reasoning as `set_target_mode`: a standing week is a setting, and an
+        accept that evaporated on reload would re-offer itself forever."""
+        state = self.state_with_activity()
+        repository = _RecordingRepository()
+        [proposal] = state.training_proposals().proposals
+        self.run_async(state.accept_training_proposal(repository, proposal))
+        self.assertEqual(
+            repository.saved["training_schedule"], [proposal.session()]
+        )
+        self.assertEqual(state.training_schedule, [proposal.session()])
+        self.assertEqual(state.training_proposals().proposals, [])
+
+    def test_an_accepted_session_is_not_reported_as_a_staged_change(self):
+        """`_original_training_schedule` has to move with the file, or the
+        staged bar reads out a pending change for a session that is now
+        exactly what config says."""
+        state = self.state_with_activity()
+        [proposal] = state.training_proposals().proposals
+        self.run_async(state.accept_training_proposal(_RecordingRepository(), proposal))
+        self.assertEqual(state.pending_changes(), [])
+
+    def test_accepting_does_not_persist_someone_elses_staged_edit(self):
+        """The file's list and the drawer's differ whenever something is
+        staged, and a click on "accept" must not quietly write out a
+        half-typed session sitting two rows below it."""
+        state = self.state_with_activity()
+        state.add_training_session()
+        [proposal] = state.training_proposals().proposals
+        repository = _RecordingRepository()
+        self.run_async(state.accept_training_proposal(repository, proposal))
+        self.assertEqual(repository.saved["training_schedule"], [proposal.session()])
+        self.assertEqual(len(state.training_schedule), 2)
+        self.assertTrue(state.pending_changes())
+
+    def test_a_session_only_staged_is_not_proposed_for_removal(self):
+        """A drop is an edit to the file, so it may only name what the file
+        holds — otherwise a session typed a moment ago is argued with on the
+        next repaint, while the cursor is still in the row above it."""
+        state = self.state_with_activity()
+        state.add_training_session()
+        self.assertEqual(state.training_proposals().drops, [])
+
+    def test_accepting_a_drop_removes_the_declared_session(self):
+        declared = {"day": "Sunday", "time": "06:00", "type": "cardio_ride",
+                    "duration_minutes": 90, "estimated_burn_kcal": 650}
+        state = self.state_with_activity()
+        state.config = dict(state.config, training_schedule=[declared])
+        state.training_schedule = [dict(declared)]
+        state._original_training_schedule = [dict(declared)]
+        drops = state.training_proposals().drops
+        self.assertEqual(len(drops), 1)
+        repository = _RecordingRepository()
+        self.run_async(state.accept_training_proposal(repository, drops[0]))
+        self.assertEqual(repository.saved["training_schedule"], [])
+        self.assertEqual(state.training_schedule, [])
+
+
+class TestTrainingProposalsView(unittest.TestCase):
+    """Three of this feature's states produce no proposals, and a bare empty
+    list spells all three identically — the same conflation
+    `adaptive_tdee_view` was written to end."""
+
+    def view(self, **kwargs):
+        defaults = dict(
+            state=TRAINING_PROPOSAL_READY,
+            proposals=[],
+            window_days=28,
+            observed_days=23,
+            activity_days=6,
+            observed_from="2026-08-05",
+            observed_to="2026-08-27",
+        )
+        return ui_state.training_proposals_view(
+            TrainingScheduleProposal(**{**defaults, **kwargs})
+        )
+
+    def test_nothing_recorded_says_so_and_names_the_sync(self):
+        view = self.view(state=TRAINING_PROPOSAL_NO_ACTIVITY)
+        self.assertIn("Nothing recorded", view.headline)
+        self.assertIn("sync.sh", view.evidence)
+
+    def test_too_little_history_is_distinct_from_no_history(self):
+        view = self.view(state=TRAINING_PROPOSAL_SHORT_HISTORY)
+        self.assertIn("Not enough history", view.headline)
+
+    def test_a_matching_week_is_reported_as_the_good_answer_it_is(self):
+        view = self.view()
+        self.assertIn("matches", view.headline)
+        self.assertFalse(view.has_proposals)
+        self.assertIn("23 day(s) observed", view.evidence)
+
+    def test_a_row_states_its_evidence_in_countable_terms(self):
+        view = self.view(
+            proposals=[
+                ProposedSession(
+                    kind=PROPOSAL_ADD, day="Thursday", time="17:45",
+                    type="gym_hypertrophy", duration_minutes=55,
+                    estimated_burn_kcal=340, occurrences=3, observations=4,
+                )
+            ]
+        )
+        [row] = view.rows
+        self.assertTrue(row.adds)
+        self.assertIn("Thursday 17:45", row.title)
+        self.assertEqual(row.evidence, "recorded 3 of 4 Thursdays")
+
+    def test_a_drop_row_names_the_silence_rather_than_a_count(self):
+        view = self.view(
+            proposals=[
+                ProposedSession(
+                    kind=PROPOSAL_DROP, day="Sunday", time="06:00",
+                    type="cardio_ride", duration_minutes=90,
+                    estimated_burn_kcal=650, occurrences=0, observations=3,
+                )
+            ]
+        )
+        [row] = view.rows
+        self.assertFalse(row.adds)
+        self.assertEqual(row.evidence, "never recorded on 3 observed Sundays")

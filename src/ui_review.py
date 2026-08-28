@@ -29,10 +29,12 @@ from nicegui import ui
 from planner import calculate_daily_targets
 from ui_context import UIContext
 from ui_generation import GenerationHandles
+from ui_state import training_proposals_view
 from ui_theme import (
     RADIUS_CARD,
     RADIUS_PANEL,
     SPACE_BASE,
+    SPACE_HAIR,
     SPACE_PAGE,
     SPACE_SECTION,
     SPACE_TIGHT,
@@ -41,6 +43,7 @@ from ui_theme import (
     TEXT_HEAD,
     TEXT_MICRO,
     TRAINING_TYPE_LABELS,
+    training_icon,
 )
 from week import humanize
 
@@ -284,8 +287,90 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
         return handler
 
+    def proposal_row(row) -> None:
+        """One "add this" / "drop that" line, with its evidence and two buttons.
+
+        Colour carries nothing here — the icon does. `add`/`remove` says which
+        direction the proposal goes and `training_icon` says what kind of
+        session it is, which is the same division `TRAINING_TYPE_ICONS`
+        already relies on and the reason no new hue was needed: every one in
+        `ui_theme.py` is spoken for twice over.
+        """
+        with ui.element("div").classes(
+            f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+        ):
+            ui.icon("add" if row.adds else "remove").classes("text-slate-400 shrink-0")
+            ui.icon(training_icon(row.session.type)).classes("text-slate-400 shrink-0")
+            with ui.element("div").classes("flex flex-col min-w-0 grow"):
+                ui.label(row.title).classes(f"{TEXT_BODY} text-slate-200 truncate")
+                ui.label(f"{row.detail} · {row.evidence}").classes(
+                    f"{TEXT_MICRO} text-slate-500 truncate"
+                )
+
+            async def on_accept(session=row.session) -> None:
+                await state.accept_training_proposal(ctx.repository, session)
+                # "training" repaints this block and the rows below it;
+                # "targets" because an accepted session expands that day's
+                # budget and pins a meal, exactly as a typed one does.
+                refreshables.refresh("training", "targets")
+
+            def on_dismiss(session=row.session) -> None:
+                state.dismiss_training_proposal(session)
+                refreshables.refresh("training")
+
+            accept = ui.button(icon="check", on_click=on_accept).props(
+                "dense flat size=xs"
+            ).classes("min-h-0 p-0 text-slate-300 shrink-0")
+            with accept:
+                ui.tooltip(
+                    "Remove it from the schedule and save to config/schedule.json"
+                    if not row.adds
+                    else "Add it to the schedule and save to config/schedule.json"
+                ).classes("max-w-xs")
+            dismiss = ui.button(icon="close", on_click=on_dismiss).props(
+                "dense flat size=xs"
+            ).classes("min-h-0 p-0 text-slate-500 shrink-0")
+            with dismiss:
+                ui.tooltip("Not now — hidden until the page reloads").classes("max-w-xs")
+
+    def proposals_block() -> None:
+        """Garmin's recorded week, offered against the declared one.
+
+        Rendered inside `training_editor` rather than as its own refreshable
+        so the two can never disagree: accepting a proposal changes the rows
+        below it, and a separately-refreshed block would leave a suggestion
+        on screen for a session already in the list underneath it.
+
+        Every state prints, including the three that propose nothing —
+        "nothing recorded yet", "not enough history" and "your schedule
+        already matches" are three different answers, and an empty block
+        spells them identically. Same reasoning as the adaptive-TDEE readout
+        in Settings.
+        """
+        view = training_proposals_view(state.training_proposals())
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_TIGHT} {RADIUS_CARD} "
+            "border border-slate-800 bg-slate-950/30"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR}"
+            ):
+                ui.icon("watch").classes("text-slate-400 shrink-0")
+                ui.label(view.headline).classes(
+                    f"{TEXT_BODY} font-semibold text-slate-200 min-w-0"
+                )
+            ui.label(view.evidence).classes(f"{TEXT_MICRO} text-slate-500")
+            for row in view.rows:
+                proposal_row(row)
+            if view.has_proposals:
+                ui.label(
+                    "Accepting writes the session to config/schedule.json — this "
+                    "is your standing week, not a change staged for the next run."
+                ).classes(f"{TEXT_MICRO} text-slate-600")
+
     @ui.refreshable
     def training_editor() -> None:
+        proposals_block()
         if not state.training_schedule:
             ui.label("No workouts scheduled.").classes(
                 f"{TEXT_MICRO} text-slate-500 italic"

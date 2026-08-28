@@ -332,6 +332,7 @@ SYNC_SECTION_LABELS = {
     "weigh_ins": "Garmin · weigh-ins",
     "daily_actuals": "Cronometer · logged intake",
     "readiness_log": "Garmin · sleep & HRV",
+    "activity_log": "Garmin · recorded activity",
 }
 
 

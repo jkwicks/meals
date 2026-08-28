@@ -162,6 +162,10 @@ class TestBodyComposition(unittest.TestCase):
             garmin_service(weight_list=[FULL_READING]).fetch_body_composition("16/08/2026")
 
 
+# `startTimeLocal` is the watch's own clock, and the field this module reads;
+# `startTimeGMT` sits beside it in the real payload and is here because it is
+# what a careless mapping would grab instead — it is silently wrong by the
+# timezone offset, which no downstream reader could detect.
 ACTIVITIES = [
     {
         "activityId": 1,
@@ -170,6 +174,8 @@ ACTIVITIES = [
         "calories": 640,
         "duration": 3600,
         "averageHR": 132,
+        "startTimeLocal": "2026-08-16 06:12:33",
+        "startTimeGMT": "2026-08-15 20:12:33",
     },
     {
         "activityId": 2,
@@ -177,6 +183,7 @@ ACTIVITIES = [
         "activityType": {"typeKey": "strength_training"},
         "calories": 300,
         "duration": 2700,
+        "startTimeLocal": "2026-08-16 05:31:00",
     },
     {
         "activityId": 3,
@@ -184,6 +191,7 @@ ACTIVITIES = [
         "activityType": {"typeKey": "treadmill_running"},
         "calories": 500,
         "duration": 1800,
+        "startTimeLocal": "2026-08-16 17:45:10",
     },
 ]
 
@@ -230,6 +238,62 @@ class TestCardioActivities(unittest.TestCase):
     def test_no_activities_is_an_empty_list(self):
         self.assertEqual(
             garmin_service(activities=[]).fetch_cardio_activities("2026-08-16"), []
+        )
+
+
+class TestActivityMapping(unittest.TestCase):
+    """`fetch_activities` and the two derived fields the schedule proposal
+    reads. The cardio filter above is a *report*; this is the stored list, and
+    it deliberately keeps the strength session that filter drops — a lift is
+    the session a proposal most needs, since it is what pins a breakfast
+    shake."""
+
+    def sessions(self):
+        return garmin_service(activities=ACTIVITIES).fetch_activities("2026-08-16")
+
+    def test_strength_work_is_kept_where_the_cardio_filter_drops_it(self):
+        self.assertIn("strength_training", [s["type"] for s in self.sessions()])
+
+    def test_garmin_types_map_to_the_apps_own_vocabulary(self):
+        self.assertEqual(
+            [s["session_type"] for s in self.sessions()],
+            ["cardio_easy", "gym_hypertrophy", "cardio_run"],
+        )
+
+    def test_the_longest_matching_key_wins(self):
+        """`indoor_cycling` must reach `cardio_ride`, not stop at a shorter
+        key that happens to appear in it — the same longest-prefix rule
+        `MET_VALUES` and `training_icon` use."""
+        self.assertEqual(sync._session_type("indoor_cycling"), "cardio_ride")
+        self.assertEqual(sync._session_type("treadmill_running"), "cardio_run")
+        self.assertEqual(sync._session_type("virtual_ride"), "cardio_ride")
+
+    def test_an_unknown_modality_maps_to_nothing_rather_than_a_neighbour(self):
+        """A yoga class offered as "Cardio Easy, 45 min, 260 kcal" is a wrong
+        answer that looks like a right one, and a proposal is a sentence the
+        user is asked to agree to."""
+        self.assertIsNone(sync._session_type("yoga"))
+
+    def test_start_time_is_the_local_clock_not_gmt(self):
+        """A GMT time is silently wrong by the timezone offset — the same
+        class of unit error as storing Garmin's grams as kilograms."""
+        self.assertEqual(self.sessions()[0]["start_time"], "06:12")
+
+    def test_an_unreadable_timestamp_is_none_rather_than_midnight(self):
+        """00:00 is not a neutral default here: `morning_training_days` reads
+        a time before 11:00 as a pre-dawn session and would pin a breakfast
+        shake to a day nobody trained in the morning."""
+        self.assertIsNone(sync._local_start_time(None))
+        self.assertIsNone(sync._local_start_time("16 Aug 2026, 6am"))
+
+    def test_the_cardio_report_is_a_filter_over_the_same_fetch(self):
+        """One login answering one question twice is a request this account
+        does not need to spend, and two fetches would be free to disagree."""
+        cardio = garmin_service(activities=ACTIVITIES).fetch_cardio_activities(
+            "2026-08-16"
+        )
+        self.assertEqual(
+            cardio, [s for s in self.sessions() if s["type"] != "strength_training"]
         )
 
 
@@ -728,6 +792,69 @@ class TestPersistence(unittest.TestCase):
             sync.get_sync_date_range(self.repo, "2026-08-19", sources=["garmin"]),
             ["2026-08-19"],
         )
+
+    def test_sync_garmin_stores_recorded_activity(self):
+        """The list that closed the "fetched every sync, read by nothing"
+        shape — the same one v0.29.0 closed for sleep."""
+        with replace_garmin_client(FakeGarminClient(activities=ACTIVITIES)):
+            sync.sync_garmin("2026-08-16", self.repo)
+        stored = self.stored()["activity_log"]
+        self.assertEqual(
+            [row["session_type"] for row in stored],
+            ["gym_hypertrophy", "cardio_easy", "cardio_run"],
+        )
+        # Sorted by start time, so a day reads in the order it was lived.
+        self.assertEqual([row["start_time"] for row in stored], ["05:31", "06:12", "17:45"])
+
+    def test_an_unmapped_or_untimed_activity_is_not_stored(self):
+        """A row nothing can read back is the thing this list was added to
+        stop writing."""
+        with replace_garmin_client(
+            FakeGarminClient(
+                activities=[
+                    {"activityType": {"typeKey": "yoga"}, "duration": 3600,
+                     "startTimeLocal": "2026-08-16 07:00:00"},
+                    {"activityType": {"typeKey": "running"}, "duration": 1800},
+                ]
+            )
+        ):
+            sync.sync_garmin("2026-08-16", self.repo)
+        self.assertEqual(self.stored()["activity_log"], [])
+
+    def test_a_re_sync_replaces_a_days_activities_rather_than_appending(self):
+        """A day holds any number of activities, so there is no row to
+        refine — merging would leave a deleted or re-classified session
+        outliving the day it was recorded on."""
+        with replace_garmin_client(FakeGarminClient(activities=ACTIVITIES)):
+            sync.sync_garmin("2026-08-16", self.repo)
+            sync.sync_garmin("2026-08-16", self.repo)
+        self.assertEqual(len(self.stored()["activity_log"]), 3)
+
+        with replace_garmin_client(
+            FakeGarminClient(activities=[dict(ACTIVITIES[0], calories=100)])
+        ):
+            sync.sync_garmin("2026-08-16", self.repo)
+        stored = self.stored()["activity_log"]
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["gross_calories"], 100)
+
+    def test_a_row_filed_under_another_date_is_refused(self):
+        """The delete half has already run by then, so a mismatched row would
+        clear a real day and land somewhere no re-sync of its own date would
+        ever clear it."""
+        with self.assertRaises(ValueError):
+            run_sync(
+                self.repo.save_activity_entries(
+                    "2026-08-16", [{"date": "2026-08-15", "session_type": "walk"}]
+                )
+            )
+
+    def test_a_day_with_no_activity_leaves_earlier_days_alone(self):
+        with replace_garmin_client(FakeGarminClient(activities=ACTIVITIES)):
+            sync.sync_garmin("2026-08-16", self.repo)
+        with replace_garmin_client(FakeGarminClient(activities=[])):
+            sync.sync_garmin("2026-08-17", self.repo)
+        self.assertEqual(len(self.stored()["activity_log"]), 3)
 
     def test_sync_garmin_stores_nothing_when_the_scale_was_not_used(self):
         """Regression: `source` alone once passed for a measurement.
