@@ -19,19 +19,23 @@ phase decided not to fix them, which is a good habit for keeping the *why*
 and a bad one for ever getting back to them. The first item this queue ranked
 was one of those, and is now closed; so is the phase 4 aside that led it
 until v0.33.0, which was recorded in prose in two documents and filed in
-neither.
+neither. The rejection decay v0.34.0 closed is the counter-example worth
+keeping in view: it came from `future-ideas.md` with all three of its
+questions already written down, so the work was choosing between answers
+rather than reconstructing what the question had been.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.33.0**. Six releases have now closed whatever this queue ranked first
+**v0.34.0**. Seven releases have now closed whatever this queue ranked first
 at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
 Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
 and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
 nothing ever ran, **v0.32.0** the amber/violet collision *and* the fibre
 readout with no measured half, **v0.33.0** the training schedule proposed
-from Garmin activity. All three of the source docs' stale claims are now
-settled: `ISSUES.md` item 9 was already fixed, `ui-redesign.md`'s phase 4
-aside is filed *and* shipped, and only `future-ideas.md`'s out-of-date 5c
+from Garmin activity, **v0.34.0** the rejection list that never decayed.
+All three of the source docs' stale claims are now settled: `ISSUES.md`
+item 9 was already fixed, `ui-redesign.md`'s phase 4 aside is filed *and*
+shipped, and only `future-ideas.md`'s out-of-date 5c
 biometric counts remain — corrected in that entry.
 
 **`ui-redesign.md`'s last *unfiled* thread is closed.** v0.33.0 shipped the
@@ -40,8 +44,9 @@ loose thread ... worth filing there rather than leaving it here" and was
 then never filed anywhere. What that document still contributes is one
 properly-filed entry — finding 3, the trend charts, which waits on data and
 nothing else. Everything now at the top of this queue comes from
-`future-ideas.md`, and the top three are all blocked on a product decision
-rather than on work.
+`future-ideas.md`, and the top three are still all blocked on a product
+decision rather than on work — closing the rejection decay changed which
+three they are, not that description of them.
 
 **A third fetched-and-discarded signal turned out to be the enabling
 half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
@@ -61,14 +66,26 @@ in it, and the sync item's single blocking decision — which of three shapes
 job outside the app process. v0.32.0: the amber/violet pass and the fibre
 item were independent, and shipped together only because the palette work
 had to touch every `ui_*` module anyway and the fibre readout lands in one
-of them. v0.33.0 closed one, and it was an L.
+of them. v0.33.0 closed one, and it was an L; v0.34.0 closed one M.
+
+**A decision-blocked item is unblocked by asking, not by waiting.** Two
+releases have now cleared one, and they cleared it differently: v0.31.0's
+sync item had three candidate shapes and this file had already recommended
+one, so the decision was made by reading. v0.34.0's rejection decay did not
+— its three questions were open, and the whole cost of clearing them was
+putting them to the maintainer and building against the answers. Everything
+now ranked 1–3 is in the second state, with no recommendation standing. The
+corollary is that "blocked by: one decision" is not a reason to skip an item
+when picking what to do next — it is a reason to start it with a question.
 
 **This file's own cross-references are by name, not by number**, the same
 rule CLAUDE.md states for citing it from anywhere else. They had gone stale
 by one after an earlier renumber — "item 8" pointing at what had become
 item 7, in three places — which is the argument for the rule rather than
 against it: a number here has a shelf life of exactly one release, and this
-renumber (2–10 → 1–9) is the fourth.
+renumber (2–9 → 1–8) is the fifth. The anchor links carry a number and are
+the one thing a renumber has to be checked against; all nine were re-checked
+against their headings this time.
 
 ## Size scale
 
@@ -84,56 +101,21 @@ renumber (2–10 → 1–9) is the fourth.
 
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
-| 1 | [Rejection list has no decay](#1--rejection-list-has-no-decay) | Feature | M | one decision |
-| 2 | [Morning readiness check-in](#2--morning-readiness-check-in) | Feature | M | one decision |
-| 3 | [Adherence and workout-completion tracking (5b)](#3--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
-| 4 | [Pantry inventory ledger with real quantities](#4--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 5 | [Trend charts / the Insights destination (5c)](#5--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 6 | [Write and generation routes on the API](#6--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 7 | [OpenAPI schema is off, so there are no generated types](#7--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 8 | [No auth on `/api`](#8--no-auth-on-api) | Feature | S | only if exposed |
-| 9 | [Food waste tracking](#9--food-waste-tracking) | Feature | XL | not scoped |
+| 1 | [Morning readiness check-in](#1--morning-readiness-check-in) | Feature | M | one decision |
+| 2 | [Adherence and workout-completion tracking (5b)](#2--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
+| 3 | [Pantry inventory ledger with real quantities](#3--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
+| 4 | [Trend charts / the Insights destination (5c)](#4--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
+| 5 | [Write and generation routes on the API](#5--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 6 | [OpenAPI schema is off, so there are no generated types](#6--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 7 | [No auth on `/api`](#7--no-auth-on-api) | Feature | S | only if exposed |
+| 8 | [Food waste tracking](#8--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed), each XS–M
 and none urgent.
 
 ---
 
-## 1 — Rejection list has no decay
-
-**Type:** Feature (product decision) &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp;
-**Source:** `future-ideas.md`, "Rejection-list decay"
-
-`build_rejection_rule` sends every entry in `data/rejections.json` to every
-generation call, forever. That was a deliberate choice to raise the question
-rather than settle it — capping to "most recent N" would just be a decay
-policy picked silently.
-
-**Ranked lower than the doc's urgency implies, deliberately.**
-`data/rejections.json` does not exist yet: zero rejections have been captured
-since phase 4 shipped. The failure mode — an unbounded dislike list starving
-the rotation, the same way "unused in the last N" starves the tail of a list
-— is real and will arrive, but it arrives slowly and there is nothing to
-migrate when it does. Do this before the file gets large, not before it
-exists.
-
-**Three questions, all product calls, all in the source doc:**
-
-1. What N should be. Too short and a stable dislike stops being honoured
-   after a month; too long and it is today's behaviour with extra steps.
-2. Hard cutoff or soft discount. A discount changes
-   `build_rejection_rule`'s aggregation, not just its inputs.
-3. Whether the *reason* changes the rate. "Had it recently" is arguably
-   self-resolving in a way "don't fancy it" is not, so one uniform window
-   across all four reasons may be the wrong model entirely.
-
-**No storage change either way** — every entry already carries its `date`, so
-the filtering or weighting lands in `build_rejection_rule` (a pure function of
-`config["rejected_preferences"]`) or at the point that list is assembled.
-
----
-
-## 2 — Morning readiness check-in
+## 1 — Morning readiness check-in
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** one
 decision &nbsp;·&nbsp; **Source:** `ISSUES.md` item 10 · `future-ideas.md` 5d
@@ -164,7 +146,7 @@ argue about; the doc does not settle it.
 
 ---
 
-## 3 — Adherence and workout-completion tracking (5b)
+## 2 — Adherence and workout-completion tracking (5b)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md` 5b
@@ -208,13 +190,13 @@ schema below, and may not need it at all.
 upsert-by-`date`+`slot_id` shape as `_upsert_dated_entry`) before any UI. The
 write path is the design question; the read path is not.
 
-**It gates part of [Trend charts / the Insights destination](#5--trend-charts--the-insights-destination-5c)**
+**It gates part of [Trend charts / the Insights destination](#4--trend-charts--the-insights-destination-5c)**
 — two of 5c's five proposed charts (7-day adherence, gym completion) have no
 data source without this.
 
 ---
 
-## 4 — Pantry inventory ledger with real quantities
+## 3 — Pantry inventory ledger with real quantities
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `future-ideas.md`, "Pantry photo → an inventory ledger"
@@ -252,7 +234,7 @@ behaviour and is what permits four meal types to claim the same tin.
 
 ---
 
-## 5 — Trend charts / the Insights destination (5c)
+## 4 — Trend charts / the Insights destination (5c)
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Blocked by:**
 runtime data &nbsp;·&nbsp; **Source:** `future-ideas.md` 5c ·
@@ -286,7 +268,7 @@ against 5 points is thin; a 30-day one is misleading. Suggest revisiting once
 in both lists.
 
 **Two of the five charts additionally depend on
-[Adherence and workout-completion tracking](#3--adherence-and-workout-completion-tracking-5b)**
+[Adherence and workout-completion tracking](#2--adherence-and-workout-completion-tracking-5b)**
 (adherence, gym completion) and should be dropped from a first version rather
 than waiting for it. The gym-completion one is now half-served without it:
 v0.33.0's `activity_log` records what the watch saw per date, so "sessions
@@ -295,7 +277,7 @@ only a session the watch missed needs the manual mark that item is about.
 
 ---
 
-## 6 — Write and generation routes on the API
+## 5 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -317,7 +299,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 7 — OpenAPI schema is off, so there are no generated types
+## 6 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -336,7 +318,7 @@ against the NiceGUI app object.
 
 ---
 
-## 8 — No auth on `/api`
+## 7 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -353,7 +335,7 @@ not before.
 
 ---
 
-## 9 — Food waste tracking
+## 8 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
@@ -361,8 +343,8 @@ not before.
 Flagged in the original architecture review as having no data source
 whatsoever. It would need a new logging entry point of its own — a separate
 product decision from both
-[Adherence and workout-completion tracking](#3--adherence-and-workout-completion-tracking-5b)
-and [Trend charts](#5--trend-charts--the-insights-destination-5c), and the
+[Adherence and workout-completion tracking](#2--adherence-and-workout-completion-tracking-5b)
+and [Trend charts](#4--trend-charts--the-insights-destination-5c), and the
 only item in this queue with no proposed schema, no proposed surface and no
 proposed interaction.
 
@@ -402,6 +384,7 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ui-redesign.md` phase 1, recorded rather than resolved | Amber carried five documented meanings (eight in fact) and violet two | Shipped in **v0.32.0** — role separation: training, fridge/freezer, the favourite star, buy-late and the prep note all gave up their hue to a glyph already doing the work; carbs → orange, fibre → cyan, and the telemetry marker's emerald training case folded into amber. No hue in `ui_theme.py` now carries more than two meanings; the `ui-work` skill's collisions section is rewritten as "The palette". |
 | not previously filed — raised 2026-08-28 | Cronometer logged no fibre, so the fibre readout had no measured half | Shipped in **v0.32.0** — `CRONOMETER_MACRO_COLUMNS` gains `fiber_g` (`Fiber (g)`/`Fiber`), keyed the repository's way rather than the CSV's. Capture and readout landed together, per this entry's own "file both or neither": capture alone reproduces the shape v0.29.0 closed for Garmin sleep. `ui_state.fibre_view(planned, logged)` is the pure view model holding the rule and both formatted halves, `PlannerState.fibre_for(day)` matches a `daily_actuals` row by the day's **calendar date** — not by weekday, which is why this is not `planner.logged_intake_for` — and `ui_telemetry.py` prints the logged figure as a second slate label beside the cyan planned one. **Side by side, never over a divider**: `32/24` in a row where every other entry is `actual/target` reads as a goal that was missed, and there is no fibre goal. `MACRO_KEYS` untouched, no budget change anywhere, `_prune`/`has_measurements` unchanged so an absent column is omitted rather than zeroed and every row synced before this reads as "no log". The appendix's **No daily fibre target** is deliberately still open and is a different, larger change |
 | `ui-redesign.md` phase 4 aside, never filed until this queue filed it | The training schedule was hand-declared while Garmin recorded what actually happened | Shipped in **v0.33.0** — `activity_log` is a fourth `biometrics.json` section (`GarminSyncService.fetch_activities` → `PlanRepository.save_activity_entries`), and `nutrition_engine.propose_training_schedule` diffs four weeks of it against the declared week. **The detector was the easy half; the confirmation is the feature**: nothing writes without a click, and the precedent copied is `estimate_session_burn_kcal`'s calculator button — a derived default, into the same field, applied explicitly. **The blocking decision — a declared session Garmin never sees — is answered symmetrically**: proposed for removal, never removed, behind two guards (the weekday must have come round at least twice inside the *observed* span, and `MIN_ACTIVE_DAYS_FOR_DROP` asks whether the watch is worn at all before its silence is evidence); a weekday that recorded *something* is never dropped, since a Sunday ride that became a Sunday walk is a day you plainly train on. **What counts as observed was the real difficulty** — `activity_log` holds only days that recorded something, the same ambiguity `sync_checkpoints` closed for weigh-ins, so the span runs from the first recorded activity to the later of the last one and Garmin's checkpoint, capped at today, and under-claiming is the safe direction. Storage is replace-per-date, not upsert: this is the one section with several rows per day. Only mapped, timed rows are stored — `GARMIN_SESSION_TYPES` has no catch-all and `startTimeLocal` is read rather than `startTimeGMT` — because a proposal is a sentence the user is asked to agree to. `net_calories` finally has a reader: it is the proposed burn, with the MET formula only as fallback. Accepting persists `training_schedule` through `save_config_keys`, making that the second UI control that writes to `config/` on `set_target_mode`'s reasoning, and applies the change to the file's list and the staged list separately so an accept never writes out someone else's half-typed session. Additions diff against the staged schedule, drops against the file's. `ui_state.training_proposals_view` carries the wording over three no-proposal states, on the `adaptive_tdee_view` precedent — "your week already matches" is the good answer and the one most likely to be misread as broken |
+| `future-ideas.md`, "Rejection-list decay" — this queue's item 1 until v0.34.0 | `build_rejection_rule` sent every recorded rejection to every generation call, forever | Shipped in **v0.34.0** — and the answer to all three of the questions this entry left open is that there were **two signals in one rule**, wanting two windows. The **dish list** is a veto on one recipe and expires per reason (`planning_rules.rejection_decay_days`): `had_it_recently` 21 days because it is self-resolving — the dish stops having been had recently whether or not anything honours the entry — `too_much_prep` 60, `dont_fancy_it` 90, `wrong_for_slot` 180 because it is structural and a curry is never breakfast. **Per reason rather than one N** answers question 3 rather than deferring it, on the precedent `favorite_reuse_days` already set for its own split. The **recurring-reason tally** counts over the longer `rejection_reason_window_days` (180), so a standing preference outlives the dishes that evidenced it — which is what makes question 2's hard-cutoff/soft-discount choice moot rather than merely decided: a hard cutoff on the half that should expire, no cutoff at all on the half that shouldn't. **The tally moved into Python**, a consequence of the split rather than a flourish: once the halves have different windows the model only ever sees the shorter one, so asking it to notice a repeated reason had it weighing a subset while being told to weigh the whole. `REJECTION_REASON_GUIDANCE` names what a run of each answer implies, split from `REJECTION_REASON_LABELS` the way that dict was already split between UI and prompt; `REJECTION_REASON_SIGNAL_MIN` (3) is what counts as a run. **No storage change and nothing to migrate**, exactly as this entry predicted — every entry already carried its `date` — and done at the moment it recommended: `data/rejections.json` still did not exist, so this landed before the file got large rather than before it existed. Two fixes carried along: `build_rejection_rule` takes `today`, the `select_favorite_assignments` seam, because the existing tests held fixed date literals against a live clock and would have begun failing about six weeks out — the failure CLAUDE.md's "Tests" section already records catching once; and `planning_rule` extends its documented fallback to a config with no `planning_rules` section at all, which `AppConfig` already treats as legal |
 | `ISSUES.md` 5 | Can't open a batch-cooking recipe | Phase 6c — body opens the shared `open_detail` |
 | `ISSUES.md` 6 | Rename "Today" to "Daily View" | Shipped post-phase-3 (rail label only; function names unchanged) |
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |
