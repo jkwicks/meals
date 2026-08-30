@@ -23,6 +23,38 @@ from planner import (
 )
 from week import humanize
 
+# --------------------------------------------------------------------------
+# Identity
+# --------------------------------------------------------------------------
+# `ui.run(title="AI Weekly Meal Planner")` was the only place the app named
+# itself, and that string is a description rather than a name — it says what
+# the program is for, which is what a README does, not what a wordmark does.
+# CHANGE-QUEUE.md's identity item; the name was the decision blocking it.
+#
+# "Larder" is the store cupboard: the food you already have, before any of it
+# is a meal. It names the half of this app that is actually unusual — the
+# pantry ledger, `inventory_to_clear`, the fridge window bounding a batch,
+# the shopping windows grouped by cook day — rather than the meal planning,
+# which every app in the category also does.
+#
+# Six characters, which is the constraint that mattered: the wordmark sits in
+# the rail, `RAIL_WIDTH_PX` is pinned, and anything in there measuring wider
+# slides every day's telemetry off its column (see `WEEK_GRID_HEADER_INSET_
+# STYLE`). At TEXT_HEAD with the mark beside it this measures well inside 168.
+APP_NAME = "Larder"
+# The mark. `restaurant_menu` was already the header's icon, so this is the
+# app's existing glyph gaining a name rather than a new one being invented —
+# and it is deliberately not `kitchen`, which the fridge badge now owns.
+APP_MARK_ICON = "restaurant_menu"
+# The browser tab. `favicon=` is a kwarg on `ui.run()` and takes an emoji
+# directly — not `add_head_html` and not a file to serve, so there is no asset
+# to ship and nothing to 404. Until this, the tab carried NiceGUI's default.
+APP_FAVICON = "\N{JAR}"
+# What the tab and the window title say. The name first, because a tab strip
+# truncates from the right and the name is the half worth keeping.
+APP_TITLE = f"{APP_NAME} — weekly meal planning"
+
+
 # The type scale — four sizes, replacing nine crammed into an 8-to-14-pixel
 # band (56 uses of the smallest pixel value alone, 35 of the next) that no
 # two of were distinguishable at a glance. That was noise, not hierarchy.
@@ -34,6 +66,33 @@ TEXT_MICRO = "text-[10px]"  # data figures, chip/badge labels, link lines, capti
 TEXT_BODY = "text-xs"  # the default — labels, inputs, card titles, list rows
 TEXT_HEAD = "text-sm"  # section headings, day names, dialog section titles
 TEXT_DISPLAY = "text-lg"  # dialog titles, a recipe name in the detail view
+
+# The two faces those four sizes render in. `grep font-family src/` returned
+# nothing before this: every size above resolved to Quasar's default Roboto,
+# and the `font-mono` figures to whatever monospace the viewer's OS happened
+# to pick — so the app's most-read surface, seven columns of macros scanned
+# vertically, had no declared face at all. CHANGE-QUEUE.md's typography item.
+#
+# **System stacks, not a webfont.** Nothing else on this page needs the
+# network: no CDN is loaded anywhere, `whfoods.json` ships in the repo, and
+# the only outbound call the app makes is OpenRouter's, from the *server*.
+# Pulling two families from Google Fonts to render a localhost planner would
+# make the front end the one part of it that fails offline, which is a worse
+# trade than a face that varies by platform. Each stack therefore names what
+# the platform already has, best first, and ends at the generic family.
+UI_FONT_STACK = (
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Roboto", '
+    '"Helvetica Neue", Arial, sans-serif'
+)
+# Figures. `ui-monospace` first resolves to SF Mono on this machine and to
+# the platform's own UI monospace elsewhere; the named fallbacks are for the
+# browsers that don't know the generic yet. Every face here has the flat,
+# unambiguous zero and equal-width digits a column of macros needs.
+FIGURE_FONT_STACK = (
+    'ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", "Menlo", '
+    '"Consolas", "Liberation Mono", monospace'
+)
+
 
 # Spacing — five steps, each with a job. Space siblings with the parent's
 # `gap`, not a per-element margin: margins collapse and double in ways a gap
@@ -256,21 +315,61 @@ STATUS_STYLES = {
 # storage note, so the badge never disagrees with the text a user would see
 # on the recipe.
 #
-# **Both badges are neutral, and the glyph in the label is the distinction.**
-# "fridge" used to be amber and "freezer" cyan; the amber was the fifth
-# meaning that colour carried, and the cyan was a whole hue spent on a
-# two-member set that ⚡ and ❄️ already tell apart. Retiring both freed
-# cyan for `MACRO_TINTS["fiber_g"]`. CHANGE-QUEUE.md's amber/violet item.
+# **Both badges are neutral, and the glyph is the distinction.** "fridge"
+# used to be amber and "freezer" cyan; the amber was the fifth meaning that
+# colour carried, and the cyan was a whole hue spent on a two-member set the
+# glyphs already tell apart. Retiring both freed cyan for
+# `MACRO_TINTS["fiber_g"]`. CHANGE-QUEUE.md's amber/violet item.
+#
+# **The glyphs are Material icons now, not emoji — and the pair had to move
+# together.** ⚡/❄️ are load-bearing here rather than decorative: they are
+# the entire reason these two badges could give up their hues, so replacing
+# one and leaving the other would leave a set half-distinguished by a glyph
+# and half by a colour that no longer exists. Emoji were the wrong carrier
+# for that weight in the first place — they render in the platform's own
+# emoji font at its own metrics and colours, so ⚡ arrived amber-yellow on
+# macOS and flat blue on Windows, reintroducing a hue this module had
+# deliberately spent a whole pass removing.
+#
+# `kitchen` is Material's refrigerator and `ac_unit` its snowflake, which is
+# the literal fridge/freezer distinction rather than the ⚡'s metaphor for
+# it. `kitchen` is also `ui_review.py`'s "Pantry clear" icon; the two never
+# share a surface — one is a badge on a meal card, the other a section
+# header inside a dialog — which is the same test the palette table applies
+# to violet meaning both fat and location.
 PREP_BADGE_STYLES = {
     "fridge": {
-        "label": "⚡ Prepped on Sun",
+        "icon": "kitchen",
+        "label": "Prepped on Sun",
         "classes": "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/30",
     },
     "freezer": {
-        "label": "❄️ From Freezer",
+        "icon": "ac_unit",
+        "label": "From Freezer",
         "classes": "bg-slate-700/40 text-slate-300 ring-1 ring-inset ring-slate-600/30",
     },
 }
+
+# The telemetry header's day marker — the other half of the emoji retirement
+# above, and filed with it because the two glyphs are one set: • and ⚡ both
+# mean "this day is measured against a live preview rather than against the
+# numbers the week was generated for", and the glyph says which of the two
+# staged it. Swapping one and leaving the other would have left one symbol
+# meaning different things in adjacent surfaces.
+#
+# **One colour, two glyphs** — both amber, per the palette contract, since
+# both say the same thing about the denominator. The training case used to
+# be emerald, which was emerald's fourth meaning and implied a distinction
+# that was never real.
+#
+# `tune` for a target override reads as a knob that was turned, which the
+# bare `•` never did. `fitness_center` is deliberately the same icon
+# `TRAINING_TYPE_ICONS` uses for a gym session and as its fallback for any
+# unrecognised type: that map has already established this glyph as "there
+# is training here", so reusing it is speaking the module's own vocabulary
+# rather than adding a second word for it.
+TELEMETRY_MARKER_OVERRIDE = "tune"
+TELEMETRY_MARKER_TRAINING = "fitness_center"
 
 # `ui_state.SyncDay.state` — what one date in the Settings sync strip is, from
 # one source's point of view. Here rather than in `ui_state.py` for the same
@@ -411,11 +510,64 @@ def format_day_label(day: str, iso: Optional[str], short: bool = False) -> str:
 # - orange  — carbs, and nothing else.
 # - cyan    — fibre, and nothing else.
 # - indigo  — the prep column, and nothing else.
+# - teal    — the brand accent (`ACCENT_*` below), and nothing else.
 # - slate   — the neutral ground, not a meaning. Anything subtracted from a
 #             hue lands here and leans on a glyph or on weight instead.
 #
 # Adding a third meaning to any of the above is the specific thing not to do.
 LOCATION_ACCENT = "bg-violet-400/10 text-violet-200 ring-1 ring-inset ring-violet-300/25"
+
+# --------------------------------------------------------------------------
+# The brand accent — a ninth role, and the only hue that is about the app
+# rather than about the food.
+# --------------------------------------------------------------------------
+# Everything above answers "what is this thing", "how is it going" or "which
+# of several". None of them answers "this is Larder", and until now nothing
+# did: the Generate button ran on Quasar's `color=primary`, which is a
+# framework default nobody chose and which is why the app's single most
+# important verb had no accent behind it.
+#
+# **Teal, because it is genuinely unclaimed.** Its two neighbours in the table
+# above never share a surface with this: emerald lives on cards and telemetry
+# bars, cyan only on the recipe dialog's fibre figure, and neither appears in
+# the rail or on the Generate button. Lime and green would have sat between
+# amber and emerald — both load-bearing — where at this density a glance
+# reads a near-target band or a cook slot.
+#
+# **Two sites, and the restraint is the point.** An accent that spread to
+# every button would be a tenth structural meaning ("clickable"), which the
+# rail's flat slate tabs already communicate by contrast. It marks the
+# wordmark and the primary verb; the three flat exports beside Generate stay
+# slate for exactly the reason the rail's own comment gives.
+#
+# **Teal was already here, in five places, and nobody had said so.** The
+# Shopping rail button, the shopping drawer's checkboxes and three review
+# controls all carried `color=teal` — a Quasar control colour picked one
+# widget at a time, appearing in no palette table and meaning nothing in
+# particular. Naming it is what turns five accidents into one token, and it
+# is why the meaning below is written as one thing rather than two: *this is
+# Larder talking*, whether that is the wordmark, the week's primary verb, or
+# the checked state of a control you just clicked. It is never a slot status,
+# never a macro, never a band — which is the whole test the table applies.
+#
+# **The Shopping button had to give the hue back for that to be true.** It sat
+# beside Generate as the second of "the week's primary verbs", both un-flat
+# and each in a different saturated colour, so the two competed rather than
+# ranking. It is now outlined instead: filled accent (Generate) > outlined
+# slate (Shopping) > flat slate (the three exports) is a three-tier hierarchy
+# carried by *shape*, the same fill-versus-outline distinction
+# `bookmark`/`bookmark_border` already draws for a favourite.
+ACCENT_HUE = "teal"
+# The wordmark's mark. 300 rather than 400: it sits on `bg-slate-900` beside
+# `text-slate-100` type, and the brighter step reads as a second heading.
+ACCENT_MARK_CLASS = "text-teal-300"
+# The Generate button. Spelled `color=teal` — bare, exactly as the five
+# pre-existing sites spell it — rather than the equivalent `teal-6`, so one
+# grep finds every use of the accent and the two spellings cannot drift.
+# Quasar owns the fill through `props`; the label colour is a Tailwind class,
+# which is the split `ui_app.py`'s rail buttons already use.
+ACCENT_BUTTON_PROPS = f"unelevated color={ACCENT_HUE}"
+ACCENT_BUTTON_CLASSES = "text-slate-900 font-semibold"
 TRAINING_ACCENT = "bg-slate-700/30 text-slate-300 ring-1 ring-inset ring-slate-600/30"
 # A scheduled rest day. Explicitly muted rather than left in TRAINING_ACCENT:
 # `apply_training_adjustments` skips a rest entry, so it expands no budget and
@@ -574,7 +726,7 @@ MACRO_DETAIL_LABELS = [
 # dialog shares it exactly — a second hand-typed copy drifting by a pixel of
 # tracking is what makes this kind of layout look approximate.
 MONO_SECTION_LABEL = (
-    f"{TEXT_BODY} font-mono uppercase tracking-[0.18em] text-slate-500"
+    f"{TEXT_BODY} font-mono uppercase tracking-[0.18em] text-slate-400"
 )
 
 # Fallbacks for config.json's "ui_settings" object, used when a config.json
@@ -759,6 +911,49 @@ def pluralize(word: str) -> str:
     return word + "s"
 
 
+def typography_css() -> str:
+    """The app's two faces, and tabular figures everywhere.
+
+    Emitted once from the page function, never from a `@ui.refreshable` —
+    `ui.add_css` stacks another copy into the head on every repaint, which is
+    why `ui_app.py` has exactly one `add_css` call and this joins it.
+
+    Three declarations, and the third is the one worth explaining:
+
+    - **`--larder-font-ui` / `--larder-font-figure` as custom properties**,
+      not two literal stacks. `.font-mono` is Tailwind's class and 39 call
+      sites already use it; redefining what it resolves to is what puts every
+      existing figure on the figure face with no call site touched.
+    - **`font-family` on `body`, inherited rather than assigned per element.**
+      Quasar sets its own `font-family` on `.q-*` components, so `body` alone
+      loses every input, button and tab label; the `:where()` wrapper carries
+      zero specificity, which lets any component that genuinely needs its own
+      face still win without an `!important` arms race.
+    - **`font-variant-numeric: tabular-nums` on the root.** This is the half
+      of the item that is about alignment rather than about a face: the 39
+      `font-mono` figures already line up because every glyph in a monospace
+      face is one width, but the telemetry header's `1722/1850`, the card
+      macro pills and the Insights captions are all proportional, so a `1`
+      is narrower than a `7` and a column of them shimmers as the week is
+      regenerated. Declaring it at the root rather than on a figure class is
+      deliberate: this app is labels and numbers almost end to end, there is
+      no prose for it to cost anything on, and the alternative is a class
+      every one of those call sites has to remember to carry.
+    """
+    return (
+        ":root {"
+        f" --larder-font-ui: {UI_FONT_STACK};"
+        f" --larder-font-figure: {FIGURE_FONT_STACK};"
+        " font-variant-numeric: tabular-nums;"
+        " font-feature-settings: 'tnum' 1, 'cv01' 1; }\n"
+        "body, :where(.q-field, .q-btn, .q-tab, .q-item, .q-dialog, .q-menu,"
+        " .q-tooltip, .q-checkbox, .q-toggle, .q-select) {"
+        " font-family: var(--larder-font-ui); }\n"
+        ".font-mono, :where(code, kbd, samp, pre) {"
+        " font-family: var(--larder-font-figure); }"
+    )
+
+
 def chain_css(chains: int) -> str:
     """CSS that lights up a whole cook->leftover chain when any card in it is hovered.
 
@@ -887,7 +1082,16 @@ CHART_MACRO_COLOURS = {
 }
 
 CHART_INK = "#cbd5e1"  # slate-300: a series the eye follows
-CHART_MUTED = "#64748b"  # slate-500: axis labels, the reference series
+# **Two constants where there was one, and the split is the contrast floor.**
+# `CHART_MUTED` was slate-500 doing both jobs below. WCAG asks 4.5:1 of text
+# and only 3:1 of a graphical object, and slate-500 measures 3.7:1 on this
+# ground — so it was simultaneously fine for the reference *line* and short
+# for the axis *labels* beside it, which are 10px text. Splitting is what
+# lets the labels clear the floor without brightening a reference series
+# that would then compete with `CHART_INK`; the planned series stays the
+# dashed one, which is what actually distinguishes it (see `ui_insights`).
+CHART_AXIS = "#94a3b8"  # slate-400: axis and legend labels — text, so 4.5:1
+CHART_MUTED = "#64748b"  # slate-500: the reference series and its markers
 CHART_GRID = "#1e293b"  # slate-800: split lines, at the weight of a border
 CHART_SURFACE = "#0f172a"  # slate-900: tooltip ground, matching the header
 
@@ -934,17 +1138,17 @@ def chart_scaffold(*, category_axis: bool = True) -> dict:
             "type": "category" if category_axis else "value",
             "axisLine": axis_line,
             "axisTick": {"show": False},
-            "axisLabel": {"color": CHART_MUTED, "fontSize": 10},
+            "axisLabel": {"color": CHART_AXIS, "fontSize": 10},
         },
         "yAxis": {
             "type": "value",
             "scale": True,
             "axisLine": {"show": False},
-            "axisLabel": {"color": CHART_MUTED, "fontSize": 10},
+            "axisLabel": {"color": CHART_AXIS, "fontSize": 10},
             "splitLine": {"lineStyle": {"color": CHART_GRID}},
         },
         "legend": {
-            "textStyle": {"color": CHART_MUTED, "fontSize": 10},
+            "textStyle": {"color": CHART_AXIS, "fontSize": 10},
             "icon": "roundRect",
             "itemHeight": 6,
             "itemWidth": 12,

@@ -51,6 +51,7 @@ from ui_theme import (
     ADHERENCE_MARK_ICONS,
     ADHERENCE_STATUS_LABELS,
     BAND_COLOURS,
+    CHART_AXIS,
     CHART_GRID,
     CHART_HEIGHT,
     CHART_HEIGHT_SHORT,
@@ -116,7 +117,7 @@ def _section(title: str, view: InsightPanel):
             ui.label(view.headline).classes(
                 f"{TEXT_HEAD} font-semibold min-w-0 text-slate-200"
             )
-        ui.label(view.detail).classes(f"{TEXT_MICRO} text-slate-500")
+        ui.label(view.detail).classes(f"{TEXT_MICRO} text-slate-400")
     return card
 
 
@@ -158,7 +159,7 @@ def build_insights(ctx: UIContext, biometrics: dict) -> InsightsHandles:
                     ui.label(adaptive.headline).classes(
                         f"{TEXT_HEAD} font-semibold min-w-0 text-slate-200"
                     )
-                ui.label(adaptive.detail).classes(f"{TEXT_MICRO} text-slate-500")
+                ui.label(adaptive.detail).classes(f"{TEXT_MICRO} text-slate-400")
 
             with _section("WEIGHT AGAINST TARGET", weight):
                 if weight.drawable:
@@ -222,7 +223,9 @@ def _weight_options(view) -> dict:
             "symbol": "none",
             "label": {
                 "formatter": f"target {view.target_kg:g} kg",
-                "color": CHART_MUTED,
+                # `CHART_AXIS`, not `CHART_MUTED`: this is the one part of the
+                # markLine that is text, and it reads at 10px.
+                "color": CHART_AXIS,
                 "fontSize": 10,
                 "position": "insideEndTop",
             },
@@ -353,16 +356,16 @@ def _weigh_in_table(rows: List) -> None:
                 f"flex flex-row flex-nowrap items-baseline gap-{SPACE_SECTION} "
                 f"min-w-0 {TEXT_MICRO}"
             ):
-                ui.label(row.date).classes("text-slate-500 shrink-0 w-20")
+                ui.label(row.date).classes("text-slate-400 shrink-0 w-20")
                 ui.label(f"{row.weight_kg:.2f} kg").classes(
                     "text-slate-300 shrink-0 w-20 text-right"
                 )
                 ui.label(
                     "" if row.delta_kg is None else f"{row.delta_kg:+.2f}"
-                ).classes("text-slate-500 shrink-0 w-16 text-right")
+                ).classes("text-slate-400 shrink-0 w-16 text-right")
                 ui.label(
                     "" if row.body_fat_pct is None else f"{row.body_fat_pct:.1f}% fat"
-                ).classes("text-slate-500 min-w-0")
+                ).classes("text-slate-400 min-w-0")
 
 
 def _adherence_tiles(view) -> None:
@@ -391,7 +394,7 @@ def _adherence_tiles(view) -> None:
                         f"{TEXT_HEAD} font-semibold text-slate-200"
                     )
                 ui.label(ADHERENCE_STATUS_LABELS[status]).classes(
-                    f"{TEXT_MICRO} text-slate-500"
+                    f"{TEXT_MICRO} text-slate-400"
                 )
         if view.as_planned_pct is not None:
             with ui.element("div").classes(
@@ -401,4 +404,4 @@ def _adherence_tiles(view) -> None:
                 ui.label(f"{view.as_planned_pct:.0f}%").classes(
                     f"{TEXT_HEAD} font-semibold text-slate-200"
                 )
-                ui.label("eaten, of marks").classes(f"{TEXT_MICRO} text-slate-500")
+                ui.label("eaten, of marks").classes(f"{TEXT_MICRO} text-slate-400")

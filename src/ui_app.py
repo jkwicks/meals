@@ -131,9 +131,17 @@ from ui_state import PlannerState
 from ui_telemetry import build_telemetry
 from ui_today import build_today
 from ui_theme import (
+    ACCENT_BUTTON_CLASSES,
+    ACCENT_BUTTON_PROPS,
+    ACCENT_MARK_CLASS,
+    APP_FAVICON,
+    APP_MARK_ICON,
+    APP_NAME,
+    APP_TITLE,
     RADIUS_CARD,
     RAIL_WIDTH_CLASS,
     SPACE_BASE,
+    SPACE_HAIR,
     SPACE_SECTION,
     SPACE_TIGHT,
     TEXT_BODY,
@@ -142,6 +150,7 @@ from ui_theme import (
     WEEK_SELECTION_LABELS,
     card_hover_css,
     chain_css,
+    typography_css,
     week_grid_scroll,
 )
 
@@ -180,9 +189,15 @@ async def planner_page() -> None:
 
     ui.dark_mode(True)
     ui.add_css(
+        # The app's two faces and its tabular figures. First because it is the
+        # only rule here that everything else inherits from; see
+        # `ui_theme.typography_css` for why the figure stack is redefined
+        # through `.font-mono` rather than through 39 edited call sites.
+        typography_css()
+        + "\n"
         # Quasar's page container assumes comfortable padding; a 7-column week
         # needs the horizontal space back.
-        ".nicegui-content { padding: 0.75rem; gap: 0.75rem; }\n"
+        + ".nicegui-content { padding: 0.75rem; gap: 0.75rem; }\n"
         # Emitted once per page rather than from `canvas`, which is refreshable
         # and would stack another copy into the head on every repaint. The
         # bound is the week's shape, not its current contents, so it stays
@@ -230,10 +245,31 @@ async def planner_page() -> None:
 
     with ui.header(bordered=True).classes(f"bg-slate-900 px-{SPACE_SECTION} py-{SPACE_BASE} flex flex-col gap-{SPACE_BASE}"):
         with ui.element("div").classes(f"flex flex-row items-baseline gap-{SPACE_SECTION}"):
-            with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
-                ui.icon("restaurant_menu").classes(f"{TEXT_HEAD} text-slate-300")
-                ui.label("AI Weekly Meal Planner").classes(
-                    f"{TEXT_HEAD} font-semibold tracking-wide"
+            # The wordmark. CHANGE-QUEUE.md filed this for the top of the
+            # rail, on the stated premise that the app named itself nowhere on
+            # screen — which was not true when the item was written: an icon
+            # and a title string had sat here since before v0.23.0. What was
+            # missing was a *name* (the string was a description of the
+            # program, which is what a README does) and any accent behind it.
+            #
+            # It stays here rather than moving. `ui.header()` is
+            # `position: fixed`, which is the whole reason the week grid needs
+            # `WEEK_GRID_HEADER_INSET_STYLE`; the rail is not, so it scrolls
+            # away with the canvas beneath it. A wordmark that leaves the
+            # screen on the first scroll of a 28-card grid is a weaker one
+            # than a wordmark that does not, and printing the name in both
+            # places would be saying it twice.
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR}"
+            ):
+                # The one place besides Generate the accent appears. The mark
+                # carries the hue and the name stays slate-100: an accent
+                # doing both would compete with the primary verb two regions
+                # below it, which is the ranking `ACCENT_*`'s own comment sets
+                # out.
+                ui.icon(APP_MARK_ICON).classes(f"{TEXT_HEAD} {ACCENT_MARK_CLASS}")
+                ui.label(APP_NAME).classes(
+                    f"{TEXT_HEAD} font-semibold tracking-wide text-slate-100"
                 )
 
             async def on_week_selection_change(event) -> None:
@@ -493,11 +529,21 @@ async def planner_page() -> None:
             f"flex flex-col gap-{SPACE_TIGHT} w-full px-{SPACE_TIGHT} py-{SPACE_BASE} my-{SPACE_TIGHT} "
             "border-y border-slate-800"
         ):
-            # Un-flat and colour-carrying on purpose — these two are the
-            # week's primary verbs, and every tab around them is a flat
-            # label. The three below stay flat and slate: an export is an
-            # occasional control, and giving it the same weight is what made
-            # the old header read as an undifferentiated row of icons.
+            # Un-flat on purpose — these two are the week's primary verbs,
+            # and every tab around them is a flat label. The three below stay
+            # flat and slate: an export is an occasional control, and giving
+            # it the same weight is what made the old header read as an
+            # undifferentiated row of icons.
+            #
+            # **Three tiers, and only the first carries a hue.** Generate used
+            # Quasar's `color=primary` — a framework default nobody picked —
+            # and Shopping `color=teal`, so the two sat side by side in
+            # different saturated colours, competing rather than ranking.
+            # Generate now takes the brand accent and Shopping is outlined:
+            # filled accent > outlined slate > flat slate is the same
+            # fill-versus-outline distinction `bookmark`/`bookmark_border`
+            # already draws, and it says which verb is the primary one, which
+            # two saturated hues never could.
             generate = rail_button(
                 "bolt",
                 "Generate",
@@ -507,8 +553,8 @@ async def planner_page() -> None:
                 "to cook in this grid — one API call per meal type, covering "
                 "each day it's cooked. Overwrites the selected week's cached "
                 "plan and appends to history.",
-                "font-semibold",
-                "unelevated color=primary",
+                ACCENT_BUTTON_CLASSES,
+                ACCENT_BUTTON_PROPS,
             )
             generate.bind_text_from(
                 state,
@@ -521,8 +567,8 @@ async def planner_page() -> None:
                 shopping.shopping_drawer.toggle,
                 "Every shopping trip in this week, grouped by department — "
                 "built from the grid as it stands, including any edits.",
-                "text-slate-900 font-semibold",
-                "unelevated color=teal",
+                "text-slate-200 font-semibold",
+                "outline",
             )
             shopping_button.bind_text_from(
                 state, "week_plan", backward=shopping_item_count
@@ -611,7 +657,11 @@ if __name__ in {"__main__", "__mp_main__"}:
     # reload=False on purpose: once generation lands, an in-memory week plan
     # would be thrown away by every source-file save.
     ui.run(
-        title="AI Weekly Meal Planner",
+        title=APP_TITLE,
+        # A kwarg, not `add_head_html`: NiceGUI takes an emoji directly and
+        # serves it as the tab icon, so there is no asset to ship and nothing
+        # to 404. The tab carried NiceGUI's own default until this.
+        favicon=APP_FAVICON,
         # server.sh passes MEALS_UI_PORT so its MEALS_PORT override reaches
         # here; 8080 keeps `python ui_app.py` working on its own.
         port=int(os.environ.get("MEALS_UI_PORT", "8080")),

@@ -194,7 +194,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             # Fat is shown, never typed: it is whatever energy is left once
             # protein and carbs are paid for.
             fat_label = ui.label(f"fat {target['fat_g']:.0f}g").classes(
-                f"{TEXT_MICRO} font-mono text-slate-500 text-center"
+                f"{TEXT_MICRO} font-mono text-slate-400 text-center"
             )
 
             for key, label in TARGET_FIELDS:
@@ -310,7 +310,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             with ui.element("div").classes("flex flex-col min-w-0 grow"):
                 ui.label(row.title).classes(f"{TEXT_BODY} text-slate-200 truncate")
                 ui.label(f"{row.detail} · {row.evidence}").classes(
-                    f"{TEXT_MICRO} text-slate-500 truncate"
+                    f"{TEXT_MICRO} text-slate-400 truncate"
                 )
 
             async def on_accept(session=row.session) -> None:
@@ -335,7 +335,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ).classes("max-w-xs")
             dismiss = ui.button(icon="close", on_click=on_dismiss).props(
                 "dense flat size=xs"
-            ).classes("min-h-0 p-0 text-slate-500 shrink-0")
+            ).classes("min-h-0 p-0 text-slate-400 shrink-0")
             with dismiss:
                 ui.tooltip("Not now — hidden until the page reloads").classes("max-w-xs")
 
@@ -365,21 +365,21 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ui.label(view.headline).classes(
                     f"{TEXT_BODY} font-semibold text-slate-200 min-w-0"
                 )
-            ui.label(view.evidence).classes(f"{TEXT_MICRO} text-slate-500")
+            ui.label(view.evidence).classes(f"{TEXT_MICRO} text-slate-400")
             for row in view.rows:
                 proposal_row(row)
             if view.has_proposals:
                 ui.label(
                     "Accepting writes the session to config/schedule.json — this "
                     "is your standing week, not a change staged for the next run."
-                ).classes(f"{TEXT_MICRO} text-slate-600")
+                ).classes(f"{TEXT_MICRO} text-slate-400")
 
     @ui.refreshable
     def training_editor() -> None:
         proposals_block()
         if not state.training_schedule:
             ui.label("No workouts scheduled.").classes(
-                f"{TEXT_MICRO} text-slate-500 italic"
+                f"{TEXT_MICRO} text-slate-400 italic"
             )
         for index, session in enumerate(state.training_schedule):
 
@@ -398,7 +398,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     ).props("dense outlined").classes(f"flex-1 min-w-0 {TEXT_BODY}")
                     ui.button(icon="delete", on_click=on_remove).props(
                         "dense flat size=xs"
-                    ).classes("min-h-0 p-0 text-slate-500")
+                    ).classes("min-h-0 p-0 text-slate-400")
                 with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
                     ui.input(
                         label="Time (HH:MM)",
@@ -516,7 +516,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
     @ui.refreshable
     def pantry_editor() -> None:
         if not state.pantry:
-            ui.label("Nothing to use up.").classes(f"{TEXT_MICRO} text-slate-500 italic")
+            ui.label("Nothing to use up.").classes(f"{TEXT_MICRO} text-slate-400 italic")
         for index, item in enumerate(state.pantry):
 
             def on_remove(i: int = index) -> None:
@@ -543,7 +543,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ).props("dense outlined debounce=350").classes(f"w-24 {TEXT_BODY}")
                 ui.button(icon="delete", on_click=on_remove).props(
                     "dense flat size=xs"
-                ).classes("min-h-0 p-0 text-slate-500")
+                ).classes("min-h-0 p-0 text-slate-400")
 
     with ui.dialog() as dialog:
         with ui.element("div").classes(
@@ -560,7 +560,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             ui.label(
                 "Everything below is staged for the next generation only — "
                 "nothing here is saved to config.json until you generate."
-            ).classes(f"{TEXT_MICRO} text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-400")
 
             ui.number(
                 label="People per meal",
@@ -580,7 +580,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 "dense outlined use-chips"
             ).classes(f"w-full {TEXT_BODY}")
             ui.label("Leave empty to use config.json's cuisine list.").classes(
-                f"{TEXT_MICRO} text-slate-600 -mt-2"
+                f"{TEXT_MICRO} text-slate-400 -mt-2"
             )
 
             baseline_cuisines = state.config.get("baseline_cuisines") or []
@@ -598,7 +598,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     + ", ".join(humanize(c).title() for c in baseline_cuisines)
                     + " before the rest rotates freely. 0% turns the floor off"
                     " for this run."
-                ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
+                ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             if diet_style_options:
                 ui.select(
@@ -610,7 +610,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ).classes(f"w-full {TEXT_BODY}")
                 ui.label(
                     "Leave empty to use config.json's active diet styles."
-                ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
+                ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             with ui.element("div").classes("flex flex-row items-center justify-between"):
                 ui.label("Bulk prep").classes(f"{TEXT_BODY} text-slate-300")
@@ -621,7 +621,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 "Batches one dinner across several days automatically — which "
                 "days is decided for you, no picking required. Absorbs the old "
                 "Sunday-prep timeline (no longer tied to Sunday)."
-            ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
+            ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             with ui.element("div").classes("flex flex-row items-center justify-between"):
                 ui.label("Long cook meal").classes(f"{TEXT_BODY} text-slate-300")
@@ -632,7 +632,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 "One dinner this week is a genuinely long, hands-off oven "
                 "roast/braise — a different day than bulk prep's, if both are "
                 "on."
-            ).classes(f"{TEXT_MICRO} text-slate-600 -mt-2")
+            ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             with ui.expansion("Daily targets", icon="track_changes").classes("w-full").props(
                 f"dense header-class='{TEXT_BODY} px-0'"
@@ -646,7 +646,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ui.label(
                     "A workout's burn is added to that day's target, and the "
                     "meal closest to it is pinned for glycogen replenishment."
-                ).classes(f"{TEXT_MICRO} text-slate-500 mb-1")
+                ).classes(f"{TEXT_MICRO} text-slate-400 mb-1")
                 with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
                     training_editor()
 
@@ -676,7 +676,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     "and the item is simply named every time, as before. "
                     "They are still ordinary ingredients, so they still "
                     "appear on the shopping list."
-                ).classes(f"{TEXT_MICRO} text-slate-500 mt-1")
+                ).classes(f"{TEXT_MICRO} text-slate-400 mt-1")
 
             with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-1"):
                 ui.button("Close", on_click=dialog.close).props("dense flat no-caps")
