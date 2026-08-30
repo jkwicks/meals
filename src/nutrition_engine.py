@@ -819,6 +819,83 @@ def calculate_adaptive_tdee(
     return measure_adaptive_tdee(daily_logs, weigh_in_history, window_days).estimate
 
 
+@dataclass(frozen=True)
+class WeightTrend:
+    """A weigh-in series as a chart draws it, plus the rate it is moving at.
+
+    Two series, not one, because they answer different questions and are
+    computed by different estimators — the distinction `smooth_series` and
+    `_trend_slope_kg_per_day` already document about themselves, surfaced
+    here so a caller cannot mix them up. `weights` is what the scale said;
+    `smoothed` is the same series shaped for the eye, and is the only thing
+    a line through a daily scatter should be drawn from. `kg_per_week` is
+    the *rate*, and it comes from the least-squares fit rather than from
+    either end of `smoothed`, because reading a rate off a smoothed series
+    understates a noise-free decline by 26%.
+
+    **Sign convention: negative while losing**, which is the raw slope's own
+    convention and deliberately not `measure_adaptive_tdee`'s. That function
+    negates it into "kg lost per day" because the energy formula is defined
+    that way; a chart caption reading "-0.62 kg/week" is not. Inverting
+    either is the easy mistake, so they are named for what they carry.
+
+    `kg_per_week` is None below two weigh-ins or a span under
+    `MIN_TREND_SPAN_DAYS` — the same floor the estimate applies, for the same
+    reason: multiplying a two-day wobble by anything is noise amplification.
+    The points are still returned in that case, because a scatter of three
+    weigh-ins is honest to *plot* even when no rate can be read off it.
+    """
+
+    dates: Tuple[str, ...]
+    weights: Tuple[float, ...]
+    smoothed: Tuple[float, ...]
+    span_days: int
+    kg_per_week: Optional[float]
+
+
+def measure_weight_trend(
+    weigh_in_history: list, window_days: int = 30
+) -> WeightTrend:
+    """`weigh_in_history`'s dated weights inside the window, and their rate.
+
+    Anchored on the most recent weigh-in rather than on today, the same
+    anchoring `measure_adaptive_tdee` uses and for the same reason: a series
+    that stops a month before it is read should yield the trend it recorded
+    rather than an empty window.
+
+    The window is wider than the estimate's 14 days by default because the
+    two want different things from the same rows — the estimate wants recent
+    intake to pair against, a chart wants enough points to read as a line.
+    Both take it as an argument so neither is quietly assuming the other's.
+    """
+    weigh_ins = [row for row in (weigh_in_history or []) if (row or {}).get("weight_kg")]
+    dates = [
+        d
+        for d in (_parse_iso_date((row or {}).get("date", "")) for row in weigh_ins)
+        if d
+    ]
+    windowed = _in_window(weigh_ins, max(dates), window_days) if dates else []
+    if not windowed:
+        return WeightTrend(dates=(), weights=(), smoothed=(), span_days=0, kg_per_week=None)
+
+    days = [when for when, _ in windowed]
+    weights = [float(row["weight_kg"]) for _, row in windowed]
+    span_days = (days[-1] - days[0]).days
+
+    kg_per_week: Optional[float] = None
+    if len(windowed) >= 2 and span_days >= MIN_TREND_SPAN_DAYS:
+        offsets = [float((when - days[0]).days) for when in days]
+        kg_per_week = round(_trend_slope_kg_per_day(offsets, weights) * 7.0, 3)
+
+    return WeightTrend(
+        dates=tuple(when.isoformat() for when in days),
+        weights=tuple(weights),
+        smoothed=tuple(round(value, 2) for value in smooth_series(weights)),
+        span_days=span_days,
+        kg_per_week=kg_per_week,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Proposing the declared week from the observed one
 # ---------------------------------------------------------------------------

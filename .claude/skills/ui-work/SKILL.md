@@ -22,6 +22,7 @@ section you need from it; you rarely need all of it:
 | the Today / Daily View destination | "The Today tab" and its three subsections |
 | the day inspector | "The day inspector" |
 | the review dialog, staged-changes bar, target curve | "The review dialog and the staged-changes bar" |
+| Insights, any chart | "Insights" |
 | Settings | "Settings' Daily Targets panel", "Settings' three read views" |
 | the shopping drawer | "Shopping list drawer" |
 | PDF / Markdown export | "Printing and PDF export" |
@@ -246,10 +247,13 @@ already covers the change — and before adding a section to `"plan"`, check it
 does not own a focused input.
 
 `"adherence"` is the newest and shows when a new topic *is* warranted: marking
-a meal repaints exactly two sections (`today.today_view`, `inspector.panel`),
-where `"plan"` would additionally rebuild the 28-card canvas, the telemetry
-header and the shopping panel on every click of a tick — none of which draw a
-mark.
+a meal repaints exactly three sections (`today.today_view`, `inspector.panel`
+and `insights.panel`), where `"plan"` would additionally rebuild the 28-card
+canvas, the telemetry header and the shopping panel on every click of a tick —
+none of which draw a mark. Insights joined it with the trend charts, which is
+worth noting because this paragraph previously said the topic had no third
+member to grow: **a topic's membership is a fact about today's readers, not a
+property of the topic.**
 
 ## Targets: read the resolved number, never the file
 

@@ -2193,8 +2193,10 @@ exactly the case where the answer is interesting.
 **It is deliberately not an input to generation.** A rejection is a
 preference about food, so `build_rejection_rule` sends it to the model; a
 mark is a record of a day, and what to do with a run of skipped Thursdays is
-a product question (CHANGE-QUEUE.md's Insights item) rather than something to
-answer by quietly adding a fourth soft rule to every prompt. Nothing in
+a product question rather than something to answer by quietly adding a fourth
+soft rule to every prompt. The Insights destination now *reports* the marks
+(see "Insights: five readouts" below); what it deliberately still does not do
+is feed them back into generation. Nothing in
 `planner.py`'s generation path reads `adherence.json`.
 
 #### The workout half is mostly derived, and only the gap is stored
@@ -2283,6 +2285,131 @@ The day's line — "2 of 3 marked" — is silent until something is marked. The
 whole week is unmarked until somebody starts, and a counter reading zero on
 six days out of seven is a UI element announcing that a feature exists rather
 than reporting anything.
+
+### Insights: five readouts, each gated on its own precondition
+
+The Insights destination was a 66-line honest empty state for five releases,
+because CHANGE-QUEUE.md's trend-charts item is blocked on runtime data rather
+than on engineering. **It still is, and that is the point of how this
+shipped**: measured the day it landed, the file held 6 weigh-ins across a
+5-day span against a floor of 7, and 5 logged days against the item's own
+suggested 14. The item's trigger was not met and the charts were built
+anyway, because waiting had a cost the stub itself demonstrated — it printed
+the counts and named the rule without evaluating it, which is exactly the
+failure v0.30.0 fixed for the adaptive estimate.
+
+So **the page evaluates rather than describes**. Each of the five readouts is
+an `InsightPanel` from `ui_state.py` carrying a `state`, a `headline` and a
+`detail`, and `ui_insights.py` prints the verdict and draws the chart only
+where `drawable` is true. The page fills itself as rows land instead of
+waiting for another release to notice they have.
+
+| readout | drawn from |
+|---|---|
+| weight against target | `biometrics.weigh_ins` + `user_profile.target_weight_kg` |
+| the weigh-in table | the same windowed rows as the chart above it |
+| planned against logged | `meal_history.json`'s per-day `targets` x `daily_actuals` |
+| macro accuracy | the same pairing, as means, `MACRO_KEYS` only |
+| adherence tiles | `adherence.json`'s `meals` + `workouts`, and `activity_log` |
+
+**Four states, not a `ready` flag**, on `AdaptiveTDEEStatus`' reasoning:
+`INSIGHT_EMPTY` (nothing recorded — sync something), `INSIGHT_SPARSE` (fewer
+than `INSIGHT_MIN_POINTS`, so no line is drawn — keep going),
+`INSIGHT_THIN` (drawn, below `INSIGHT_THIN_POINTS`) and `INSIGHT_READY`.
+Empty and sparse spell identically as a missing chart and have different
+fixes, which is the whole reason they are separate.
+
+**Thin is drawn, because the item's worry is the axis and not the points.**
+"A 14-day chart against 5 points is thin; a 30-day one is misleading" is a
+statement about the frame: a window anchored on the data's own last row and
+captioned `6 point(s) across 5 day(s)` cannot mislead the way a fixed 30-day
+axis with six dots in one corner does. Anchoring on the data rather than on
+today is the same rule `measure_adaptive_tdee` already applies.
+
+**Two pairings, one join.** `paired_intake_days` is the only place planned
+meets logged, and both charts that need it call it, so they cannot disagree
+about which days count. It takes two rules from elsewhere rather than
+inventing them: the *last* history entry for a date wins (a regenerated day
+legitimately has two — the same rule `meal_adherence_view` applies to a
+duplicated mark), and a zero-calorie logged row is not a pairing, which is
+what `planner.logged_intake_for` already refuses to substitute for a plan. A
+*partly* logged day is kept and reads as a shortfall — honest, and the same
+reading `reconcile_adaptive_tdee` warns systematic under-logging produces.
+
+Four decisions inside the charts are worth knowing, all of them the same
+decision in different clothes — **a chart may not claim more than the data
+supports**:
+
+- **The target line is drawn only when it is in view.** The weight chart's
+  y-axis is scaled to the weigh-ins, because a zero-based one renders a real
+  0.6 kg week as a flat line 99 kg above the origin — which puts an 80 kg
+  target outside the plot, where ECharts clips it, leaving a chart headed
+  "weight against target" with no target on it. Widening the axis to include
+  it flattens the trend instead. So `WeightTrendPanel.target_in_range` gates
+  the line and the caption states the gap either way; the line appears on its
+  own as the scale approaches it.
+- **Macro accuracy is a percentage axis.** 2000 kcal and 79 g of protein
+  cannot share a value axis, and four separate charts would say less than
+  one. The dashed rule at 100% is the plan.
+- **Fibre is not on it.** It is reported and never budgeted, so it has no
+  planned figure to divide by; a percentage column would invent the target
+  the rule exists to refuse. Its honest readout is already the telemetry
+  header's `FIB 32g · logged 24g`, side by side with no divider.
+- **The adherence percentage's denominator is *marks*, and says so in
+  words.** The plans those dates were generated against are gone from
+  `week_plan.json` the moment a new week is generated over them, so "of meals
+  planned" would be a divider under a number nobody counted. The tiles also
+  have no `INSIGHT_MIN_POINTS` gate at all: a count of three marks is a true
+  statement about three marks, where a line through three points is a claim
+  about a direction.
+
+**The adherence tile is the thinnest of the five and its empty state says
+why.** Unlike a weigh-in or a Cronometer row, a mark exists only because
+somebody clicked it — the series does not accumulate because the sync job
+runs — so "have I been marking" is its own precondition, and reporting it as
+late data would be wrong.
+
+**No chart introduces a hue.** `CHART_MACRO_COLOURS` is `MACRO_TINTS` in the
+units ECharts takes (categorical: which macro), a logged bar takes its
+`BAND_COLOURS` fill (semantic: how that day went, the same `macro_band` call
+the telemetry header makes about the same day), and everything structural is
+slate. The planned series is the *dashed* one throughout — the fill-vs-outline
+distinction `bookmark`/`bookmark_border` already draws, reached for because
+both series are slate and a second hue would have to mean something.
+
+**A legend swatch that disagrees with its mark is worse than no legend.**
+ECharts takes the swatch from `itemStyle`, not `lineStyle`, so a line
+coloured only through the latter is labelled with a chip from ECharts' own
+default palette — measured, and it drew a white trend line with a blue chip.
+The intake chart has no legend at all for the harder version of the same
+problem: its bars are banded per day, and one chip cannot stand for five
+different fills without being wrong about four of them, so the encoding is
+in the caption instead.
+
+`nutrition_engine.measure_weight_trend` is the engine half, and it exists so
+the chart and the estimate cannot disagree about a slope. It returns the raw
+weigh-ins, `smooth_series`' line through them **and** the least-squares rate,
+which are three different things the module is emphatic about keeping apart:
+smoothing is for the eye, and reading a rate off a smoothed series
+understates a noise-free decline by 26%. Two details it does not share with
+`measure_adaptive_tdee`: a 30-day default window (a chart wants points, the
+estimate wants intake to pair against), and the raw slope's own sign —
+**negative while losing**, where the estimate negates it into "kg lost per
+day" because the energy formula is defined that way. Both are named for what
+they carry, because inverting one for the other doubles the error rather than
+cancelling it.
+
+It is also the reader `smooth_series` never had: that function's docstring
+has said "for display — the weight-trend line a UI draws" since it was
+written, and nothing drew one. That is the same fetched-or-built-and-never-read
+pattern this queue has now closed three times from the storage side, seen
+from the other end.
+
+The panel is `@ui.refreshable` and registered on `"plan"` **and**
+`"adherence"` — generation appends the history entries the intake charts pair
+against, and marking a meal is the only thing that fills the tiles. That
+makes Insights the third member of the `"adherence"` topic, which was
+documented as unable to grow one.
 
 ### Biometric sync — Garmin Connect and Cronometer
 
@@ -2666,7 +2793,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
 | `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the protein floor, logged-intake substitution, adaptive TDEE |
-| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip |
@@ -2675,7 +2802,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), and the Settings destination's sync-status, sync-freshness and location read views |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |
