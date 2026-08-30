@@ -1,6 +1,6 @@
 ---
 name: ui-work
-description: The NiceGUI front-end contract for this project — the type/spacing/radius scale, what each colour is allowed to mean, the NiceGUI and Quasar traps that have each cost a debugging session, refresh topics, and which module a change belongs in. Load before editing any ui_*.py file (ui_app, ui_theme, ui_state, ui_cards, ui_plan, ui_today, ui_review, ui_settings, ui_telemetry, ui_shopping, ui_inspector, ui_catalog_browser, ui_insights, ui_staged_bar, ui_generation, ui_context, ui_catalog), or when changing anything about the web UI's layout, styling, colours or widgets.
+description: The NiceGUI front-end contract for this project — the type/spacing/radius scale, what each colour is allowed to mean, the NiceGUI and Quasar traps that have each cost a debugging session, refresh topics, and which module a change belongs in. Load before editing any ui_*.py file (ui_app, ui_theme, ui_state, ui_cards, ui_plan, ui_today, ui_review, ui_settings, ui_telemetry, ui_shopping, ui_inspector, ui_catalog_browser, ui_insights, ui_staged_bar, ui_generation, ui_context, ui_catalog, ui_adherence), or when changing anything about the web UI's layout, styling, colours or widgets.
 ---
 
 # The NiceGUI front end — contract and traps
@@ -19,7 +19,7 @@ section you need from it; you rarely need all of it:
 | the week grid, the header, scroll alignment | "NiceGUI front end" |
 | any card, the recipe dialog | "The expanded recipe card", "Module layout" |
 | the rail, its buttons, a destination | "The rail's action block", "Module layout" |
-| the Today / Daily View destination | "The Today tab" and its two subsections |
+| the Today / Daily View destination | "The Today tab" and its three subsections |
 | the day inspector | "The day inspector" |
 | the review dialog, staged-changes bar, target curve | "The review dialog and the staged-changes bar" |
 | Settings | "Settings' Daily Targets panel", "Settings' three read views" |
@@ -138,7 +138,12 @@ shape already doing the work, which is why the hue was removable:
 | edited training session (emerald marker) | amber | the glyph: • override, ⚡ training. Both mean "measured against a live preview", so one colour and two glyphs is the honest encoding |
 
 **Icon, not colour, distinguishes members of a set.** `TRAINING_TYPE_ICONS`
-is the precedent and the reasoning is in its comment: every hue above is
+is the precedent and `ADHERENCE_MARK_ICONS`/`ADHERENCE_SOURCE_ICONS` are the
+newest application — three meal marks and two completion sources, all slate,
+because emerald (the obvious tick) is the cook status and a green check on a
+card would read as a fifth slot state. Set versus unset is the fill-and-weight
+distinction `bookmark`/`bookmark_border` already draws. The reasoning is in
+`TRAINING_TYPE_ICONS`' comment: every hue above is
 spoken for, so seven new ones would collide with an existing meaning long
 before they read as a scale. Match exactly first, then longest prefix, and
 never raise on an unknown key.
@@ -239,6 +244,12 @@ widgets depend on it. Topics are registered once, in `planner_page()`, after
 every module is built. Before adding a topic, check whether an existing one
 already covers the change — and before adding a section to `"plan"`, check it
 does not own a focused input.
+
+`"adherence"` is the newest and shows when a new topic *is* warranted: marking
+a meal repaints exactly two sections (`today.today_view`, `inspector.panel`),
+where `"plan"` would additionally rebuild the 28-card canvas, the telemetry
+header and the shopping panel on every click of a tick — none of which draw a
+mark.
 
 ## Targets: read the resolved number, never the file
 

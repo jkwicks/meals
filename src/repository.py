@@ -158,6 +158,27 @@ BIOMETRIC_SECTION_SOURCES = {
     "activity_log": "garmin",
 }
 
+# The two lists `adherence.json` holds, and the field that distinguishes two
+# rows sharing a date in each. `date` is the first half of every key here,
+# exactly as it is in `biometrics.json`; this names the second half, which is
+# what lets one upsert serve both sections instead of one per section.
+#
+# **One file with two sections, rather than the two files `future-ideas.md`'s
+# 5b proposed.** The signals stay separate lists, which is the part that
+# matters and the call this codebase has now made five times (`weigh_ins` vs.
+# `daily_actuals`, `readiness_log`, `activity_log`, `rejections.json`): a meal
+# mark and a workout mark can never overwrite each other, because they share
+# no key. What they do share is a question — "did today's plan actually
+# happen" — and they are always read together to answer it, so a second path,
+# a second loader and a second pair of save methods would be two of each for
+# one answer. `biometrics.json` is the precedent for the shape: four signals,
+# four lists, one file.
+#
+# Neither section folds into `daily_actuals`, for the reason that file's own
+# split records: a manual mark and a Cronometer sync writing the same key
+# would silently overwrite each other with no way to tell which won.
+ADHERENCE_SECTIONS = {"meals": "slot_id", "workouts": "session_id"}
+
 
 @dataclass(frozen=True)
 class StoragePaths:
@@ -240,6 +261,16 @@ class StoragePaths:
         `biometrics`: two rejections can land on the same slot on the same
         day (regenerate twice), and there's nothing to merge them on."""
         return os.path.join(self.data_dir, "rejections.json")
+
+    @property
+    def adherence(self) -> str:
+        """Whether a planned meal was actually eaten, and whether a declared
+        session that the watch never saw was actually done — see CLAUDE.md's
+        "Whether the plan actually happened". Two lists in one file, keyed by
+        `date` plus `ADHERENCE_SECTIONS`' second field, so a re-mark is an
+        update rather than a second row: unlike `rejections`, marking a meal
+        twice is a correction, not two events."""
+        return os.path.join(self.data_dir, "adherence.json")
 
     @property
     def shopping_list(self) -> str:
@@ -424,6 +455,54 @@ class PlanRepository(abc.ABC):
         merges into an existing row — two rejections can land on the same
         slot on the same day (regenerate twice in a row), and each is its own
         event, not an update to the last one."""
+
+    @abc.abstractmethod
+    async def load_adherence(self) -> dict:
+        """Both `ADHERENCE_SECTIONS` lists, oldest first, each coerced to a
+        list even when the file is missing or predates that section.
+
+        Empty is the normal cold start — nothing is written until a meal or a
+        session is marked by hand, so a checkout that has never been marked
+        reads exactly as it did before this existed.
+        """
+
+    @abc.abstractmethod
+    async def save_meal_adherence(self, entry: dict) -> None:
+        """Record what happened to one planned meal (`planner.AdherenceEntry`).
+
+        Merged on `date` + `slot_id`, unlike `save_rejection_entry`'s append:
+        a rejection is an event that happened, so marking twice is two facts,
+        while re-marking a meal is a *correction* — Thursday's dinner was
+        eaten or it wasn't, and two rows saying different things about it
+        would leave nothing able to say which is current.
+        """
+
+    @abc.abstractmethod
+    async def clear_meal_adherence(self, date: str, slot_id: str) -> None:
+        """Un-mark one meal, removing its row entirely.
+
+        Absence and a status are genuinely different answers — "not marked"
+        means nobody has said, where a stored row means somebody did — so
+        un-marking deletes rather than writing a fourth "unknown" status that
+        every reader would then have to treat as absent anyway.
+        """
+
+    @abc.abstractmethod
+    async def save_workout_completion(self, entry: dict) -> None:
+        """Record that a declared session was done (`planner.WorkoutCompletion`).
+
+        Merged on `date` + `session_id`, same reasoning as
+        `save_meal_adherence`. Only ever written for a session the *watch did
+        not record* — anything Garmin saw is already in `activity_log` and is
+        derived, never stored twice. See CLAUDE.md's "Whether the plan
+        actually happened" for why storing the derived half would put two
+        answers to one question on disk.
+        """
+
+    @abc.abstractmethod
+    async def clear_workout_completion(self, date: str, session_id: str) -> None:
+        """Un-mark one session, removing its row. Same delete-don't-flag
+        reasoning as `clear_meal_adherence`."""
 
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
@@ -787,6 +866,21 @@ class LocalJSONRepository(PlanRepository):
     async def save_rejection_entry(self, entry: dict) -> None:
         await asyncio.to_thread(self._append_rejection, entry)
 
+    async def load_adherence(self) -> dict:
+        return await asyncio.to_thread(self._read_adherence)
+
+    async def save_meal_adherence(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_adherence, "meals", entry)
+
+    async def clear_meal_adherence(self, date: str, slot_id: str) -> None:
+        await asyncio.to_thread(self._clear_adherence, "meals", date, slot_id)
+
+    async def save_workout_completion(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_adherence, "workouts", entry)
+
+    async def clear_workout_completion(self, date: str, session_id: str) -> None:
+        await asyncio.to_thread(self._clear_adherence, "workouts", date, session_id)
+
     async def load_biometrics(self) -> dict:
         return await asyncio.to_thread(self._read_biometrics)
 
@@ -1024,6 +1118,77 @@ class LocalJSONRepository(PlanRepository):
         rejections = self._read_json(self.paths.rejections) or []
         rejections.append(dict(entry))
         self._write_json(self.paths.rejections, rejections)
+
+    def _read_adherence(self) -> Dict[str, List[dict]]:
+        """`adherence.json` with both sections guaranteed present as lists.
+
+        Same tolerance `_read_biometrics` extends for the same reason:
+        callers index `["meals"]` unguarded, so this is the one place that can
+        be wrong about a missing file, a null where a list belongs, or a file
+        written before one of the two sections existed.
+        """
+        stored = self._read_json(self.paths.adherence) or {}
+        return {section: list(stored.get(section) or []) for section in ADHERENCE_SECTIONS}
+
+    def _upsert_adherence(self, section: str, entry: dict) -> None:
+        """Merge `entry` into `section` on `date` + its `ADHERENCE_SECTIONS`
+        key, then rewrite the file.
+
+        The two-part key is the only thing separating this from
+        `_upsert_dated_entry`: a date holds four meals and can hold two
+        sessions, so `date` alone would let Thursday's lunch overwrite
+        Thursday's dinner. Read-modify-write in one worker-thread call for
+        the identical reason stated there — the read and the write must not
+        be separated by an `await`, or a concurrent save is silently dropped
+        by whichever landed second. Sorted by the same pair so the file reads
+        chronologically, and within a date deterministically; both halves are
+        strings, so the tuple sorts without parsing either.
+        """
+        key_field = ADHERENCE_SECTIONS[section]
+        date = entry.get("date")
+        key = entry.get(key_field)
+        if not date or not key:
+            raise ValueError(
+                f"An {section} entry needs a 'date' and a {key_field!r}: got {entry!r}"
+            )
+
+        adherence = self._read_adherence()
+        rows = adherence[section]
+        existing = next(
+            (
+                row
+                for row in rows
+                if row.get("date") == date and row.get(key_field) == key
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.update(entry)
+        else:
+            rows.append(dict(entry))
+        rows.sort(key=lambda row: (row.get("date") or "", row.get(key_field) or ""))
+        self._write_json(self.paths.adherence, adherence)
+
+    def _clear_adherence(self, section: str, date: str, key: str) -> None:
+        """Drop the row for `date` + `key`, if there is one.
+
+        A no-op when nothing matches, and deliberately without a write in
+        that case: un-marking something never marked is a real interaction
+        (a double-click on a toggle) and rewriting the file to record that
+        nothing changed is the same waste `_replace_dated_entries` already
+        guards against for an empty day.
+        """
+        key_field = ADHERENCE_SECTIONS[section]
+        adherence = self._read_adherence()
+        kept = [
+            row
+            for row in adherence[section]
+            if not (row.get("date") == date and row.get(key_field) == key)
+        ]
+        if len(kept) == len(adherence[section]):
+            return
+        adherence[section] = kept
+        self._write_json(self.paths.adherence, adherence)
 
     def _save_sync_checkpoint(self, source: str, checked_date: str) -> None:
         """Advance `source`'s entry in `sync_checkpoints`, never backward.

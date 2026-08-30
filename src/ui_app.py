@@ -114,6 +114,7 @@ from export_menu import build_week_menu_html, build_week_menu_pdf
 from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
 from shopping import aggregate_cook_events
+from ui_adherence import build_adherence
 from ui_cards import build_cards
 from ui_catalog import build_rename_dialog
 from ui_catalog_browser import build_catalog_browser
@@ -207,17 +208,20 @@ async def planner_page() -> None:
     # wires the click that opens it), rename_dialog before catalog_browser
     # (its per-row edit icon opens the one shared dialog), review and
     # generation before staged_bar (its Review/Generate week/Discard actions
-    # call straight into both) — everything before the refresh-topic
+    # call straight into both), adherence before inspector and before today
+    # (both draw its mark buttons on the same shared `today_card`/
+    # `context_strip` renderers) — everything before the refresh-topic
     # registration below (every topic there names a section some `build_*`
     # returned).
     generation = build_generation(ctx)
     review = build_review(ctx, generation)
     cards = build_cards(ctx, generation)
     plan = build_plan(ctx, cards)
-    inspector = build_inspector(ctx, cards, review)
+    adherence = build_adherence(ctx)
+    inspector = build_inspector(ctx, cards, review, adherence)
     telemetry = build_telemetry(ctx, inspector)
     shopping = build_shopping(ctx)
-    today = build_today(ctx, cards)
+    today = build_today(ctx, cards, adherence)
     rename_dialog = build_rename_dialog(ctx)
     catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
     settings = build_settings(ctx, biometrics)
@@ -310,6 +314,12 @@ async def planner_page() -> None:
         staged_bar.bar,
     )
     refreshables.on("today", today.today_view)
+    # Marking a meal or a session changes exactly two sections, and neither
+    # is on the week grid: `"plan"` would additionally rebuild the 28-card
+    # canvas, the telemetry header and the shopping panel on every click of a
+    # tick, none of which draw a mark. Nothing else in the app reads
+    # `adherence.json`, so this topic has no third member to grow.
+    refreshables.on("adherence", today.today_view, inspector.panel)
     # The inspector panel has no focused input (its targets are read-only —
     # editing lives in the review dialog), so unlike "telemetry" it's safe to
     # repaint on every kind of target/training change, not just the narrow

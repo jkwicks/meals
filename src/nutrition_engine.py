@@ -1218,3 +1218,141 @@ def propose_training_schedule(
         observed_from=observed_from.isoformat(),
         observed_to=observed_to.isoformat(),
     )
+
+
+# --------------------------------------------------------------------------
+# The recorded week, read one day at a time
+#
+# `propose_training_schedule` above asks a four-week question — "what does
+# your week look like" — and answers it as a schedule to accept. This asks
+# the one-day question underneath it: *did today's declared sessions
+# happen?* Same two inputs, same vocabulary (`GARMIN_SESSION_TYPES`' output
+# is what both a stored row and a declared session are spelled in), so it
+# lives here rather than growing a second module that knows how an activity
+# row maps onto a declared one.
+#
+# It stores nothing and marks nothing. A session the watch never recorded is
+# reported as unrecorded, and whether that means "didn't happen" or "the
+# watch was flat" is exactly what the manual mark in `data/adherence.json`
+# answers — see CLAUDE.md's "Whether the plan actually happened".
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SessionMatch:
+    """One declared session for one date, and the activity that answers it.
+
+    `recorded` is the only load-bearing field; the three `recorded_*` ones
+    are the evidence a person can check it against, in the units the watch
+    reported them in — the same "show the evidence, not just the verdict"
+    shape `ProposedSession.occurrences`/`observations` takes.
+
+    `recorded_kcal` is the **net** figure, already discounted by
+    `sync_service.EXERCISE_RECOVERY_FACTOR` at sync time, because that is the
+    number this app is willing to put on a day. Reporting the gross one
+    beside a budget computed from the net would be two numbers for one
+    session with nothing on screen saying which was which.
+    """
+
+    time: str
+    session_type: str
+    recorded: bool
+    recorded_start: Optional[str] = None
+    recorded_minutes: Optional[float] = None
+    recorded_kcal: Optional[float] = None
+
+    @property
+    def session_id(self) -> str:
+        """`planner.workout_session_id`'s spelling, without importing it.
+
+        `nutrition_engine` imports nothing from `planner` — that is the rule
+        the module docstring states and the reason it is testable without an
+        event loop or an API key — so the format lives in two places by
+        necessity. `tests/test_adherence.py` pins them equal, which is the
+        cheap half of the trade: a drift here files a manual mark under a key
+        the button that wrote it would never read back, and nothing else in
+        the app would notice.
+        """
+        return f"{self.time}:{self.session_type}"
+
+
+def match_recorded_sessions(
+    activity_log: list,
+    declared_sessions: list,
+    on_date: str,
+) -> List[SessionMatch]:
+    """Each declared session for `on_date`, and whether the watch saw it.
+
+    Pure, like everything else here: two lists and a date in, a list out.
+
+    **Matched on `session_type`, then paired by closest start time.** A day
+    with one gym session and one walk is unambiguous, but a day declaring two
+    sessions of the same type is not, and matching on type alone would let
+    one recorded lift answer for both. Each declared session claims the
+    nearest unclaimed recording of its type, so two declared lifts against
+    one recorded one leave the second honestly unrecorded rather than
+    silently confirmed.
+
+    Time is used to *choose between* candidates and never to reject one: a
+    06:30 gym session started at 07:10 is the same session, and a matcher
+    with a tolerance window would have to pick a number that is wrong for
+    somebody. The type and the date are the claim; the clock only breaks
+    ties.
+
+    Rest entries are the caller's to filter — this module has no opinion on
+    what `training_schedule` means by "rest", and `TrainingView.is_rest`
+    already folds a typed rest and a zero-burn session together for the one
+    caller that needs it.
+
+    An activity row with no `session_type` (a modality `GARMIN_SESSION_TYPES`
+    has never heard of) can answer nothing, and is skipped exactly as
+    `propose_training_schedule` skips it — for the same reason: a yoga class
+    is not evidence that the declared lift happened.
+    """
+    recorded = [
+        row
+        for row in (activity_log or [])
+        if isinstance(row, dict)
+        and str(row.get("date") or "")[:10] == on_date
+        and row.get("session_type")
+    ]
+
+    claimed: set = set()
+    matches: List[SessionMatch] = []
+    for session in declared_sessions or []:
+        session_type = str(session.get("type") or "")
+        time = str(session.get("time") or "")
+        wanted = _clock_minutes(time)
+        candidates = [
+            (index, row)
+            for index, row in enumerate(recorded)
+            if index not in claimed and row.get("session_type") == session_type
+        ]
+        if not candidates:
+            matches.append(
+                SessionMatch(time=time, session_type=session_type, recorded=False)
+            )
+            continue
+
+        # Nearest start time wins. An unreadable clock on either side sorts
+        # last rather than raising — it is still a recording of the right
+        # type on the right day, so it is a worse match, not a non-match.
+        def distance(pair: Tuple[int, dict]) -> Tuple[int, int]:
+            started = _clock_minutes(str(pair[1].get("start_time") or ""))
+            if wanted is None or started is None:
+                return (1, pair[0])
+            return (0, abs(started - wanted))
+
+        index, row = min(candidates, key=distance)
+        claimed.add(index)
+        matches.append(
+            SessionMatch(
+                time=time,
+                session_type=session_type,
+                recorded=True,
+                recorded_start=row.get("start_time"),
+                recorded_minutes=row.get("duration_min"),
+                recorded_kcal=row.get("net_calories"),
+            )
+        )
+    return matches

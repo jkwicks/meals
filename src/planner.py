@@ -631,9 +631,10 @@ def build_diet_style_rule(config: dict) -> str:
 
 class RejectionEntry(BaseModel):
     """One "why did you regenerate this" answer — see CLAUDE.md's "Rejection
-    capture". Same field-naming convention `future-ideas.md`'s proposed
-    `AdherenceEntry` uses for the sibling signal (5b), since the two are
-    stored separately on purpose but describe adjacent moments.
+    capture". Same field-naming convention `AdherenceEntry` below uses for the
+    sibling signal, since the two are stored separately on purpose but
+    describe adjacent moments — a rejection is a "no" to a suggestion before
+    it ever became the plan, a mark is what happened to the plan.
 
     `date` is when the rejection was recorded (today), not the weekday the
     slot belongs to — that's `slot_id`'s job, and the two answer different
@@ -829,6 +830,104 @@ def build_rejection_rule(config: dict, today: Optional[date] = None) -> str:
             "meal type, not just a note about the dishes above:\n" + guidance
         )
     return "".join(parts)
+
+
+# What a mark on a planned meal says happened to it. Three answers rather
+# than a boolean because the two failures are different in kind and the
+# difference is the whole point of recording anything: a *skipped* meal is a
+# day that came up short against a target it was planned to hit, while a
+# *swapped* one is a day that was fed by something else entirely. A single
+# "eaten?" flag collapses those into one "no", and a 7-day adherence readout
+# built on it could not tell a missed dinner from a dinner out.
+ADHERENCE_EATEN = "eaten"
+ADHERENCE_SKIPPED = "skipped"
+ADHERENCE_SWAPPED = "swapped"
+
+ADHERENCE_STATUSES = (ADHERENCE_EATEN, ADHERENCE_SKIPPED, ADHERENCE_SWAPPED)
+
+# `AdherenceEntry.status` -> the phrase the UI puts on a tooltip. Here beside
+# the statuses rather than in `ui_theme.py` for the reason
+# `REJECTION_REASON_LABELS` is here: the vocabulary and its wording are one
+# fact, and a second copy in a widget module is free to drift from the
+# `Literal` that actually constrains it.
+ADHERENCE_STATUS_LABELS = {
+    ADHERENCE_EATEN: "ate this",
+    ADHERENCE_SKIPPED: "skipped this",
+    ADHERENCE_SWAPPED: "ate something else",
+}
+
+
+class AdherenceEntry(BaseModel):
+    """One "what actually happened to this meal" mark — see CLAUDE.md's
+    "Whether the plan actually happened". `future-ideas.md`'s 5b named this
+    type and this field list; only its storage changed, from a file of its
+    own to a section of `data/adherence.json`.
+
+    Keyed by `date` + `slot_id`, both of which are needed: a date holds four
+    meals, and a `slot_id` is a weekday name (`"Thursday:dinner"`), so it
+    repeats every seven days. That pair is what makes a re-mark a correction
+    of one meal rather than a second opinion about it — the one thing
+    separating this from `RejectionEntry`, which is an append-only log
+    because two rejections on one slot are two events.
+
+    Deliberately **not** an input to generation. A rejection is a preference
+    about food, so `build_rejection_rule` sends it; a mark is a record of a
+    day, and what to do with a run of skipped Thursdays is a product question
+    (CHANGE-QUEUE.md's Insights item), not something to answer by quietly
+    adding a fourth soft rule to every prompt.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    slot_id: str
+    status: Literal["eaten", "skipped", "swapped"]
+    marked_at: str
+
+
+class WorkoutCompletion(BaseModel):
+    """One "I did this session" mark for a session the watch never recorded.
+
+    **Only ever written for the sessions Garmin missed**, which is what
+    shrank this from `future-ideas.md`'s proposed `data/workout_log.json`.
+    v0.33.0's `activity_log` already holds what was actually done, and
+    `nutrition_engine.match_recorded_sessions` reads a declared session
+    against it — so storing a `completed` row for a session the watch saw
+    would be a second answer to a question already answered, free to
+    disagree with the first the moment a re-sync changed one of them.
+
+    `session_id` is `"<time>:<type>"` (`"06:30:gym_hypertrophy"`), the same
+    role `slot_id` plays for a meal: `date` says which day, this says which
+    of that day's sessions. Time is part of it because a day may declare two
+    sessions of one type, and `training_schedule` itself has no id to borrow
+    — `PlannerState.pending_changes` already keys a session on `(day, time)`
+    for the same absence.
+
+    `source` is `"manual"` for everything this stores, and exists so a row
+    stays legible beside the derived half it deliberately does not duplicate:
+    a reader holding one of these knows a person asserted it, not a watch.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    session_id: str
+    session_type: str
+    completed: bool
+    source: str
+    marked_at: str
+
+
+def workout_session_id(time: str, session_type: str) -> str:
+    """`WorkoutCompletion.session_id` for a declared session.
+
+    One function rather than an f-string at each call site, because the
+    writer (the Daily View's mark button) and the reader (the view model
+    that decides whether that button is already lit) have to agree on the
+    spelling exactly, and a mark filed under a key nothing reads back is
+    invisible rather than broken.
+    """
+    return f"{time}:{session_type}"
 
 
 # --------------------------------------------------------------------------

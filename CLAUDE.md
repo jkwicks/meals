@@ -2117,6 +2117,170 @@ Once nothing survives either window the rule emits `""` again, so a list that
 has fully aged off produces a byte-identical prompt to before the feature
 existed — the same convention every rule in `build_generation_rules` follows.
 
+### Whether the plan actually happened
+
+Nothing observed whether a planned meal was eaten, skipped or swapped. The
+nearest thing was the swap-with-favourite flow, which changes the **plan**
+rather than recording a deviation from it — so a week could be planned,
+cooked around and half-ignored, and the app's own record of it stayed the
+week it had generated.
+
+`data/adherence.json` is where that is recorded now: two lists, written by
+`PlanRepository.save_meal_adherence`/`save_workout_completion` and read by
+`load_adherence`, marked from the Daily View (and the day inspector, which
+shares its renderers).
+
+| list | row | keyed on |
+|---|---|---|
+| `meals` | `planner.AdherenceEntry` — `date`, `slot_id`, `status` (`eaten`/`skipped`/`swapped`), `marked_at` | `date` + `slot_id` |
+| `workouts` | `planner.WorkoutCompletion` — `date`, `session_id`, `session_type`, `completed`, `source`, `marked_at` | `date` + `session_id` |
+
+**Three statuses rather than a boolean**, because the two failures are
+different in kind and the difference is the reason for recording anything: a
+*skipped* meal is a day that came short of a target it was planned to hit,
+where a *swapped* one is a day fed by something else. An "eaten?" flag
+collapses those into one "no", and the 7-day adherence readout this exists to
+feed could not then tell a missed dinner from a dinner out.
+
+**One file with two sections, not the two files `future-ideas.md`'s 5b
+proposed.** The part that matters is that the two are separate *lists* — the
+call this codebase has now made five times (`weigh_ins` vs. `daily_actuals`,
+then `readiness_log`, `activity_log`, `rejections.json`), for the reason each
+of those records: two signals sharing a key overwrite each other silently,
+with nothing able to say which won. Neither folds into `daily_actuals` for
+exactly that reason. What they *do* share is a question — did today's plan
+happen — so they are always read together to answer it, and a second path, a
+second loader and a second pair of save methods would be two of each for one
+answer. `biometrics.json` is the precedent for the shape: four signals, four
+lists, one file.
+
+**The key is `date` plus one more field, unlike every biometric section.**
+`ADHERENCE_SECTIONS` is the manifest naming that second field per section,
+which is what lets one `_upsert_adherence` serve both. `date` alone would let
+Thursday's lunch overwrite Thursday's dinner; `slot_id` alone repeats every
+seven days, since it is a weekday name.
+
+**A mark is an update, not an event** — the one thing separating this from
+`save_rejection_entry`'s append. Two rejections on one slot are two facts;
+re-marking a meal is a correction, and two rows disagreeing about Thursday's
+dinner leave nothing able to say which is current.
+
+**Un-marking deletes the row.** Absence and a status are genuinely different
+answers — "nobody has said" versus "somebody said" — so there is no fourth
+`unknown` status every reader would then have to treat as absent anyway.
+Clicking the status a slot already carries clears it, which is what makes
+three buttons a complete control rather than three one-way doors; and
+clearing something never marked writes nothing at all, so an untouched
+checkout stays distinguishable on disk from a marked-then-unmarked one.
+
+**A day with no calendar date cannot be marked.** `slot_id` is a weekday
+name, so without the loaded plan's `week_start_date` there is no key to file
+a mark under and none to read one back — the same pre-migration tolerance
+`logged_actuals_for` already draws for such a plan, reached from the other
+direction: there it costs a readout, here it costs the affordance. Marks are
+matched by **date**, never by weekday, for that same reason.
+
+**A skipped slot is not markable**, and is excluded from the day's
+denominator: nothing was planned to be eaten there, so "did you eat it" has
+no answer, and counting it would make every week with a skipped snack read as
+permanently 3-of-4 adhered. A leftover *is* markable — it is a meal the week
+intends you to eat, whoever cooked it — and so is a failed one, which is
+exactly the case where the answer is interesting.
+
+**It is deliberately not an input to generation.** A rejection is a
+preference about food, so `build_rejection_rule` sends it to the model; a
+mark is a record of a day, and what to do with a run of skipped Thursdays is
+a product question (CHANGE-QUEUE.md's Insights item) rather than something to
+answer by quietly adding a fourth soft rule to every prompt. Nothing in
+`planner.py`'s generation path reads `adherence.json`.
+
+#### The workout half is mostly derived, and only the gap is stored
+
+`future-ideas.md` 5b proposed a `data/workout_log.json` carrying `scheduled`
+and `completed` per session. **v0.33.0 made most of that derivable**:
+`activity_log` records what Garmin actually did on each date, so "did the
+declared session happen" is a question about two lists that already exist.
+
+`nutrition_engine.match_recorded_sessions` is that read — the per-date
+counterpart to `propose_training_schedule`'s four-week aggregate, pure over
+the same two inputs and in the same module because both speak
+`GARMIN_SESSION_TYPES`' vocabulary, and a second module knowing how an
+activity row maps onto a declared one is a second chance to disagree about
+it. It stores nothing.
+
+Three things about the matching are decisions:
+
+- **Type and date are the claim; the clock only breaks ties.** A 06:30
+  session started at 07:10 is the same session, and a tolerance window would
+  have to pick a number that is wrong for somebody. So a matching type on the
+  matching date always counts.
+- **Each declared session claims the nearest *unclaimed* recording**, so a
+  day declaring two lifts against one recorded one leaves the second honestly
+  unrecorded rather than silently confirmed by the first.
+- **An unmapped activity answers nothing.** `GARMIN_SESSION_TYPES` has no
+  catch-all, so a yoga class arrives with `session_type: None` — skipped here
+  exactly as `propose_training_schedule` skips it, and for the same reason: a
+  yoga class is not evidence that the declared lift happened.
+
+**Only the gap is stored.** A `WorkoutCompletion` is written *only* for a
+session the watch never recorded — a lift on a day the watch was flat, a
+class with no device. `PlannerState.mark_workout` refuses one for a recorded
+session rather than merely not offering the button, because a stored
+`completed` row beside `activity_log` would be a second answer to one
+question, free to disagree the moment a re-sync changed either. When both do
+somehow say yes — reachable only when a later sync finds a session already
+marked by hand — Garmin wins, since the watch's own record is the better
+evidence and the stale manual row is the one that should stop being cited.
+
+`ui_state.workout_marks_view` is where the stored half is laid over the
+derived one — the engine measures, the view model decides what a reader is
+told, the same layering `sync_status` and `adaptive_tdee_view` already use.
+A day with no calendar date reports its sessions as neither recorded nor
+markable rather than as "not done", which would state as fact something never
+actually checked.
+
+#### The affordance, and the trap it had to avoid
+
+`ui_adherence.py` is the one concern — a `build_adherence(ctx)` factory
+holding two click handlers — and it is its own module rather than more
+handles on `CardHandles` because two unrelated surfaces raise these marks,
+and only one of them is a card.
+
+**The mark row is a *sibling* of the clickable body**, the pattern
+`ui_cards.meal_card` established. `ui_today.today_card` used to put its click
+handler on the whole card, which was correct while nothing on the card was
+clickable in its own right; a mark button under that handler would open the
+recipe dialog on top of the mark it had just recorded. The handler moved down
+onto a body element, and the header row — meal type, marks, status badge —
+now sits beside it.
+
+**Glyph carries all of it; no hue does.** Every colour in the palette already
+means at most two things (the `ui-work` skill's table), and emerald — the
+obvious pick for a tick — is the cook status, so a green check on a card
+would read as a fifth slot state. `check_circle` / `remove_circle` /
+`swap_horiz` distinguish the three marks, `check_circle` versus `task_alt`
+distinguishes a Garmin-recorded session from a hand-marked one, and set
+versus unset is the fill-and-weight distinction `bookmark`/`bookmark_border`
+already draws for a favourite.
+
+**Marks persist on click and do not stage.** Every grid edit in this app
+waits for Save because it is an input to the next generation; a mark is not,
+so there is nothing for the staged bar to hold and a tick that vanished on
+reload would be a control with no effect. That is the same test
+`set_target_mode` and `accept_training_proposal` pass, arrived at from the
+storage side rather than the config one — and unlike those two, this writes
+to `data/`, so it does not touch the "two places write to `config/`" rule.
+
+The repaint topic is `"adherence"`, its own: the only two sections drawing a
+mark are the Daily View and the inspector, where `"plan"` would additionally
+rebuild the 28-card canvas, the telemetry header and the shopping panel on
+every click of a tick.
+
+The day's line — "2 of 3 marked" — is silent until something is marked. The
+whole week is unmarked until somebody starts, and a counter reading zero on
+six days out of seven is a UI element announcing that a feature exists rather
+than reporting anything.
+
 ### Biometric sync — Garmin Connect and Cronometer
 
 `src/integrations/sync_service.py` fills the four lists `biometrics.json`
@@ -2507,6 +2671,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
+| `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), and the Settings destination's sync-status, sync-freshness and location read views |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
@@ -2514,9 +2679,10 @@ the module under seven frozen weekdays before trusting it.
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those
-rules are exactly what a UI change can silently break. The other twelve `ui_*`
-modules (including `ui_inspector.py`, the day inspector) are widget
-construction, and testing them would mean a NiceGUI
+rules are exactly what a UI change can silently break. The other `ui_*`
+modules (including `ui_inspector.py`, the day inspector, and
+`ui_adherence.py`, whose two handlers are a `mark_*` call and a refresh) are
+widget construction, and testing them would mean a NiceGUI
 harness asserting on element trees, which pins the layout rather than the
 behaviour. If logic worth testing appears in one of them, the move is to pull
 it into `ui_state.py` (or a pure helper) rather than to grow a UI harness.
