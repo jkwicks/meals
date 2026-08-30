@@ -11,8 +11,9 @@ this?" but not "what should I start?", because neither file ranks against
 the other and neither holds the defects recorded in CLAUDE.md as they were
 found. This file ranks everything in one list. The other two stay the place
 where an item’s full reasoning lives; entries below point at them rather
-than restating them. `ui-redesign.md` now contributes exactly one open entry
-(finding 3, blocked on data); its last unfiled thread shipped in v0.33.0.
+than restating them. **`ui-redesign.md` now contributes nothing at all**:
+its last unfiled thread shipped in v0.33.0 and finding 3, its last filed
+one, shipped in v0.36.0. The document is now wholly history.
 
 **Provenance is stated per item**, because several of the entries below were
 never filed anywhere — they were recorded in CLAUDE.md prose at the moment a
@@ -31,30 +32,46 @@ is worth amending as the ground under it moves, not only when it is closed.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.35.0**. Eight releases have now closed whatever this queue ranked first
+**v0.36.0**. Nine releases have now closed whatever this queue ranked first
 at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
 Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
 and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
 nothing ever ran, **v0.32.0** the amber/violet collision *and* the fibre
 readout with no measured half, **v0.33.0** the training schedule proposed
 from Garmin activity, **v0.34.0** the rejection list that never decayed,
-**v0.35.0** the plan nothing ever checked against what was eaten.
+**v0.35.0** the plan nothing ever checked against what was eaten,
+**v0.36.0** the Insights destination that described its own blocker instead
+of evaluating it.
 All three of the source docs' stale claims are now settled: `ISSUES.md`
 item 9 was already fixed, `ui-redesign.md`'s phase 4 aside is filed *and*
-shipped, and only `future-ideas.md`'s out-of-date 5c
-biometric counts remain — corrected in that entry.
+shipped, and `future-ideas.md`'s out-of-date 5c biometric counts stopped
+mattering when the entry they blocked closed.
 
-**`ui-redesign.md`'s last *unfiled* thread is closed.** v0.33.0 shipped the
-phase 4 aside that called proposing the schedule from Garmin activity "a
-loose thread ... worth filing there rather than leaving it here" and was
-then never filed anywhere. What that document still contributes is one
-properly-filed entry — finding 3, the trend charts, which waits on data and
-nothing else, and closing the adherence item moved it up to third.
-Everything now at the top of this queue comes from `future-ideas.md`, but
-the long-standing "the top three are all blocked on a decision" reading no
-longer holds: v0.35.0 took the second of them, so items 1 and 2 are
-decision-blocked and item 3 is blocked on data alone. The queue's top is
-now two questions and a wait, not three questions.
+**`ui-redesign.md` is now closed out entirely.** v0.33.0 shipped its last
+*unfiled* thread (the phase 4 aside about proposing the schedule from Garmin
+activity, "worth filing there rather than leaving it here", then never filed
+anywhere); v0.36.0 shipped finding 3, the last of its properly-filed ones.
+Everything left in this queue comes from `future-ideas.md`, `ISSUES.md` or
+the front-end review.
+
+**"Blocked by: data" turned out to be a statement about the *page*, not
+about the work.** Finding 3 sat at the top of this queue behind a trigger —
+`calculate_adaptive_tdee` returning a number and ~14 rows in both lists —
+that was still unmet on the day it shipped: 6 weigh-ins across a 5-day span
+against a floor of 7. It shipped anyway, and the reason is the strongest
+argument this file has yet made for *starting* a blocked item. The thing
+actually blocked was a chart being **worth looking at**; what was not
+blocked was the page saying, per readout, which precondition was unmet — and
+the stub demonstrated the cost of leaving that undone, because it printed
+the counts and named the rule without ever evaluating it, which is precisely
+the failure v0.30.0 had already fixed one floor down. **A wait is worth
+re-reading as two questions: what needs the data, and what only needs to
+report that the data is missing.** The second half is almost never blocked,
+and it is what stops the first half from having to be noticed by a human
+later.
+
+The queue's top is now two questions, both decision-blocked, and nothing
+waiting on data at all.
 
 **A third fetched-and-discarded signal turned out to be the enabling
 half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
@@ -109,14 +126,14 @@ workout question had already half-answered itself in a note added later
 more than the original proposal. **An old decision's options age; the
 question rarely does.**
 
-**Why the front-end block ranks 4–6 rather than higher or lower.** Items
-1–3 are signals the app cannot currently see at all; 4–6 are the surface
+**Why the front-end block ranks 3–5 rather than higher or lower.** Items
+1–2 are signals the app cannot currently see at all; 3–5 are the surface
 every session already passes through, and none is blocked on work — only the
-accent and the wordmark wait on a name. They rank below 1–3 because polish on
+accent and the wordmark wait on a name. They rank below 1–2 because polish on
 a working surface is worth less than a signal that does not exist, and above
 the API entries because those have no consumer today: `/api` is read-only,
 nothing outside NiceGUI calls it, and both the write routes and the generated
-types are groundwork for a front end nobody has asked for. Every item in 4–6
+types are groundwork for a front end nobody has asked for. Every item in 3–5
 was verified against the running code on 2026-08-30 rather than against the
 review that raised them — **four of that review's proposals did not survive
 that check** and are recorded as deliberately excluded inside the entries, so
@@ -127,22 +144,25 @@ rule CLAUDE.md states for citing it from anywhere else. They had gone stale
 by one after an earlier renumber — "item 8" pointing at what had become
 item 7, in three places — which is the argument for the rule rather than
 against it: a number here has a shelf life of exactly one release, and this
-renumber is the seventh. The previous one was an *insertion* rather than a
+renumber is the eighth. One of the eight was an *insertion* rather than a
 closure — the front-end block took 5–7 and pushed the three API entries and
 food waste down to 8–11 — which was the same hazard from the other
 direction, and the only time this file has had one. This renumber is an
-ordinary closure again: removing the adherence item moved everything below
-it up by one, so nine of the ten anchors changed and all nine were
-re-checked against their headings.
+ordinary closure again: removing the trend-charts item moved everything
+below it up by one, so seven of the nine remaining anchors changed and all
+seven were re-checked against their headings.
 
-**Both body cross-references pointed at the item that closed**, which is
-the case the by-name rule exists for and the first time it has actually
-bitten. Neither was left as a dangling anchor: the trend-charts entry's
-"two of these charts have no data source" became "both data sources now
-exist, and here is what is thin about the new one", and the food-waste
-entry's became a note on why a `skipped` mark is *not* a waste signal. A
-closed item is a change of fact for whatever cited it, not just a link to
-repoint.
+**A body cross-reference has now pointed at a closing item twice
+running**, which is the case the by-name rule exists for. Neither time was
+it left as a dangling anchor, and both times the repair was a change of
+*fact* rather than of link: v0.35.0 turned the trend-charts entry's "two of
+these charts have no data source" into "both data sources now exist, and
+here is what is thin about the new one", and the food-waste entry's citation
+of adherence into a note on why a `skipped` mark is *not* a waste signal.
+v0.36.0 closed the trend-charts entry itself, so food waste — which cited it
+as the nearest thing to a shared design question — now cites it as shipped,
+and says what that did and did not settle. **A closed item is a change of
+fact for whatever cited it, not just a link to repoint.**
 
 ## Size scale
 
@@ -160,14 +180,13 @@ repoint.
 |---|---|---|---|---|
 | 1 | [Morning readiness check-in](#1--morning-readiness-check-in) | Feature | M | one decision |
 | 2 | [Pantry inventory ledger with real quantities](#2--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 3 | [Trend charts / the Insights destination (5c)](#3--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 4 | [The front end declares no typography, and its muted text is below AA](#4--the-front-end-declares-no-typography-and-its-muted-text-is-below-aa) | Tech debt | S | — |
-| 5 | [The UI reads flat, and three moments are missing](#5--the-ui-reads-flat-and-three-moments-are-missing) | Tech debt | M | — |
-| 6 | [The app has no name, mark, accent or favicon](#6--the-app-has-no-name-mark-accent-or-favicon) | Feature | S | one decision |
-| 7 | [Write and generation routes on the API](#7--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 8 | [OpenAPI schema is off, so there are no generated types](#8--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 9 | [No auth on `/api`](#9--no-auth-on-api) | Feature | S | only if exposed |
-| 10 | [Food waste tracking](#10--food-waste-tracking) | Feature | XL | not scoped |
+| 3 | [The front end declares no typography, and its muted text is below AA](#3--the-front-end-declares-no-typography-and-its-muted-text-is-below-aa) | Tech debt | S | — |
+| 4 | [The UI reads flat, and three moments are missing](#4--the-ui-reads-flat-and-three-moments-are-missing) | Tech debt | M | — |
+| 5 | [The app has no name, mark, accent or favicon](#5--the-app-has-no-name-mark-accent-or-favicon) | Feature | S | one decision |
+| 6 | [Write and generation routes on the API](#6--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 7 | [OpenAPI schema is off, so there are no generated types](#7--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 8 | [No auth on `/api`](#8--no-auth-on-api) | Feature | S | only if exposed |
+| 9 | [Food waste tracking](#9--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed)
 and ten [front-end craft items](#front-end-craft-items--small-none-urgent), each XS–M
@@ -244,57 +263,7 @@ behaviour and is what permits four meal types to claim the same tin.
 
 ---
 
-## 3 — Trend charts / the Insights destination (5c)
-
-**Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Blocked by:**
-runtime data &nbsp;·&nbsp; **Source:** `future-ideas.md` 5c ·
-`ui-redesign.md` finding 3 (the last open finding from the original review)
-
-`ui_insights.py` is a 66-line honest empty state that reads live counts off
-`biometrics.json` so the message ages correctly. The charts behind it are
-scoped (weight vs. target, calories actual-vs-planned, macro accuracy,
-adherence tiles, a weigh-in table) and need no new dependency —
-`ui.echart` ships with the installed NiceGUI.
-
-**The blocker is still real, but the source doc's numbers are stale and the
-gap is closing.** `future-ideas.md` records one weigh-in and one
-`daily_actuals` row as of 2026-08-16. Measured today: **5 weigh-ins**
-(2026-08-11, then daily 08-24 → 08-27) and **5 `daily_actuals`** rows, plus
-28 `meal_history.json` entries.
-
-`calculate_adaptive_tdee` still returns `None`, and **the app now says why
-rather than leaving it to be re-derived here**: v0.30.0's
-`measure_adaptive_tdee` reports the precondition, and this destination's own
-empty state prints it. Measured on 2026-08-28 it read "weigh-in span 4 days,
-needs 7" — the 14-day window is anchored on the most recent weigh-in, which
-drops the 08-11 reading. **Roughly three more consecutive daily weigh-ins
-clears it.** That is the trigger to re-evaluate this item — not a date, and
-not "when there is enough data," but that one function returning a number,
-which the page itself will now be the first thing to tell you.
-
-Chart-worthiness needs more than the adaptive estimate does. A 14-day chart
-against 5 points is thin; a 30-day one is misleading. Suggest revisiting once
-`calculate_adaptive_tdee` returns non-`None` **and** there are ~14 daily rows
-in both lists.
-
-**Two of the five charts used to additionally depend on the adherence item,
-and no longer do — v0.35.0 built both their data sources.** The adherence
-chart has `data/adherence.json`'s `meals` list, keyed by date and slot, and
-the gym-completion one has `nutrition_engine.match_recorded_sessions` over
-v0.33.0's `activity_log` plus the `workouts` list for what the watch missed.
-So all five charts are now blocked on exactly one thing — runtime data — and
-none on missing work.
-
-**That said, adherence is the *thinnest* of the five, and for a reason worth
-stating**: unlike a weigh-in or a Cronometer row, a mark only exists if
-somebody clicks it, so this series does not accumulate merely by the sync job
-running. Treat "have I actually been marking" as its own precondition
-alongside the weigh-in span, rather than assuming the file fills the way the
-biometric ones do.
-
----
-
-## 4 — The front end declares no typography, and its muted text is below AA
+## 3 — The front end declares no typography, and its muted text is below AA
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** —
 &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
@@ -335,7 +304,7 @@ scale, so a change made only in `ui_theme.py` leaves the contract lying.
 
 ---
 
-## 5 — The UI reads flat, and three moments are missing
+## 4 — The UI reads flat, and three moments are missing
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** —
 &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
@@ -385,14 +354,18 @@ should not be re-filed.** Card interior padding, proposed as `SPACE_TIGHT` →
 the `SPACE_TIGHT` is the row gap, which is exactly the job the spacing scale
 assigns it ("between rows inside one card"). And hiding the Insights
 destination until enough data exists contradicts the decision recorded in
-`ui_insights.py`'s own docstring — the empty state is deliberate, reads live
-counts so the message ages correctly, and now prints `adaptive_tdee_view`'s
-verdict rather than restating the rule; hiding it would additionally make the
+`ui_insights.py`'s own docstring, which v0.36.0 has now made harder rather
+than easier to argue with: the page is five charts, each drawn behind its
+own `InsightPanel` gate, so "enough data" is not one condition the rail
+could branch on — it is four states per readout, and on the day the charts
+shipped four of the five were drawable while the fifth (adherence, which
+fills only when somebody marks a meal) and the TDEE verdict above them were
+both reporting exactly why they were not. Hiding it would additionally make the
 rail's shape depend on how much biometric data you happen to hold.
 
 ---
 
-## 6 — The app has no name, mark, accent or favicon
+## 5 — The app has no name, mark, accent or favicon
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** one
 decision &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified
@@ -442,7 +415,7 @@ has to move as a pair or not at all.
 
 ---
 
-## 7 — Write and generation routes on the API
+## 6 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -464,7 +437,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 8 — OpenAPI schema is off, so there are no generated types
+## 7 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -483,7 +456,7 @@ against the NiceGUI app object.
 
 ---
 
-## 9 — No auth on `/api`
+## 8 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -500,22 +473,26 @@ not before.
 
 ---
 
-## 10 — Food waste tracking
+## 9 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
 
 Flagged in the original architecture review as having no data source
 whatsoever. It would need a new logging entry point of its own — a separate
-product decision from
-[Trend charts](#3--trend-charts--the-insights-destination-5c) and from the
-adherence marking v0.35.0 shipped, and the only item in this queue with no
-proposed schema, no proposed surface and no proposed interaction.
+product decision from the adherence marking v0.35.0 shipped and the trend
+charts v0.36.0 shipped, and the only item in this queue with no proposed
+schema, no proposed surface and no proposed interaction.
 
-**Adherence closing does not shorten it**, which is worth saying because the
-two look adjacent: a `skipped` mark says a planned meal was not eaten and
+**Neither of those closures shortens it**, which is worth saying because all
+three look adjacent. A `skipped` mark says a planned meal was not eaten and
 says nothing whatever about whether its ingredients were thrown away. The
-signal would still be new, and its entry point still unbuilt.
+Insights destination is now the surface a waste readout would live on and
+`ui_state`'s `InsightPanel` is the shape it would take — so the *reporting*
+half has a home it did not have before, which is genuinely new — but every
+readout there is drawn from a signal something already records, and this one
+has no signal at all. The entry point is still unbuilt, and that is the
+whole item.
 
 Kept here so it is not rediscovered as a new idea. It needs a design pass
 before it can be estimated at all.
@@ -578,6 +555,7 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `ui-redesign.md` phase 4 aside, never filed until this queue filed it | The training schedule was hand-declared while Garmin recorded what actually happened | Shipped in **v0.33.0** — `activity_log` is a fourth `biometrics.json` section (`GarminSyncService.fetch_activities` → `PlanRepository.save_activity_entries`), and `nutrition_engine.propose_training_schedule` diffs four weeks of it against the declared week. **The detector was the easy half; the confirmation is the feature**: nothing writes without a click, and the precedent copied is `estimate_session_burn_kcal`'s calculator button — a derived default, into the same field, applied explicitly. **The blocking decision — a declared session Garmin never sees — is answered symmetrically**: proposed for removal, never removed, behind two guards (the weekday must have come round at least twice inside the *observed* span, and `MIN_ACTIVE_DAYS_FOR_DROP` asks whether the watch is worn at all before its silence is evidence); a weekday that recorded *something* is never dropped, since a Sunday ride that became a Sunday walk is a day you plainly train on. **What counts as observed was the real difficulty** — `activity_log` holds only days that recorded something, the same ambiguity `sync_checkpoints` closed for weigh-ins, so the span runs from the first recorded activity to the later of the last one and Garmin's checkpoint, capped at today, and under-claiming is the safe direction. Storage is replace-per-date, not upsert: this is the one section with several rows per day. Only mapped, timed rows are stored — `GARMIN_SESSION_TYPES` has no catch-all and `startTimeLocal` is read rather than `startTimeGMT` — because a proposal is a sentence the user is asked to agree to. `net_calories` finally has a reader: it is the proposed burn, with the MET formula only as fallback. Accepting persists `training_schedule` through `save_config_keys`, making that the second UI control that writes to `config/` on `set_target_mode`'s reasoning, and applies the change to the file's list and the staged list separately so an accept never writes out someone else's half-typed session. Additions diff against the staged schedule, drops against the file's. `ui_state.training_proposals_view` carries the wording over three no-proposal states, on the `adaptive_tdee_view` precedent — "your week already matches" is the good answer and the one most likely to be misread as broken |
 | `future-ideas.md`, "Rejection-list decay" — this queue's item 1 until v0.34.0 | `build_rejection_rule` sent every recorded rejection to every generation call, forever | Shipped in **v0.34.0** — and the answer to all three of the questions this entry left open is that there were **two signals in one rule**, wanting two windows. The **dish list** is a veto on one recipe and expires per reason (`planning_rules.rejection_decay_days`): `had_it_recently` 21 days because it is self-resolving — the dish stops having been had recently whether or not anything honours the entry — `too_much_prep` 60, `dont_fancy_it` 90, `wrong_for_slot` 180 because it is structural and a curry is never breakfast. **Per reason rather than one N** answers question 3 rather than deferring it, on the precedent `favorite_reuse_days` already set for its own split. The **recurring-reason tally** counts over the longer `rejection_reason_window_days` (180), so a standing preference outlives the dishes that evidenced it — which is what makes question 2's hard-cutoff/soft-discount choice moot rather than merely decided: a hard cutoff on the half that should expire, no cutoff at all on the half that shouldn't. **The tally moved into Python**, a consequence of the split rather than a flourish: once the halves have different windows the model only ever sees the shorter one, so asking it to notice a repeated reason had it weighing a subset while being told to weigh the whole. `REJECTION_REASON_GUIDANCE` names what a run of each answer implies, split from `REJECTION_REASON_LABELS` the way that dict was already split between UI and prompt; `REJECTION_REASON_SIGNAL_MIN` (3) is what counts as a run. **No storage change and nothing to migrate**, exactly as this entry predicted — every entry already carried its `date` — and done at the moment it recommended: `data/rejections.json` still did not exist, so this landed before the file got large rather than before it existed. Two fixes carried along: `build_rejection_rule` takes `today`, the `select_favorite_assignments` seam, because the existing tests held fixed date literals against a live clock and would have begun failing about six weeks out — the failure CLAUDE.md's "Tests" section already records catching once; and `planning_rule` extends its documented fallback to a config with no `planning_rules` section at all, which `AppConfig` already treats as legal |
 | `future-ideas.md` 5b — this queue's item 2 until v0.35.0 | Nothing observed whether a planned meal was eaten, skipped or swapped | Shipped in **v0.35.0**, with both of this entry's decisions answered rather than deferred. **Storage** is `data/adherence.json`: two lists in one file — `meals` (`planner.AdherenceEntry`, this entry's own field list) and `workouts` (`planner.WorkoutCompletion`) — keyed by `date` plus a second field named per section in `ADHERENCE_SECTIONS`, so one `_upsert_adherence` serves both and Thursday's lunch cannot overwrite Thursday's dinner. Separate *lists* rather than the separate *files* this entry proposed: the part that matters is that the signals share no key, which is the call this codebase has now made five times, but they answer one question and are always read together, so `biometrics.json`'s shape (four signals, four lists, one file) is the precedent taken. A mark is an update, not an append — the one thing separating it from `save_rejection_entry` — and un-marking **deletes** the row, because absence and a status are different answers and a fourth `unknown` status is one every reader would have to treat as absent anyway; clearing what was never marked writes nothing at all, so an untouched checkout stays distinguishable on disk. **The workout half shrank exactly as this entry predicted it should be re-scoped to**: `nutrition_engine.match_recorded_sessions` is the per-date read of v0.33.0's `activity_log` against the declared week — pure, type-and-date matched with the clock only breaking ties, each declared session claiming the nearest *unclaimed* recording, an unmapped modality answering nothing — and only the gap is stored. `PlannerState.mark_workout` refuses a session the watch recorded rather than merely not offering the button, so `activity_log` and `adherence.json` can never hold two answers to one question; where both somehow say yes, Garmin wins. `data/workout_log.json` was therefore not needed. **Decision 2 took the answer this entry named**: `ui_cards.meal_card`'s icon row as a *sibling* of the clickable body — which meant moving `today_card`'s click handler off the card element onto a body element, or a mark click would have bubbled through and opened the recipe dialog on top of the mark it just recorded. Three statuses rather than a boolean, because a skipped meal and a swapped one fail differently and the chart this feeds could not otherwise tell a missed dinner from a dinner out. All slate, glyph-distinguished, per the palette rule v0.32.0 established — emerald is the cook status, so a green tick would read as a fifth slot state. New `ui_adherence.py` and a new `"adherence"` refresh topic; the day inspector got it free, sharing `today_card`/`context_strip`. Marks persist on click and deliberately do not stage, and nothing in the generation path reads them: what to do with a run of skipped Thursdays is a product question, not a fourth soft prompt rule. Writes land in `data/`, so the two-writers-to-`config/` rule is untouched. `tests/test_adherence.py`, 45 tests over all three layers |
+| `future-ideas.md` 5c · `ui-redesign.md` finding 3 — this queue's item 3 until v0.36.0 | The Insights destination was an empty state describing a blocker it never evaluated | Shipped in **v0.36.0**, and the notable thing is that **the entry's own trigger was still unmet on the day it shipped** — 6 weigh-ins across a 5-day span against a floor of 7, 5 logged days against the ~14 this entry suggested. What was blocked on data was a chart being *worth looking at*; what was never blocked was the page saying which precondition was unmet, and the stub proved the cost of leaving that undone by printing the counts and naming the rule without evaluating it — the identical failure v0.30.0 fixed one floor down. Five readouts: weight against target with the weigh-in table under it, planned calories against logged, macro accuracy, adherence tiles. Each is an `InsightPanel` from `ui_state.py` (`state`/`headline`/`detail`/`drawable`) over four states — `INSIGHT_EMPTY` (nothing recorded), `INSIGHT_SPARSE` (fewer than `INSIGHT_MIN_POINTS`, nothing drawn), `INSIGHT_THIN` (drawn, span named) and `INSIGHT_READY` — because empty and sparse spell identically as a missing chart and have different fixes, the `AdaptiveTDEEStatus` precedent. **Thin is drawn**, since this entry's worry ("a 14-day chart against 5 points is thin; a 30-day one is misleading") is about the *axis*: a window anchored on the data's own last row and captioned `6 point(s) across 5 day(s)` cannot mislead the way a fixed axis with six dots in one corner does. `paired_intake_days` is the single join between `meal_history.json`'s per-day `targets` and `daily_actuals`, borrowing two rules rather than inventing them (last history entry per date wins; a zero-calorie row is not a pairing, per `logged_intake_for`) — **this entry never mentioned `meal_history.json`, and it was carrying the planned half of two of the five charts all along**, which is the "check what is already stored before writing a schema" lesson v0.35.0 recorded, paying again. `nutrition_engine.measure_weight_trend` gives the chart and the estimate one slope, and is the first production caller `smooth_series` has ever had — its docstring has said "for display: the weight-trend line a UI draws" since it was written, so this is the fetched-and-never-read pattern seen from the build side. Three chart decisions are all the same decision: the target line draws only when `target_in_range` (a 19 kg gap and a 1 kg span cannot share a legible linear axis, and a scaled axis clips it outright — the gap is captioned either way), macro accuracy is a percentage axis and `MACRO_KEYS`-only so fibre keeps its no-denominator rule, and the adherence percentage says "of marks" in words because the plans those dates were generated against are gone from `week_plan.json`. No chart introduces a hue: `CHART_MACRO_COLOURS` is `MACRO_TINTS` in hex, a logged bar takes `BAND_COLOURS` from the same `macro_band` call the header makes, the reference series is always the dashed one. `insights.panel` becomes the third member of the `"adherence"` topic, which was documented as unable to grow one |
 | `ISSUES.md` 5 | Can't open a batch-cooking recipe | Phase 6c — body opens the shared `open_detail` |
 | `ISSUES.md` 6 | Rename "Today" to "Daily View" | Shipped post-phase-3 (rail label only; function names unchanged) |
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |
@@ -592,6 +570,8 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 
 `ISSUES.md` 8's first bullet is closed (v0.31.0) and 10 is the
 morning-readiness item; 11 is closed (v0.29.0).
-Nothing else in that register is open. `ui-redesign.md` has one entry left
-in the queue above — finding 3, the trend charts — and no unfiled asides:
-v0.33.0 shipped the last of those.
+Nothing else in that register is open. **`ui-redesign.md` has nothing left
+at all** — no entries in the queue above and no unfiled asides: v0.33.0
+shipped the last aside and v0.36.0 shipped finding 3, its last filed
+finding. Of the four source documents this queue consolidated, only
+`future-ideas.md` and the front-end review still contribute open work.
