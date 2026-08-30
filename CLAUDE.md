@@ -1995,12 +1995,15 @@ something.
 `load_rejections`, a plain event log rather than an upsert-by-date table:
 regenerating the same slot twice must record twice, not overwrite, which is
 exactly why `_append_rejection` (unlike `_upsert_dated_entry`) carries no
-merge key at all. This is a genuinely different signal from
-CHANGE-QUEUE.md's adherence item (5b — `AdherenceEntry`, whether a *served*
-plan was eaten, skipped or swapped) — a rejection happens *before* a recipe
-ever becomes the plan — and the two must not share a file for the same reason
-`weigh_ins` and `daily_actuals` don't: two different signals writing the
-same key would silently overwrite each other with no way to tell which won.
+merge key at all. This is a genuinely different signal from adherence
+(`AdherenceEntry`, whether a *served* plan was eaten, skipped or swapped —
+see "Whether the plan actually happened") — a rejection happens *before* a
+recipe ever becomes the plan — and the two must not share a file for the same
+reason `weigh_ins` and `daily_actuals` don't: two different signals writing
+the same key would silently overwrite each other with no way to tell which
+won. Now that both exist, note also that they differ in whether a repeat is
+an event or a correction: two rejections on one slot are two facts and are
+appended, where re-marking a meal replaces the mark.
 
 **It is soft guidance, exactly like `diet_styles` and `sourcing`, never a
 validator.** `planner.build_rejection_rule(config)` reads
