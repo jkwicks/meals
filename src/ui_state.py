@@ -56,6 +56,7 @@ from planner import (
 from planner import clock_minutes
 from nutrition_engine import (
     ADAPTIVE_NO_LOGS,
+    MIN_TREND_SPAN_DAYS,
     ADAPTIVE_NO_WEIGH_INS,
     ADAPTIVE_SHORT_SPAN,
     ADAPTIVE_TDEE_TOLERANCE,
@@ -70,14 +71,17 @@ from nutrition_engine import (
     estimate_session_burn_kcal,
     match_recorded_sessions,
     measure_adaptive_tdee,
+    measure_weight_trend,
     propose_training_schedule,
     resolve_current_weight_kg,
 )
 from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository, catalog_matches
 from ui_theme import (
+    ADHERENCE_MARK_ORDER,
     LINK_COLOURS,
     LINK_SOURCE_MEAL,
     LINK_TARGET_MEAL,
+    MACRO_DETAIL_LABELS,
     STATUS_COOK,
     STATUS_LEFTOVER,
     STATUS_MISSING,
@@ -91,6 +95,7 @@ from ui_theme import (
     SYNC_UNCHECKED,
     TRAINING_TYPE_LABELS,
     TRAINING_TYPES,
+    macro_band,
 )
 from week import (
     MODE_COOK,
@@ -3142,4 +3147,590 @@ def training_proposals_view(proposal: TrainingScheduleProposal) -> TrainingPropo
         headline=f"{len(rows)} suggestion(s) from recorded activity",
         evidence=observed,
         rows=rows,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The Insights destination's series
+# ---------------------------------------------------------------------------
+#
+# CHANGE-QUEUE.md's trend-charts item (`future-ideas.md` 5c ·
+# `ui-redesign.md` finding 3). Five readouts — weight against target, planned
+# calories against logged, macro accuracy, adherence tiles and the weigh-in
+# table — over data this app has been accumulating for one week.
+#
+# **The item was filed as blocked on runtime data, and it still is; what
+# changed is who says so.** Its own trigger — `calculate_adaptive_tdee`
+# returning a number, and ~14 rows in both lists — was measured unmet on the
+# live file the day this shipped (6 weigh-ins, 5 logged days, a 5-day span
+# against a floor of 7). Waiting for it would have meant a page that says
+# "not enough yet" in prose it cannot check, which is the exact failure
+# v0.30.0 fixed for the adaptive estimate: Insights printed the counts and
+# then named the rule without ever evaluating it. So every series below
+# evaluates its own precondition and reports which one stopped it, and the
+# page fills itself as rows land rather than waiting on another release.
+#
+# **Thin is a state, not a reason to draw nothing.** The item's worry is
+# precise — "a 14-day chart against 5 points is thin; a 30-day one is
+# misleading" — and it is a worry about the *axis*, not about the points. A
+# window anchored on the data's own last row and captioned with the span it
+# actually covers cannot mislead the way a fixed 30-day axis with three dots
+# in the corner does. `INSIGHT_THIN` is drawn and labelled; `INSIGHT_SPARSE`
+# is not drawn at all.
+
+# How far back any series looks. Wider than the adaptive estimate's 14 days
+# because the two want different things from the same rows — that wants
+# recent intake to pair a weight trend against, a chart wants enough points
+# to read as a line.
+INSIGHT_WINDOW_DAYS = 30
+
+# Below this many points there is no line, only dots pretending to be one.
+INSIGHT_MIN_POINTS = 3
+
+# Above this it is a series; between the two it is drawn with the span named,
+# so nobody reads six days as a fortnight. 14 is the item's own figure.
+INSIGHT_THIN_POINTS = 14
+
+# Which precondition a series is in. Four rather than a bare `ready` flag for
+# the reason `AdaptiveTDEEStatus` carries four: "nothing recorded", "not
+# enough to draw" and "drawn, but short" have different fixes, and spelling
+# them identically is what had a reader holding five of everything
+# concluding the feature was broken.
+INSIGHT_EMPTY = "empty"
+INSIGHT_SPARSE = "sparse"
+INSIGHT_THIN = "thin"
+INSIGHT_READY = "ready"
+
+
+@dataclass
+class InsightPanel:
+    """One readout's verdict — the two lines every section prints above itself.
+
+    Same contract as `AdaptiveTDEEView`: `headline` is the state in a few
+    words, `detail` is the measured evidence and, for a blocked state, what
+    would clear it. `drawable` is the single test a widget branches on, so
+    no widget module re-derives the threshold.
+    """
+
+    state: str
+    headline: str
+    detail: str
+
+    @property
+    def drawable(self) -> bool:
+        return self.state in (INSIGHT_THIN, INSIGHT_READY)
+
+
+@dataclass
+class WeighInRow:
+    """One row of the weigh-in table — the fifth of the item's five readouts.
+
+    It rides on the chart's own windowed rows rather than re-reading
+    `biometrics.json`, so the table and the line above it cannot disagree
+    about which weigh-ins are in view. `delta_kg` is against the previous row
+    *in the window*, which is why the first row carries None rather than 0.0:
+    a zero would claim a weigh-in that didn't move.
+    """
+
+    date: str
+    weight_kg: float
+    delta_kg: Optional[float]
+    body_fat_pct: Optional[float]
+
+
+@dataclass
+class WeightTrendPanel(InsightPanel):
+    dates: Tuple[str, ...] = ()
+    labels: Tuple[str, ...] = ()
+    weights: Tuple[float, ...] = ()
+    smoothed: Tuple[float, ...] = ()
+    rows: List[WeighInRow] = field(default_factory=list)
+    target_kg: Optional[float] = None
+    kg_per_week: Optional[float] = None
+    span_days: int = 0
+
+    @property
+    def to_target_kg(self) -> Optional[float]:
+        if self.target_kg is None or not self.weights:
+            return None
+        return round(self.weights[-1] - self.target_kg, 1)
+
+    @property
+    def target_in_range(self) -> bool:
+        """Whether the target is close enough to share the plot's own axis.
+
+        **A 19 kg gap and a 1 kg span cannot both be legible on one linear
+        axis**, and this is the chart where that collides: the y-axis is
+        scaled to the weigh-ins (a zero-based one draws a real week as a flat
+        line 99 kg above the origin), which puts a distant target outside the
+        plot entirely — ECharts clips it, so the chart titled "weight against
+        target" silently shows no target at all. Widening the axis to include
+        it flattens the trend instead, which is the same trade the macro
+        chart resolves by moving to a percentage axis.
+
+        So the line is drawn only once it is genuinely in view, and the gap
+        is stated in words either way. A target that appears as the scale
+        approaches it is the honest version of both states.
+        """
+        if self.target_kg is None or not self.weights:
+            return False
+        low, high = min(self.weights), max(self.weights)
+        margin = max((high - low) * 0.5, 0.5)
+        return low - margin <= self.target_kg <= high + margin
+
+
+@dataclass
+class IntakePanel(InsightPanel):
+    dates: Tuple[str, ...] = ()
+    labels: Tuple[str, ...] = ()
+    planned: Tuple[float, ...] = ()
+    logged: Tuple[float, ...] = ()
+    bands: Tuple[str, ...] = ()
+    mean_planned: float = 0.0
+    mean_logged: float = 0.0
+
+
+@dataclass
+class MacroAccuracyRow:
+    key: str
+    label: str
+    planned: float
+    logged: float
+    band: str
+
+    @property
+    def pct(self) -> Optional[float]:
+        return (self.logged / self.planned * 100) if self.planned > 0 else None
+
+
+@dataclass
+class MacroAccuracyPanel(InsightPanel):
+    rows: List[MacroAccuracyRow] = field(default_factory=list)
+    days: int = 0
+
+
+@dataclass
+class AdherencePanel(InsightPanel):
+    counts: Dict[str, int] = field(default_factory=dict)
+    marked_days: int = 0
+    workouts_recorded: int = 0
+    workouts_marked: int = 0
+
+    @property
+    def marks(self) -> int:
+        return sum(self.counts.values())
+
+    @property
+    def as_planned_pct(self) -> Optional[float]:
+        """Eaten as a share of what was *marked*, never of what was planned.
+
+        The denominator is marks because that is the only denominator that
+        exists: `adherence.json` is keyed by date and slot, and the plans
+        those dates were generated against are gone from `week_plan.json` the
+        moment a new week is generated over them. A percentage of "meals
+        planned" would be a divider under a number nobody counted — the same
+        rule that keeps fibre off a denominator. Every surface printing this
+        has to say "of marks" in words.
+        """
+        return (self.counts.get(ADHERENCE_EATEN, 0) / self.marks * 100) if self.marks else None
+
+
+def _windowed_dates(dates: List[str], window_days: int) -> Set[str]:
+    """`dates` within `window_days` of the latest of them.
+
+    Anchored on the data's own last date rather than on today — the anchoring
+    `measure_adaptive_tdee` and `measure_weight_trend` both use, and for the
+    same reason: a series that stops a fortnight before it is read should
+    show the fortnight it recorded instead of an empty window.
+    """
+    parsed = sorted({d for d in (str(value)[:10] for value in dates) if _iso_date(d)})
+    if not parsed:
+        return set()
+    end = _iso_date(parsed[-1])
+    start = end - timedelta(days=window_days)
+    return {d for d in parsed if start <= _iso_date(d) <= end}
+
+
+def _iso_date(value: str) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _short_dates(dates) -> Tuple[str, ...]:
+    """ISO dates as `24 Aug` for a chart's category axis.
+
+    Formatted here rather than in the widget because the axis labels and the
+    weigh-in table below them are two readings of one series, and a category
+    label built in `ui_insights.py` would be the one string on the page that
+    the view model could not be tested against. Full ISO stays on `dates`,
+    which is what the table prints and what any date match keys on.
+    """
+    return tuple(
+        (_iso_date(value).strftime("%-d %b") if _iso_date(value) else str(value))
+        for value in dates
+    )
+
+
+def _span_days(dates) -> int:
+    parsed = sorted(d for d in (_iso_date(value) for value in dates) if d)
+    return (parsed[-1] - parsed[0]).days if len(parsed) >= 2 else 0
+
+
+def _series_state(points: int) -> str:
+    if points <= 0:
+        return INSIGHT_EMPTY
+    if points < INSIGHT_MIN_POINTS:
+        return INSIGHT_SPARSE
+    return INSIGHT_THIN if points < INSIGHT_THIN_POINTS else INSIGHT_READY
+
+
+def _span_note(points: int, span_days: int) -> str:
+    """The caption that keeps a short series from reading as a long one."""
+    return f"{points} point(s) across {span_days} day(s)"
+
+
+def weight_trend_panel(
+    biometrics: Optional[dict],
+    target_kg: Optional[float] = None,
+    window_days: int = INSIGHT_WINDOW_DAYS,
+) -> WeightTrendPanel:
+    """Weigh-ins against the target weight, and the table beneath them.
+
+    The line through the scatter is `nutrition_engine.smooth_series` and the
+    *rate* under it is `measure_weight_trend`'s least-squares fit — two
+    estimators on purpose, because smoothing for the eye and estimating a
+    rate are different jobs and the module says so at length. Reading the
+    rate off the smoothed endpoints understates a noise-free decline by 26%.
+
+    `kg_per_week` is legitimately None on a drawable chart: the points clear
+    `INSIGHT_MIN_POINTS` well before the span clears `MIN_TREND_SPAN_DAYS`,
+    and a rate quoted off four days of weighing is the noise amplification
+    that floor exists to refuse. The chart draws; the caption says why there
+    is no rate on it yet.
+    """
+    trend = measure_weight_trend((biometrics or {}).get("weigh_ins") or [], window_days)
+    state = _series_state(len(trend.weights))
+    rows = []
+    previous: Optional[float] = None
+    windowed = {
+        str(row.get("date") or "")[:10]: row
+        for row in ((biometrics or {}).get("weigh_ins") or [])
+        if isinstance(row, dict)
+    }
+    for iso, weight in zip(trend.dates, trend.weights):
+        body_fat = (windowed.get(iso) or {}).get("body_fat_pct")
+        rows.append(
+            WeighInRow(
+                date=iso,
+                weight_kg=weight,
+                delta_kg=None if previous is None else round(weight - previous, 2),
+                body_fat_pct=float(body_fat) if isinstance(body_fat, (int, float)) else None,
+            )
+        )
+        previous = weight
+
+    common = dict(
+        dates=trend.dates,
+        labels=_short_dates(trend.dates),
+        weights=trend.weights,
+        smoothed=trend.smoothed,
+        rows=rows,
+        target_kg=target_kg,
+        kg_per_week=trend.kg_per_week,
+        span_days=trend.span_days,
+    )
+    if state == INSIGHT_EMPTY:
+        return WeightTrendPanel(
+            state=state,
+            headline="No weigh-ins yet",
+            detail=(
+                "Nothing on the scale inside the window. Garmin's sync writes "
+                "these — see Settings' Biometric Sync."
+            ),
+            **common,
+        )
+    if state == INSIGHT_SPARSE:
+        return WeightTrendPanel(
+            state=state,
+            headline="Not enough weigh-ins to draw",
+            detail=(
+                f"{len(trend.weights)} weigh-in(s) recorded; a line needs "
+                f"{INSIGHT_MIN_POINTS}."
+            ),
+            **common,
+        )
+    rate = (
+        f"{trend.kg_per_week:+.2f} kg/week"
+        if trend.kg_per_week is not None
+        else f"no rate yet — the trend needs a {MIN_TREND_SPAN_DAYS}-day span, "
+        f"this one covers {trend.span_days}"
+    )
+    panel = WeightTrendPanel(
+        state=state,
+        headline=f"{trend.weights[-1]:.1f} kg",
+        detail=f"{_span_note(len(trend.weights), trend.span_days)} · {rate}",
+        **common,
+    )
+    # The gap is always in words, and only *sometimes* on the chart — see
+    # `target_in_range`. A caption that appears the moment the line has to be
+    # dropped would be a caption nobody reads until it matters; this one is
+    # the standing answer and the line is the bonus.
+    if panel.to_target_kg is not None:
+        panel.detail += f" · {panel.to_target_kg:+.1f} kg to target"
+    return panel
+
+
+def paired_intake_days(
+    history: Optional[List[dict]],
+    biometrics: Optional[dict],
+    window_days: int = INSIGHT_WINDOW_DAYS,
+) -> List[Tuple[str, dict, dict]]:
+    """Dates carrying both a planned target and a logged row, oldest first.
+
+    The planned half is `meal_history.json`'s own `targets` block —
+    `record_week_history` stamps one per cooked day — and the logged half is
+    `daily_actuals`. **Both are keyed by date, which is the whole reason this
+    pairing is possible at all**: a `slot_id` is a weekday name and would
+    repeat every seven days, the same distinction `logged_actuals_for` draws
+    against `planner.logged_intake_for`.
+
+    Two rules, both borrowed rather than invented:
+
+    - **Last history entry wins for a date.** History appends an entry per
+      generation, so a regenerated day legitimately has two, and the later
+      one is the plan that stood. Same rule `meal_adherence_view` applies to
+      a duplicated mark.
+    - **A zero-calorie logged row is not a pairing.** A partial sync can
+      write one, and it would read as a day nobody ate — exactly the case
+      `planner.logged_intake_for` already refuses to substitute for a plan.
+      A *partly* logged day (a real figure, short of the day) is kept, and
+      reads as a shortfall, which is the honest reading and the same one
+      `reconcile_adaptive_tdee` warns systematic under-logging produces.
+    """
+    planned: Dict[str, dict] = {}
+    for entry in history or []:
+        if not isinstance(entry, dict):
+            continue
+        iso = str(entry.get("date") or "")[:10]
+        targets = entry.get("targets")
+        if iso and isinstance(targets, dict):
+            planned[iso] = targets
+    logged = {
+        str(row.get("date") or "")[:10]: row
+        for row in ((biometrics or {}).get("daily_actuals") or [])
+        if isinstance(row, dict) and float(row.get("calories") or 0) > 0
+    }
+    shared = _windowed_dates(sorted(set(planned) & set(logged)), window_days)
+    return [(iso, planned[iso], logged[iso]) for iso in sorted(shared)]
+
+
+def intake_panel(
+    history: Optional[List[dict]],
+    biometrics: Optional[dict],
+    window_days: int = INSIGHT_WINDOW_DAYS,
+) -> IntakePanel:
+    """What each day was planned to eat, against what Cronometer logged.
+
+    The per-day `bands` are `ui_theme.macro_band`'s existing on/near/off
+    read, not a second tolerance: this chart is the first thing outside the
+    telemetry header to ask "how close did that day land", and two answers to
+    that question would be free to disagree on a screen showing both.
+    """
+    days = paired_intake_days(history, biometrics, window_days)
+    dates = tuple(iso for iso, _, _ in days)
+    planned = tuple(float(target.get("calories") or 0) for _, target, _ in days)
+    logged = tuple(float(row.get("calories") or 0) for _, _, row in days)
+    state = _series_state(len(days))
+    common = dict(
+        dates=dates,
+        labels=_short_dates(dates),
+        planned=planned,
+        logged=logged,
+        bands=tuple(macro_band(a, p) for a, p in zip(logged, planned)),
+        mean_planned=round(sum(planned) / len(planned), 1) if planned else 0.0,
+        mean_logged=round(sum(logged) / len(logged), 1) if logged else 0.0,
+    )
+    if state == INSIGHT_EMPTY:
+        return IntakePanel(
+            state=state,
+            headline="No day has both a plan and a log",
+            detail=(
+                "This pairs `meal_history.json`'s targets against Cronometer's "
+                "logged day. Generate a week, then sync the days you ate it."
+            ),
+            **common,
+        )
+    if state == INSIGHT_SPARSE:
+        return IntakePanel(
+            state=state,
+            headline="Not enough paired days to draw",
+            detail=(
+                f"{len(days)} day(s) carry both a plan and a log; a chart needs "
+                f"{INSIGHT_MIN_POINTS}."
+            ),
+            **common,
+        )
+    delta = common["mean_logged"] - common["mean_planned"]
+    return IntakePanel(
+        state=state,
+        headline=f"{delta:+.0f} kcal/day against plan",
+        # The chart has no legend, deliberately: its bars are coloured per
+        # day by `macro_band`, and one legend swatch cannot stand for five
+        # different fills without being wrong about four of them. So the
+        # encoding is said here, where every other explanation on this page
+        # already lives.
+        detail=(
+            f"{_span_note(len(days), _span_days(dates))} · logged "
+            f"{common['mean_logged']:.0f} against a planned "
+            f"{common['mean_planned']:.0f} · bars are the logged day, tinted by "
+            "how close it landed; the dashed line is the plan"
+        ),
+        **common,
+    )
+
+
+def macro_accuracy_panel(
+    history: Optional[List[dict]],
+    biometrics: Optional[dict],
+    window_days: int = INSIGHT_WINDOW_DAYS,
+) -> MacroAccuracyPanel:
+    """Mean logged against mean planned, one row per budgeted macro.
+
+    **`MACRO_KEYS`, so fibre is not here.** Fibre is reported and never
+    budgeted, so it has no planned figure to divide by — printing it in a
+    column of percentages would invent the target the whole rule exists to
+    refuse. It already has its honest readout: the telemetry header prints
+    planned and logged side by side with no divider between them.
+
+    Means rather than a per-day series because the question is different from
+    `intake_panel`'s. That one asks which days went off; this asks whether
+    the split is drifting — a week that hits its calories 20 g of protein
+    light every day is the failure CLAUDE.md's portion-sizing section says a
+    single trim factor structurally cannot fix, and it is invisible on a
+    calorie chart.
+    """
+    days = paired_intake_days(history, biometrics, window_days)
+    rows = []
+    # `MACRO_DETAIL_LABELS` for the wording and `MACRO_KEYS` for the
+    # membership, rather than either alone: the labels are the three-letter
+    # forms a reader knows (PRO/CHO/FAT) but the list carries fibre, and
+    # `MACRO_KEYS` is the tuple that decides what has a budget anywhere else
+    # in the app. Filtering one by the other is what keeps the exclusion
+    # above from being a second hand-maintained list.
+    for key, label, _ in MACRO_DETAIL_LABELS:
+        if key not in MACRO_KEYS:
+            continue
+        planned = [float((target or {}).get(key) or 0) for _, target, _ in days]
+        logged = [float((row or {}).get(key) or 0) for _, _, row in days]
+        if not planned:
+            continue
+        mean_planned = sum(planned) / len(planned)
+        mean_logged = sum(logged) / len(logged)
+        rows.append(
+            MacroAccuracyRow(
+                key=key,
+                label=label,
+                planned=round(mean_planned, 1),
+                logged=round(mean_logged, 1),
+                band=macro_band(mean_logged, mean_planned),
+            )
+        )
+    state = _series_state(len(days))
+    if state == INSIGHT_EMPTY:
+        return MacroAccuracyPanel(
+            state=state,
+            headline="Nothing to compare yet",
+            detail="Needs a day that was both planned and logged.",
+            rows=[],
+            days=0,
+        )
+    if state == INSIGHT_SPARSE:
+        return MacroAccuracyPanel(
+            state=state,
+            headline="Not enough paired days",
+            detail=(
+                f"{len(days)} day(s) of {INSIGHT_MIN_POINTS}. One day's split is "
+                "a meal, not a pattern."
+            ),
+            rows=rows,
+            days=len(days),
+        )
+    off = [row.label for row in rows if row.band == "off"]
+    return MacroAccuracyPanel(
+        state=state,
+        headline=(
+            f"{', '.join(off)} off plan" if off else "Every macro within 15% of plan"
+        ),
+        detail=f"Mean of {len(days)} paired day(s), logged against planned.",
+        rows=rows,
+        days=len(days),
+    )
+
+
+def adherence_panel(
+    adherence: Optional[Dict[str, List[dict]]],
+    biometrics: Optional[dict],
+    window_days: int = INSIGHT_WINDOW_DAYS,
+) -> AdherencePanel:
+    """What was marked, and what the watch recorded, over the same window.
+
+    **Tiles, not a trend, so there is no `INSIGHT_MIN_POINTS` gate on them.**
+    A count of three marks is a true statement about three marks; a line
+    through three points is a claim about a direction. The only failure a
+    count has is being zero, and that is `INSIGHT_EMPTY`.
+
+    **This is the thinnest of the five and the queue says so.** Unlike a
+    weigh-in or a Cronometer row, a mark exists only because somebody clicked
+    it — the series does not accumulate merely because the sync job runs — so
+    "have I been marking" is its own precondition, and the empty state names
+    it rather than implying the data is late.
+    """
+    meals = [row for row in ((adherence or {}).get("meals") or []) if isinstance(row, dict)]
+    workouts = [
+        row for row in ((adherence or {}).get("workouts") or []) if isinstance(row, dict)
+    ]
+    activity = [
+        row for row in ((biometrics or {}).get("activity_log") or []) if isinstance(row, dict)
+    ]
+    dates = _windowed_dates(
+        [str(row.get("date") or "") for row in meals + workouts + activity], window_days
+    )
+    marked = [row for row in meals if str(row.get("date") or "")[:10] in dates]
+    counts = Counter(
+        str(row.get("status") or "") for row in marked if row.get("status")
+    )
+    completions = [
+        row
+        for row in workouts
+        if str(row.get("date") or "")[:10] in dates and row.get("completed")
+    ]
+    recorded = sum(1 for row in activity if str(row.get("date") or "")[:10] in dates)
+    marked_days = len({str(row.get("date") or "")[:10] for row in marked})
+    common = dict(
+        counts={status: counts.get(status, 0) for status in ADHERENCE_MARK_ORDER},
+        marked_days=marked_days,
+        workouts_recorded=recorded,
+        workouts_marked=len(completions),
+    )
+    if not marked and not completions and not recorded:
+        return AdherencePanel(
+            state=INSIGHT_EMPTY,
+            headline="Nothing marked yet",
+            detail=(
+                "Unlike the charts above, this one fills only when you mark a "
+                "meal — the tick, cross and swap under each card in Daily View. "
+                "The sync job cannot fill it for you."
+            ),
+            **common,
+        )
+    return AdherencePanel(
+        state=INSIGHT_READY,
+        headline=f"{sum(common['counts'].values())} meal(s) marked across {marked_days} day(s)",
+        detail=(
+            f"{recorded} session(s) recorded by Garmin, {len(completions)} marked by hand, "
+            f"in the last {window_days} days."
+        ),
+        **common,
     )

@@ -306,7 +306,7 @@ one topic map. The concerns:
 | `ui_plan.py` | the Plan destination — `ui_cards`' canvas, plus the generation-failure list above it |
 | `ui_today.py` | the Today destination — one day's cards, its location/training context strip, and the day picker that moves between days (see below); its day-rendering helpers are module-level so `ui_inspector.py` reuses them |
 | `ui_catalog_browser.py` | the Library destination — the recipe catalog, its filters, and recipe import |
-| `ui_insights.py` | the Insights destination — a stub honest-empty-state, see CHANGE-QUEUE.md's trend-charts item (5c) |
+| `ui_insights.py` | the Insights destination — five readouts (weight/target, the weigh-in table, planned-against-logged, macro accuracy, adherence tiles), each drawn only behind its own `ui_state` gate (see "Insights" below) |
 | `ui_settings.py` | the Settings destination — week start, shopping days, model, the Daily Targets source panel (see below), and an integrations list whose rows open three read-only detail dialogs |
 
 Each `build_*(ctx)` returns a small dataclass of the refreshable functions
@@ -998,6 +998,43 @@ copy says so. Dismiss is session-local. Both refresh `"training"`; accept
 also refreshes `"targets"`, because an accepted session expands that day's
 budget and pins a meal exactly as a typed one does. The engine behind them is
 CLAUDE.md's "Proposing the week you actually trained".
+
+## Insights
+
+Five readouts — weight against target with the weigh-in table under it,
+planned calories against logged, macro accuracy, adherence tiles. CLAUDE.md's
+"Insights: five readouts" carries the reasoning; what matters when editing
+this module is that **it decides nothing**. Each section asks `ui_state` for
+an `InsightPanel`, prints `headline` and `detail`, and draws a chart only
+where `.drawable` is true. A threshold, a percentage or a caption computed in
+`ui_insights.py` would be the one string on the page no test could reach.
+
+Four things here will look removable and are not:
+
+- **`chart_scaffold()` in `ui_theme.py`, not per-chart options.** A chart
+  reads as part of this UI only while its gridlines, tick colour and tooltip
+  ground match the panels around it exactly — the argument `MONO_SECTION_LABEL`
+  already makes for the expanded card's headings. The macro chart *swaps* the
+  scaffold's two axes rather than hand-building a horizontal one, for the same
+  reason.
+- **`itemStyle` alongside `lineStyle` on every line series.** ECharts takes
+  the legend swatch from the former. Set only the latter and it labels your
+  white trend line with a blue chip from its own default palette.
+- **No legend on the intake chart.** Its bars are `macro_band`-tinted per
+  day, and one swatch cannot stand for five fills without being wrong about
+  four. The encoding is in the panel's caption instead.
+- **`view.labels` for a category axis, `view.dates` for anything else.**
+  The short `24 Aug` form is built in the view model beside the ISO strings
+  the table prints and every date match keys on.
+
+Colour follows the palette contract with no additions: `CHART_MACRO_COLOURS`
+is `MACRO_TINTS` in hex (categorical), a logged bar takes `BAND_COLOURS`
+(semantic), everything structural is slate, and the *reference* series — a
+target, a plan — is always the dashed one.
+
+The panel is `@ui.refreshable` and registered on `"plan"` and `"adherence"`.
+It owns no input, so the focus-theft trap that keeps other sections off
+`"plan"` does not apply.
 
 ## Settings' Daily Targets panel
 

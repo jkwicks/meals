@@ -864,3 +864,90 @@ def telemetry_bar(
         ui.element("div").classes("absolute inset-y-0 w-px bg-slate-100/50").style(
             f"left: {target_pct:.1f}%;"
         )
+
+
+# ---- charts ---------------------------------------------------------------
+# The Insights destination's ECharts palette. Hex rather than Tailwind classes
+# for the same reason `BAND_COLOURS` is: these are handed to a canvas
+# renderer, which has never heard of a class name.
+#
+# **Every value here is an existing meaning, restated in the units ECharts
+# takes** — no chart introduces a hue. `CHART_MACRO_COLOURS` is `MACRO_TINTS`
+# (categorical: which macro), a logged bar takes its `BAND_COLOURS` fill
+# (semantic: how the day went), and everything structural is slate, which the
+# palette contract calls the neutral ground rather than a meaning. A chart
+# that reached for a new accent would be adding a ninth hue to a table where
+# every one of the eight is already spoken for twice.
+CHART_MACRO_COLOURS = {
+    "protein_g": "#7dd3fc",  # sky-300, matching MACRO_TINTS
+    "net_carbs_g": "#fdba74",  # orange-300
+    "fat_g": "#c4b5fd",  # violet-300
+    "fiber_g": "#67e8f9",  # cyan-300
+    "calories": "#cbd5e1",  # slate-300 — the total is not a macro
+}
+
+CHART_INK = "#cbd5e1"  # slate-300: a series the eye follows
+CHART_MUTED = "#64748b"  # slate-500: axis labels, the reference series
+CHART_GRID = "#1e293b"  # slate-800: split lines, at the weight of a border
+CHART_SURFACE = "#0f172a"  # slate-900: tooltip ground, matching the header
+
+# **The planned series is drawn as the *dashed* one.** Solid-vs-dashed is the
+# fill-and-weight distinction `bookmark`/`bookmark_border` already draws for a
+# favourite, reached for here because both series in these charts are slate
+# and a second hue would have to mean something. Dashed reads as the
+# reference — what was intended — against the solid line of what happened.
+CHART_REFERENCE_DASH = [4, 4]
+
+CHART_HEIGHT = "h-56"
+CHART_HEIGHT_SHORT = "h-40"
+
+
+def chart_scaffold(*, category_axis: bool = True) -> dict:
+    """The dark-theme grid, axes and tooltip every Insights chart shares.
+
+    One helper rather than three copies because a chart only reads as part of
+    this UI while its gridlines, tick colour and tooltip ground match the
+    panels around it exactly — the same argument `MONO_SECTION_LABEL` makes
+    for the expanded card's headings. Callers merge their series and axis
+    data over the top; nothing here names a series.
+
+    `containLabel` is what keeps a rotated date tick inside the canvas
+    instead of clipped by it, and the left inset is deliberately tight: these
+    charts sit in a panel that is already padded.
+    """
+    axis_line = {"lineStyle": {"color": CHART_GRID}}
+    return {
+        "grid": {
+            "left": 8,
+            "right": 12,
+            "top": 24,
+            "bottom": 8,
+            "containLabel": True,
+        },
+        "tooltip": {
+            "trigger": "axis",
+            "backgroundColor": CHART_SURFACE,
+            "borderColor": CHART_GRID,
+            "textStyle": {"color": CHART_INK, "fontSize": 11},
+        },
+        "xAxis": {
+            "type": "category" if category_axis else "value",
+            "axisLine": axis_line,
+            "axisTick": {"show": False},
+            "axisLabel": {"color": CHART_MUTED, "fontSize": 10},
+        },
+        "yAxis": {
+            "type": "value",
+            "scale": True,
+            "axisLine": {"show": False},
+            "axisLabel": {"color": CHART_MUTED, "fontSize": 10},
+            "splitLine": {"lineStyle": {"color": CHART_GRID}},
+        },
+        "legend": {
+            "textStyle": {"color": CHART_MUTED, "fontSize": 10},
+            "icon": "roundRect",
+            "itemHeight": 6,
+            "itemWidth": 12,
+            "top": 0,
+        },
+    }

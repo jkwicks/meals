@@ -2383,3 +2383,348 @@ class TestCatalogRowsHonourTheLibraryFilters(unittest.TestCase):
             [row.name for row in state.catalog_rows()],
             ["Apple Porridge", "Beef Cheeks", "Zucchini Soup"],
         )
+
+
+# ---------------------------------------------------------------------------
+# The Insights destination's series
+# ---------------------------------------------------------------------------
+
+
+def weigh_ins(days, start="2026-08-01", weight=100.0, step=-0.1):
+    first = date.fromisoformat(start)
+    return [
+        {
+            "date": (first + timedelta(days=offset)).isoformat(),
+            "weight_kg": round(weight + step * offset, 2),
+            "body_fat_pct": 30.0,
+        }
+        for offset in range(days)
+    ]
+
+
+def logged(days, start="2026-08-01", calories=1800.0, protein=140.0):
+    first = date.fromisoformat(start)
+    return [
+        {
+            "date": (first + timedelta(days=offset)).isoformat(),
+            "calories": calories,
+            "protein_g": protein,
+            "net_carbs_g": 120.0,
+            "fat_g": 70.0,
+        }
+        for offset in range(days)
+    ]
+
+
+def planned(days, start="2026-08-01", calories=2000.0, protein=144.0):
+    first = date.fromisoformat(start)
+    return [
+        {
+            "date": (first + timedelta(days=offset)).isoformat(),
+            "targets": {
+                "calories": calories,
+                "protein_g": protein,
+                "net_carbs_g": 120.0,
+                "fat_g": 80.0,
+            },
+        }
+        for offset in range(days)
+    ]
+
+
+class TestSeriesAreGatedOnTheirOwnPrecondition(unittest.TestCase):
+    """Every Insights readout says which precondition stopped it.
+
+    This is the lesson `adaptive_tdee_view` was written for, applied to the
+    charts: "nothing recorded yet", "not enough to draw" and "drawn, but
+    short" spell identically as an absent chart, and the queue item these
+    implement was blocked on exactly the data that makes the difference. The
+    page shipped while its own trigger was unmet on purpose — 6 weigh-ins
+    across a 5-day span — so the states below are the shipped state, not an
+    edge case.
+    """
+
+    def test_no_weigh_ins_is_empty_and_says_where_they_come_from(self):
+        view = ui_state.weight_trend_panel({"weigh_ins": []})
+        self.assertEqual(view.state, ui_state.INSIGHT_EMPTY)
+        self.assertFalse(view.drawable)
+        self.assertIn("scale", view.detail)
+
+    def test_two_weigh_ins_is_sparse_not_empty(self):
+        """Two points are a line segment, not a trend, and the fixes differ.
+
+        Empty means "sync something"; sparse means "keep weighing in". A
+        single `drawable` flag would send both readers to the same place.
+        """
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(2)})
+        self.assertEqual(view.state, ui_state.INSIGHT_SPARSE)
+        self.assertFalse(view.drawable)
+
+    def test_a_short_series_draws_and_names_its_span(self):
+        """`INSIGHT_THIN` is drawn — the item's worry is the axis, not the
+        points, and a caption naming the real span cannot mislead the way a
+        fixed 30-day axis with six dots in the corner does."""
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(6)})
+        self.assertEqual(view.state, ui_state.INSIGHT_THIN)
+        self.assertTrue(view.drawable)
+        self.assertIn("6 point(s) across 5 day(s)", view.detail)
+
+    def test_a_full_series_is_ready(self):
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(20)})
+        self.assertEqual(view.state, ui_state.INSIGHT_READY)
+
+    def test_a_drawable_chart_can_still_have_no_rate(self):
+        """The chart's floor and the trend's floor are different numbers.
+
+        Three points clear `INSIGHT_MIN_POINTS` on day three;
+        `MIN_TREND_SPAN_DAYS` is seven. Quoting a kg/week off four days of
+        weighing is the noise amplification that floor exists to refuse, so
+        the chart draws and the caption says why there is no rate on it.
+        """
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(5)})
+        self.assertTrue(view.drawable)
+        self.assertIsNone(view.kg_per_week)
+        self.assertIn("no rate yet", view.detail)
+
+
+class TestTheWeighInTableRidesOnTheChartsOwnRows(unittest.TestCase):
+    def test_deltas_are_against_the_previous_row_in_the_window(self):
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(4)})
+        self.assertEqual([row.delta_kg for row in view.rows], [None, -0.1, -0.1, -0.1])
+
+    def test_the_first_row_carries_no_delta_rather_than_zero(self):
+        """A zero would claim a weigh-in that didn't move."""
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(3)})
+        self.assertIsNone(view.rows[0].delta_kg)
+
+    def test_body_fat_is_carried_when_the_scale_reported_it(self):
+        rows = weigh_ins(3)
+        del rows[1]["body_fat_pct"]
+        view = ui_state.weight_trend_panel({"weigh_ins": rows})
+        self.assertEqual(
+            [row.body_fat_pct for row in view.rows], [30.0, None, 30.0]
+        )
+
+    def test_the_table_covers_exactly_the_charted_window(self):
+        """One windowing, two readouts — the table cannot show a weigh-in the
+        line above it has already dropped."""
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(40)}, window_days=30)
+        self.assertEqual(len(view.rows), len(view.weights))
+        self.assertEqual(view.rows[-1].date, view.dates[-1])
+
+
+class TestPairingPlannedAgainstLogged(unittest.TestCase):
+    """`paired_intake_days` — the join two of the five charts stand on."""
+
+    def test_only_dates_carrying_both_are_paired(self):
+        days = ui_state.paired_intake_days(
+            planned(5), {"daily_actuals": logged(3)}
+        )
+        self.assertEqual([iso for iso, _, _ in days], [
+            "2026-08-01", "2026-08-02", "2026-08-03"
+        ])
+
+    def test_the_last_history_entry_for_a_date_wins(self):
+        """A regenerated day legitimately has two entries; the later one is
+        the plan that stood. Same rule `meal_adherence_view` applies to a
+        duplicated mark."""
+        history = planned(1) + planned(1, calories=2500.0)
+        days = ui_state.paired_intake_days(history, {"daily_actuals": logged(1)})
+        self.assertEqual(days[0][1]["calories"], 2500.0)
+
+    def test_a_zero_calorie_row_is_not_a_pairing(self):
+        """A partial sync can write one, and it would read as a day nobody
+        ate — the case `planner.logged_intake_for` already refuses."""
+        rows = logged(3)
+        rows[1]["calories"] = 0
+        days = ui_state.paired_intake_days(planned(3), {"daily_actuals": rows})
+        self.assertEqual([iso for iso, _, _ in days], ["2026-08-01", "2026-08-03"])
+
+    def test_a_partly_logged_day_is_kept_and_reads_as_a_shortfall(self):
+        """Honest, and the same reading `reconcile_adaptive_tdee` warns
+        systematic under-logging produces. Dropping it would hide the
+        under-logging this chart exists to show."""
+        rows = logged(2)
+        rows[1]["calories"] = 430.0
+        view = ui_state.intake_panel(planned(2), {"daily_actuals": rows})
+        self.assertEqual(view.logged, (1800.0, 430.0))
+
+    def test_an_entry_with_no_targets_block_is_skipped(self):
+        """History predating per-day targets is tolerated, not raised on —
+        the same pre-migration tolerance `history_styles` extends."""
+        history = planned(2)
+        del history[0]["targets"]
+        days = ui_state.paired_intake_days(history, {"daily_actuals": logged(2)})
+        self.assertEqual([iso for iso, _, _ in days], ["2026-08-02"])
+
+
+class TestIntakeAndMacroAccuracy(unittest.TestCase):
+    def test_each_day_takes_the_bands_the_header_already_uses(self):
+        """One tolerance, not a second one: the telemetry header asks the
+        same question of the same day, and two answers would be free to
+        disagree on a screen showing both."""
+        view = ui_state.intake_panel(planned(4), {"daily_actuals": logged(4)})
+        self.assertEqual(view.bands, ("near",) * 4)
+
+    def test_the_headline_is_the_mean_gap_per_day(self):
+        view = ui_state.intake_panel(planned(4), {"daily_actuals": logged(4)})
+        self.assertEqual(view.headline, "-200 kcal/day against plan")
+
+    def test_fibre_is_absent_from_macro_accuracy(self):
+        """It is reported and never budgeted, so it has no planned figure to
+        divide by. A percentage column would invent the target the rule
+        exists to refuse."""
+        view = ui_state.macro_accuracy_panel(planned(4), {"daily_actuals": logged(4)})
+        self.assertNotIn("fiber_g", [row.key for row in view.rows])
+        self.assertEqual(
+            [row.key for row in view.rows],
+            ["calories", "protein_g", "net_carbs_g", "fat_g"],
+        )
+
+    def test_a_macro_row_reports_its_share_of_plan(self):
+        view = ui_state.macro_accuracy_panel(planned(4), {"daily_actuals": logged(4)})
+        protein = next(row for row in view.rows if row.key == "protein_g")
+        self.assertAlmostEqual(protein.pct, 140.0 / 144.0 * 100, places=1)
+        self.assertEqual(protein.band, "on")
+
+    def test_a_macro_off_plan_is_named_in_the_headline(self):
+        view = ui_state.macro_accuracy_panel(
+            planned(4), {"daily_actuals": logged(4, protein=70.0)}
+        )
+        self.assertIn("PRO", view.headline)
+
+    def test_nothing_paired_is_empty_not_zero_percent(self):
+        view = ui_state.macro_accuracy_panel(planned(4), {"daily_actuals": []})
+        self.assertEqual(view.state, ui_state.INSIGHT_EMPTY)
+        self.assertEqual(view.rows, [])
+
+
+class TestAdherenceTilesCountRatherThanTrend(unittest.TestCase):
+    """The thinnest of the five, and the only one with no minimum.
+
+    A count of three marks is a true statement about three marks; a line
+    through three points is a claim about a direction. The only failure a
+    count has is being zero.
+    """
+
+    def marks(self, *statuses, start="2026-08-01"):
+        first = date.fromisoformat(start)
+        return {
+            "meals": [
+                {
+                    "date": (first + timedelta(days=offset)).isoformat(),
+                    "slot_id": "Monday:dinner",
+                    "status": status,
+                }
+                for offset, status in enumerate(statuses)
+            ]
+        }
+
+    def test_one_mark_is_already_a_readout(self):
+        view = ui_state.adherence_panel(self.marks("eaten"), {})
+        self.assertEqual(view.state, ui_state.INSIGHT_READY)
+        self.assertEqual(view.counts["eaten"], 1)
+
+    def test_the_three_statuses_are_counted_apart(self):
+        view = ui_state.adherence_panel(
+            self.marks("eaten", "skipped", "swapped", "eaten"), {}
+        )
+        self.assertEqual(
+            view.counts, {"eaten": 2, "skipped": 1, "swapped": 1}
+        )
+        self.assertEqual(view.marked_days, 4)
+
+    def test_the_percentage_denominator_is_marks_never_meals_planned(self):
+        """The only denominator that exists: the plans those dates were
+        generated against are gone from `week_plan.json` the moment a new
+        week is generated over them."""
+        view = ui_state.adherence_panel(self.marks("eaten", "skipped"), {})
+        self.assertEqual(view.marks, 2)
+        self.assertEqual(view.as_planned_pct, 50.0)
+
+    def test_nothing_marked_says_the_sync_cannot_fix_it(self):
+        """Unlike every other series here, this one does not accumulate
+        because a job ran — which is the misreading the empty state exists to
+        prevent."""
+        view = ui_state.adherence_panel({}, {})
+        self.assertEqual(view.state, ui_state.INSIGHT_EMPTY)
+        self.assertIn("mark a meal", view.detail)
+        self.assertIsNone(view.as_planned_pct)
+
+    def test_a_recorded_session_alone_is_enough_to_report(self):
+        """Garmin fills the workout half without anyone clicking anything, so
+        an activity log with no marks beside it is not an empty page."""
+        view = ui_state.adherence_panel(
+            {}, {"activity_log": [{"date": "2026-08-02", "type": "gym"}]}
+        )
+        self.assertEqual(view.state, ui_state.INSIGHT_READY)
+        self.assertEqual(view.workouts_recorded, 1)
+
+    def test_only_completed_workout_rows_count(self):
+        view = ui_state.adherence_panel(
+            {
+                "meals": [],
+                "workouts": [
+                    {"date": "2026-08-01", "session_id": "a", "completed": True},
+                    {"date": "2026-08-01", "session_id": "b", "completed": False},
+                ],
+            },
+            {},
+        )
+        self.assertEqual(view.workouts_marked, 1)
+
+
+class TestTheTargetIsOnlyDrawnWhenItIsInView(unittest.TestCase):
+    """A 19 kg gap and a 1 kg span cannot share one legible linear axis.
+
+    Written against the bug the first screenshot showed: the y-axis is scaled
+    to the weigh-ins (a zero-based one draws a real week as a flat line 99 kg
+    above the origin), so a distant target fell outside the plot and ECharts
+    clipped it — a chart headed "weight against target" with no target on it.
+    """
+
+    def test_a_distant_target_is_not_drawn(self):
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(6)}, 80.0)
+        self.assertFalse(view.target_in_range)
+
+    def test_a_target_the_scale_has_reached_is_drawn(self):
+        view = ui_state.weight_trend_panel(
+            {"weigh_ins": weigh_ins(6, weight=80.2)}, 80.0
+        )
+        self.assertTrue(view.target_in_range)
+
+    def test_the_gap_is_in_words_either_way(self):
+        """Which is what makes dropping the line safe: the number a reader
+        wants is in the caption whether or not the chart can carry it."""
+        far = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(6)}, 80.0)
+        near = ui_state.weight_trend_panel(
+            {"weigh_ins": weigh_ins(6, weight=80.2)}, 80.0
+        )
+        self.assertIn("kg to target", far.detail)
+        self.assertIn("kg to target", near.detail)
+        self.assertAlmostEqual(far.to_target_kg, 19.5, places=1)
+
+    def test_no_target_configured_is_no_line_and_no_caption(self):
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(6)})
+        self.assertIsNone(view.to_target_kg)
+        self.assertFalse(view.target_in_range)
+        self.assertNotIn("to target", view.detail)
+
+
+class TestChartLabelsAreFormattedInTheViewModel(unittest.TestCase):
+    def test_axis_labels_are_short_dates_and_the_keys_stay_iso(self):
+        """Two readings of one series: the axis says `24 Aug`, the table and
+        every date match keep the full ISO string."""
+        view = ui_state.weight_trend_panel({"weigh_ins": weigh_ins(3)})
+        self.assertEqual(view.labels, ("1 Aug", "2 Aug", "3 Aug"))
+        self.assertEqual(view.dates[0], "2026-08-01")
+
+    def test_the_intake_chart_labels_the_same_way(self):
+        view = ui_state.intake_panel(planned(3), {"daily_actuals": logged(3)})
+        self.assertEqual(view.labels, ("1 Aug", "2 Aug", "3 Aug"))
+
+    def test_the_caption_says_what_the_missing_legend_would_have(self):
+        """The bars are banded per day, so one legend swatch would be wrong
+        about every band but its own — the encoding moves into words."""
+        view = ui_state.intake_panel(planned(4), {"daily_actuals": logged(4)})
+        self.assertIn("dashed line is the plan", view.detail)

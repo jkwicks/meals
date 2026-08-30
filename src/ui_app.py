@@ -32,7 +32,7 @@ Four regions, mirroring how the week is actually read:
 - **Rail** — a slim vertical tab strip (`ui.tabs().props("vertical")`)
   choosing one of five destinations: Plan (the week grid — `ui_plan.py`),
   Today (`ui_today.py`), Library (the recipe catalog and import —
-  `ui_catalog_browser.py`), Insights (a stub — `ui_insights.py`), Settings
+  `ui_catalog_browser.py`), Insights (the trend charts — `ui_insights.py`), Settings
   (`ui_settings.py`) — plus, between the first two tabs and the last three,
   the **action block** phase 6b collected out of `ui.header()` and the Plan
   panel: Generate, Shopping, Shuffle styles, PDF menu, Mobile page. The
@@ -170,7 +170,7 @@ fastapi_app.include_router(build_api_router(REPOSITORY))
 @ui.page("/")
 async def planner_page() -> None:
     state = await PlannerState.load(REPOSITORY)
-    # Read once per page load for the Insights stub and the Settings
+    # Read once per page load for the Insights charts and the Settings
     # destination's sync-status dialog — nothing on this page writes
     # biometrics.json (the sync CLI does), so there's no reason to re-read it
     # on repaint, and both `build_*` factories are synchronous anyway.
@@ -312,14 +312,22 @@ async def planner_page() -> None:
         today.today_view,
         inspector.panel,
         staged_bar.bar,
+        # Generation is what appends the `meal_history.json` entries the
+        # Insights charts pair against `daily_actuals`, so a finished run
+        # changes what this destination has to draw. It owns no input, so
+        # the focus-theft trap that keeps other sections off "plan" does not
+        # apply to it.
+        insights.panel,
     )
     refreshables.on("today", today.today_view)
-    # Marking a meal or a session changes exactly two sections, and neither
-    # is on the week grid: `"plan"` would additionally rebuild the 28-card
+    # Marking a meal or a session changes exactly three sections, and none is
+    # on the week grid: `"plan"` would additionally rebuild the 28-card
     # canvas, the telemetry header and the shopping panel on every click of a
-    # tick, none of which draw a mark. Nothing else in the app reads
-    # `adherence.json`, so this topic has no third member to grow.
-    refreshables.on("adherence", today.today_view, inspector.panel)
+    # tick, none of which draw a mark. The third member arrived with the
+    # trend charts — Insights' adherence tiles are the only readout in the
+    # app that counts marks rather than showing one — which is why this
+    # comment no longer says the topic cannot grow one.
+    refreshables.on("adherence", today.today_view, inspector.panel, insights.panel)
     # The inspector panel has no focused input (its targets are read-only —
     # editing lives in the review dialog), so unlike "telemetry" it's safe to
     # repaint on every kind of target/training change, not just the narrow

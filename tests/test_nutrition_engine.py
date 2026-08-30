@@ -942,5 +942,91 @@ class TestObservedWindow(unittest.TestCase):
         )
 
 
+class TestWeightTrendForDisplay(unittest.TestCase):
+    """`measure_weight_trend` — the series the Insights weight chart draws.
+
+    Written when the chart was, because `smooth_series` had been sitting
+    tested and *unread* since it was added: its docstring says it is "for
+    display — the weight-trend line a UI draws", and nothing drew one. The
+    thing worth pinning is not the smoothing (already covered above) but the
+    two ways this function is deliberately not the estimate beside it — a
+    wider default window, and the raw slope's own sign.
+    """
+
+    def series(self, days, start=100.0, step=-0.1):
+        return [
+            {
+                "date": (date(2026, 8, 1) + timedelta(days=offset)).isoformat(),
+                "weight_kg": start + step * offset,
+            }
+            for offset in range(days)
+        ]
+
+    def test_a_short_span_still_returns_its_points(self):
+        """The chart draws; only the rate is withheld.
+
+        `measure_adaptive_tdee` returns no estimate below
+        `MIN_TREND_SPAN_DAYS` and that is right for an energy figure — but a
+        scatter of four weigh-ins is honest to plot, and refusing to hand
+        them over would have made the chart wait on the estimate's floor for
+        no reason of its own.
+        """
+        trend = ne.measure_weight_trend(self.series(4))
+        self.assertEqual(len(trend.weights), 4)
+        self.assertEqual(len(trend.smoothed), 4)
+        self.assertEqual(trend.span_days, 3)
+        self.assertIsNone(trend.kg_per_week)
+
+    def test_a_long_enough_span_carries_a_rate(self):
+        trend = ne.measure_weight_trend(self.series(14))
+        self.assertEqual(trend.span_days, 13)
+        self.assertIsNotNone(trend.kg_per_week)
+        self.assertAlmostEqual(trend.kg_per_week, -0.7, places=2)
+
+    def test_the_rate_is_negative_while_losing(self):
+        """The raw slope's convention, not the estimate's negated one.
+
+        `measure_adaptive_tdee` negates this into "kg lost per day" because
+        the energy formula is defined that way. Inverting one for the other
+        is the easy mistake and it doubles the error rather than cancelling
+        it, so the two are pinned apart here.
+        """
+        losing = ne.measure_weight_trend(self.series(14, step=-0.1))
+        gaining = ne.measure_weight_trend(self.series(14, step=0.1))
+        self.assertLess(losing.kg_per_week, 0)
+        self.assertGreater(gaining.kg_per_week, 0)
+
+    def test_the_window_is_anchored_on_the_last_weigh_in_not_today(self):
+        """A series that stops a month ago shows the month it recorded."""
+        old = [
+            {"date": "2026-01-05", "weight_kg": 100.0},
+            {"date": "2026-01-19", "weight_kg": 99.0},
+        ]
+        trend = ne.measure_weight_trend(old)
+        self.assertEqual(trend.dates, ("2026-01-05", "2026-01-19"))
+        self.assertEqual(trend.span_days, 14)
+
+    def test_the_default_window_is_wider_than_the_estimate_s(self):
+        """30 days of points, where the estimate pairs against 14.
+
+        Not a stylistic difference: a chart wants enough points to read as a
+        line and the estimate wants recent intake to pair against. Both take
+        the window as an argument so neither assumes the other's.
+        """
+        trend = ne.measure_weight_trend(self.series(30))
+        self.assertEqual(len(trend.weights), 30)
+        self.assertEqual(len(ne.measure_weight_trend(self.series(30), 14).weights), 15)
+
+    def test_an_undated_or_weightless_row_is_dropped_not_raised_on(self):
+        rows = self.series(8) + [{"date": "not-a-date", "weight_kg": 90.0}, {"date": "2026-08-09"}]
+        self.assertEqual(len(ne.measure_weight_trend(rows).weights), 8)
+
+    def test_nothing_at_all_is_an_empty_trend_not_a_crash(self):
+        trend = ne.measure_weight_trend([])
+        self.assertEqual(trend.weights, ())
+        self.assertEqual(trend.span_days, 0)
+        self.assertIsNone(trend.kg_per_week)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
