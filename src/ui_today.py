@@ -31,15 +31,31 @@ over, for that reason.**
 """
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from nicegui import ui
 
+from planner import workout_session_id
+from ui_adherence import AdherenceHandles
 from ui_cards import CardHandles
 from ui_context import UIContext
-from ui_state import DayContext, LocationView, SlotView, TrainingView, day_context
+from ui_state import (
+    DayContext,
+    LocationView,
+    MealAdherenceView,
+    PlannerState,
+    SlotView,
+    TrainingView,
+    WorkoutMarkView,
+    day_context,
+)
 from ui_theme import (
+    ADHERENCE_MARK_ICONS,
+    ADHERENCE_MARK_ORDER,
+    ADHERENCE_SOURCE_ICONS,
+    ADHERENCE_UNMARKED_ICON,
     LOCATION_ACCENT,
+    adherence_mark_tooltip,
     format_day_label,
     MACRO_LABELS,
     MACRO_TINTS,
@@ -70,6 +86,49 @@ from week import MODE_COOK, MODE_LEFTOVER, humanize, slot_id
 # label long enough to fill its chip wraps *below* its icon and runs back
 # underneath it — the same trap the recipe dialog's step rows document.
 CHIP = f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} px-{SPACE_TIGHT} py-[2px] {RADIUS_PILL}"
+
+
+@dataclass
+class DayMarks:
+    """One day's adherence marks, plus the handlers that change them.
+
+    A parameter object rather than four more arguments on `today_card` and
+    `context_strip`, because both of those are also called by
+    `ui_inspector.py` and every one of them would have had to grow the same
+    four. It bundles view model and handles deliberately: a widget module is
+    exactly where those two meet, and keeping them apart would mean threading
+    both through the same call sites anyway.
+
+    Optional throughout — `None` means "this surface doesn't offer marking",
+    which is what every mark-drawing function below checks first. Nothing
+    today passes None, but the two call sites are a Daily View and a day
+    inspector, and a third read-only surface (an export, a printed menu)
+    should be able to reuse these renderers without inventing handlers it has
+    no page to repaint.
+    """
+
+    day: str
+    meals: MealAdherenceView
+    workouts: List[WorkoutMarkView]
+    handles: AdherenceHandles
+
+
+def build_day_marks(
+    state: PlannerState, day: str, adherence: AdherenceHandles
+) -> DayMarks:
+    """Both mark views for `day`, read once per repaint.
+
+    Once, not once per card, for the same reason `day_context` is built once:
+    `meal_adherence_for` walks the day's spec slots and `workout_marks_for`
+    walks the activity log, and four cards each asking would be four copies
+    of one day's answer.
+    """
+    return DayMarks(
+        day=day,
+        meals=state.meal_adherence_for(day),
+        workouts=state.workout_marks_for(day),
+        handles=adherence,
+    )
 
 
 # ---- the day-context strip: where you are, what you're training -----------
@@ -137,10 +196,79 @@ def session_chip(session: TrainingView) -> None:
             ui.label(detail).classes(f"{TEXT_MICRO} font-mono text-slate-400")
 
 
-def training_row(context: DayContext) -> None:
+def completion_mark(mark: Optional[WorkoutMarkView], marks: Optional[DayMarks]) -> None:
+    """Whether a declared session happened, and the one click that says so.
+
+    Three renders, because there are three genuinely different states and
+    only one of them is editable:
+
+    - **Recorded by Garmin** — a plain icon, not a button. `activity_log` is
+      the answer for these and nothing on this page may overwrite it; the
+      tooltip carries what the watch actually saw, which is the half worth
+      reading when a 20-minute walk is answering for a declared hour.
+    - **Marked by hand** — a button, because a manual mark is a row in
+      `adherence.json` and a mis-click has to be takeable back.
+    - **Neither** — the button that writes one.
+
+    A day with no calendar date renders nothing at all rather than an
+    unmarked circle: without a date there is nothing to match the activity
+    log against, so "not done" would be stated as fact having never been
+    checked. That is `WorkoutMarkView.markable`, and it is the same
+    honest-silence default `context_strip` takes for a day with no context.
+    """
+    if mark is None or not mark.markable or marks is None:
+        return
+
+    if mark.source == "garmin":
+        icon = ui.icon(ADHERENCE_SOURCE_ICONS["garmin"]).classes(
+            f"{TEXT_BODY} text-slate-300"
+        )
+        with icon:
+            detail = mark.detail
+            ui.tooltip(
+                f"Recorded by Garmin — {detail}" if detail else "Recorded by Garmin"
+            )
+        return
+
+    button = ui.button(
+        icon=(
+            ADHERENCE_SOURCE_ICONS["manual"] if mark.marked else ADHERENCE_UNMARKED_ICON
+        ),
+        on_click=lambda m=mark: marks.handles.mark_workout(marks.day, m),
+    )
+    button.props("dense flat round size=xs").classes(
+        f"min-h-0 p-{SPACE_HAIR} "
+        + ("text-slate-200" if mark.marked else "text-slate-600 hover:text-slate-300")
+    )
+    with button:
+        ui.tooltip(
+            "Marked done — click to clear"
+            if mark.marked
+            else "Garmin didn't record this — mark it done"
+        )
+
+
+def training_row(context: DayContext, marks: Optional[DayMarks] = None) -> None:
+    by_session = {mark.session_id: mark for mark in (marks.workouts if marks else [])}
     with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
         for session in context.sessions:
-            session_chip(session)
+            if session.is_rest:
+                # Nothing to complete: `TrainingView.is_rest` folds a typed
+                # rest day and a zero-burn session together, and neither is a
+                # session that could have been done or missed.
+                session_chip(session)
+                continue
+            # `flex-nowrap` per the standing Quasar trap — this is an
+            # icon-beside-content row, and `.flex`'s own `flex-wrap: wrap`
+            # would drop the mark below the chip it belongs to.
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR}"
+            ):
+                session_chip(session)
+                completion_mark(
+                    by_session.get(workout_session_id(session.time, session.type)),
+                    marks,
+                )
 
         # Only worth printing once there are two sessions to add up —
         # under one it would just restate the chip beside it. This is the
@@ -152,7 +280,7 @@ def training_row(context: DayContext) -> None:
             )
 
 
-def context_strip(context: DayContext) -> None:
+def context_strip(context: DayContext, marks: Optional[DayMarks] = None) -> None:
     """The location and training rows, or nothing at all.
 
     Nothing is the honest render for a config with no `base_schedule` and
@@ -169,7 +297,7 @@ def context_strip(context: DayContext) -> None:
         if context.location is not None:
             location_row(context.location)
         if context.sessions:
-            training_row(context)
+            training_row(context, marks)
 
 
 # ---- the cards --------------------------------------------------------
@@ -208,8 +336,53 @@ def card_context_badges(context: DayContext, meal_type: str) -> None:
                 ui.tooltip(note.text).classes("max-w-xs")
 
 
+def meal_marks(meal_type: str, marks: Optional[DayMarks]) -> None:
+    """The three "what happened to this" buttons, or nothing.
+
+    Nothing in three cases, and each is a real state rather than a guard
+    against a bug: the surface offers no marking at all, the day has no
+    calendar date to key a mark on (`MealAdherenceView.markable`), or this
+    slot is a skip — nothing was planned to be eaten there, so "did you eat
+    it" has no answer and a row of buttons would invite one.
+
+    Clicking the status a slot already carries clears it (`mark_meal`), which
+    is why the tooltip on a selected button says so: three buttons with no
+    visible way back would be three one-way doors.
+    """
+    if marks is None or not marks.meals.markable:
+        return
+    slot = slot_id(marks.day, meal_type)
+    if slot not in marks.meals.planned:
+        return
+
+    current = marks.meals.status_for(slot)
+    for status in ADHERENCE_MARK_ORDER:
+        selected = current == status
+        button = ui.button(
+            icon=ADHERENCE_MARK_ICONS[status],
+            on_click=lambda s=status: marks.handles.mark_meal(marks.day, meal_type, s),
+        )
+        # Glyph and fill only — no hue. Every colour in the palette already
+        # means something (the `ui-work` skill's table), and emerald, the
+        # obvious tick colour, is the cook status.
+        button.props("dense flat round size=xs").classes(
+            f"min-h-0 p-{SPACE_HAIR} "
+            + (
+                "text-slate-100 bg-slate-700"
+                if selected
+                else "text-slate-600 hover:text-slate-300"
+            )
+        )
+        with button:
+            ui.tooltip(adherence_mark_tooltip(status, selected))
+
+
 def today_card(
-    view: Optional[SlotView], meal_type: str, context: DayContext, cards: CardHandles
+    view: Optional[SlotView],
+    meal_type: str,
+    context: DayContext,
+    cards: CardHandles,
+    marks: Optional[DayMarks] = None,
 ) -> None:
     if view is None:
         view = SlotView(day="", meal_type=meal_type, status=STATUS_SKIP, title="—")
@@ -218,58 +391,74 @@ def today_card(
 
     card = ui.element("div").classes(
         f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_SECTION} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
-        f"w-56 {look['card']} {clickable}"
+        f"w-56 {look['card']}"
     )
-    if view.recipe:
-        card.on("click", lambda v=view: cards.open_detail(v))
 
     with card:
+        # The header row is a **sibling** of the clickable body below, not a
+        # child of it — the same structure `ui_cards.meal_card` uses and for
+        # the same reason: a click on a mark button would otherwise bubble
+        # through the body's handler and open the recipe dialog on top of the
+        # mark it just recorded. This is why the click moved off the card
+        # element itself, where it used to live when nothing on the card was
+        # clickable in its own right.
         with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
             ui.label(meal_type.upper()).classes(
                 f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
             )
             with ui.element("div").classes(
-                f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
-                f"{look['badge']}"
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR}"
             ):
-                ui.icon(look["icon"]).classes(TEXT_MICRO)
-                ui.label(look["label"]).classes(
-                    f"{TEXT_MICRO} font-semibold tracking-wide"
-                )
-
-        ui.label(view.title).classes(
-            f"{TEXT_HEAD} leading-tight font-bold text-slate-100 line-clamp-2"
-        )
-
-        tags = " · ".join(part for part in [view.style, view.cuisine] if part)
-        if tags:
-            ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
-
-        if view.mode == MODE_LEFTOVER and view.source_label:
-            link_line("↩ from", view.source_label, view.chain_colour)
-
-        if view.macros:
-            with ui.element("div").classes(
-                f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
-                f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
-            ):
-                ui.label(f"{view.macros['calories']:.0f} kcal").classes(
-                    f"{TEXT_MICRO} font-mono text-slate-300"
-                )
-                for key, short, unit in MACRO_LABELS[1:]:
-                    ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
-                    ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
-                        f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
+                meal_marks(meal_type, marks)
+                with ui.element("div").classes(
+                    f"flex items-center gap-{SPACE_HAIR} px-{SPACE_TIGHT} py-[1px] {RADIUS_PILL} "
+                    f"{look['badge']}"
+                ):
+                    ui.icon(look["icon"]).classes(TEXT_MICRO)
+                    ui.label(look["label"]).classes(
+                        f"{TEXT_MICRO} font-semibold tracking-wide"
                     )
 
-        if view.mode == MODE_COOK and view.portions:
-            ui.label(
-                f"{view.portions} portions · {view.prep_minutes} min"
-                if view.prep_minutes is not None
-                else f"{view.portions} portions"
-            ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
+        body = ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} min-w-0 {clickable}"
+        )
+        if view.recipe:
+            body.on("click", lambda v=view: cards.open_detail(v))
 
-        card_context_badges(context, meal_type)
+        with body:
+            ui.label(view.title).classes(
+                f"{TEXT_HEAD} leading-tight font-bold text-slate-100 line-clamp-2"
+            )
+
+            tags = " · ".join(part for part in [view.style, view.cuisine] if part)
+            if tags:
+                ui.label(tags).classes(f"{TEXT_MICRO} text-slate-400 truncate")
+
+            if view.mode == MODE_LEFTOVER and view.source_label:
+                link_line("↩ from", view.source_label, view.chain_colour)
+
+            if view.macros:
+                with ui.element("div").classes(
+                    f"flex flex-row flex-wrap items-center gap-x-1 mt-0.5 px-{SPACE_TIGHT} py-{SPACE_HAIR} "
+                    f"{RADIUS_PILL} bg-slate-950/40 w-fit max-w-full"
+                ):
+                    ui.label(f"{view.macros['calories']:.0f} kcal").classes(
+                        f"{TEXT_MICRO} font-mono text-slate-300"
+                    )
+                    for key, short, unit in MACRO_LABELS[1:]:
+                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
+                        ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
+                            f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
+                        )
+
+            if view.mode == MODE_COOK and view.portions:
+                ui.label(
+                    f"{view.portions} portions · {view.prep_minutes} min"
+                    if view.prep_minutes is not None
+                    else f"{view.portions} portions"
+                ).classes(f"{TEXT_MICRO} text-emerald-300/70 truncate")
+
+            card_context_badges(context, meal_type)
 
 
 @dataclass
@@ -283,7 +472,9 @@ class TodayHandles:
     bind_tab: Callable
 
 
-def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
+def build_today(
+    ctx: UIContext, cards: CardHandles, adherence: AdherenceHandles
+) -> TodayHandles:
     state = ctx.state
     refreshables = ctx.refreshables
     tab = None
@@ -430,6 +621,9 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
         # the whole week, and four cards asking for it would be four copies of
         # that work for one day's answer.
         context = day_context(state, day)
+        # Same once-per-repaint rule as `day_context` directly above, and for
+        # the same reason — see `build_day_marks`.
+        marks = build_day_marks(state, day, adherence)
 
         with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION} p-{SPACE_SECTION}"):
             day_nav(day)
@@ -448,7 +642,7 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                         f"{TEXT_BODY} text-amber-300/80 italic"
                     )
 
-            context_strip(context)
+            context_strip(context, marks)
 
             with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-w-md"):
                 telemetry_bar(
@@ -457,13 +651,32 @@ def build_today(ctx: UIContext, cards: CardHandles) -> TodayHandles:
                     height="10px",
                     bar_scale_limit=bar_scale_limit,
                 )
-                ui.label(
-                    f"{totals['calories']:.0f} / {float(target['calories']):.0f} kcal"
-                ).classes(f"{TEXT_BODY} text-slate-400")
+                with ui.element("div").classes(
+                    f"flex flex-row flex-wrap items-baseline gap-{SPACE_BASE}"
+                ):
+                    ui.label(
+                        f"{totals['calories']:.0f} / {float(target['calories']):.0f} kcal"
+                    ).classes(f"{TEXT_BODY} text-slate-400")
+                    # Silent until something on the day is marked — see
+                    # `MealAdherenceView.summary`. It sits beside the calorie
+                    # figure rather than under it because the two are the
+                    # same kind of statement about the day, one planned and
+                    # one observed, which is the placement rule the fibre
+                    # readout already follows in the header.
+                    if marks.meals.summary:
+                        ui.label(marks.meals.summary).classes(
+                            f"{TEXT_MICRO} text-slate-500"
+                        )
 
             views = state.slot_views()
             with ui.element("div").classes(f"flex flex-row flex-wrap gap-{SPACE_BASE}"):
                 for meal_type in state.meal_types:
-                    today_card(views.get(slot_id(day, meal_type)), meal_type, context, cards)
+                    today_card(
+                        views.get(slot_id(day, meal_type)),
+                        meal_type,
+                        context,
+                        cards,
+                        marks,
+                    )
 
     return TodayHandles(today_view=today_view, bind_tab=bind_tab)

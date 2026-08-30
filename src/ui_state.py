@@ -12,7 +12,7 @@ the monolith; this file just draws the module boundary where it already was.
 
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 from pydantic import ValidationError
@@ -23,9 +23,15 @@ from planner import (
     NUTRIENT_KEYS,
     SUNDAY_PREP_REHEAT_MINUTES,
     TRAINING_NOTE_PREFIXES,
+    ADHERENCE_EATEN,
+    ADHERENCE_SKIPPED,
+    ADHERENCE_STATUS_LABELS,
+    ADHERENCE_SWAPPED,
+    AdherenceEntry,
     CookEvent,
     Recipe,
     WeekPlan,
+    WorkoutCompletion,
     TARGET_MODE_AUTO,
     TARGET_MODE_MACROS,
     TARGET_MODE_MANUAL,
@@ -40,6 +46,7 @@ from planner import (
     resolve_planner_model,
     split_targets,
     weeknight_prep_minutes,
+    workout_session_id,
 )
 # `apply_training_adjustments` is its real owner; it is the tolerant "HH:MM"
 # parse a drawer's free-text time field needs. Shared rather than
@@ -58,8 +65,10 @@ from nutrition_engine import (
     TRAINING_PROPOSAL_SHORT_HISTORY,
     AdaptiveTDEEStatus,
     ProposedSession,
+    SessionMatch,
     TrainingScheduleProposal,
     estimate_session_burn_kcal,
+    match_recorded_sessions,
     measure_adaptive_tdee,
     propose_training_schedule,
     resolve_current_weight_kg,
@@ -303,6 +312,235 @@ class DayContext:
         return sum(session.burn_kcal for session in self.active_sessions)
 
 
+def _now_iso() -> str:
+    """The `marked_at` stamp both mark methods write.
+
+    UTC and second-resolution, matching `ui_generation`'s rejection stamp —
+    the two are adjacent records of "the user said something at this moment"
+    and a reader comparing them should not have to reconcile two conventions.
+    Nothing reads it back today; it exists so a future audit of a mark can
+    tell a considered answer from a stray click, which needs the field to
+    have been there all along.
+    """
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@dataclass
+class MealAdherenceView:
+    """One day's meal marks, and whether the day can carry any.
+
+    **`date_iso` is what makes a day markable at all**, and it is legitimately
+    absent: a `slot_id` is a weekday name (`"Thursday:dinner"`), which repeats
+    every seven days, so without the plan's `week_start_date` there is no key
+    to file a mark under and no way to read one back. That is the same
+    pre-migration tolerance `logged_actuals_for` already draws for a plan
+    generated before that field existed, reached from the other direction —
+    there it costs a readout, here it costs the affordance.
+
+    `planned` is the slots there is something to adhere to. A skipped slot is
+    excluded deliberately: nothing was planned to be eaten, so "did you eat
+    it" has no answer, and counting it in a denominator would make every week
+    with a skipped snack read as permanently 3/4 adhered.
+    """
+
+    date_iso: Optional[str]
+    statuses: Dict[str, str] = field(default_factory=dict)
+    planned: Tuple[str, ...] = ()
+
+    @property
+    def markable(self) -> bool:
+        return self.date_iso is not None
+
+    def status_for(self, slot: str) -> Optional[str]:
+        return self.statuses.get(slot)
+
+    def label_for(self, slot: str) -> Optional[str]:
+        status = self.statuses.get(slot)
+        return ADHERENCE_STATUS_LABELS.get(status) if status else None
+
+    @property
+    def marked(self) -> int:
+        return sum(1 for slot in self.planned if slot in self.statuses)
+
+    @property
+    def eaten(self) -> int:
+        return sum(
+            1 for slot in self.planned if self.statuses.get(slot) == ADHERENCE_EATEN
+        )
+
+    @property
+    def summary(self) -> str:
+        """One line for the day, or "" when there is nothing worth saying.
+
+        Silent until something is marked, rather than printing "0 of 4
+        marked" on every unmarked day — the whole week is unmarked until
+        somebody starts, and a counter that reads zero on six days out of
+        seven is a UI element announcing that a feature exists rather than
+        reporting anything. Same "say nothing" default `context_strip` takes
+        for a day with no location and no session.
+        """
+        if not self.planned or not self.marked:
+            return ""
+        parts = [f"{self.marked} of {len(self.planned)} marked"]
+        if self.eaten != self.marked:
+            # Only when the two differ: with every mark an "eaten", the second
+            # half would restate the first.
+            parts.append(f"{self.eaten} as planned")
+        return " · ".join(parts)
+
+
+@dataclass
+class WorkoutMarkView:
+    """One declared session, and the two independent ways it can be done.
+
+    `recorded` comes from Garmin and `marked` from a person, and they are
+    kept apart rather than folded into one boolean because only the second is
+    stored — see `planner.WorkoutCompletion`. A session the watch saw needs
+    no row and must never get one, so the button is offered only where
+    `recorded` is False; `done` is what the tick actually keys off.
+
+    The three `recorded_*` figures ride through from `SessionMatch` so the
+    strip can say *what* the watch saw rather than only that it saw
+    something — a 20-minute walk answering for a declared hour is exactly the
+    case where the evidence matters more than the verdict.
+    """
+
+    session_id: str
+    time: str
+    session_type: str
+    label: str
+    recorded: bool
+    marked: bool
+    markable: bool
+    recorded_start: Optional[str] = None
+    recorded_minutes: Optional[float] = None
+    recorded_kcal: Optional[float] = None
+
+    @property
+    def done(self) -> bool:
+        return self.recorded or self.marked
+
+    @property
+    def source(self) -> str:
+        """Which of the two answered, or "" for a session nothing has.
+
+        Garmin wins when both say yes. That is not a preference between the
+        sources so much as an ordering: a manual mark is only ever written
+        for a session the watch had not recorded, so the pair can only
+        co-occur when a later re-sync found the session after the fact — and
+        at that point the watch's own record is the better evidence, and the
+        stale manual row is the one that should stop being cited.
+        """
+        if self.recorded:
+            return "garmin"
+        return "manual" if self.marked else ""
+
+    @property
+    def detail(self) -> str:
+        """What the watch recorded, in its own units, or "" for no recording."""
+        if not self.recorded:
+            return ""
+        parts = [
+            part
+            for part in [
+                self.recorded_start or "",
+                f"{self.recorded_minutes:.0f} min" if self.recorded_minutes else "",
+                f"{self.recorded_kcal:.0f} kcal" if self.recorded_kcal else "",
+            ]
+            if part
+        ]
+        return " · ".join(parts)
+
+
+def meal_adherence_view(
+    rows: List[dict],
+    date_iso: Optional[str],
+    planned: Tuple[str, ...],
+) -> MealAdherenceView:
+    """`adherence.json`'s `meals` rows for one date, as the view above.
+
+    Pure and date-matched, never weekday-matched — the same distinction
+    `PlannerState.logged_actuals_for` documents against
+    `planner.logged_intake_for`. Last row wins for a duplicated key, matching
+    that function: `_upsert_adherence` keeps one row per `date`+`slot_id`, so
+    a second is only reachable in a hand-edited file where the later line is
+    the edit.
+    """
+    if date_iso is None:
+        return MealAdherenceView(date_iso=None, statuses={}, planned=planned)
+    statuses = {}
+    for row in rows or []:
+        if not isinstance(row, dict) or str(row.get("date") or "")[:10] != date_iso:
+            continue
+        slot = str(row.get("slot_id") or "")
+        status = str(row.get("status") or "")
+        if slot and status:
+            statuses[slot] = status
+    return MealAdherenceView(date_iso=date_iso, statuses=statuses, planned=planned)
+
+
+def workout_marks_view(
+    sessions: List["TrainingView"],
+    activity_log: list,
+    rows: List[dict],
+    date_iso: Optional[str],
+) -> List[WorkoutMarkView]:
+    """Each of `sessions`, against what the watch recorded and what was marked.
+
+    The fold `nutrition_engine.match_recorded_sessions` deliberately does not
+    do: that function is pure over two lists and knows nothing about storage,
+    and this is where a stored manual mark is laid over its answer — the same
+    layering `sync_status` and `adaptive_tdee_view` already use, where the
+    engine measures and the view model decides what a reader is told.
+
+    A day with no `date_iso` yields sessions that are neither recorded nor
+    markable: without a real calendar date there is nothing to match the
+    activity log against and no key to file a mark under, and reporting them
+    as "not done" would state as fact something never actually checked.
+    """
+    if date_iso is None:
+        return [
+            WorkoutMarkView(
+                session_id=workout_session_id(session.time, session.type),
+                time=session.time,
+                session_type=session.type,
+                label=session.label,
+                recorded=False,
+                marked=False,
+                markable=False,
+            )
+            for session in sessions
+        ]
+
+    matches = match_recorded_sessions(
+        activity_log,
+        [{"time": session.time, "type": session.type} for session in sessions],
+        date_iso,
+    )
+    marked = {
+        str(row.get("session_id") or "")
+        for row in rows or []
+        if isinstance(row, dict)
+        and str(row.get("date") or "")[:10] == date_iso
+        and row.get("completed")
+    }
+    return [
+        WorkoutMarkView(
+            session_id=match.session_id,
+            time=session.time,
+            session_type=session.type,
+            label=session.label,
+            recorded=match.recorded,
+            marked=match.session_id in marked,
+            markable=True,
+            recorded_start=match.recorded_start,
+            recorded_minutes=match.recorded_minutes,
+            recorded_kcal=match.recorded_kcal,
+        )
+        for session, match in zip(sessions, matches)
+    ]
+
+
 @dataclass
 class PendingChange:
     """One line of the staged-changes bar/review dialog's "N pending changes".
@@ -451,6 +689,14 @@ class PlannerState:
     # nothing else. Read once and kept, exactly like `recipe_catalog` above:
     # the one thing that appends to it is a generation, which reloads it.
     history: List[dict] = field(default_factory=list)
+    # `adherence.json`'s two lists — what actually happened to a planned meal,
+    # and which sessions the watch missed but were done anyway. Read once at
+    # `.load()` and then kept *in step by hand*: `mark_meal` and `mark_workout`
+    # update this alongside their write, because unlike the catalog or the
+    # history there is no reload between a mark and the repaint that has to
+    # show it. Re-reading the file per repaint would be a disk read per
+    # keystroke elsewhere on the page for a list only two surfaces consult.
+    adherence: Dict[str, List[dict]] = field(default_factory=dict)
     catalog_search: str = ""
     # The full-screen catalog browser's own filters — separate from
     # catalog_search above so typing in one surface doesn't silently refilter
@@ -540,6 +786,7 @@ class PlannerState:
         state._original_training_schedule = [dict(session) for session in state.training_schedule]
         state.recipe_catalog = await repository.load_recipe_catalog()
         state.history = await repository.load_history()
+        state.adherence = await repository.load_adherence()
         await state.reload_plan(repository)
         return state
 
@@ -1642,6 +1889,127 @@ class PlannerState:
             float(self.totals_for(day).get("fiber_g") or 0.0),
             float(logged) if isinstance(logged, (int, float)) else None,
         )
+
+    def meal_adherence_for(self, day: str) -> "MealAdherenceView":
+        """What was marked against `day`'s meals — see `meal_adherence_view`.
+
+        The planned set comes off `spec`, not off `week_plan.cook_events`, so
+        a leftover counts and a slot whose generation failed does too: both
+        are meals the week intends you to eat, and a failed one is exactly
+        the case where "did you eat it" has an interesting answer. Only a
+        skip is excluded, because nothing was planned there to adhere to.
+        """
+        planned = tuple(
+            slot_id(slot.day, slot.meal_type)
+            for slot in self.spec.slots
+            if slot.day == day and slot.mode in (MODE_COOK, MODE_LEFTOVER)
+        )
+        return meal_adherence_view(
+            (self.adherence or {}).get("meals") or [],
+            self.day_date_iso(day),
+            planned,
+        )
+
+    def workout_marks_for(self, day: str) -> List["WorkoutMarkView"]:
+        """`day`'s real sessions, against the watch and against any manual mark.
+
+        Rest is filtered here rather than in `workout_marks_view` or in
+        `match_recorded_sessions`: `TrainingView.is_rest` is the one place
+        that folds a typed `rest` and a zero-burn session together, and both
+        of those are days there is nothing to have completed.
+        """
+        sessions = [s for s in self.training_for(day) if not s.is_rest]
+        return workout_marks_view(
+            sessions,
+            (self.biometrics or {}).get("activity_log") or [],
+            (self.adherence or {}).get("workouts") or [],
+            self.day_date_iso(day),
+        )
+
+    async def mark_meal(
+        self, repository: LocalJSONRepository, day: str, meal_type: str, status: str
+    ) -> None:
+        """Record — or clear — what happened to one planned meal.
+
+        **Clicking the status a slot already carries clears it**, which is
+        what makes three buttons a complete control rather than three
+        one-way doors: without it a mis-click could be corrected to another
+        status but never back to "nobody has said", and absence is a real
+        answer here (see `clear_meal_adherence`).
+
+        Persists immediately, unlike every grid edit, which stages until
+        Save. A mark is not an input to the next run — nothing generates
+        differently because of it — so there is nothing for a staged bar to
+        stage, and a mark that vanished on reload would be a tick box that
+        does nothing. That is the same test `set_target_mode` and
+        `accept_training_proposal` pass, arrived at from the storage side
+        rather than the config one.
+
+        A day with no calendar date cannot be marked at all — the UI does not
+        offer the buttons, and this refuses rather than filing the mark under
+        a key nothing will read back.
+        """
+        date_iso = self.day_date_iso(day)
+        if date_iso is None:
+            return
+        slot = slot_id(day, meal_type)
+        rows = [
+            row
+            for row in ((self.adherence or {}).get("meals") or [])
+            if not (row.get("date") == date_iso and row.get("slot_id") == slot)
+        ]
+        current = self.meal_adherence_for(day).status_for(slot)
+        if current == status:
+            self.adherence = dict(self.adherence or {}, meals=rows)
+            await repository.clear_meal_adherence(date_iso, slot)
+            return
+
+        entry = AdherenceEntry(
+            date=date_iso,
+            slot_id=slot,
+            status=status,
+            marked_at=_now_iso(),
+        ).model_dump()
+        self.adherence = dict(self.adherence or {}, meals=rows + [entry])
+        await repository.save_meal_adherence(entry)
+
+    async def mark_workout(
+        self, repository: LocalJSONRepository, day: str, mark: "WorkoutMarkView"
+    ) -> None:
+        """Toggle the manual "I did this" mark for one declared session.
+
+        **Refuses a session the watch already recorded**, rather than merely
+        not offering the button: `activity_log` is the answer for those, and
+        a stored `completed` row beside it would be a second answer free to
+        disagree the moment a re-sync changed one of them — the same
+        one-question-one-source rule that keeps derived and stored apart
+        throughout this app.
+        """
+        date_iso = self.day_date_iso(day)
+        if date_iso is None or mark.recorded:
+            return
+        rows = [
+            row
+            for row in ((self.adherence or {}).get("workouts") or [])
+            if not (
+                row.get("date") == date_iso and row.get("session_id") == mark.session_id
+            )
+        ]
+        if mark.marked:
+            self.adherence = dict(self.adherence or {}, workouts=rows)
+            await repository.clear_workout_completion(date_iso, mark.session_id)
+            return
+
+        entry = WorkoutCompletion(
+            date=date_iso,
+            session_id=mark.session_id,
+            session_type=mark.session_type,
+            completed=True,
+            source="manual",
+            marked_at=_now_iso(),
+        ).model_dump()
+        self.adherence = dict(self.adherence or {}, workouts=rows + [entry])
+        await repository.save_workout_completion(entry)
 
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""

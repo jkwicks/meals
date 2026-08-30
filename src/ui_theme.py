@@ -14,7 +14,13 @@ from typing import Optional
 
 from nicegui import ui
 
-from planner import TRAINING_INTENSITY_SPLIT
+from planner import (
+    ADHERENCE_EATEN,
+    ADHERENCE_SKIPPED,
+    ADHERENCE_STATUS_LABELS,
+    ADHERENCE_SWAPPED,
+    TRAINING_INTENSITY_SPLIT,
+)
 from week import humanize
 
 # The type scale — four sizes, replacing nine crammed into an 8-to-14-pixel
@@ -468,6 +474,51 @@ TRAINING_NOTE_BADGES = {
     "post": {"label": "POST-WORKOUT", "icon": "bolt"},
     "pre": {"label": "PRE-WORKOUT", "icon": "schedule"},
 }
+
+# ---- adherence marks ------------------------------------------------------
+# The three answers a Daily View card offers to "what happened to this meal",
+# in the order they are drawn, and the two ways a declared session can turn
+# out to have been done.
+#
+# **Glyph carries all of it; no hue does.** Every colour in the palette is
+# already spoken for (the `ui-work` skill's table), and the obvious pick for
+# a tick — emerald — is the cook status, so a green check on a card would
+# read as a fifth slot state rather than as a mark. This is the same call
+# `TRAINING_TYPE_ICONS` makes for the same reason, and the same one that
+# moved the favourite star off amber.
+#
+# Set vs. unset is *fill and weight*, not a second glyph: `bookmark`/
+# `bookmark_border` is the precedent, but only `check_circle` has an outline
+# twin in the base Material set, and three marks each encoding "set" a
+# different way is not an encoding. A selected mark takes the `bg-slate-700`
+# fill the day picker already uses for its selected pill.
+ADHERENCE_MARK_ORDER = (ADHERENCE_EATEN, ADHERENCE_SKIPPED, ADHERENCE_SWAPPED)
+
+ADHERENCE_MARK_ICONS = {
+    ADHERENCE_EATEN: "check_circle",
+    ADHERENCE_SKIPPED: "remove_circle",
+    ADHERENCE_SWAPPED: "swap_horiz",
+}
+
+# Which of the two sources says a session was done. Two glyphs rather than
+# two colours, again — and they are worth telling apart on screen because
+# only one of them is stored: a `task_alt` is a row in `adherence.json` that
+# a click can take back, a `check_circle` is what the watch recorded and
+# nothing in this UI can edit.
+ADHERENCE_SOURCE_ICONS = {"garmin": "check_circle", "manual": "task_alt"}
+ADHERENCE_UNMARKED_ICON = "radio_button_unchecked"
+
+
+def adherence_mark_tooltip(status: str, selected: bool) -> str:
+    """What one mark button says on hover.
+
+    Selected buttons say how to undo themselves, because a three-button row
+    with no visible "clear" is otherwise a set of one-way doors — the
+    affordance exists (`PlannerState.mark_meal` clears on a repeat click) and
+    this is the only place a reader could learn it.
+    """
+    label = ADHERENCE_STATUS_LABELS.get(status, status)
+    return f"Marked: {label} — click to clear" if selected else label.capitalize()
 
 # (key, short label, unit suffix). Calories carry no suffix because their
 # short label already reads as one — "kcal: 2200kcal" otherwise.

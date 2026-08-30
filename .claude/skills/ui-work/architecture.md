@@ -667,6 +667,64 @@ saying nothing: a config with no `base_schedule` yields no location, an
 untrained day yields no chips, and a day with neither renders no strip at
 all rather than an empty panel announcing the absence of a feature.
 
+### Marking what actually happened
+
+The Daily View is where adherence is recorded — CHANGE-QUEUE.md's adherence
+item, and the reason `today_card` was restructured. The full record is in
+CLAUDE.md's "Whether the plan actually happened"; what belongs here is the
+front-end half.
+
+**The mark row is a sibling of the clickable body, and that is what the
+restructure was for.** `today_card` used to put its click handler on the
+whole card element — correct while nothing on the card was clickable in its
+own right, and exactly wrong the moment a button appeared inside it: a click
+on a mark would bubble through the card's handler and open the recipe dialog
+on top of the mark it had just recorded. The handler moved down onto a `body`
+element, and the header row — meal type, the three marks, the status badge —
+is now its sibling, which is the structure `ui_cards.meal_card` has used for
+its favourite/swap/regenerate row since phase 1 and documents in the same
+words.
+
+**Both surfaces get it for free, because both already shared the
+renderers.** `ui_inspector.py` calls the same module-level `context_strip` and
+`today_card`, so threading one `DayMarks` parameter object through them
+reached the inspector with no second copy of anything. That parameter is an
+object rather than four more arguments precisely because there are two call
+sites and both would have grown the same four.
+
+Four decisions, none of them cosmetic:
+
+- **No hue.** The three meal marks and the two completion sources are all
+  slate, distinguished by glyph — `check_circle`/`remove_circle`/`swap_horiz`
+  for ate/skipped/swapped, and `check_circle` versus `task_alt` for a
+  Garmin-recorded session versus a hand-marked one. Emerald is the obvious
+  colour for a tick and is the cook status, so a green check on a card would
+  read as a fifth slot state; every other hue is equally spoken for. Set
+  versus unset is fill and weight, the `bookmark`/`bookmark_border`
+  distinction, rather than a second glyph — only `check_circle` has an
+  outline twin in the base Material set, and three marks each encoding "set"
+  a different way is not an encoding.
+- **A Garmin-recorded session renders as an icon, not a button.**
+  `activity_log` is the answer for those and nothing on this page may
+  overwrite it; the tooltip carries what the watch actually saw, which is the
+  half worth reading when a 20-minute walk is answering for a declared hour.
+  A hand-marked one *is* a button, because it is a row in `adherence.json`
+  and a mis-click has to be takeable back.
+- **A day with no `week_start_date` offers nothing.** Not an unmarked circle
+  — that would state as fact something never checked — and not an error. The
+  same honest silence `context_strip` already takes for a day with no
+  location and no session, and the same tolerance `day_date_iso` draws for a
+  plan generated before that field existed.
+- **`"adherence"` is its own refresh topic.** Two sections draw a mark, and
+  `"plan"` would repaint the canvas, the header and the shopping panel on
+  every tick.
+
+Marks persist on click rather than staging. Every grid edit waits for Save
+because it is an input to the next generation; a mark is not, so the staged
+bar has nothing to hold and a tick that vanished on reload would be a control
+with no effect. It writes to `data/`, so the "two places write to `config/`"
+rule above is untouched.
+
 ### Browsing to another day
 
 The tab is no longer pinned to today: a row of seven day pills with a chevron

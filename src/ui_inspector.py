@@ -27,11 +27,12 @@ from typing import Callable
 
 from nicegui import ui
 
+from ui_adherence import AdherenceHandles
 from ui_cards import CardHandles
 from ui_context import UIContext
 from ui_review import ReviewHandles
 from ui_state import day_context
-from ui_today import context_strip, today_card
+from ui_today import build_day_marks, context_strip, today_card
 from ui_theme import (
     RADIUS_PANEL,
     SPACE_BASE,
@@ -52,7 +53,12 @@ class InspectorHandles:
     open: Callable[[str], None]
 
 
-def build_inspector(ctx: UIContext, cards: CardHandles, review: ReviewHandles) -> InspectorHandles:
+def build_inspector(
+    ctx: UIContext,
+    cards: CardHandles,
+    review: ReviewHandles,
+    adherence: AdherenceHandles,
+) -> InspectorHandles:
     state = ctx.state
     refreshables = ctx.refreshables
 
@@ -66,6 +72,11 @@ def build_inspector(ctx: UIContext, cards: CardHandles, review: ReviewHandles) -
         totals = state.totals_for(day)
         bar_scale_limit = state.config["ui_settings"]["bar_scale_limit"]
         context = day_context(state, day)
+        # The same marks the Daily View draws, on the same day-parameterised
+        # renderers — see this module's docstring. Nothing new here: the two
+        # panels share `context_strip` and `today_card`, so they share what
+        # those two now take.
+        marks = build_day_marks(state, day, adherence)
         views = state.slot_views()
 
         with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION} p-{SPACE_PAGE} w-[40rem] max-w-full"):
@@ -92,11 +103,17 @@ def build_inspector(ctx: UIContext, cards: CardHandles, review: ReviewHandles) -
                     "dense flat no-caps size=sm"
                 ).classes("text-sky-300")
 
-            context_strip(context)
+            context_strip(context, marks)
 
             with ui.element("div").classes(f"flex flex-row flex-wrap gap-{SPACE_BASE}"):
                 for meal_type in state.meal_types:
-                    today_card(views.get(slot_id(day, meal_type)), meal_type, context, cards)
+                    today_card(
+                        views.get(slot_id(day, meal_type)),
+                        meal_type,
+                        context,
+                        cards,
+                        marks,
+                    )
 
     with ui.dialog() as inspector_dialog:
         with ui.element("div").classes(
