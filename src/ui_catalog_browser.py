@@ -157,7 +157,7 @@ def build_catalog_browser(
         cell = ui.element("div").classes(
             f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} min-w-0 cursor-pointer "
             f"select-none {'justify-end' if right else ''} "
-            + (tint or ("text-slate-300" if active else "text-slate-500 hover:text-slate-300"))
+            + (tint or ("text-slate-300" if active else "text-slate-400 hover:text-slate-300"))
         )
         cell.on("click", lambda c=column: on_sort(c))
         with cell:
@@ -223,7 +223,7 @@ def build_catalog_browser(
                 ).props("dense flat round size=xs")
                 fav_button.classes(
                     f"min-h-0 p-{SPACE_HAIR} "
-                    + ("text-slate-200" if row.is_favorite else "text-slate-500 hover:text-slate-300")
+                    + ("text-slate-200" if row.is_favorite else "text-slate-400 hover:text-slate-300")
                 )
 
             body = ui.element("div").classes(
@@ -245,12 +245,12 @@ def build_catalog_browser(
                 ):
                     ui.label(row.name).classes(
                         f"{TEXT_BODY} font-medium truncate min-w-0 "
-                        + ("" if row.readable else "text-slate-500 italic")
+                        + ("" if row.readable else "text-slate-400 italic")
                     )
                     for flag, icon, tooltip in RECIPE_FLAG_ICONS:
                         if row.entry.get("recipe", {}).get(flag):
                             ui.icon(icon).classes(
-                                f"{TEXT_MICRO} shrink-0 text-slate-500"
+                                f"{TEXT_MICRO} shrink-0 text-slate-400"
                             ).tooltip(tooltip)
 
                 ui.label(row.meal_type.title()).classes(f"{TEXT_MICRO} text-slate-400 truncate")
@@ -272,11 +272,11 @@ def build_catalog_browser(
                         )
                 else:
                     for _ in range(4):
-                        ui.label("—").classes(f"{TEXT_MICRO} font-mono text-slate-600 text-right")
+                        ui.label("—").classes(f"{TEXT_MICRO} font-mono text-slate-400 text-right")
 
                 ui.label(row.last_eaten_label).classes(
                     f"{TEXT_MICRO} font-mono text-right "
-                    + ("text-slate-400" if row.last_eaten else "text-slate-600")
+                    + ("text-slate-400" if row.last_eaten else "text-slate-400")
                 )
 
             with ui.element("div").classes(
@@ -285,12 +285,12 @@ def build_catalog_browser(
                 ui.button(
                     icon="edit", on_click=lambda e=row.entry: rename_dialog.open(e)
                 ).props("dense flat round size=xs").classes(
-                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-sky-300"
+                    f"min-h-0 p-{SPACE_HAIR} text-slate-400 hover:text-sky-300"
                 )
                 ui.button(
                     icon="delete", on_click=lambda rid=row.id: delete_recipe(ctx, rid)
                 ).props("dense flat round size=xs").classes(
-                    f"min-h-0 p-{SPACE_HAIR} text-slate-500 hover:text-rose-300"
+                    f"min-h-0 p-{SPACE_HAIR} text-slate-400 hover:text-rose-300"
                 )
 
     @ui.refreshable
@@ -301,20 +301,20 @@ def build_catalog_browser(
             f"flex flex-col gap-{SPACE_HAIR} mb-{SPACE_BASE}"
         ):
             ui.label(f"{len(rows)} of {len(state.recipe_catalog)} recipes").classes(
-                f"{TEXT_BODY} text-slate-500"
+                f"{TEXT_BODY} text-slate-400"
             )
             ui.label(_window_note(catalog_history_window(state.history))).classes(
-                f"{TEXT_MICRO} text-slate-600"
+                f"{TEXT_MICRO} text-slate-400"
             )
 
         if not state.recipe_catalog:
             ui.label("Catalog is empty — bookmark a cooked meal or import one.").classes(
-                f"{TEXT_HEAD} text-slate-500 italic"
+                f"{TEXT_HEAD} text-slate-400 italic"
             )
             return
         if not rows:
             ui.label("No recipes match these filters.").classes(
-                f"{TEXT_HEAD} text-slate-500 italic"
+                f"{TEXT_HEAD} text-slate-400 italic"
             )
             return
 
@@ -380,7 +380,7 @@ def build_catalog_browser(
                 "Paste raw recipe text, an ingredient list, or a URL — it's turned "
                 "into grams, macros and NOVA groups under the same dietary rules "
                 "generation uses."
-            ).classes(f"{TEXT_MICRO} text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-400")
             ui.textarea(placeholder="Paste recipe text or a URL…").bind_value(
                 state, "import_text"
             ).props("dense outlined").classes(f"w-full {TEXT_BODY}").style(

@@ -162,10 +162,10 @@ def location_row(location: LocationView) -> None:
                 "no prep at the eating location"
                 if location.max_prep_minutes == 0
                 else f"≤ {location.max_prep_minutes} min prep"
-            ).classes(f"{TEXT_MICRO} text-slate-500 italic")
+            ).classes(f"{TEXT_MICRO} text-slate-400 italic")
 
         if location.notes:
-            ui.label(location.notes).classes(f"{TEXT_MICRO} text-slate-500 italic")
+            ui.label(location.notes).classes(f"{TEXT_MICRO} text-slate-400 italic")
 
 
 def session_chip(session: TrainingView) -> None:
@@ -238,7 +238,7 @@ def completion_mark(mark: Optional[WorkoutMarkView], marks: Optional[DayMarks]) 
     )
     button.props("dense flat round size=xs").classes(
         f"min-h-0 p-{SPACE_HAIR} "
-        + ("text-slate-200" if mark.marked else "text-slate-600 hover:text-slate-300")
+        + ("text-slate-200" if mark.marked else "text-slate-400 hover:text-slate-300")
     )
     with button:
         ui.tooltip(
@@ -370,7 +370,7 @@ def meal_marks(meal_type: str, marks: Optional[DayMarks]) -> None:
             + (
                 "text-slate-100 bg-slate-700"
                 if selected
-                else "text-slate-600 hover:text-slate-300"
+                else "text-slate-400 hover:text-slate-300"
             )
         )
         with button:
@@ -404,7 +404,7 @@ def today_card(
         # clickable in its own right.
         with ui.element("div").classes(f"flex flex-row items-center justify-between gap-{SPACE_TIGHT}"):
             ui.label(meal_type.upper()).classes(
-                f"{TEXT_MICRO} font-semibold tracking-widest text-slate-500"
+                f"{TEXT_MICRO} font-semibold tracking-widest text-slate-400"
             )
             with ui.element("div").classes(
                 f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR}"
@@ -446,7 +446,7 @@ def today_card(
                         f"{TEXT_MICRO} font-mono text-slate-300"
                     )
                     for key, short, unit in MACRO_LABELS[1:]:
-                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-600")
+                        ui.label("·").classes(f"{TEXT_MICRO} text-slate-400")
                         ui.label(f"{view.macros[key]:.0f}{unit} {short}").classes(
                             f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}"
                         )
@@ -558,7 +558,7 @@ def build_today(
                 tone = (
                     "text-slate-100 font-semibold"
                     if selected
-                    else ("text-slate-300" if is_today else "text-slate-500")
+                    else ("text-slate-300" if is_today else "text-slate-400")
                 )
                 # Today is a ring, not the dot it used to be: the dot slot now
                 # belongs to the workout marks, and two different dots on one
@@ -610,7 +610,7 @@ def build_today(
             ui.label(
                 "Nothing generated yet — use \"Generate Current Week\", or "
                 "switch the header's week selector to a cached week."
-            ).classes(f"{TEXT_HEAD} text-slate-500 p-{SPACE_PAGE}")
+            ).classes(f"{TEXT_HEAD} text-slate-400 p-{SPACE_PAGE}")
             return
 
         target = state.targets_for(day)
@@ -665,7 +665,7 @@ def build_today(
                     # readout already follows in the header.
                     if marks.meals.summary:
                         ui.label(marks.meals.summary).classes(
-                            f"{TEXT_MICRO} text-slate-500"
+                            f"{TEXT_MICRO} text-slate-400"
                         )
 
             views = state.slot_views()

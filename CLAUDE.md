@@ -240,6 +240,16 @@ history. The CLI is still the one that prints shopping lists.
 
 ### NiceGUI front end
 
+**The app is called Larder.** `ui_theme.APP_NAME`/`APP_MARK_ICON`/
+`APP_FAVICON`/`APP_TITLE` are the only places that name it — the browser tab,
+the window title and the header wordmark all read from them, so a literal at a
+call site is a fourth thing to miss when it changes. The name is the store
+cupboard, and it names the half of this app that is actually unusual: the
+pantry ledger, `inventory_to_clear`, the fridge window bounding a batch, the
+shopping windows grouped by cook day. `ui.run(title="AI Weekly Meal Planner")`
+was the only thing that named it before, and that string is a description
+rather than a name.
+
 `ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density
 desktop UI: a header of 7 per-day macro bars, a persistent staged-changes bar
 beneath it, and a slim vertical rail choosing one of five destinations — Plan

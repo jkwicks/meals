@@ -40,6 +40,24 @@ section you need from it; you rarely need all of it:
 - **everything else** — widget construction. Untested on purpose: asserting
   on element trees pins the layout rather than the behaviour.
 
+## Identity — the app is called Larder
+
+`APP_NAME`, `APP_MARK_ICON`, `APP_FAVICON` and `APP_TITLE` in `ui_theme.py`.
+Never spell any of them at a call site: the name reaches the browser tab, the
+window title and the header wordmark, and a fourth literal is a fourth thing
+to miss.
+
+The wordmark is `restaurant_menu` in `ACCENT_MARK_CLASS` beside the name in
+`text-slate-100`, at the top-left of `ui.header()` — **not** in the rail, where
+CHANGE-QUEUE.md originally filed it. Two reasons, and the second is the one
+worth remembering: `ui.header()` is `position: fixed` (the whole reason the
+week grid needs `WEEK_GRID_HEADER_INSET_STYLE`) while the rail is not, so a
+rail wordmark scrolls off on the first scroll of a 28-card grid. The item's
+stated premise — that the app named itself nowhere on screen — was also simply
+untrue when it was written; an icon and a title string had sat in the header
+since before v0.23.0. What was missing was a *name* rather than a place to put
+one.
+
 ## The type scale — four sizes
 
 Established by phase 1 of `ui-redesign.md`. Until that phase lands you will
@@ -57,6 +75,28 @@ with 56 uses of `text-[10px]` and 35 of `text-[9px]`) is what this replaces.
 That was noise, not hierarchy — no two of those sizes were distinguishable at
 a glance. **Weight and colour carry the rest of the hierarchy**, not a fifth
 size.
+
+`TEXT_MICRO` is **10px and stays 10px** until somebody does the measuring pass
+CHANGE-QUEUE.md files separately for it. It is one line to change and entirely
+verification to ship: `RAIL_WIDTH_PX` is pinned at 168,
+`WEEK_GRID_HEADER_INSET_STYLE` derives the header grid's position from it, day
+columns floor around 110px, and `ui_cards.meal_card`'s status badge row is
+already "the one row on the card with no width to spare". A 10% bump on the
+most-used size in a nine-column layout can reflow all of it.
+
+### The two faces those sizes render in
+
+`UI_FONT_STACK` and `FIGURE_FONT_STACK`, emitted by `ui_theme.typography_css()`
+from `ui_app.py`'s single `add_css` call. Before them `grep font-family src/`
+returned nothing at all: everything rendered in Quasar's default Roboto and the
+39 `font-mono` figures in whatever monospace the viewer's OS picked.
+
+| | |
+|---|---|
+| **System stacks, never a webfont** | Nothing else on this page needs the network — no CDN anywhere, `whfoods.json` ships in the repo, and the only outbound call is OpenRouter's, from the *server*. A Google Fonts link would make the front end the one part of the app that fails offline. |
+| **Custom properties, not literal stacks** | The figure face is applied by redefining what `.font-mono` resolves to, which puts all 39 existing figure sites on it with no call site touched. |
+| **`:where()` on the Quasar selectors** | Quasar sets `font-family` on its own components, so `body` alone loses every input, button and tab label. `:where()` carries zero specificity, so a component that genuinely needs its own face still wins without an `!important` arms race. |
+| **`tabular-nums` at the root, not on a class** | The `font-mono` figures already align — every glyph in a monospace face is one width. This is for the telemetry header's `1722/1850`, the card macro pills and the Insights captions, which are proportional, so a `1` is narrower than a `7` and a column of them shimmers as the week regenerates. Declared at the root because this app is labels and numbers almost end to end: there is no prose for it to cost anything on, and the alternative is a class every such site has to remember. |
 
 ## Spacing — five steps, each with a job
 
@@ -118,6 +158,7 @@ recorded, which is the argument for keeping this list current.
 | **orange** | carbs | |
 | **cyan** | fibre | |
 | **indigo** | the prep column | |
+| **teal** | the brand accent (`ACCENT_*`) | one meaning, not two: *this is Larder talking* — the wordmark, the Generate button, and the checked state of a control |
 | **slate** | *the neutral ground, not a meaning* | anything subtracted from a hue lands here |
 
 **Adding a third meaning to any of these is the specific thing not to do.** If
@@ -130,13 +171,13 @@ shape already doing the work, which is why the hue was removable:
 | was | now | carried by |
 |---|---|---|
 | training (amber, everywhere) | slate | `TRAINING_TYPE_ICONS`' glyph, which already distinguished the *kind* |
-| fridge / freezer badge (amber / cyan) | both slate | the ⚡ and ❄️ already in the labels — this is what freed cyan for fibre |
+| fridge / freezer badge (amber / cyan) | both slate | the glyph in the label — this is what freed cyan for fibre. Was ⚡/❄️; now `kitchen`/`ac_unit`, see below |
 | favourite star (amber) | slate | `bookmark` vs `bookmark_border` — filled vs outline |
 | buy-late (amber) | slate | the ⏳ and the "buy fresh closer to the day" annotation |
 | recipe prep note (amber box) | slate | the `inventory_2` icon |
 | carbs (amber) | orange | — a macro is categorical; it needed a hue, just not that one |
 | fibre (emerald) | cyan | — same |
-| edited training session (emerald marker) | amber | the glyph: • override, ⚡ training. Both mean "measured against a live preview", so one colour and two glyphs is the honest encoding |
+| edited training session (emerald marker) | amber | the glyph: `tune` override, `fitness_center` training. Both mean "measured against a live preview", so one colour and two glyphs is the honest encoding |
 
 **Icon, not colour, distinguishes members of a set.** `TRAINING_TYPE_ICONS`
 is the precedent and `ADHERENCE_MARK_ICONS`/`ADHERENCE_SOURCE_ICONS` are the
@@ -154,6 +195,82 @@ as connected (`ui_settings.py`), a ticked step in the recipe dialog
 (`ui_cards.py`), and several `hover:` affordances. The pass was scoped to the
 theme module's constants, which is where the acceptance criterion drew the
 line; these are named here rather than silently left.
+
+### The accent is teal, and it is one meaning
+
+`ACCENT_HUE`, `ACCENT_MARK_CLASS`, `ACCENT_BUTTON_PROPS`,
+`ACCENT_BUTTON_CLASSES`. Teal was **already in the app in five places** — the
+Shopping rail button, the shopping drawer's checkboxes and three review
+controls — picked one widget at a time, in no palette table, meaning nothing in
+particular. Naming it is what turned five accidents into one token, and it is
+why the row above reads as a single meaning rather than two.
+
+Two rules:
+
+- **The Shopping button had to give the hue back.** It sat beside Generate as
+  the second of "the week's primary verbs", both un-flat and each in a
+  different saturated colour, so the two competed rather than ranking. It is
+  outlined now: **filled accent (Generate) > outlined slate (Shopping) > flat
+  slate (the three exports)** — the same fill-versus-outline distinction
+  `bookmark`/`bookmark_border` draws for a favourite.
+- **Do not spread it.** An accent on every button becomes a tenth structural
+  meaning ("clickable"), which the rail's flat slate tabs already communicate
+  by contrast.
+
+Spelled bare — `color=teal`, not the equivalent `teal-6` — so one grep finds
+every use and the two spellings cannot drift.
+
+### The contrast floor: `text-slate-400` is the dimmest text there is
+
+`text-slate-500` and `text-slate-600` are **retired from text** and must not
+come back. Measured on `slate-900`:
+
+| | ratio | verdict |
+|---|---|---|
+| `slate-600` | 2.3:1 | was the app's most common pairing with `TEXT_MICRO` |
+| `slate-500` | 3.7:1 | under AA at every size this app uses — `TEXT_BODY` is 12px |
+| `slate-400` | 6.9:1 | the floor |
+
+All 110 sites moved in one pass. CHANGE-QUEUE.md filed the rule as "no 600 at
+any size, no 500 at `TEXT_MICRO`"; it went further because 500 at `TEXT_BODY`
+is also under AA, and a mixed rule produces the odd inversion of a 10px label
+sitting *brighter* than the 12px label beside it.
+
+Three sites where low contrast was carrying meaning kept the meaning by other
+means, which is the same "shape, not hue" move as everywhere else here: a
+completed recipe step is `slate-400` **plus** `line-through` against
+`slate-200`; an unset favourite or adherence mark is `slate-400` against
+`slate-200` **plus** the outline-vs-filled icon.
+
+**Charts split the constant rather than following the rule blindly.** WCAG asks
+4.5:1 of *text* and only 3:1 of a *graphical object*, and `slate-500` sits
+between the two. So `CHART_AXIS` (slate-400) is the axis, legend and markLine
+*labels*, and `CHART_MUTED` (slate-500) stays the reference *series* and its
+markers — which is what stops the planned line brightening into competition
+with `CHART_INK`. The dash, not the tint, is what distinguishes it.
+
+### Emoji are not glyphs — use Material icons
+
+The prep badges were `⚡ Prepped on Sun` / `❄️ From Freezer` and the telemetry
+day marker was `•` / `⚡`. All four are Material icons now: `kitchen` /
+`ac_unit` and `tune` / `fitness_center`.
+
+- **Emoji render in the platform's own emoji font, at its metrics and its
+  colours.** ⚡ arrived amber-yellow on macOS and flat blue on Windows —
+  reintroducing hues this module had spent a whole pass removing, in the exact
+  two badges whose *justification* for going slate was that the glyph carried
+  the distinction.
+- **Each pair moves together or not at all.** ⚡/❄️ are one set (fridge vs
+  freezer) and •/⚡ are another (which staged reading this is); swapping one
+  member leaves a set half-distinguished by a glyph and half by a colour that
+  no longer exists. And the ⚡ in the two pairs was never one symbol — it meant
+  "prepped ahead" in one and "training" in the other, in adjacent surfaces.
+- **Reuse the vocabulary.** `fitness_center` is deliberately the icon
+  `TRAINING_TYPE_ICONS` already uses for a gym session and as its fallback for
+  any unrecognised type. `kitchen` is also `ui_review.py`'s "Pantry clear"
+  icon; the two never share a surface — a badge on a meal card versus a section
+  header inside a dialog — which is the test the palette table applies to
+  violet meaning both fat and location.
 
 ## NiceGUI traps — every one of these cost a debugging session
 

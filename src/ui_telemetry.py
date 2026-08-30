@@ -28,6 +28,8 @@ from ui_theme import (
     SPACE_BASE,
     SPACE_HAIR,
     SPACE_TIGHT,
+    TELEMETRY_MARKER_OVERRIDE,
+    TELEMETRY_MARKER_TRAINING,
     TEXT_BODY,
     TEXT_MICRO,
     WEEK_GRID_COLS,
@@ -120,7 +122,7 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         ui.label(str(value)).classes(
                             f"{TEXT_BODY} font-mono font-semibold text-slate-200"
                         )
-                        ui.label(label).classes(f"{TEXT_MICRO} text-slate-500")
+                        ui.label(label).classes(f"{TEXT_MICRO} text-slate-400")
 
     # ---- header: macro telemetry -----------------------------------------
     # `prep_telemetry_cell` replaces the usual kcal/protein bars in the prep
@@ -137,7 +139,7 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                     f"{TEXT_BODY} font-semibold tracking-wider text-indigo-300"
                 )
             if session is None:
-                ui.label("Not generated").classes(f"{TEXT_MICRO} font-mono text-slate-500")
+                ui.label("Not generated").classes(f"{TEXT_MICRO} font-mono text-slate-400")
             else:
                 ui.label(
                     f"Active Prep: {session.total_active_minutes} / {max_active} mins"
@@ -189,29 +191,53 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         # unmarked day is measured against the plan itself.
                         # **One colour, two glyphs.** Both cases mean the
                         # same thing, so both are amber and the glyph says
-                        # which — • a target override, ⚡ an edited training
-                        # session. The training case used to be emerald,
-                        # which was emerald's fourth meaning and implied a
-                        # distinction that was never real.
-                        marker = "•" if overridden else ("⚡" if training else "")
-                        # Phase 6a: this is now the *only* place a day's
-                        # identity is printed — `ui_cards.canvas()`'s swim-lane
-                        # header below dropped its own copy — so it carries the
-                        # date as well as the weekday. `format_day_label`
-                        # degrades to the bare short name for a plan generated
-                        # before `week_start_date` existed, the same tolerance
-                        # the Today tab's picker relies on.
-                        ui.label(
-                            format_day_label(day, state.day_date_iso(day), short=True).upper()
-                            + marker
-                        ).classes(
-                            f"{TEXT_BODY} font-semibold tracking-wider truncate min-w-0 "
-                            + (
-                                "text-amber-300"
-                                if (overridden or training)
-                                else "text-slate-300"
-                            )
+                        # which — `tune` a target override, `fitness_center`
+                        # an edited training session. See the pair's own
+                        # comment in `ui_theme`; they were `•` and `⚡` until
+                        # the emoji retirement, and had to move together
+                        # because they are one set rather than two symbols.
+                        marker = (
+                            TELEMETRY_MARKER_OVERRIDE
+                            if overridden
+                            else (TELEMETRY_MARKER_TRAINING if training else "")
                         )
+                        marker_tint = (
+                            "text-amber-300"
+                            if (overridden or training)
+                            else "text-slate-300"
+                        )
+                        # A row rather than one label, because the marker is
+                        # an icon now and NiceGUI has no way to put one inside
+                        # a label's text. `flex-nowrap` because Quasar's
+                        # `.flex` wraps and `flex-row` does not undo it, and
+                        # `min-w-0` on the name so `truncate` still has
+                        # something to shrink — a flex item's default
+                        # `min-width: auto` refuses to go below its longest
+                        # word, which would push the marker out of the cell
+                        # before the date ever elided.
+                        with ui.element("div").classes(
+                            f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} min-w-0"
+                        ):
+                            # Phase 6a: this is now the *only* place a day's
+                            # identity is printed — `ui_cards.canvas()`'s
+                            # swim-lane header below dropped its own copy — so
+                            # it carries the date as well as the weekday.
+                            # `format_day_label` degrades to the bare short
+                            # name for a plan generated before
+                            # `week_start_date` existed, the same tolerance the
+                            # Today tab's picker relies on.
+                            ui.label(
+                                format_day_label(
+                                    day, state.day_date_iso(day), short=True
+                                ).upper()
+                            ).classes(
+                                f"{TEXT_BODY} font-semibold tracking-wider truncate min-w-0 "
+                                + marker_tint
+                            )
+                            if marker:
+                                ui.icon(marker).classes(
+                                    f"{TEXT_MICRO} shrink-0 leading-none {marker_tint}"
+                                )
                         # The date makes this pair too wide for one line at
                         # ordinary laptop widths, and it wraps to two rather
                         # than overflowing into the next day's column —
@@ -233,7 +259,7 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                     telemetry_bar(kcal, kcal_goal, height="9px", bar_scale_limit=bar_scale_limit)
                     with ui.element("div").classes("flex flex-row justify-between items-baseline"):
                         ui.label("protein").classes(
-                            f"{TEXT_MICRO} uppercase tracking-wide text-slate-500"
+                            f"{TEXT_MICRO} uppercase tracking-wide text-slate-400"
                         )
                         ui.label(f"{protein:.0f}/{protein_goal:.0f}g").classes(
                             f"{TEXT_MICRO} font-mono {MACRO_TINTS['protein_g']}"

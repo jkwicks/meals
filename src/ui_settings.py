@@ -209,7 +209,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     f"flex flex-col gap-{SPACE_HAIR} min-w-0 flex-1"
                 ):
                     ui.label(day[:3]).classes(
-                        f"{TEXT_MICRO} text-slate-500 text-center"
+                        f"{TEXT_MICRO} text-slate-400 text-center"
                     )
                     ui.number(
                         value=float(state.config["weekly_schedule"][day][macro]),
@@ -268,7 +268,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                         "workout no longer adds to it."
                     )
                 if note:
-                    ui.label(note).classes(f"{TEXT_MICRO} text-slate-500")
+                    ui.label(note).classes(f"{TEXT_MICRO} text-slate-400")
                 # Why the *other* TDEE lost. The line above names the winner —
                 # "TDEE 2472 (formula)" — and that reads as a settled choice
                 # rather than as a measurement that never fired: every unmet
@@ -288,7 +288,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                         # whole distinction.
                         ui.icon(
                             "trending_up" if adaptive.measuring else "trending_flat"
-                        ).classes(f"{TEXT_BODY} shrink-0 text-slate-500")
+                        ).classes(f"{TEXT_BODY} shrink-0 text-slate-400")
                         with ui.element("div").classes(
                             f"flex flex-col gap-{SPACE_HAIR} min-w-0"
                         ):
@@ -296,7 +296,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                                 f"{TEXT_MICRO} font-semibold text-slate-400"
                             )
                             ui.label(adaptive.detail).classes(
-                                f"{TEXT_MICRO} text-slate-500"
+                                f"{TEXT_MICRO} text-slate-400"
                             )
                 # Carbs are always per-day editable; a switchable macro only
                 # once it is manual. Fat has no inputs at all — an editable
@@ -337,7 +337,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     f"{TEXT_HEAD} font-semibold text-slate-200"
                 )
                 ui.label(f"{status.recorded_total} row(s) on file").classes(
-                    f"{TEXT_MICRO} text-slate-500"
+                    f"{TEXT_MICRO} text-slate-400"
                 )
 
             if not status.connected:
@@ -345,7 +345,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 # saying the same thing less clearly.
                 ui.label(
                     f"Never synced — nothing in {status.section}, and no checkpoint."
-                ).classes(f"{TEXT_BODY} text-slate-500")
+                ).classes(f"{TEXT_BODY} text-slate-400")
                 return
 
             with ui.element("div").classes(
@@ -379,7 +379,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 for key in SYNC_DAY_STYLES
                 if status.count(key)
             )
-            ui.label(summary).classes(f"{TEXT_MICRO} text-slate-500")
+            ui.label(summary).classes(f"{TEXT_MICRO} text-slate-400")
 
     def freshness_line(freshness: SyncFreshness) -> None:
         """When anything last synced, above the three per-list cards.
@@ -416,9 +416,9 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 )
                 if freshness.last_checked:
                     ui.label(_stamp(freshness.last_checked)).classes(
-                        f"{TEXT_MICRO} font-mono text-slate-500"
+                        f"{TEXT_MICRO} font-mono text-slate-400"
                     )
-            ui.label(look["phrase"]).classes(f"{TEXT_MICRO} text-slate-500")
+            ui.label(look["phrase"]).classes(f"{TEXT_MICRO} text-slate-400")
             if freshness.lagging:
                 # One source advancing while another sits still is a failing
                 # credential or a rate-limited account, not a stopped
@@ -427,7 +427,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     f"{', '.join(freshness.lagging)} is behind the others by "
                     f"{freshness.stale_after_days}+ days — that source is "
                     "failing while the job itself runs."
-                ).classes(f"{TEXT_MICRO} text-slate-500")
+                ).classes(f"{TEXT_MICRO} text-slate-400")
 
     @ui.refreshable
     def sync_body() -> None:
@@ -465,7 +465,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     "or a rate-limited account can't reach a page, and days "
                     "the server is never started are still covered. Install it "
                     "once, then this line reports whether it is still running:"
-                ).classes(f"{TEXT_MICRO} text-slate-500")
+                ).classes(f"{TEXT_MICRO} text-slate-400")
                 ui.label("./scripts/sync.sh install").classes(
                     f"{TEXT_MICRO} font-mono text-slate-400 break-all"
                 )
@@ -473,7 +473,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     "Or run it by hand. Either way it walks back from each "
                     "source's own checkpoint, so re-running costs nothing for "
                     "days already checked:"
-                ).classes(f"{TEXT_MICRO} text-slate-500")
+                ).classes(f"{TEXT_MICRO} text-slate-400")
                 ui.label("./scripts/sync.sh run").classes(
                     f"{TEXT_MICRO} font-mono text-slate-400 break-all"
                 )
@@ -511,7 +511,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
 
                     if location is None:
                         ui.label("No default location.").classes(
-                            f"{TEXT_BODY} text-slate-500"
+                            f"{TEXT_BODY} text-slate-400"
                         )
                         continue
 
@@ -520,7 +520,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     if not location.meal_modes:
                         ui.label(
                             "Constrains nothing — meals follow week_defaults."
-                        ).classes(f"{TEXT_MICRO} text-slate-500")
+                        ).classes(f"{TEXT_MICRO} text-slate-400")
                         continue
 
                     for meal_type in meal_types:
@@ -532,7 +532,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                         ):
                             ui.label(meal_type.upper()).classes(
                                 f"{TEXT_MICRO} font-semibold tracking-widest "
-                                "text-slate-500 shrink-0"
+                                "text-slate-400 shrink-0"
                             )
                             # A skip carrying an estimate is a meal that was
                             # eaten, not one that was missed — the whole
@@ -604,7 +604,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     ui.label(day).classes(f"{TEXT_HEAD} font-semibold text-slate-200")
                     if not sessions:
                         ui.label("Nothing scheduled.").classes(
-                            f"{TEXT_BODY} text-slate-500"
+                            f"{TEXT_BODY} text-slate-400"
                         )
                         continue
                     with ui.element("div").classes(
@@ -619,7 +619,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 "or drop and applies nothing without a click. Scoring adherence "
                 "against a served plan is a separate, unbuilt thing — it needs a "
                 "completion schema this page deliberately doesn't invent."
-            ).classes(f"{TEXT_MICRO} text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-400")
 
     # ---- the dialogs ------------------------------------------------------
     # One per surface, built once and reused, keyed by nothing: unlike the day
@@ -683,14 +683,14 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 with row:
                     ui.icon(icon).classes(
                         f"{TEXT_HEAD} "
-                        + ("text-emerald-300" if connected else "text-slate-600")
+                        + ("text-emerald-300" if connected else "text-slate-400")
                     )
                     with ui.element("div").classes("flex flex-col min-w-0 flex-1"):
                         ui.label(label).classes(f"{TEXT_BODY} font-semibold text-slate-200")
-                        ui.label(description).classes(f"{TEXT_MICRO} text-slate-500")
+                        ui.label(description).classes(f"{TEXT_MICRO} text-slate-400")
                     ui.label("Connected" if connected else "Not connected").classes(
                         f"{TEXT_MICRO} font-semibold uppercase tracking-wide shrink-0 "
-                        + ("text-emerald-300" if connected else "text-slate-600")
+                        + ("text-emerald-300" if connected else "text-slate-400")
                     )
                     # The chevron is the only thing distinguishing a row that
                     # opens something from one that doesn't — "Connected" says
@@ -753,7 +753,7 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                     f"{TEXT_BODY} font-semibold text-slate-300"
                 )
                 ui.label("where each number comes from").classes(
-                    f"{TEXT_MICRO} text-slate-500"
+                    f"{TEXT_MICRO} text-slate-400"
                 )
             with ui.element("div").classes(
                 f"flex flex-col gap-{SPACE_BASE} w-full min-w-0"

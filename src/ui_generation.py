@@ -172,7 +172,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             ui.label(
                 "One API call per meal type, 30s–3 min each. This window stays "
                 "until the whole week is done."
-            ).classes(f"{TEXT_MICRO} text-slate-500")
+            ).classes(f"{TEXT_MICRO} text-slate-400")
             # Portion trims and failed days both arrive as notes, mid-run. A log
             # keeps them all — a single status label would overwrite the trim
             # you wanted to read with the next day's heading.
@@ -227,7 +227,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
                 ).props("dense flat no-caps size=sm").classes("text-slate-300")
             ui.button(icon="close", on_click=dismiss_rejection_prompt).props(
                 "dense flat size=xs"
-            ).classes("min-h-0 p-0 text-slate-500")
+            ).classes("min-h-0 p-0 text-slate-400")
 
     def dismiss_rejection_prompt() -> None:
         # No action = no record — an ignored prompt must not silently log a

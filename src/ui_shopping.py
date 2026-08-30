@@ -90,7 +90,7 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
             ui.label(
                 "A list is built from generated recipes, so there is nothing to buy "
                 "until the week has been generated."
-            ).classes(f"{TEXT_BODY} text-slate-500")
+            ).classes(f"{TEXT_BODY} text-slate-400")
             return
 
         # Daily mode reuses the same partitioning function with every day
@@ -120,7 +120,7 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
                         ui.label(
                             f"{len(events)} cook session(s)"
                             + (f" · {len(shopping_list.items())} items" if shopping_list else "")
-                        ).classes(f"{TEXT_MICRO} text-slate-500")
+                        ).classes(f"{TEXT_MICRO} text-slate-400")
                     if shopping_list:
                         ui.button(
                             "Copy for Keep",
@@ -132,7 +132,7 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
 
                 if not events:
                     ui.label("Nothing cooked in this window.").classes(
-                        f"{TEXT_BODY} text-slate-500 italic"
+                        f"{TEXT_BODY} text-slate-400 italic"
                     )
                     continue
 
@@ -161,13 +161,13 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
                 ).classes("w-full"):
                     ui.label(
                         "Quantities below already include every portion."
-                    ).classes(f"{TEXT_MICRO} text-slate-500")
+                    ).classes(f"{TEXT_MICRO} text-slate-400")
                     for line in cook_plan_lines(events):
                         ui.label(line).classes(f"{TEXT_MICRO} text-slate-400")
 
                 for department in sorted(shopping_list.categories):
                     ui.label(department).classes(
-                        f"{TEXT_MICRO} uppercase tracking-widest text-slate-500 mt-1"
+                        f"{TEXT_MICRO} uppercase tracking-widest text-slate-400 mt-1"
                     )
                     for item in shopping_list.categories[department]:
                         text = f"{item.name} — {format_quantity(item.name, item.total_amount_g)}"
@@ -186,9 +186,9 @@ def build_shopping(ctx: UIContext) -> ShoppingHandles:
     ).props(":width=420") as shopping_drawer:
         with ui.element("div").classes("flex flex-row items-center justify-between"):
             with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
-                ui.icon("shopping_cart").classes(f"{TEXT_HEAD} text-slate-500")
+                ui.icon("shopping_cart").classes(f"{TEXT_HEAD} text-slate-400")
                 ui.label("Shopping list").classes(
-                    f"{TEXT_BODY} uppercase tracking-widest text-slate-500"
+                    f"{TEXT_BODY} uppercase tracking-widest text-slate-400"
                 )
             ui.button(icon="close", on_click=lambda: shopping_drawer.hide()).props(
                 "dense flat size=sm"
