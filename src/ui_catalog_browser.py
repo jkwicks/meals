@@ -59,6 +59,7 @@ from ui_theme import (
     SPACE_PAGE,
     SPACE_SECTION,
     SPACE_TIGHT,
+    SURFACE_INSET,
     TEXT_BODY,
     TEXT_DISPLAY,
     TEXT_HEAD,
@@ -207,7 +208,7 @@ def build_catalog_browser(
     def catalog_row(row: CatalogRow) -> None:
         with ui.element("div").classes(
             f"flex flex-row flex-nowrap items-center gap-{SPACE_BASE} px-{SPACE_BASE} py-{SPACE_TIGHT} "
-            f"{RADIUS_CARD} border-b border-slate-800/70 hover:bg-slate-900/60 transition-colors"
+            f"{RADIUS_CARD} border-b border-slate-800/70 hover:{SURFACE_INSET} transition-colors"
         ):
             # The favourite toggle and the edit/delete pair are siblings of
             # the clickable body between them, never inside it — the same

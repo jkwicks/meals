@@ -36,6 +36,8 @@ from ui_theme import (
     SPACE_TIGHT,
     STATUS_SKIP,
     STATUS_STYLES,
+    SURFACE_CARD_LIFT,
+    SURFACE_PANEL,
     TEXT_BODY,
     TEXT_DISPLAY,
     TEXT_HEAD,
@@ -618,7 +620,8 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
 
         with ui.element("div").classes(
             f"meal-card card-{view.status} {RADIUS_CARD} p-{SPACE_BASE} flex flex-col gap-{SPACE_TIGHT} min-w-0 "
-            f"w-full overflow-hidden transition-shadow duration-150 {look['card']} {chain}"
+            f"w-full overflow-hidden transition-shadow duration-150 {SURFACE_CARD_LIFT} "
+            f"{look['card']} {chain}"
         ):
             # `w-full` and `overflow-hidden` are both load-bearing, not
             # tidiness. The day column above this is a real 110px-ish flex
@@ -1107,9 +1110,14 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         `sticky` positions itself against here. An opaque background is what
         stops a scrolled-under card showing through it, and `z-10` is what
         keeps that background above the cards rather than beneath them.
+
+        It is `SURFACE_PANEL` rather than the page ground: this cell sits
+        *inside* the Plan panel, so painting it slate-950 would draw a dark
+        stripe down the left of a slate-900 surface. It was slate-950 before
+        the elevation pass only because the two were then the same thing.
         """
         with ui.element("div").classes(
-            f"sticky left-0 z-10 flex items-center px-{SPACE_TIGHT} bg-slate-950"
+            f"sticky left-0 z-10 flex items-center px-{SPACE_TIGHT} {SURFACE_PANEL}"
         ).style(f"grid-column: 1; grid-row: {row};"):
             ui.label(meal_type.upper()).classes(
                 f"{TEXT_MICRO} font-semibold tracking-widest text-slate-400"

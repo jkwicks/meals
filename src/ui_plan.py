@@ -16,9 +16,12 @@ directions at once, and the split is the point:
   that used to sit in `ui.header()`. The rail is now the single place a
   click starts something; a destination panel reports and shows.
 
-What is left is genuinely neither: a generation failure is an error banner
-for *this* destination's grid, naming slots whose cards below are the red
-NOT GENERATED ones. It stays here, immediately above the thing it describes.
+What is left is genuinely neither, and there are two of them, both banners
+that sit immediately above the thing they describe: a generation failure
+names slots whose cards below are the red NOT GENERATED ones, and the
+empty state says what the grid below *is* on a week that has never been
+generated. Both are readings of this destination's own canvas, so neither
+belongs in the header (which reads the week) or the rail (which acts on it).
 
 `build_plan(ctx, cards)` needs `cards` (see `ui_cards`) for `canvas()` — this
 module never builds its own grid, it composes the one `ui_cards` already
@@ -36,9 +39,14 @@ from ui_context import UIContext
 from ui_theme import (
     RADIUS_CARD,
     SPACE_BASE,
+    SPACE_HAIR,
     SPACE_SECTION,
+    SPACE_TIGHT,
+    SURFACE_INSET,
     TEXT_BODY,
+    TEXT_HEAD,
     TEXT_MICRO,
+    WEEK_SELECTION_LABELS,
     week_grid_scroll,
 )
 from week import slot_label
@@ -47,6 +55,7 @@ from week import slot_label
 @dataclass
 class PlanHandles:
     week_failures: Callable
+    empty_state: Callable
     panel: Callable
 
 
@@ -66,6 +75,57 @@ def build_plan(ctx: UIContext, cards: CardHandles) -> PlanHandles:
             )
             for key, error in failures.items():
                 ui.label(f"{slot_label(key)}: {error}").classes(f"{TEXT_MICRO} text-rose-200/80")
+
+    @ui.refreshable
+    def empty_state() -> None:
+        """What to say above a week that has never been generated.
+
+        The grid below is *not* empty when there is no plan — `slot_views`
+        builds from the spec, so 28 placeholder cards render regardless, and
+        every structural control on them (mode, "Link to next lunch", a skip
+        estimate) works and is worth using *before* a run rather than after
+        one. So this is a banner above the canvas, on `week_failures`' own
+        shape, and deliberately not a hero that replaces it: hiding a
+        functioning grid to announce that it holds no recipes yet would cost
+        the one thing a first-time visitor most needs to do next.
+
+        **It carries no Generate button, and that is phase 6b's rule rather
+        than an omission.** The rail is the single place a click starts
+        something and a destination panel reports and shows — see this
+        module's own docstring for why the button left this panel in the
+        first place. A second Generate here would be a second thing to keep
+        in step with `state.week_selection`, which the rail's own button
+        already binds to. It names the button instead, with the icon it
+        wears, so the sentence points at a real thing on screen.
+        """
+        if state.week_plan is not None:
+            return
+        label = WEEK_SELECTION_LABELS[state.week_selection].lower()
+        cook_slots = len(state.spec.cook_slots())
+        with ui.element("div").classes(
+            f"mb-{SPACE_SECTION} p-{SPACE_SECTION} {RADIUS_CARD} border border-slate-800 "
+            f"{SURFACE_INSET} flex flex-col gap-{SPACE_TIGHT}"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} min-w-0"
+            ):
+                ui.icon("calendar_view_week").classes(f"{TEXT_HEAD} shrink-0 text-slate-400")
+                ui.label(f"Nothing generated for the {label} yet").classes(
+                    f"{TEXT_HEAD} font-semibold text-slate-200 min-w-0"
+                )
+            ui.label(
+                f"The grid below is the shape a run would fill: {cook_slots} "
+                "meal(s) to cook, the rest leftovers or skipped. Set modes, "
+                "link leftovers and pin favourites here first — they are what "
+                "the run is asked for."
+            ).classes(f"{TEXT_BODY} text-slate-400")
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} min-w-0"
+            ):
+                ui.icon("bolt").classes(f"{TEXT_BODY} shrink-0 text-slate-400")
+                ui.label(
+                    f"Ready? \u201cGenerate {label}\u201d in the rail on the left."
+                ).classes(f"{TEXT_MICRO} text-slate-400 min-w-0")
 
     def panel() -> None:
         # `w-full min-w-0`: `.q-tab-panel` (this div's parent) is a Quasar flex
@@ -89,8 +149,9 @@ def build_plan(ctx: UIContext, cards: CardHandles) -> PlanHandles:
         with ui.element("div").classes(
             f"flex flex-col p-{SPACE_SECTION} w-full min-w-0"
         ):
+            empty_state()
             week_failures()
             with week_grid_scroll():
                 cards.canvas()
 
-    return PlanHandles(week_failures=week_failures, panel=panel)
+    return PlanHandles(week_failures=week_failures, empty_state=empty_state, panel=panel)

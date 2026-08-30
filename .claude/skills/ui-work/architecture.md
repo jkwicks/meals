@@ -277,6 +277,127 @@ to icon-only-plus-tooltip in the same pass — the card's own left-border
 colour already said cook/leftover/skip/missing, so the label was spending
 width on every one of 28 cards to repeat the border's answer.
 
+### The three surfaces
+
+CHANGE-QUEUE.md's "the UI reads flat", and the accurate core of the
+2026-08-30 front-end review: there was exactly one `shadow-*` class in the
+entire front end, everything else was `slate-900`/`950` fills separated by 1px
+borders, and at this density every surface therefore carried identical visual
+weight. The measured version is worse than the prose one — the page ground was
+Quasar's own dark `#121212`, which sits *lighter* than `slate-950` and barely
+darker than the `slate-900` every panel is painted in, and `ui.tab_panels` was
+`bg-transparent`, so a meal card's translucent tint composited onto the body
+with nothing at all between them.
+
+`SURFACE_PAGE` / `SURFACE_PANEL` / `SURFACE_INSET` / `SURFACE_CARD_LIFT` in
+`ui_theme.py` are the answer, and the per-value table is in `SKILL.md`. What
+belongs here is why it is fill and shadow rather than the brighter border the
+review proposed: **the card border is already spoken for.** `STATUS_STYLES`
+puts four structural meanings on that exact edge — emerald cook, sky leftover,
+slate skip, rose not-generated — and its 3px left accent repeats them. A
+neutral border bright enough to read as elevation would compete with all four
+and would read as a fifth slot status, which is the one thing the palette
+contract names as not to do.
+
+Three consequences the implementation turned up, none of them foreseen by the
+review, and all three the same shape — **a translucent fill is a claim about
+what is behind it**:
+
+- **The cook tint went `/[0.07]` → `/[0.12]`** (the review's own item (b),
+  and it lands for a better reason than "brighter": 7% of anything against a
+  lighter ground had been carrying the one card in the week that costs you an
+  evening).
+- **The skip tint went `slate-900/40` → `slate-950/40`.** Over the old
+  `#121212` it read as a slightly cooler tile; over a slate-900 panel it
+  composites to slate-900 exactly — to nothing. Going *down* a step instead
+  makes a skipped slot read as recessed, which is the honest shape for the
+  one status where nothing is planned. `ui_insights`' adherence tiles and
+  `ui_catalog_browser`'s row hover were the other two `/60`-and-below fills
+  that vanished the same way; both are `SURFACE_INSET` now.
+- **The rail's surface had to move off `ui.tabs()` onto a wrapper div.**
+  `.q-tabs` carries a height of its own and ignores `self-stretch`, so the
+  painted column stopped under the last tab and the row's ground showed for
+  the rest of the height. That had been true all along and was invisible
+  while the ground was `#121212`. **Raising the contrast between surfaces
+  exposes every element that was sized to its content rather than to its
+  column** — worth checking for, rather than being surprised by, next time.
+
+### Two things a Plan panel says in front of its grid
+
+`week_failures` had this region to itself; `empty_state` joins it for a week
+that has never been generated. Both are readings of *this destination's own
+canvas*, which is what keeps them here rather than in the header (which reads
+the week) or the rail (which acts on it).
+
+**It is a banner, not the hero the review asked for**, and the difference is
+load-bearing: the grid below is not empty when there is no plan.
+`slot_views()` builds from the spec, so 28 placeholder cards render, and every
+structural control on them — mode, "Link to next lunch", a skip estimate, a
+pinned favourite — works and is worth using *before* a run rather than after
+one. Replacing that with a centred call to action would hide the one thing a
+first-time visitor most needs to do next in order to announce that it holds no
+recipes yet.
+
+**It carries no Generate button**, which is phase 6b's rule rather than an
+omission — the rail is the single place a click starts something. A second
+Generate here would also be a second control to keep in step with
+`state.week_selection`, which the rail's own button already binds to. It names
+that button and wears its icon instead, so the sentence points at something
+real on screen.
+
+The review claimed `state.week_plan is None` "already gates the shopping list
+the same way". It does not: it gates the PDF and HTML *exports* in
+`ui_app.py`. This is a new branch, not a moved one.
+
+### The generation dialog says which meal types are banked
+
+`ui_generation.py` already built a persistent dialog with a `linear_progress`
+bar, a status label and a live `ui.log`; `on_meal_type` already fired on the
+loop, once per meal type, with that stage's cook count. Everything a staged
+readout needs was arriving — only the rendering was missing, which is why the
+review's own three-day costing for this was wrong by about an order of
+magnitude, and worth correcting in writing so it does not get deferred again
+on a cost it does not have.
+
+**The one piece with real logic in it lives in `ui_state.py`**
+(`generation_stage_views`), for the reason `SKILL.md` gives: if you want to
+test a `build_*` function, move the logic down rather than growing a NiceGUI
+harness. What it holds is the off-by-one that makes this feature honest —
+`progress_callback` fires *before* each meal type's call, so its count is
+stages **started**, and index `started - 1` is the one in flight. Reading it
+as "finished" would tick a stage as done up to three minutes before its
+recipes exist, which is exactly the window a reader is watching this list
+during. The final stage therefore has nothing to bank it, and `complete` —
+set once `generate_week_plan` returns — is what does. A run that raises leaves
+the last stage showing as running, which is true rather than a bug: that is
+the stage that was in flight when the run came apart.
+
+Glyph carries all three states and no hue does (`check_circle` /
+`autorenew` / `radio_button_unchecked`), because emerald — the obvious tick —
+is the cook status, and a green check in front of a meal type would read as a
+slot state.
+
+### Discard asks first
+
+"Discard pending changes" is the only irreversible button on the page. Target
+overrides, training edits and pantry rows are never written to disk, so there
+is nothing to reload them from: its undo is retyping everything. It sat one
+unlabelled click away, immediately beside "Review", which is the button a
+reader actually wants.
+
+The confirmation is built once in `build_staged_bar`, outside the
+`@ui.refreshable` `bar()` — a dialog constructed inside a refreshable stacks
+another copy into the page on every repaint, the same reason
+`ui_generation`'s progress dialog is built at factory time and merely
+*opened* by the run. Its body is its own refreshable so the list of what is
+about to be thrown away is current at the moment of opening rather than at
+the moment of construction.
+
+The confirm button is slate, not rose. Rose already means a failed slot and an
+off-target reading; a destructive-action red would be a third meaning on a hue
+the contract caps at two — and a dialog whose entire purpose is to say what
+you are about to lose can afford to say it in words.
+
 ### Module layout
 
 `ui_app.py` used to be the whole UI — every widget a closure inside one

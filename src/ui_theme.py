@@ -119,6 +119,36 @@ RADIUS_CARD = "rounded"  # cards, boxes, inputs
 RADIUS_PANEL = "rounded-lg"  # dialogs, panels
 RADIUS_PILL = "rounded-full"  # bars, dots, pills
 
+# Elevation — three surfaces, and nothing borrows a hue to say which it is.
+#
+# Before this the app had *one*: the page ground was Quasar's own dark
+# `#121212`, the tab panels were `bg-transparent` on top of it, and a meal
+# card's translucent status tint composited straight onto that — so a card, the
+# panel holding it and the page behind them all carried identical visual
+# weight, and there was exactly one `shadow-*` class in the entire front end.
+# Nothing read as foreground, which is CHANGE-QUEUE.md's "the UI reads flat".
+#
+# | | is | why |
+# |---|---|---|
+# | `SURFACE_PAGE` | slate-950, on `body` | the ground. Shows in the gutters and between regions, and never holds content of its own |
+# | `SURFACE_PANEL` | slate-900 | the header, the rail, every destination panel, every dialog and the shopping drawer |
+# | `SURFACE_INSET` | slate-950 at 30% | a box *recessed into* a panel — a settings read view, an insight chart frame. Already the de-facto pattern in `ui_settings`/`ui_review`/`ui_insights`, spelled literally at a dozen call sites; naming it is what stops the next one being invented again. Those literals are legacy on the same terms as the type and spacing scales' — do not add new ones, convert any you touch |
+# | `SURFACE_CARD_LIFT` | `shadow-sm` | a meal card, raised off its panel |
+#
+# **A card is `SURFACE_PANEL` plus its status tint, and that falls out rather
+# than being spelled.** `STATUS_STYLES`' fills are translucent, so once the
+# panel underneath became slate-900 the tint composites onto it with no call
+# site touched — which is the whole reason elevation here is fill-and-shadow
+# and never border. The card's border and its 3px left accent are *structural*
+# colour (emerald cook, sky leftover, slate skip, rose not-generated); a
+# neutral border bright enough to read as elevation would compete with four
+# meanings already living on that exact edge and would read as a fifth slot
+# status. See the `ui-work` skill's palette table.
+SURFACE_PAGE = "#020617"  # slate-950 — a hex, because it is set on `body`
+SURFACE_PANEL = "bg-slate-900"
+SURFACE_INSET = "bg-slate-950/30"
+SURFACE_CARD_LIFT = "shadow-sm"
+
 # Phase 2a of `ui-redesign.md`. The header's `WEEK_GRID_COLS` row
 # (`ui_telemetry.telemetry`) and the canvas (`ui_cards.canvas`) have to
 # scroll in lockstep, but they can't share one physical scroll parent: the
@@ -277,9 +307,26 @@ STATUS_MISSING = "missing"
 # points at rather than as its own event. `glow` is the hover colour (see
 # `card_css`), and `icon` is what makes the chip legible at a glance down a
 # column of 28.
+#
+# **Every fill here is translucent, and that is what makes elevation free.**
+# A card is painted onto whatever panel holds it, so once `SURFACE_PANEL`
+# became slate-900 each tint composited onto slate-900 with no call site
+# touched — the card is "panel plus status", which is exactly what the
+# elevation table above says it should be. Two of the four fills moved with
+# that change, and both moves are consequences of it rather than taste:
+#
+# - **Cook is `/0.12`, up from `/0.07`.** The one card in the week that costs
+#   you an evening was the least distinguishable thing on a page of 28, and
+#   7% of anything over a *lighter* ground had been carrying that.
+# - **Skip is `slate-950`, not `slate-900`.** At 40% over the old `#121212`
+#   ground it read as a slightly cooler tile; over a slate-900 panel it
+#   composites to slate-900 exactly, i.e. to nothing at all, leaving the card
+#   as a dashed outline around the panel showing through. Going *down* a step
+#   instead makes a skipped slot read as recessed into the panel, which is the
+#   honest shape for the one status where nothing is planned.
 STATUS_STYLES = {
     STATUS_COOK: {
-        "card": "border border-emerald-400/25 border-l-[3px] border-l-emerald-400 bg-emerald-400/[0.07]",
+        "card": "border border-emerald-400/25 border-l-[3px] border-l-emerald-400 bg-emerald-400/[0.12]",
         "badge": "bg-emerald-400/20 text-emerald-200 ring-1 ring-inset ring-emerald-300/30",
         "label": "COOK",
         "icon": "local_fire_department",
@@ -293,7 +340,7 @@ STATUS_STYLES = {
         "glow": "#38bdf8",
     },
     STATUS_SKIP: {
-        "card": "border border-dashed border-slate-800 border-l-[3px] border-l-slate-700 bg-slate-900/40",
+        "card": "border border-dashed border-slate-800 border-l-[3px] border-l-slate-700 bg-slate-950/40",
         "badge": "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/30",
         "label": "SKIP",
         "icon": "remove",
@@ -951,6 +998,34 @@ def typography_css() -> str:
         " font-family: var(--larder-font-ui); }\n"
         ".font-mono, :where(code, kbd, samp, pre) {"
         " font-family: var(--larder-font-figure); }"
+    )
+
+
+def surface_css() -> str:
+    """The page ground — the darkest of the three surfaces, and the only one
+    not carried by a Tailwind class on an element.
+
+    `ui.dark_mode(True)` leaves the body on Quasar's own `--q-dark-page`
+    (`#121212`), which is a neutral grey the rest of this app's slate palette
+    is not, and — the part that mattered — is *lighter* than `slate-950` and
+    barely darker than the `slate-900` every panel is painted in. So the page
+    behind a panel and the panel itself read as one plane. This pins the
+    ground to `SURFACE_PAGE`, which is what gives the panels above it
+    something to be raised off.
+
+    Both selectors, because Quasar paints the ground twice: `body.body--dark`
+    is the rule that ships the `#121212`, and `.q-page` (NiceGUI's
+    `.nicegui-content` sits inside one) inherits `transparent` from Quasar but
+    is set explicitly by some layouts. Naming both means the ground cannot
+    depend on which one wins.
+
+    Emitted from the page function's single `ui.add_css` alongside
+    `typography_css`, for the same reason: `add_css` from inside a
+    `@ui.refreshable` stacks another copy into the head on every repaint.
+    """
+    return (
+        f"body.body--dark {{ background-color: {SURFACE_PAGE}; }}\n"
+        f".body--dark .q-page {{ background-color: {SURFACE_PAGE}; }}"
     )
 
 

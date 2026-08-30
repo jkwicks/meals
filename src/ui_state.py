@@ -13,7 +13,7 @@ the monolith; this file just draws the module boundary where it already was.
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from pydantic import ValidationError
 
@@ -97,6 +97,7 @@ from ui_theme import (
     TRAINING_TYPE_LABELS,
     TRAINING_TYPES,
     macro_band,
+    pluralize,
 )
 from week import (
     MODE_COOK,
@@ -3760,3 +3761,81 @@ def adherence_panel(
         ),
         **common,
     )
+
+
+# --------------------------------------------------------------------------
+# The generation dialog's per-stage checklist
+# --------------------------------------------------------------------------
+
+GENERATION_STAGE_PENDING = "pending"
+GENERATION_STAGE_RUNNING = "running"
+GENERATION_STAGE_BANKED = "banked"
+
+
+@dataclass
+class GenerationStageView:
+    """One meal type's line in the progress dialog: banked, running, pending.
+
+    A `linear_progress` bar and a status line say "4 of 5" and nothing else.
+    Across a run that can take fifteen minutes, what a reader wants is
+    *which* meal types are already banked — a dinner that landed twelve
+    minutes ago is a result, not a fraction of one.
+    """
+
+    meal_type: str
+    label: str
+    state: str
+    cooks: Optional[int]
+
+    @property
+    def detail(self) -> str:
+        """The cook count, once that stage has reported one.
+
+        None until `on_meal_type` fires for this stage — the count comes from
+        that callback, so a stage still pending has genuinely not been counted
+        yet and prints nothing rather than a `0` it would then have to correct.
+        """
+        if self.cooks is None:
+            return ""
+        return f"{self.cooks} recipe(s)" if self.cooks else "nothing to cook"
+
+
+def generation_stage_views(
+    order: Sequence[str],
+    started: int,
+    cooks: Dict[str, int],
+    complete: bool,
+) -> List[GenerationStageView]:
+    """Which stages are banked, which one is running, which are still queued.
+
+    **`started` counts stages *begun*, not stages finished**, because that is
+    what `generate_week_plan`'s `progress_callback` gives us: it fires once
+    per meal type *before* that meal type's call. So index `started - 1` is
+    the one currently in flight and everything below it is banked. Reading
+    `started` as "finished" would tick a stage as done up to three minutes
+    before its recipes exist, which on a free route is exactly the window a
+    reader is watching this list to understand.
+
+    That leaves the final stage with nothing to bank it — no later callback
+    ever fires — which is what `complete` is for: `generate_week` sets it once
+    `generate_week_plan` has returned, and it banks every stage at once. A run
+    that raises instead leaves the last stage showing as running, which is
+    true: it is the one that was in flight when the run came apart.
+    """
+    views: List[GenerationStageView] = []
+    for index, meal_type in enumerate(order):
+        if complete or index < started - 1:
+            state = GENERATION_STAGE_BANKED
+        elif index == started - 1:
+            state = GENERATION_STAGE_RUNNING
+        else:
+            state = GENERATION_STAGE_PENDING
+        views.append(
+            GenerationStageView(
+                meal_type=meal_type,
+                label=humanize(pluralize(meal_type)).capitalize(),
+                state=state,
+                cooks=cooks.get(meal_type),
+            )
+        )
+    return views

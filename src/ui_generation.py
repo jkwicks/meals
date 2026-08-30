@@ -31,13 +31,21 @@ from planner import (
     short_error,
 )
 from ui_context import UIContext
-from ui_state import SlotView
+from ui_state import (
+    GENERATION_STAGE_BANKED,
+    GENERATION_STAGE_PENDING,
+    GENERATION_STAGE_RUNNING,
+    SlotView,
+    generation_stage_views,
+)
 from ui_theme import (
     RADIUS_CARD,
     RADIUS_PANEL,
     SPACE_BASE,
+    SPACE_HAIR,
     SPACE_PAGE,
     SPACE_TIGHT,
+    SURFACE_PANEL,
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
@@ -158,9 +166,59 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
     # not a construction, so the day-by-day updates below can just assign to
     # these elements from the progress callbacks.
 
+    # The per-stage checklist. Everything it needs was already arriving on the
+    # loop: `on_meal_type` fires once per meal type, before its call, with
+    # that stage's cook count — only the rendering was missing.
+    # `ui_state.generation_stage_views` holds the one piece of it worth
+    # testing (which stage is banked, and why that is off by one from what
+    # the callback counts); this end is widget construction, per the
+    # `ui-work` skill's line on where logic goes.
+    #
+    # `_stage_progress` is closure-local for the same reason
+    # `_pending_rejection` below is: presentation-only scratch state for one
+    # widget, read by nothing else and by no refresh topic. `done` is what
+    # that function calls `started`.
+    _stage_progress: dict = {"order": [], "done": 0, "cooks": {}, "complete": False}
+
+    # Glyph, never hue: the palette contract caps every colour at two
+    # meanings and emerald — the obvious tick — is already the cook status,
+    # so a green check in front of a meal type would read as a slot state
+    # rather than as progress. Same reasoning `ADHERENCE_MARK_ICONS` records
+    # for the three marks on a card.
+    STAGE_ICONS = {
+        GENERATION_STAGE_BANKED: "check_circle",
+        GENERATION_STAGE_RUNNING: "autorenew",
+        GENERATION_STAGE_PENDING: "radio_button_unchecked",
+    }
+
+    @ui.refreshable
+    def stage_checklist() -> None:
+        stage_views = generation_stage_views(
+            _stage_progress["order"],
+            _stage_progress["done"],
+            _stage_progress["cooks"],
+            _stage_progress["complete"],
+        )
+        if not stage_views:
+            return
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_HAIR} w-full"):
+            for stage in stage_views:
+                tone = (
+                    "text-slate-400"
+                    if stage.state == GENERATION_STAGE_PENDING
+                    else "text-slate-200"
+                )
+                with ui.element("div").classes(
+                    f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} min-w-0"
+                ):
+                    ui.icon(STAGE_ICONS[stage.state]).classes(f"{TEXT_BODY} shrink-0 {tone}")
+                    ui.label(stage.label).classes(f"{TEXT_MICRO} min-w-0 truncate {tone}")
+                    if stage.detail:
+                        ui.label(stage.detail).classes(f"{TEXT_MICRO} shrink-0 text-slate-400")
+
     with ui.dialog().props("persistent") as progress_dialog:
         with ui.element("div").classes(
-            f"bg-slate-900 {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
+            f"{SURFACE_PANEL} {RADIUS_PANEL} p-{SPACE_PAGE} w-[32rem] max-w-full flex flex-col gap-{SPACE_BASE}"
         ):
             with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
                 ui.icon("bolt").classes(f"{TEXT_HEAD} text-slate-300")
@@ -169,6 +227,7 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             progress_bar = ui.linear_progress(value=0.0, size="10px", show_value=False).props(
                 "rounded color=primary"
             )
+            stage_checklist()
             ui.label(
                 "One API call per meal type, 30s–3 min each. This window stays "
                 "until the whole week is done."
@@ -373,8 +432,20 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
                 if cooks
                 else f"{label} ({done}/{len(stages)}) — nothing to cook, all leftovers or skipped"
             )
+            # Safe to touch NiceGUI elements from here: `progress_callback`
+            # never crosses the thread boundary (unlike `note_callback`, which
+            # `on_calling_loop` has to re-schedule) — `generate_week_plan`
+            # fires it on the loop, between stages.
+            _stage_progress["done"] = done
+            _stage_progress["cooks"][meal_type] = cooks
+            stage_checklist.refresh()
 
         button.props("loading")
+        _stage_progress["order"] = stages
+        _stage_progress["done"] = 0
+        _stage_progress["cooks"] = {}
+        _stage_progress["complete"] = False
+        stage_checklist.refresh()
         progress_status.text = (
             f"Starting {len(stages)} meal type(s) across {cooking_days} cooking day(s) "
             f"on {state.model}…"
@@ -394,6 +465,10 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             )
             progress_status.text = "Saving…"
             progress_bar.value = 1.0
+            # The last stage only becomes banked here: `on_meal_type` fires
+            # *before* each call, so nothing else ever ticks the final one.
+            _stage_progress["complete"] = True
+            stage_checklist.refresh()
             # Targets whichever week is selected in the header — generating
             # while "Next Week" is showing must not overwrite "current".
             await REPOSITORY.save_week_plan(week_plan.model_dump(), state.week_selection)
