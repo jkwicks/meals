@@ -516,6 +516,191 @@ class TestNudgeFoodsRespectBans(unittest.TestCase):
         self.assertEqual(picked, [])
 
 
+def cook_event(*ingredients, quantities=None, day="Monday"):
+    """A cook event whose recipe is already scaled to its batch, which is what
+    `build_cook_event` hands the ledger."""
+    ings = [
+        planner.Ingredient(
+            name=name, quantity_g=grams, nova_group=1,
+            calories=grams, protein_g=1.0, net_carbs_g=1.0, fat_g=1.0,
+        )
+        for name, grams in (quantities or [])
+    ] or list(ingredients)
+    return planner.CookEvent(
+        slot_id=f"{day}:dinner", day=day, meal_type="dinner", portions=2,
+        recipe=planner.Recipe(
+            name="Test dish", meal_type="dinner", servings=2,
+            ingredients=ings, instructions=["Cook it."], prep_time_minutes=10,
+        ),
+    )
+
+
+class TestInventoryEntries(unittest.TestCase):
+    """`inventory_to_clear` takes two shapes and always has.
+
+    A bare string is an unquantified item, which is what the whole list was
+    before this change and what the ledger deliberately cannot spend. A dict
+    carries grams. Both stay legal because a quantity is genuinely unknown for
+    some things ("half a bag of spinach"), and requiring one would make the
+    honest answer unexpressible.
+    """
+
+    def test_both_shapes_parse(self):
+        self.assertEqual(
+            planner.inventory_entries({"inventory_to_clear": [
+                "half a bag of spinach",
+                {"item": "chicken thighs", "quantity_g": 600},
+            ]}),
+            [("half a bag of spinach", None), ("chicken thighs", 600.0)],
+        )
+
+    def test_an_absent_list_is_legal(self):
+        """`AppConfig` gives the field a `default_factory`, so a config with
+        no `inventory_to_clear` at all is legal and a reader has to agree —
+        the same fallback `planning_rule` documents for its own section."""
+        self.assertEqual(planner.inventory_entries({}), [])
+
+    def test_a_malformed_entry_is_dropped_rather_than_raised_on(self):
+        """The policy `split_targets` applies to a malformed `meal_overrides`,
+        for the same reason: a config typo must not cost a week of
+        generation."""
+        entries = planner.inventory_entries({"inventory_to_clear": [
+            {"quantity_g": 600},
+            {"item": "tuna", "quantity_g": "lots"},
+            {"item": "oats", "quantity_g": 500},
+        ]})
+        self.assertEqual(entries, [("tuna", None), ("oats", 500.0)])
+
+    def test_only_quantified_entries_reach_the_ledger(self):
+        """There is no number to decrement for the others, so a ledger holding
+        them would have to invent one."""
+        self.assertEqual(
+            planner.seed_inventory_ledger({"inventory_to_clear": [
+                "half a bag of spinach", {"item": "oats", "quantity_g": 500},
+            ]}),
+            {"oats": 500.0},
+        )
+
+
+class TestInventoryLedgerIsSpent(unittest.TestCase):
+    """The pantry as a week-wide count each stage spends and passes on.
+
+    The same seed-then-spend shape as `seafood_used` for
+    `max_seafood_meals_per_week`, and the same reason it has to be counted
+    rather than merely stated: no generation call sees more than its own axis,
+    so handing every meal type the full pantry is exactly what let four of
+    them write the same tin of tuna into four different recipes with nothing
+    tracking that it was spent the first time.
+    """
+
+    def ledger(self):
+        return {"chicken thighs": 600.0, "tinned tuna": 190.0}
+
+    def test_a_cut_the_recipe_names_differently_still_draws_on_the_item(self):
+        """`normalize_name`'s equality is right for combining shopping lines
+        and too strict here: a pantry entry is written the way you say it out
+        loud, a recipe names the cut it needs."""
+        ledger = self.ledger()
+        spent = planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Chicken thigh fillets, diced", 400)])]
+        )
+        self.assertEqual(spent, {"chicken thighs": 400.0})
+        self.assertEqual(ledger["chicken thighs"], 200.0)
+
+    def test_a_later_stage_sees_what_an_earlier_one_used(self):
+        """The whole feature in one assertion: two stages, one tin."""
+        ledger = self.ledger()
+        planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Tuna (canned in springwater)", 95)])]
+        )
+        self.assertEqual(ledger["tinned tuna"], 95.0)
+        planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Tinned tuna, drained", 95)])]
+        )
+        self.assertEqual(ledger["tinned tuna"], 0.0)
+
+    def test_overshoot_floors_at_zero_rather_than_going_negative(self):
+        """A recipe legitimately calls for more than the house holds, and the
+        honest reading of that is "the item is gone", not "you owe 200g"."""
+        ledger = self.ledger()
+        spent = planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Chicken thighs", 900)])]
+        )
+        self.assertEqual(spent, {"chicken thighs": 600.0})
+        self.assertEqual(ledger["chicken thighs"], 0.0)
+
+    def test_a_different_food_never_draws_on_it(self):
+        """Over-matching is the dangerous direction: it tells later meal types
+        an item is spent while it is still in the fridge, silently withdrawing
+        a priority the user asked for. Departments are what stop "chicken"
+        being drained by a chicken broth."""
+        ledger = self.ledger()
+        self.assertEqual(
+            planner.spend_inventory(ledger, [cook_event(quantities=[
+                ("Chicken broth", 500), ("Beef mince", 400),
+            ])]),
+            {},
+        )
+        self.assertEqual(ledger, self.ledger())
+
+    def test_one_ingredient_draws_on_at_most_one_item(self):
+        """Two entries both matching would each be charged the full amount,
+        spending the house's stock twice over on one dish."""
+        ledger = {"chicken": 500.0, "chicken thighs": 500.0}
+        spent = planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Chicken thighs, diced", 300)])]
+        )
+        self.assertEqual(sum(spent.values()), 300.0)
+
+    def test_counted_per_cook_event_not_per_slot_that_eats_it(self):
+        """The call `is_seafood_meal` already makes for the seafood cap: a
+        bulk-cooked tray feeding three lunches came out of the fridge once,
+        and `CookEvent.recipe` is already scaled to the whole batch."""
+        ledger = self.ledger()
+        planner.spend_inventory(
+            ledger, [cook_event(quantities=[("Chicken thighs", 600)])]
+        )
+        self.assertEqual(ledger["chicken thighs"], 0.0)
+
+
+class TestInventoryInstruction(unittest.TestCase):
+    """What the model is told, and what it stops being told once an item runs
+    out."""
+
+    CONFIG = {"inventory_to_clear": [
+        {"item": "chicken thighs", "quantity_g": 600},
+        "half a bag of spinach",
+    ]}
+
+    def test_without_a_ledger_it_reads_as_it_always_did(self):
+        """A single-meal regeneration has no week in front of it to count
+        against, so every entry is simply named — and the sentence explaining
+        how to read a quantity is absent, because none is shown."""
+        line = planner.inventory_instruction({"inventory_to_clear": ["spinach"]})
+        self.assertIn("spinach", line)
+        self.assertNotIn("Where an amount is given", line)
+
+    def test_a_quantity_states_what_is_left_not_what_was_there(self):
+        config = dict(self.CONFIG, inventory_ledger={"chicken thighs": 250.0})
+        line = planner.inventory_instruction(config)
+        self.assertIn("chicken thighs (250g left)", line)
+        self.assertIn("half a bag of spinach", line)
+        self.assertIn("Where an amount is given", line)
+
+    def test_an_exhausted_item_drops_out_rather_than_being_announced(self):
+        """The sentence is a list of things to reach for, and a spent item is
+        not one."""
+        config = dict(self.CONFIG, inventory_ledger={"chicken thighs": 0.0})
+        line = planner.inventory_instruction(config)
+        self.assertNotIn("chicken thighs", line)
+        self.assertIn("half a bag of spinach", line)
+
+    def test_an_empty_list_emits_nothing(self):
+        """The convention every rule in `build_generation_rules` follows: an
+        unused feature leaves the prompt byte-identical to before it existed."""
+        self.assertEqual(planner.inventory_instruction({"inventory_to_clear": []}), "")
+
+
 class TestRealConfig(unittest.TestCase):
     """The shipped config must satisfy its own schema and the corpus filter."""
 

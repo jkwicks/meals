@@ -374,6 +374,10 @@ async def planner_page() -> None:
         inspector.panel,
         staged_bar.bar,
     )
+    # Adding or removing a pantry row changes the count the staged bar shows
+    # and nothing else on the page — typing *into* a row refreshes nothing at
+    # all, which is what keeps the cursor in the field being edited.
+    refreshables.on("pantry", review.pantry_editor, staged_bar.bar)
     refreshables.on("catalog", cards.canvas, catalog_browser.catalog_grid)
     refreshables.on("favorites", catalog_browser.catalog_grid)
     refreshables.on("catalog_browser", catalog_browser.catalog_grid)

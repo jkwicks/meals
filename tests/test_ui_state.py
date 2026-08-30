@@ -376,7 +376,10 @@ class TestPendingChanges(unittest.TestCase):
 
     def test_pantry_items_are_counted_not_listed(self):
         state = make_state()
-        state.pantry = ["600g chicken thighs", "half a bag of spinach"]
+        state.pantry = [
+            {"item": "chicken thighs", "quantity_g": 600.0},
+            {"item": "half a bag of spinach", "quantity_g": None},
+        ]
         summaries = [c.summary for c in state.pending_changes()]
         self.assertEqual(summaries, ["2 pantry item(s)"])
 
@@ -390,7 +393,7 @@ class TestPendingChanges(unittest.TestCase):
         """None of the four sources should suppress or duplicate another."""
         state = make_state()
         state.set_target("Monday", "calories", 2200)
-        state.pantry = ["600g chicken thighs"]
+        state.pantry = [{"item": "chicken thighs", "quantity_g": 600.0}]
         state.apply_spec(link_leftover(state.spec, "Tuesday:lunch", "Monday:dinner"))
         summaries = [c.summary for c in state.pending_changes()]
         self.assertEqual(len(summaries), 3)
@@ -411,7 +414,7 @@ class TestPendingChanges(unittest.TestCase):
             _original_training_schedule=[dict(session)],
         )
         state.set_target("Monday", "calories", 2200)
-        state.pantry = ["600g chicken thighs"]
+        state.pantry = [{"item": "chicken thighs", "quantity_g": 600.0}]
         state.add_training_session()
         self.assertEqual(len(state.pending_changes()), 3)
 
@@ -428,9 +431,14 @@ class TestPendingChanges(unittest.TestCase):
         config.json's number rather than to zero."""
         state = make_state()
         state.config["inventory_to_clear"] = ["half a bag of spinach"]
-        state.pantry = ["600g chicken thighs"]
+        state.pantry = [{"item": "chicken thighs", "quantity_g": 600.0}]
         state.discard_pending_inputs()
-        self.assertEqual(state.pantry, ["half a bag of spinach"])
+        # A bare string in the file is still legal and normalises to a row with
+        # no quantity, which `planner.inventory_entries` reads straight back as
+        # the unquantified item it has always been.
+        self.assertEqual(
+            state.pantry, [{"item": "half a bag of spinach", "quantity_g": None}]
+        )
 
     def test_generating_does_not_clear_target_or_pantry_pending_state(self):
         """`target_overrides`/`pantry` are never written to config.json, so a
@@ -438,7 +446,7 @@ class TestPendingChanges(unittest.TestCase):
         regenerate still uses them, and the bar should keep saying so."""
         state = make_state()
         state.set_target("Monday", "calories", 2200)
-        state.pantry = ["600g chicken thighs"]
+        state.pantry = [{"item": "chicken thighs", "quantity_g": 600.0}]
         state.apply_spec(link_leftover(state.spec, "Tuesday:lunch", "Monday:dinner"))
         # Simulates what a successful generation does to `edited` —
         # `adopt_plan` clears it because saving is what makes the grid match

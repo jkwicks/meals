@@ -57,6 +57,12 @@ class ReviewHandles:
     # be part of the registry regardless of whether the dialog is open.
     targets_editor: Callable
     training_editor: Callable
+    # Registered under "pantry", its own topic: adding or removing a row is
+    # the only thing that changes what the staged bar counts, and "plan" (what
+    # the chip box this replaced refreshed) would rebuild the 28-card canvas,
+    # the telemetry header and the shopping panel for a row nobody has typed
+    # into yet.
+    pantry_editor: Callable
 
 
 def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles:
@@ -475,14 +481,69 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
     # ---- pantry -------------------------------------------------------------
 
-    def on_pantry(event) -> None:
-        state.pantry = [
-            str(item).strip() for item in (event.value or []) if str(item).strip()
-        ]
-        # The staged-changes bar counts pantry items live — nothing else on
-        # screen reads `state.pantry`, so before the bar existed this handler
-        # had nothing worth refreshing.
-        refreshables.refresh("plan")
+    def pantry_field_handler(index: int, key: str):
+        """One `on_change` per (row, field), index and key baked in via closure
+        arguments exactly as `training_field_handler` does — and for the same
+        reason: a row removed between render and edit must not write into
+        whichever entry has since taken its place.
+
+        Refreshes nothing. The staged-changes bar counts pantry *rows* and
+        nothing on screen reads a row's contents, so repainting on every
+        keystroke would rebuild the row the cursor is sitting in for no visible
+        change — the focus-theft trap the training editor sidesteps by
+        refreshing `"targets"` rather than `"training"`, avoided here by having
+        nothing to refresh at all. Adding and removing rows do refresh, because
+        those change the count the bar shows.
+        """
+
+        def handler(event) -> None:
+            value = event.value
+            if key == "quantity_g":
+                # Blank clears back to unquantified rather than storing 0: an
+                # emptied field means "I don't know how much", where 0 would
+                # mean "there is none", and the ledger reads those differently
+                # — an item at 0 drops out of the prompt entirely.
+                state.pantry[index][key] = None if value in (None, "") else float(value)
+            else:
+                state.pantry[index][key] = str(value or "").strip()
+
+        return handler
+
+    def on_pantry_add() -> None:
+        state.pantry.append({"item": "", "quantity_g": None})
+        refreshables.refresh("pantry")
+
+    @ui.refreshable
+    def pantry_editor() -> None:
+        if not state.pantry:
+            ui.label("Nothing to use up.").classes(f"{TEXT_MICRO} text-slate-500 italic")
+        for index, item in enumerate(state.pantry):
+
+            def on_remove(i: int = index) -> None:
+                del state.pantry[i]
+                refreshables.refresh("pantry")
+
+            with ui.row().classes(
+                f"w-full items-center flex-nowrap gap-{SPACE_BASE}"
+            ):
+                ui.input(
+                    label="Item",
+                    value=item.get("item", ""),
+                    on_change=pantry_field_handler(index, "item"),
+                ).props(
+                    'dense outlined debounce=350 placeholder="chicken thighs"'
+                ).classes(f"flex-1 min-w-0 {TEXT_BODY}")
+                ui.number(
+                    label="Grams",
+                    value=item.get("quantity_g"),
+                    min=0,
+                    step=50,
+                    precision=0,
+                    on_change=pantry_field_handler(index, "quantity_g"),
+                ).props("dense outlined debounce=350").classes(f"w-24 {TEXT_BODY}")
+                ui.button(icon="delete", on_click=on_remove).props(
+                    "dense flat size=xs"
+                ).classes("min-h-0 p-0 text-slate-500")
 
     with ui.dialog() as dialog:
         with ui.element("div").classes(
@@ -592,26 +653,29 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             with ui.expansion("Pantry clear", icon="kitchen").classes("w-full").props(
                 f"dense header-class='{TEXT_BODY} px-0'"
             ):
-                # `new_value_mode="add-unique"` is what makes this a free-text
-                # multi-item box rather than a picker: there is no fixed list
-                # of things that can be in your fridge. Seeded from config so
-                # an inventory set on disk shows up already entered.
-                ui.select(
-                    list(state.pantry),
-                    value=list(state.pantry),
-                    label="Things to use up",
-                    multiple=True,
-                    new_value_mode="add-unique",
-                    on_change=on_pantry,
-                ).props(
-                    "dense outlined use-chips use-input hide-dropdown-icon "
-                    'input-debounce=0 placeholder="600g chicken thighs — press enter"'
-                ).classes(f"w-full {TEXT_BODY}")
+                # A row editor rather than the free-text chip box this was,
+                # because a chip cannot hold two fields and the grams are the
+                # whole point: without them nothing could tell that one tin of
+                # tuna had already been written into Monday's lunch when
+                # Thursday's dinner asked for it. Same shape as the training
+                # editor above, which is this file's established pattern for
+                # an editable list of records.
+                with ui.element("div").classes(
+                    f"flex flex-col gap-{SPACE_TIGHT} w-full"
+                ):
+                    pantry_editor()
+                ui.button(
+                    "Add item", icon="add", on_click=on_pantry_add
+                ).props("dense flat no-caps size=sm").classes("text-slate-400 mt-1")
                 ui.label(
                     "A priority, not a rule: the model prefers these where "
                     "they fit and never bends a meal's style, cuisine or "
-                    "macro budget to use one up. They are still ordinary "
-                    "ingredients, so they still appear on the shopping list."
+                    "macro budget to use one up. Give an amount in grams and "
+                    "it is spent as the week generates, so the same 600g is "
+                    "not written into four different meals; leave it blank "
+                    "and the item is simply named every time, as before. "
+                    "They are still ordinary ingredients, so they still "
+                    "appear on the shopping list."
                 ).classes(f"{TEXT_MICRO} text-slate-500 mt-1")
 
             with ui.row().classes(f"justify-end gap-{SPACE_BASE} mt-1"):
@@ -629,4 +693,5 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         open=dialog.open,
         targets_editor=targets_editor,
         training_editor=training_editor,
+        pantry_editor=pantry_editor,
     )

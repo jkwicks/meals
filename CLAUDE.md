@@ -183,6 +183,12 @@ consumer — see "Some slots are decided before the model is called". They stay
 typed loosely (`Dict[str, Dict[str, Any]]`) because the *shape* is still open:
 a location rule is a bag of `<meal_type>_mode` keys plus `restrictions`, and
 pinning that down would make adding the next kind of rule a schema change.
+`allows_long_cook` is that next kind of rule, added without a schema change
+exactly as the loose typing intends — it says whether you are home with the
+hours for something to sit in the oven, and is read by `day_allows_long_cook`
+(see "Which days those are: presence, not the calendar"). A location that
+omits it falls back to the weekend, so the key is optional in fact as well as
+in the schema.
 `regional` reached the same milestone earlier, when `sourcing` arrived beside
 it (see "Buying what the shops actually stock").
 
@@ -1716,45 +1722,108 @@ The rules, and why each is shaped that way:
   shipped config, so there is usually no snack slot to claim — and a rule
   whose slots don't exist is one that can't be seen to be wrong.
 
-**A `long_oven_cook` favourite may only take a weekend slot**
-(`favorite_fits_day`), and the rule cuts across all three meal types —
-breakfast, which covers two mornings from one record, has to suit both.
+**A `long_oven_cook` dish may only take a day with the hours in it**
+(`day_allows_long_cook`), and that one function is read by both halves of the
+rule — `favorite_fits_day` for a saved favourite, `reject_misplaced_long_cook`
+for a generated one. It cuts across all three meal types on the favourite
+side; breakfast, which covers two mornings from one record, has to suit both.
+
 Nothing else in the app was going to stop a long cook landing on a Tuesday,
 which is worth spelling out because all three plausible candidates look like
-they should have: `BATCH_ROAST_RULE` tells the *model* to put the week's long
-cook on a weekend and a favourite is never generated, so that rule never sees
-it; the placement rule above is about protecting cuisine blocks and says
-nothing about the day having the hours in it; and `prep_limit_for`'s
-30-minute weeknight ceiling counts **active** minutes, which a braise
-honestly reports as the 20 that are hands-on rather than the 8-10 hours it
-then sits in the oven. A "Slow Cooked Beef Cheeks" imported from Keep was
-scheduled for a Thursday exactly this way. Eight of the 36 dinner favourites
-in the shipped catalog are long cooks, so this is a shape rather than one bad
-record.
+they should have: `build_batch_roast_rule` tells the *model* which days suit a
+long cook and a favourite is never generated, so that rule never sees it; the
+placement rule above is about protecting cuisine blocks and says nothing about
+the day having the hours in it; and `prep_limit_for`'s 30-minute weeknight
+ceiling counts **active** minutes, which a braise honestly reports as the 20
+that are hands-on rather than the 8-10 hours it then sits in the oven. A "Slow
+Cooked Beef Cheeks" imported from Keep was scheduled for a Thursday exactly
+this way. Eight of the 36 dinner favourites in the shipped catalog are long
+cooks, so this is a shape rather than one bad record.
 
-Two consequences of *how* it declines are worth knowing. A weeknight run end
+Two consequences of *how* it declines are worth knowing. An ineligible run end
 takes the next eligible favourite instead of being left empty, so a long cook
-is deferred rather than dropped — it waits for a run end that lands on a
-weekend. And the dinner cap counts **pins made, not run ends looked at**:
-slicing the run ends first, which is what this used to do, spends both of
-them on declined weeknights and pins nothing at all on a week whose Saturday
-was free the whole time.
+is deferred rather than dropped — it waits for a run end that lands on a day
+with room. And the dinner cap counts **pins made, not run ends looked at**:
+slicing the run ends first, which is what this used to do, spends both of them
+on declined weeknights and pins nothing at all on a week whose Saturday was
+free the whole time.
 
-It keys on the weekend rather than on `base_schedule`, which does know that
-Tuesday is a WFH day and that a slow cooker started at 8am on one is
-perfectly fine. Weeknight-versus-weekend is the split `prep_limit_for` and
-`BATCH_ROAST_RULE` already draw, and a second, subtler notion of "a day with
-room to cook" is one more thing to keep in agreement with them. Widening it
-to the days you are actually home is a real improvement and belongs in
-`favorite_fits_day` when it happens.
+#### Which days those are: presence, not the calendar
 
-**It deliberately does not touch the generated side**, where the day choice
-is still soft — `BATCH_ROAST_RULE` states a preference for a weekend and
-nothing rejects a model that puts a 4-hour braise on a Tuesday while
-truthfully reporting 25 minutes of active prep. Making that hard needs an
-elapsed-time field on `Recipe` that no saved recipe carries, which is a
-schema change, a prompt change and a validator change; the favourite path is
-where the failure actually happened and is fixed on its own terms.
+`day_allows_long_cook` reads `location_rules.<location>.allows_long_cook` for
+the day's `base_schedule` location, and **falls back to the weekend** when the
+location declares nothing — so a config predating the key plans
+byte-identically to before it existed. `week.location_rule` already collapses
+"no `base_schedule`", "unknown location" and "no rule for it" into `{}`, which
+is why one `.get` covers all three.
+
+This used to be the weekend and nothing else, with the objection to that
+recorded here and in `favorite_fits_day`'s own docstring: `base_schedule` does
+know Tuesday is a WFH day and that a slow cooker started at 8am on one is
+perfectly fine. What held it back was the worry that a second notion of "a day
+with room to cook" would drift away from `prep_limit_for` and the batch-roast
+rule. **It is not a second notion of the same thing — it is the other axis.**
+Active minutes are a claim on your *attention* and stay weeknight-versus-
+weekend; elapsed hours are a claim on your *presence*, which is what a braise
+actually needs and what `base_schedule` already records. `prep_limit_for` is
+deliberately untouched: widening the *active* ceiling on a WFH day would say
+you have three hands-on hours on a working Tuesday, which is false.
+
+**A location may rule a weekend day out, not only rule a weekday in**, and on
+the shipped config it does — `Saturday: Outing` loses the long cook that the
+calendar rule gave it, while Tuesday and Wednesday gain one. That direction is
+the point rather than a side effect: the complaint against the old rule was
+that the calendar is not where you are, and you cannot start a braise on a day
+you are out. Declaring `Home` in `location_rules` (it had no entry before) is
+part of the same move — relying on "Home happens to fall on a Sunday" is the
+coupling being removed, and a Home day placed on a Wednesday should carry its
+hours with it.
+
+#### The generated side is enforced too, and needed a measured field to do it
+
+This **used** to stop at the favourite path, with the generated one left soft:
+`BATCH_ROAST_RULE` stated a preference and nothing rejected a model that put a
+4-hour braise on a Tuesday while truthfully reporting 25 minutes of active
+prep. So the two halves disagreed about a Thursday — a *saved* braise could
+not take one and a *freshly generated* braise could, which is the worse of the
+two failures because it is the one no catalog record makes visible.
+
+`reject_misplaced_long_cook` is the hard half, run by a `model_validator` on
+both response models (`DayRecipes` from its context's single `day`,
+`MealTypeWeekRecipes` over its own day keys) — the same split
+`enforce_prep_limit` already makes, over the same shared function, so the two
+axes cannot disagree about a Tuesday.
+
+**Two ways to fail, because one field alone catches only half of it.**
+`long_oven_cook` is the model's self-report and a careless model simply omits
+it. `Recipe.total_time_minutes` is the measured claim `ELAPSED_TIME_RULE` asks
+for — whole wall-clock time including unattended hours — and is what catches
+the braise that never flagged itself. It defaults to `None`, which means
+*unknown* and never 0: every recipe saved before the field existed carries
+None and falls through to the flag alone, the same pre-migration tolerance
+`history_styles()` extends to old history entries. `WEEKNIGHT_ELAPSED_LIMIT_
+MINUTES` (90) is deliberately a third number rather than a re-reading of the
+two prep ceilings, for the attention-versus-presence reason above.
+
+**A batch anchor is exempt, and the rule would break the long-cook toggle
+without it.** `apply_batch_selections` anchors both batches on day 1 — Monday,
+on the shipped config — but that food is cooked on **prep day**, the Sunday
+before the week starts (`week.PREP_DAY_INDEX`). The anchor's grid day is only
+where its leftover chain has to start, so judging it against Monday's schedule
+would reject the one dish in the week most deliberately given the hours. Same
+two slot ids `build_cook_event` already counts fridge days from
+(`prep_day_batch_slot_ids`).
+
+**The prompt names exactly the days the validator accepts**, which is why
+`BATCH_ROAST_RULE` became `build_batch_roast_rule(config, days)` and why
+`build_long_cook_day_rule` joined the shared rules block. A model rejected for
+breaking a rule it was never given burns a 30s-3min retry to discover a
+constraint one sentence would have stated — and `WEEKEND_PREP_LIMIT_MINUTES`
+already learned the same lesson from the other direction, stated in the prompt
+and enforced nowhere, so a 200-minute weekend recipe passed validation while
+violating its own brief. `build_batch_roast_rule` **emits nothing at all when
+no day in scope qualifies**: asking for a long cook the validator is certain
+to reject is a guaranteed wasted call.
 
 **A pinned dinner has to be visible to the model generating the same stage.**
 `avoid_proteins` is extended from `stage_events` only *after* a stage
@@ -1962,20 +2031,101 @@ disagree about whether something is banned.
 
 ### Using up what's already in the house
 
-`config.inventory_to_clear` is a flat list of things to cook through ("600g
-chicken thighs", "half a bag of spinach"). `inventory_instruction()` turns it
-into one system-prompt line per day; an empty list emits nothing, so the
-prompt is byte-identical to before when the feature is unused.
+`config.inventory_to_clear` is a list of things to cook through, and it takes
+**two shapes, both legal**: a bare string is an unquantified item ("half a bag
+of spinach") and `{"item": "chicken thighs", "quantity_g": 600}` is one the
+ledger below can reason about. Both stay legal on purpose — a quantity is
+genuinely unknown for some things, and requiring one would make the honest
+answer unexpressible. `inventory_entries()` is the single parser, and it drops
+a malformed entry with a warning rather than raising, the same policy
+`split_targets` applies to a malformed `meal_overrides`: a config typo must
+not cost a week of generation.
+
+Grams rather than counts, for the same reason every other quantity here is
+grams: the ledger is spent against `Ingredient.quantity_g`, and a tin that had
+to be converted somewhere would be converted twice and differently. A tin of
+tuna is about 95 g drained.
+
+`inventory_instruction()` turns the list into one system-prompt line per day;
+an empty list emits nothing, so the prompt is byte-identical to before when
+the feature is unused.
 
 It is deliberately a **priority, not a constraint** — the wording tells the
 model to prefer these items where they fit and forbids it from bending a
 meal's style, cuisine or macro budget to use one up. A model told it *must*
 use an item will wedge chicken thighs into a breakfast shake.
 
-Consequence worth knowing: these items are still ordinary ingredients in the
-recipe, so they still appear on the shopping list. The list describes what the
-recipes need, not what you have yet to buy — subtracting inventory from it
-would need real quantities per item, which this list doesn't carry.
+#### The ledger: a count each stage spends and passes on
+
+One tin of tuna could be written into five recipes in the same week, because
+every meal type was handed the whole pantry and nothing tracked that it had
+been spent the first time. That is the identical shape `sourcing.max_seafood_
+meals_per_week` already fixed, and it is fixed the identical way: **no single
+generation call sees more than its own axis**, so a quantity stated to all
+four permits four.
+
+`seed_inventory_ledger(config)` builds `{item: grams}` from the quantified
+entries only — there is no number to decrement for the others, so a ledger
+holding them would have to invent one. `generate_week_plan` seeds it once,
+publishes it to each stage as `config["inventory_ledger"]`, and calls
+`spend_inventory` on what that stage actually returned. A dict where
+`seafood_used` is an int, which is the only real difference: an item runs out
+on its own without taking the others with it.
+
+Four things about it are decisions:
+
+- **It never reaches disk**, which was the item's own second open question.
+  A count that survived the run would start disagreeing with the actual shelf
+  the moment you cook something without telling the app — the same "state able
+  to disagree with reality" problem the shopping list's unpersisted checkboxes
+  were designed around. It rides on `config` in memory, the channel
+  `select_nudge_foods` already uses for `nudge_foods`, and is covered by the
+  standing rule that `save_config_keys` merges *named* keys rather than saving
+  the config it is handed. It would also have made generation a third writer
+  to `config/`, where both existing ones persist a *standing* setting.
+- **Matching is `shopping.ingredient_draws_on`**, not a third notion of "same
+  food". `normalize_name`'s equality is right for combining shopping lines and
+  too strict here — a pantry entry is written the way you say it out loud
+  ("chicken thighs") while a recipe names the cut ("Chicken thigh fillets,
+  diced") — so this is *containment* of the pantry item's words, guarded by
+  matching departments and by any state the pantry item states. The guards
+  matter more than the widening: an ingredient wrongly matched tells later
+  meal types an item is spent while it is still in the fridge, silently
+  withdrawing a priority the user asked for. Failing to match is the safe
+  direction, because an unmatched ingredient leaves the item unspent, which is
+  exactly how the pantry behaved before it had quantities at all.
+- **Counted per cook event, not per slot that eats it** — the same call
+  `is_seafood_meal` makes for the seafood cap. A bulk-cooked tray of thighs
+  feeding three lunches came out of the fridge once, and `CookEvent.recipe` is
+  already scaled to its full batch by `build_cook_event`, so the grams here are
+  the grams the shopping list would buy.
+- **Overshoot floors at 0 and is not recorded.** A recipe legitimately calls
+  for more than the house holds, and the honest reading is "the item is gone",
+  not "you owe 200 g". An exhausted item then drops out of the prompt line
+  entirely rather than being announced as gone: the sentence is a list of
+  things to reach for, and a spent item is not one.
+
+`regenerate_single_meal`/`regenerate_single_day` seed no ledger, so every
+entry is simply named there — the same call `build_seafood_limit_rule` makes,
+and for the same reason: a single replaced meal has no week in front of it to
+count against.
+
+Consequence worth knowing, and unchanged by the ledger: these items are still
+ordinary ingredients in the recipe, so they still appear on the shopping list.
+The list describes what the recipes need, not what you have yet to buy.
+**Subtracting the pantry from the list is a separate change** and a harder
+one — it needs the ledger to survive the run, which it deliberately does not.
+
+The drawer's Pantry clear section is now a row editor (item + grams + remove)
+rather than the free-text chip box it was: a chip cannot hold two fields.
+Same shape as the training editor beside it, which is that file's established
+pattern for an editable list of records. `PlannerState.pantry` carries
+`{"item", "quantity_g"}` rows accordingly, seeded through the same
+`inventory_entries` parser generation reads, so the drawer can never show a
+row the ledger would drop. Typing in a row refreshes nothing — nothing on
+screen reads a row's contents, and repainting would rebuild the field the
+cursor is in; adding or removing one refreshes `"pantry"`, its own topic,
+because that changes the count the staged bar shows.
 
 ### Rejection capture
 
@@ -2796,8 +2946,8 @@ the module under seven frozen weekdays before trusting it.
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
-| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip |
-| `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap |
+| `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip, and the pantry ledger — both entry shapes, the containment match and the two guards on it, and what a spent item stops being told to the model |
+| `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
@@ -2854,6 +3004,17 @@ because something broke, record the failure in the test, not just the fix.
   computed 1722 is the live example. Reach for `PlannerState.planned_targets`
   (or `baseline_targets`, for what a day would aim at unoverridden), never
   `config["weekly_schedule"][day]`.
+- **`inventory_to_clear` holds two shapes and both are load-bearing.** A bare
+  string is an unquantified item and a dict carries `quantity_g`; normalising
+  the list to one shape would either invent a quantity nobody knows or discard
+  one that is spent. `planner.inventory_entries` is the only parser — reach for
+  it rather than iterating the list, or the drawer and the ledger will disagree
+  about what the file said.
+- **`Recipe.total_time_minutes` is `None` for unknown, never 0.** Every recipe
+  saved before the field existed carries None, and a validator reading 0 as
+  "instant" would pass exactly the dishes it exists to reject. It is also
+  never derived from `prep_time_minutes`: the gap between them *is* the
+  measurement (see "The generated side is enforced too").
 - **Testing a "fails before any call" guard requires a populated
   environment.** See the sync-credentials note under "Biometric sync": a guard
   test that constructs its subject with `""` and runs against an empty `.env`

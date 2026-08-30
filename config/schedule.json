@@ -73,14 +73,16 @@
         "portable",
         "no_long_prep"
       ],
-      "max_prep_minutes": 0
+      "max_prep_minutes": 0,
+      "allows_long_cook": false
     },
     "WFH": {
       "lunch_mode": "cook",
       "restrictions": [
         "quick_cook"
       ],
-      "max_prep_minutes": 15
+      "max_prep_minutes": 15,
+      "allows_long_cook": true
     },
     "Outing": {
       "lunch_mode": "skip",
@@ -91,14 +93,19 @@
         "fat_g": 44
       },
       "dinner_mode": "leftover",
-      "notes": "Dining out or packed nutrition"
+      "notes": "Dining out or packed nutrition",
+      "allows_long_cook": false
     },
     "Holiday": {
       "breakfast_mode": "skip",
       "lunch_mode": "skip",
       "dinner_mode": "skip",
       "snack_mode": "skip",
-      "notes": "Holiday food - eaten out, not planned"
+      "notes": "Holiday food - eaten out, not planned",
+      "allows_long_cook": false
+    },
+    "Home": {
+      "allows_long_cook": true
     }
   },
   "regional": {

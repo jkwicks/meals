@@ -39,6 +39,7 @@ from planner import (
     calculate_daily_targets,
     hydrate_dynamic_targets,
     day_multiplicity,
+    inventory_entries,
     is_prepped_ahead,
     is_sunday_prepped,
     load_app_config,
@@ -559,6 +560,25 @@ class PendingChange:
     summary: str
 
 
+def pantry_rows(config: dict) -> List[Dict[str, Any]]:
+    """`inventory_to_clear` as the drawer's editable rows.
+
+    One parse of that list, shared by `.load()` and `discard_pending_inputs`,
+    so a seeded pantry and a discarded one cannot disagree about what the file
+    said. `planner.inventory_entries` is the parser — the same one generation
+    reads the list through, which is what keeps the drawer from showing a row
+    the ledger would drop, or dropping one it would keep.
+
+    Always rows, even for a config written before quantities existed: a bare
+    string becomes `{"item": ..., "quantity_g": None}`, which
+    `inventory_entries` reads straight back as the unquantified item it was.
+    """
+    return [
+        {"item": name, "quantity_g": quantity}
+        for name, quantity in inventory_entries(config)
+    ]
+
+
 @dataclass
 class PlannerState:
     """Everything one browser tab is looking at.
@@ -604,7 +624,15 @@ class PlannerState:
     # Food already in the house, to be cooked through. Seeded from config's
     # `inventory_to_clear` and edited in the drawer; it reaches the model as a
     # priority, never a constraint (`planner.inventory_instruction`).
-    pantry: List[str] = field(default_factory=list)
+    #
+    # `{"item": str, "quantity_g": float | None}` rows, the same shape
+    # `training_schedule` uses and for the same reason: a list of records the
+    # drawer edits field by field. Was a bare `List[str]`, which is what the
+    # config file still accepts — a string entry normalises to a row with no
+    # quantity here, and `planner.inventory_entries` reads it back as exactly
+    # the unquantified item it was. Only a row carrying a `quantity_g` is
+    # spent by the ledger; the rest are named every stage as they always were.
+    pantry: List[Dict[str, Any]] = field(default_factory=list)
     # day -> partial macro dict, holding only what differs from config.json.
     # Storing the *difference* rather than a full copy is what lets the drawer
     # say which days are overridden and reset them one at a time, and means a
@@ -782,7 +810,7 @@ class PlannerState:
             servings=config["serving_rules"]["servings_per_meal"],
             shop_days=list(config["shopping"]["shop_days"]),
             model=resolve_planner_model(dict(config, models=models_config)),
-            pantry=[str(item).strip() for item in config["inventory_to_clear"] if str(item).strip()],
+            pantry=pantry_rows(config),
             training_schedule=[dict(session) for session in config["training_schedule"]],
             bulk_prep_enabled=config["enable_sunday_prep"],
             long_cook_enabled=config["enable_sunday_prep"],
@@ -1327,7 +1355,7 @@ class PlannerState:
                 dict(
                     self.config,
                     weekly_schedule=schedule,
-                    inventory_to_clear=list(self.pantry),
+                    inventory_to_clear=[dict(item) for item in self.pantry],
                             openrouter_model=self.model,
                             training_schedule=[dict(session) for session in self.training_schedule],
                             # generate_week_plan/build_client/fit_recipe_to_budget etc.
@@ -1721,9 +1749,7 @@ class PlannerState:
         """
         self.clear_targets()
         self.training_schedule = [dict(session) for session in self._original_training_schedule]
-        self.pantry = [
-            str(item).strip() for item in self.config["inventory_to_clear"] if str(item).strip()
-        ]
+        self.pantry = pantry_rows(self.config)
 
     def has_training(self, day: str) -> bool:
         """Whether `day` carries a session that actually buys calories back.

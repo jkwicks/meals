@@ -967,6 +967,162 @@ class TestFavouriteSelection(unittest.TestCase):
         self.assertEqual(self.pick(spec_with(), favourites=[]), {})
 
 
+class TestWhichDaysHaveTheHours(unittest.TestCase):
+    """`day_allows_long_cook` — one answer, read by the favourite path and the
+    generated one.
+
+    The rule used to be the calendar (`WEEKEND_DAYS`), with the complaint
+    against it recorded in `favorite_fits_day`'s own docstring: `base_schedule`
+    knows Tuesday is a work-from-home day and a slow cooker started at 8am on
+    one is genuinely fine. The worry that held it back was a second, subtler
+    notion of "a day with room to cook" drifting away from `prep_limit_for`.
+    It is not a second notion of the same thing — it is the other axis. Active
+    minutes are a claim on your attention and stay weeknight-versus-weekend;
+    elapsed hours are a claim on your presence, which is what a braise needs.
+    """
+
+    SCHEDULE = {
+        "base_schedule": {
+            "Monday": "Office", "Tuesday": "WFH", "Wednesday": "WFH",
+            "Thursday": "Office", "Friday": "Office", "Saturday": "Outing",
+            "Sunday": "Home",
+        },
+        "location_rules": {
+            "Office": {"allows_long_cook": False},
+            "WFH": {"allows_long_cook": True},
+            "Outing": {"allows_long_cook": False},
+            "Home": {"allows_long_cook": True},
+        },
+    }
+
+    def test_no_schedule_at_all_is_the_weekend_rule(self):
+        """A config predating the key plans byte-identically to before it
+        existed — the tolerance every optional config feature here extends."""
+        for day in DAYS:
+            self.assertEqual(
+                planner.day_allows_long_cook(day, {}), day in ("Saturday", "Sunday")
+            )
+
+    def test_a_home_weekday_gains_the_hours(self):
+        self.assertTrue(planner.day_allows_long_cook("Tuesday", self.SCHEDULE))
+        self.assertTrue(planner.day_allows_long_cook("Wednesday", self.SCHEDULE))
+
+    def test_a_declared_weekend_day_can_lose_them(self):
+        """The consequence the appendix entry did not anticipate, and the one
+        that makes this "where you are" rather than "which day it is": the
+        shipped schedule spends Saturday out of the house, and you cannot
+        start a braise on a day you are not there to start it."""
+        self.assertFalse(planner.day_allows_long_cook("Saturday", self.SCHEDULE))
+        self.assertTrue(planner.day_allows_long_cook("Sunday", self.SCHEDULE))
+
+    def test_a_location_that_says_nothing_falls_back_to_the_weekend(self):
+        """Three cases collapse into one because `week.location_rule` already
+        collapses two of them into `{}` — an unnamed day, an unknown location,
+        and a rule with no `allows_long_cook` key."""
+        partial = {
+            "base_schedule": {"Tuesday": "WFH", "Saturday": "Somewhere Else"},
+            "location_rules": {"WFH": {"lunch_mode": "cook"}},
+        }
+        self.assertFalse(planner.day_allows_long_cook("Tuesday", partial))
+        self.assertTrue(planner.day_allows_long_cook("Saturday", partial))
+        self.assertFalse(planner.day_allows_long_cook("Monday", partial))
+
+    def test_the_prompt_names_exactly_the_days_the_validator_accepts(self):
+        """The model has to be told the rule it is judged against, which is
+        the lesson `WEEKEND_PREP_LIMIT_MINUTES` learned from the other
+        direction — stated in the prompt, enforced nowhere, and a 200-minute
+        weekend recipe passed validation while violating its own brief."""
+        rule = planner.build_long_cook_day_rule(self.SCHEDULE, DAYS)
+        for day in ("Tuesday", "Wednesday", "Sunday"):
+            self.assertIn(day, rule.split("\n")[0])
+        for day in ("Monday", "Thursday", "Friday", "Saturday"):
+            self.assertNotIn(day, rule.split("\n")[0])
+
+    def test_a_call_whose_days_all_qualify_says_nothing(self):
+        """Same convention every rule in `build_generation_rules` follows: a
+        constraint that constrains nothing produces a byte-identical prompt."""
+        self.assertEqual(
+            planner.build_long_cook_day_rule(self.SCHEDULE, ["Tuesday", "Sunday"]), ""
+        )
+
+    def test_a_week_with_no_room_is_never_asked_for_a_long_cook(self):
+        """`build_batch_roast_rule` emitting nothing is the half that would
+        otherwise be a guaranteed retry: asking for a dish the validator is
+        certain to reject burns the full call to discover a contradiction
+        already visible in the config."""
+        self.assertEqual(
+            planner.build_batch_roast_rule(self.SCHEDULE, ["Monday", "Thursday"]), ""
+        )
+        self.assertIn(
+            "Tuesday", planner.build_batch_roast_rule(self.SCHEDULE, DAYS)
+        )
+
+
+class TestAGeneratedLongCookIsRejectedToo(unittest.TestCase):
+    """`reject_misplaced_long_cook` — the hard half the generated path lacked.
+
+    The favourite path has been gated since `favorite_fits_day` existed while
+    the generated one was only ever asked nicely, so the two disagreed about a
+    Thursday: a saved braise could not take one, and a freshly generated braise
+    could. Both now read `day_allows_long_cook`.
+    """
+
+    SCHEDULE = TestWhichDaysHaveTheHours.SCHEDULE
+
+    def dish(self, name="Braise", long_oven_cook=False, total_time_minutes=None):
+        return recipe(
+            name, "dinner", long_oven_cook=long_oven_cook
+        ).model_copy(update={"total_time_minutes": total_time_minutes})
+
+    def check(self, day, dish, config=None):
+        planner.reject_misplaced_long_cook(
+            [(day, dish)], self.SCHEDULE if config is None else config
+        )
+
+    def test_a_flagged_long_cook_is_rejected_on_a_day_without_the_hours(self):
+        with self.assertRaises(ValueError) as caught:
+            self.check("Thursday", self.dish(long_oven_cook=True))
+        self.assertIn("Thursday", str(caught.exception))
+
+    def test_the_same_dish_passes_on_a_day_that_has_them(self):
+        self.check("Tuesday", self.dish(long_oven_cook=True, total_time_minutes=300))
+
+    def test_an_unflagged_braise_is_caught_by_its_elapsed_time(self):
+        """The case the flag alone cannot reach, and the one that actually
+        happened: `prep_time_minutes` counts only the hands-on minutes, so a
+        4-hour braise truthfully reports 25 and clears the weeknight ceiling.
+        `total_time_minutes` is the measured claim."""
+        with self.assertRaises(ValueError) as caught:
+            self.check("Thursday", self.dish(total_time_minutes=265))
+        self.assertIn("265", str(caught.exception))
+
+    def test_an_unknown_elapsed_time_falls_through_to_the_flag(self):
+        """None is "unknown", never 0. Every recipe saved before this field
+        existed carries None, and rejecting those would fail a week over a
+        migration — the same tolerance `history_styles` extends to old
+        history entries."""
+        self.check("Thursday", self.dish(total_time_minutes=None))
+        with self.assertRaises(ValueError):
+            self.check("Thursday", self.dish(long_oven_cook=True))
+
+    def test_a_dish_inside_the_ceiling_passes_anywhere(self):
+        self.check("Thursday", self.dish(total_time_minutes=85))
+
+    def test_a_batch_anchor_is_exempt_because_it_is_cooked_on_prep_day(self):
+        """Without this the rule would break the long-cook toggle outright.
+        `apply_batch_selections` anchors both batches on day 1 — Monday, an
+        Office day — but that food is cooked on **prep day**, the Sunday
+        before the week starts (`week.PREP_DAY_INDEX`). The anchor's grid day
+        is only where its leftover chain has to start, so judging it against
+        Monday's schedule would reject the one dish in the week most
+        deliberately given the hours."""
+        anchored = dict(self.SCHEDULE, long_cook_anchor="Monday:dinner")
+        self.check("Monday", self.dish(long_oven_cook=True, total_time_minutes=300), anchored)
+        # ...and only that slot. The same dish on the next Office day is not.
+        with self.assertRaises(ValueError):
+            self.check("Thursday", self.dish(long_oven_cook=True), anchored)
+
+
 class TestALongCookNeedsADayWithTheHours(unittest.TestCase):
     """A `long_oven_cook` favourite may only claim a weekend slot.
 
@@ -1032,6 +1188,33 @@ class TestALongCookNeedsADayWithTheHours(unittest.TestCase):
             self.dinners(self.pick(spec_with(), favourites=only_long)),
             {"Saturday:dinner": "Beef Cheeks"},
         )
+
+    def test_a_home_weekday_can_now_take_the_braise(self):
+        """The appendix item itself. With a schedule declaring Tuesday and
+        Wednesday as work-from-home days, the earliest run end that has the
+        hours is a Tuesday — where the calendar rule made the braise wait
+        until Sunday, five days after the run end it was actually offered."""
+        picks = planner.select_favorite_assignments(
+            spec_with(),
+            dict(BASE_CONFIG, **TestWhichDaysHaveTheHours.SCHEDULE),
+            [],
+            [favourite("Beef Cheeks", "dinner", long_oven_cook=True)],
+            today=date(2026, 8, 23),
+        )
+        self.assertEqual(self.dinners(picks), {"Tuesday:dinner": "Beef Cheeks"})
+
+    def test_a_declared_outing_saturday_is_refused(self):
+        """The same schedule read the other way, and the reason this is not a
+        pure widening: a Saturday spent out of the house has no more room for
+        a braise than a Thursday at the office does."""
+        picks = planner.select_favorite_assignments(
+            spec_with({wk.slot_id(d, "dinner"): {"mode": MODE_SKIP} for d in DAYS[:5]}),
+            dict(BASE_CONFIG, **TestWhichDaysHaveTheHours.SCHEDULE),
+            [],
+            [favourite("Beef Cheeks", "dinner", long_oven_cook=True)],
+            today=date(2026, 8, 23),
+        )
+        self.assertEqual(self.dinners(picks), {"Sunday:dinner": "Beef Cheeks"})
 
     def test_a_weeknight_lunch_is_skipped_without_ending_the_loop(self):
         """Lunch stops at the first slot with nothing eligible left, so the

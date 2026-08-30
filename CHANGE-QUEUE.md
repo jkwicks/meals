@@ -32,7 +32,7 @@ is worth amending as the ground under it moves, not only when it is closed.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.36.0**. Nine releases have now closed whatever this queue ranked first
+**v0.37.0**. Ten releases have now closed whatever this queue ranked first
 at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
 Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
 and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
@@ -41,7 +41,8 @@ readout with no measured half, **v0.33.0** the training schedule proposed
 from Garmin activity, **v0.34.0** the rejection list that never decayed,
 **v0.35.0** the plan nothing ever checked against what was eaten,
 **v0.36.0** the Insights destination that described its own blocker instead
-of evaluating it.
+of evaluating it, **v0.37.0** the pantry that could be spent five times over
+*and* the two long-cook deferrals it turned out to be sitting next to.
 All three of the source docs' stale claims are now settled: `ISSUES.md`
 item 9 was already fixed, `ui-redesign.md`'s phase 4 aside is filed *and*
 shipped, and `future-ideas.md`'s out-of-date 5c biometric counts stopped
@@ -70,8 +71,10 @@ report that the data is missing.** The second half is almost never blocked,
 and it is what stops the first half from having to be noticed by a human
 later.
 
-The queue's top is now two questions, both decision-blocked, and nothing
-waiting on data at all.
+The queue's top is now one question, decision-blocked, and nothing waiting on
+data at all. Everything below it is front-end craft or API groundwork with no
+consumer — so the next release either answers the readiness question or
+starts on a surface, and there is no third option left in the list.
 
 **A third fetched-and-discarded signal turned out to be the enabling
 half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
@@ -91,9 +94,9 @@ keeps paying**; the three above are the case for storing one, and this is
 the case for checking, before writing a new schema, whether something
 already stored answers most of the question.
 
-**Two of the last three releases closed two items each**, which is worth
-noting because the top of this queue moved by more than one place twice
-running. v0.31.0: the `/api/recipes` duplication was an XS with no decision
+**Three of the last seven releases closed more than one item each**, which is
+worth noting because the top of this queue has moved by more than one place
+three times now. v0.31.0: the `/api/recipes` duplication was an XS with no decision
 in it, and the sync item's single blocking decision — which of three shapes
 — was answered by taking the one this file already recommended, a launchd
 job outside the app process. v0.32.0: the amber/violet pass and the fibre
@@ -102,6 +105,17 @@ had to touch every `ui_*` module anyway and the fibre readout lands in one
 of them. v0.33.0 closed one, and it was an L; v0.34.0 closed one M;
 v0.35.0 closed one that had been filed as an L and turned out to be smaller
 than filed, because half of it had already been built for another reason.
+v0.37.0 closed **three** — the pantry ledger plus both appendix deferrals —
+and did so on a selection rather than a ranking: they were picked because
+all three change what food ends up in a slot, which is not a question this
+file's priority order was built to answer. **That is worth recording as a
+legitimate second way to pick.** The ranking answers "what is most worth
+doing"; a theme answers "what is cheapest to do together", and here the
+saving was real and one-directional. `day_allows_long_cook` was written for
+the favourite half and the generated half then cost about a third of its
+filed M, because the rule it had to be checked against already existed by
+the time it was reached. The ledger shared nothing with them and was simply
+the item the theme was chosen for.
 
 **A decision-blocked item is unblocked by asking, not by waiting.** Three
 releases have now cleared one, and they cleared it differently: v0.31.0's
@@ -111,11 +125,16 @@ one, so the decision was made by reading. v0.34.0's rejection decay did not
 putting them to the maintainer and building against the answers. v0.35.0's
 adherence item was the same shape as v0.34.0's and is the strongest case
 yet: it had carried **two** decisions and an L since the doc was written,
-and both were answered in one exchange before a line was built. Items 1 and
-2 are still in that state, with no recommendation standing. The corollary
-holds and has now paid twice: "blocked by: one decision" is not a reason to
-skip an item when picking what to do next — it is a reason to start it with
-a question.
+and both were answered in one exchange before a line was built. **v0.37.0
+makes it three of the last four**, and the pantry ledger is the clearest case
+yet for the corollary: it carried an L and *two* decisions, and one of them
+this file had already answered in the entry itself ("the doc's own
+recommendation is to skip the camera entirely for v1"), so only one was ever
+really open. Both were settled in a single exchange before a line was built.
+The morning readiness check-in is the last item still in that state, with no
+recommendation standing. "Blocked by: one decision" is not a reason to skip
+an item when picking what to do next — it is a reason to start it with a
+question.
 
 **A blocking decision is also worth re-reading before it is asked.** This
 entry's storage question proposed two files and was answered with one file
@@ -126,14 +145,14 @@ workout question had already half-answered itself in a note added later
 more than the original proposal. **An old decision's options age; the
 question rarely does.**
 
-**Why the front-end block ranks 3–5 rather than higher or lower.** Items
-1–2 are signals the app cannot currently see at all; 3–5 are the surface
+**Why the front-end block ranks 2–4 rather than higher or lower.** Item 1 is
+a signal the app cannot currently see at all; 2–4 are the surface
 every session already passes through, and none is blocked on work — only the
-accent and the wordmark wait on a name. They rank below 1–2 because polish on
-a working surface is worth less than a signal that does not exist, and above
+accent and the wordmark wait on a name. They rank below item 1 because polish
+on a working surface is worth less than a signal that does not exist, and above
 the API entries because those have no consumer today: `/api` is read-only,
 nothing outside NiceGUI calls it, and both the write routes and the generated
-types are groundwork for a front end nobody has asked for. Every item in 3–5
+types are groundwork for a front end nobody has asked for. Every item in 2–4
 was verified against the running code on 2026-08-30 rather than against the
 review that raised them — **four of that review's proposals did not survive
 that check** and are recorded as deliberately excluded inside the entries, so
@@ -144,13 +163,16 @@ rule CLAUDE.md states for citing it from anywhere else. They had gone stale
 by one after an earlier renumber — "item 8" pointing at what had become
 item 7, in three places — which is the argument for the rule rather than
 against it: a number here has a shelf life of exactly one release, and this
-renumber is the eighth. One of the eight was an *insertion* rather than a
+renumber is the ninth. One of the nine was an *insertion* rather than a
 closure — the front-end block took 5–7 and pushed the three API entries and
 food waste down to 8–11 — which was the same hazard from the other
 direction, and the only time this file has had one. This renumber is an
-ordinary closure again: removing the trend-charts item moved everything
-below it up by one, so seven of the nine remaining anchors changed and all
-seven were re-checked against their headings.
+ordinary closure again: removing the pantry ledger moved everything below it
+up by one, so all seven remaining anchors changed and all seven were
+re-checked against their headings. **The appendix shrank in the same
+release**, which no previous renumber has had to account for: two of its six
+rows closed alongside the ledger, because all three were the same question
+asked about different halves of the app.
 
 **A body cross-reference has now pointed at a closing item twice
 running**, which is the case the by-name rule exists for. Neither time was
@@ -179,14 +201,13 @@ fact for whatever cited it, not just a link to repoint.**
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
 | 1 | [Morning readiness check-in](#1--morning-readiness-check-in) | Feature | M | one decision |
-| 2 | [Pantry inventory ledger with real quantities](#2--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
-| 3 | [The front end declares no typography, and its muted text is below AA](#3--the-front-end-declares-no-typography-and-its-muted-text-is-below-aa) | Tech debt | S | — |
-| 4 | [The UI reads flat, and three moments are missing](#4--the-ui-reads-flat-and-three-moments-are-missing) | Tech debt | M | — |
-| 5 | [The app has no name, mark, accent or favicon](#5--the-app-has-no-name-mark-accent-or-favicon) | Feature | S | one decision |
-| 6 | [Write and generation routes on the API](#6--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 7 | [OpenAPI schema is off, so there are no generated types](#7--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 8 | [No auth on `/api`](#8--no-auth-on-api) | Feature | S | only if exposed |
-| 9 | [Food waste tracking](#9--food-waste-tracking) | Feature | XL | not scoped |
+| 2 | [The front end declares no typography, and its muted text is below AA](#2--the-front-end-declares-no-typography-and-its-muted-text-is-below-aa) | Tech debt | S | — |
+| 3 | [The UI reads flat, and three moments are missing](#3--the-ui-reads-flat-and-three-moments-are-missing) | Tech debt | M | — |
+| 4 | [The app has no name, mark, accent or favicon](#4--the-app-has-no-name-mark-accent-or-favicon) | Feature | S | one decision |
+| 5 | [Write and generation routes on the API](#5--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 6 | [OpenAPI schema is off, so there are no generated types](#6--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 7 | [No auth on `/api`](#7--no-auth-on-api) | Feature | S | only if exposed |
+| 8 | [Food waste tracking](#8--food-waste-tracking) | Feature | XL | not scoped |
 
 Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed)
 and ten [front-end craft items](#front-end-craft-items--small-none-urgent), each XS–M
@@ -225,45 +246,7 @@ argue about; the doc does not settle it.
 
 ---
 
-## 2 — Pantry inventory ledger with real quantities
-
-**Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
-`future-ideas.md`, "Pantry photo → an inventory ledger"
-
-`config.inventory_to_clear` is a flat list of strings and
-`inventory_instruction()` sends it as one priority line per day. There are no
-quantities the code can reason about, so one tin of tuna can be written into
-five recipes in the same week — nothing tracks that it was spent the first
-time. It is also why the shopping list cannot subtract what you already have,
-which is the thing people actually want from this feature.
-
-**Two decisions:**
-
-1. **Whether the photo path earns a third model role.** `models.json` names
-   two today, both text; reading a shelf needs a vision model and somewhere
-   to put an image, and `StoragePaths` handles JSON only — nothing in `data/`
-   is binary. **The doc's own recommendation is to skip the camera entirely
-   for v1** — a typed quantity column on the existing list — because the
-   ledger is the hard part, not the OCR. That is also what makes this
-   startable without settling the vision question at all.
-2. **Whether a decremented ledger writes back to disk.** A count that lives
-   for one run is honest and simple; a persisted count starts disagreeing
-   with the actual shelf the moment you cook something without telling the
-   app — the same "state able to disagree with reality" problem the shopping
-   list's unpersisted checkboxes were designed around.
-
-**The mechanism already has a precedent**, which is what keeps this L rather
-than XL: a week-wide count that each generation stage spends and passes on is
-exactly `seafood_used` for `max_seafood_meals_per_week`, and
-`avoid_proteins`/`avoid_recipe_names` for variety. An inventory ledger is
-that pattern with a dict instead of an int — `{"tinned tuna": 1}` seeded from
-config, decremented by what each meal type actually used, later axes told
-when an item is gone. Handing every meal type the full pantry is the current
-behaviour and is what permits four meal types to claim the same tin.
-
----
-
-## 3 — The front end declares no typography, and its muted text is below AA
+## 2 — The front end declares no typography, and its muted text is below AA
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** —
 &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
@@ -304,7 +287,7 @@ scale, so a change made only in `ui_theme.py` leaves the contract lying.
 
 ---
 
-## 4 — The UI reads flat, and three moments are missing
+## 3 — The UI reads flat, and three moments are missing
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** —
 &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
@@ -365,7 +348,7 @@ rail's shape depend on how much biometric data you happen to hold.
 
 ---
 
-## 5 — The app has no name, mark, accent or favicon
+## 4 — The app has no name, mark, accent or favicon
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** one
 decision &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified
@@ -415,7 +398,7 @@ has to move as a pair or not at all.
 
 ---
 
-## 6 — Write and generation routes on the API
+## 5 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -437,7 +420,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 7 — OpenAPI schema is off, so there are no generated types
+## 6 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -456,7 +439,7 @@ against the NiceGUI app object.
 
 ---
 
-## 8 — No auth on `/api`
+## 7 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -473,7 +456,7 @@ not before.
 
 ---
 
-## 9 — Food waste tracking
+## 8 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
@@ -505,10 +488,20 @@ Each of these was decided against at the moment a feature shipped, with the
 reasoning captured in prose and no entry anywhere. None is urgent; all are
 small enough to fold into adjacent work. Listed so the queue is complete.
 
+**Two of the original six closed in v0.37.0**, and the way they closed is the
+appendix's own argument being made back to it. Both were long-cook placement
+— one on the favourite path, one on the generated one — and each was filed
+as its own deferral because each was noticed at a different moment. Read
+together they were one question ("which days have the hours in them") with
+one answer, and the second was nearly free once the first had a function to
+name. **A deferral recorded alone is worth re-reading beside its neighbours
+before it is estimated**: the generated-path row was filed as an M on the
+strength of "a schema, prompt and validator change together", which it did
+need, and which came to about a third of the work because the day rule it
+had to be checked against already existed by then.
+
 | Item | Type | Size | Detail |
 |---|---|---|---|
-| `favorite_fits_day` keys on the weekend, not on where you actually are | Feature | S | A `long_oven_cook` favourite may only take a weekend slot. `base_schedule` knows Tuesday is a WFH day and a slow cooker started at 8am is fine, but widening the rule means a second notion of "a day with room to cook" that has to stay in agreement with `prep_limit_for` and `BATCH_ROAST_RULE`. CLAUDE.md: "a real improvement and belongs in `favorite_fits_day` when it happens." |
-| Generated long cooks can still land on a weeknight | Bug (soft) | M | The favourite path is hard-gated; the generated path is not. `BATCH_ROAST_RULE` states a weekend preference and nothing rejects a model that puts a 4-hour braise on a Tuesday while truthfully reporting 25 active minutes. Making it hard needs an elapsed-time field on `Recipe` that no saved recipe carries — a schema, prompt and validator change together. |
 | The Daily View day picker cannot cross weeks | Feature | M | Chevrons clamp at both ends of the loaded week rather than wrapping or spilling. Crossing weeks needs an async load of the other cached plan plus a second control free to disagree with the header's week selector. CLAUDE.md: "a real feature, and a bigger one than this." |
 | No daily fibre target | Feature | M | `fiber_g` is reported everywhere and budgeted nowhere, deliberately — it has no term in `calories ≈ 4p + 4c + 9f`. A real target needs a term in `calculate_macro_targets` and a per-slot share in `split_targets`. Displaying `32/xx` today would invent a goal the planner never aimed at. |
 | The bulk-prep **lunch** anchor keeps its from-scratch prep time | Bug (minor) | XS | `ui_state.slot_views` collapses a prep-session dish to `SUNDAY_PREP_REHEAT_MINUTES` on `sunday_prepped and event.meal_type == "dinner"` — a test written when only the long cook was anchored. `apply_batch_selections` anchors bulk prep on **lunch**, so that card shows the full cook time for a dish that was cooked on prep day. Found while fixing the fridge-day origin (below); left alone deliberately, since "how long does it take" is a different question from "how old is it" and the shake still has to be excluded either way. |
@@ -520,7 +513,7 @@ small enough to fold into adjacent work. Listed so the queue is complete.
 
 Raised by the same 2026-08-30 review and verified against the code, but each
 individually too small to rank against the list above. All are XS–S, and each
-folds naturally into whichever of items 5–7 is already touching that file —
+folds naturally into whichever of items 4–6 is already touching that file —
 which is the point of listing them here rather than filing ten entries that
 would drown the ranking this file exists to provide.
 
@@ -556,6 +549,8 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 | `future-ideas.md`, "Rejection-list decay" — this queue's item 1 until v0.34.0 | `build_rejection_rule` sent every recorded rejection to every generation call, forever | Shipped in **v0.34.0** — and the answer to all three of the questions this entry left open is that there were **two signals in one rule**, wanting two windows. The **dish list** is a veto on one recipe and expires per reason (`planning_rules.rejection_decay_days`): `had_it_recently` 21 days because it is self-resolving — the dish stops having been had recently whether or not anything honours the entry — `too_much_prep` 60, `dont_fancy_it` 90, `wrong_for_slot` 180 because it is structural and a curry is never breakfast. **Per reason rather than one N** answers question 3 rather than deferring it, on the precedent `favorite_reuse_days` already set for its own split. The **recurring-reason tally** counts over the longer `rejection_reason_window_days` (180), so a standing preference outlives the dishes that evidenced it — which is what makes question 2's hard-cutoff/soft-discount choice moot rather than merely decided: a hard cutoff on the half that should expire, no cutoff at all on the half that shouldn't. **The tally moved into Python**, a consequence of the split rather than a flourish: once the halves have different windows the model only ever sees the shorter one, so asking it to notice a repeated reason had it weighing a subset while being told to weigh the whole. `REJECTION_REASON_GUIDANCE` names what a run of each answer implies, split from `REJECTION_REASON_LABELS` the way that dict was already split between UI and prompt; `REJECTION_REASON_SIGNAL_MIN` (3) is what counts as a run. **No storage change and nothing to migrate**, exactly as this entry predicted — every entry already carried its `date` — and done at the moment it recommended: `data/rejections.json` still did not exist, so this landed before the file got large rather than before it existed. Two fixes carried along: `build_rejection_rule` takes `today`, the `select_favorite_assignments` seam, because the existing tests held fixed date literals against a live clock and would have begun failing about six weeks out — the failure CLAUDE.md's "Tests" section already records catching once; and `planning_rule` extends its documented fallback to a config with no `planning_rules` section at all, which `AppConfig` already treats as legal |
 | `future-ideas.md` 5b — this queue's item 2 until v0.35.0 | Nothing observed whether a planned meal was eaten, skipped or swapped | Shipped in **v0.35.0**, with both of this entry's decisions answered rather than deferred. **Storage** is `data/adherence.json`: two lists in one file — `meals` (`planner.AdherenceEntry`, this entry's own field list) and `workouts` (`planner.WorkoutCompletion`) — keyed by `date` plus a second field named per section in `ADHERENCE_SECTIONS`, so one `_upsert_adherence` serves both and Thursday's lunch cannot overwrite Thursday's dinner. Separate *lists* rather than the separate *files* this entry proposed: the part that matters is that the signals share no key, which is the call this codebase has now made five times, but they answer one question and are always read together, so `biometrics.json`'s shape (four signals, four lists, one file) is the precedent taken. A mark is an update, not an append — the one thing separating it from `save_rejection_entry` — and un-marking **deletes** the row, because absence and a status are different answers and a fourth `unknown` status is one every reader would have to treat as absent anyway; clearing what was never marked writes nothing at all, so an untouched checkout stays distinguishable on disk. **The workout half shrank exactly as this entry predicted it should be re-scoped to**: `nutrition_engine.match_recorded_sessions` is the per-date read of v0.33.0's `activity_log` against the declared week — pure, type-and-date matched with the clock only breaking ties, each declared session claiming the nearest *unclaimed* recording, an unmapped modality answering nothing — and only the gap is stored. `PlannerState.mark_workout` refuses a session the watch recorded rather than merely not offering the button, so `activity_log` and `adherence.json` can never hold two answers to one question; where both somehow say yes, Garmin wins. `data/workout_log.json` was therefore not needed. **Decision 2 took the answer this entry named**: `ui_cards.meal_card`'s icon row as a *sibling* of the clickable body — which meant moving `today_card`'s click handler off the card element onto a body element, or a mark click would have bubbled through and opened the recipe dialog on top of the mark it just recorded. Three statuses rather than a boolean, because a skipped meal and a swapped one fail differently and the chart this feeds could not otherwise tell a missed dinner from a dinner out. All slate, glyph-distinguished, per the palette rule v0.32.0 established — emerald is the cook status, so a green tick would read as a fifth slot state. New `ui_adherence.py` and a new `"adherence"` refresh topic; the day inspector got it free, sharing `today_card`/`context_strip`. Marks persist on click and deliberately do not stage, and nothing in the generation path reads them: what to do with a run of skipped Thursdays is a product question, not a fourth soft prompt rule. Writes land in `data/`, so the two-writers-to-`config/` rule is untouched. `tests/test_adherence.py`, 45 tests over all three layers |
 | `future-ideas.md` 5c · `ui-redesign.md` finding 3 — this queue's item 3 until v0.36.0 | The Insights destination was an empty state describing a blocker it never evaluated | Shipped in **v0.36.0**, and the notable thing is that **the entry's own trigger was still unmet on the day it shipped** — 6 weigh-ins across a 5-day span against a floor of 7, 5 logged days against the ~14 this entry suggested. What was blocked on data was a chart being *worth looking at*; what was never blocked was the page saying which precondition was unmet, and the stub proved the cost of leaving that undone by printing the counts and naming the rule without evaluating it — the identical failure v0.30.0 fixed one floor down. Five readouts: weight against target with the weigh-in table under it, planned calories against logged, macro accuracy, adherence tiles. Each is an `InsightPanel` from `ui_state.py` (`state`/`headline`/`detail`/`drawable`) over four states — `INSIGHT_EMPTY` (nothing recorded), `INSIGHT_SPARSE` (fewer than `INSIGHT_MIN_POINTS`, nothing drawn), `INSIGHT_THIN` (drawn, span named) and `INSIGHT_READY` — because empty and sparse spell identically as a missing chart and have different fixes, the `AdaptiveTDEEStatus` precedent. **Thin is drawn**, since this entry's worry ("a 14-day chart against 5 points is thin; a 30-day one is misleading") is about the *axis*: a window anchored on the data's own last row and captioned `6 point(s) across 5 day(s)` cannot mislead the way a fixed axis with six dots in one corner does. `paired_intake_days` is the single join between `meal_history.json`'s per-day `targets` and `daily_actuals`, borrowing two rules rather than inventing them (last history entry per date wins; a zero-calorie row is not a pairing, per `logged_intake_for`) — **this entry never mentioned `meal_history.json`, and it was carrying the planned half of two of the five charts all along**, which is the "check what is already stored before writing a schema" lesson v0.35.0 recorded, paying again. `nutrition_engine.measure_weight_trend` gives the chart and the estimate one slope, and is the first production caller `smooth_series` has ever had — its docstring has said "for display: the weight-trend line a UI draws" since it was written, so this is the fetched-and-never-read pattern seen from the build side. Three chart decisions are all the same decision: the target line draws only when `target_in_range` (a 19 kg gap and a 1 kg span cannot share a legible linear axis, and a scaled axis clips it outright — the gap is captioned either way), macro accuracy is a percentage axis and `MACRO_KEYS`-only so fibre keeps its no-denominator rule, and the adherence percentage says "of marks" in words because the plans those dates were generated against are gone from `week_plan.json`. No chart introduces a hue: `CHART_MACRO_COLOURS` is `MACRO_TINTS` in hex, a logged bar takes `BAND_COLOURS` from the same `macro_band` call the header makes, the reference series is always the dashed one. `insights.panel` becomes the third member of the `"adherence"` topic, which was documented as unable to grow one |
+| `future-ideas.md`, "Pantry photo → an inventory ledger" — this queue's item 2 until v0.37.0 | `inventory_to_clear` was a flat list of strings, so one tin of tuna could be written into five recipes in the same week | Shipped in **v0.37.0**, with both decisions answered rather than deferred. **Decision 1 took this entry's own recommendation and skipped the camera**: a `quantity_g` on the existing list, no vision model, no third model role, nothing binary in `data/` — the ledger was always the hard part and the OCR never was. **Decision 2 is run-scoped, never persisted**: `generate_week_plan` seeds `seed_inventory_ledger(config)` once, publishes it to each stage as `config["inventory_ledger"]` and calls `spend_inventory` on what that stage actually returned, then throws it away. A count that survived the run would start disagreeing with the shelf the moment you cook something without telling the app — the "state able to disagree with reality" problem the shopping list's unpersisted checkboxes were designed around — and it would have made generation a *third* writer to `config/`, where both existing ones persist a standing setting. It rides on `config` in memory, the `nudge_foods` channel, covered by the standing rule that `save_config_keys` merges named keys rather than saving what it is handed. **The mechanism was the precedent this entry named**, and it held exactly: `seafood_used` with a dict instead of an int, spent in `MEAL_TYPE_PRIORITY` order, later axes told when an item is gone — because no single call sees more than its own axis, which is why a quantity stated to all four permits four. **The matching is the part this entry did not anticipate**, and it is where the reuse paid: `shopping.ingredient_draws_on` rather than a third notion of "same food", `normalize_name`'s equality widened to containment (a pantry entry says "chicken thighs", a recipe says "Chicken thigh fillets, diced") and guarded by matching departments and states, because over-matching tells later meal types an item is spent while it is still in the fridge and under-matching merely restores the old behaviour. Counted per cook event, not per slot that eats it, the call `is_seafood_meal` already makes. Overshoot floors at 0 and an exhausted item drops out of the prompt rather than being announced as gone. Both entry shapes stay legal — a bare string is unquantified and always was — with `inventory_entries` the single parser, dropping a malformed entry with a warning on `split_targets`' policy. The drawer's chip box became a row editor (a chip cannot hold two fields) on the training editor's pattern, `PlannerState.pantry` carries rows through the same parser generation reads, and `"pantry"` is a new refresh topic because typing in a row must refresh nothing while adding one changes the staged bar's count. **Subtracting the pantry from the shopping list is still not done**, and this entry called it "the thing people actually want": it needs the ledger to survive the run, which is precisely what decision 2 declined |
+| appendix, "`favorite_fits_day` keys on the weekend" · appendix, "Generated long cooks can still land on a weeknight" | The two halves of long-cook placement disagreed: a *saved* braise could not take a Thursday and a *generated* one could | Shipped in **v0.37.0**, together, because they were one question. `planner.day_allows_long_cook` is the single answer both read — `location_rules.<location>.allows_long_cook` off the day's `base_schedule` location, falling back to the weekend when the location says nothing, so a config predating the key plans byte-identically. **The worry that deferred the first was that a second notion of "a day with room to cook" would drift from `prep_limit_for`. It is not a second notion — it is the other axis**: active minutes are a claim on your attention and stay weeknight-versus-weekend, elapsed hours are a claim on your presence, which is what a braise needs and what `base_schedule` already records. `prep_limit_for` is untouched. **A location may rule a weekend day *out*, which the appendix entry ("widening it") did not anticipate**: the shipped `Saturday: Outing` loses the long cook the calendar gave it while Tuesday and Wednesday gain one, and that direction is the point — the complaint was that the calendar is not where you are. The second half needed the elapsed-time field the entry predicted: `Recipe.total_time_minutes`, `None` for unknown and never 0, asked for by `ELAPSED_TIME_RULE` and checked by `reject_misplaced_long_cook` on both response models over one shared function, exactly as `enforce_prep_limit` already splits. **Two ways to fail, because the flag alone catches only half**: `long_oven_cook` is a self-report a careless model omits, and the elapsed figure is what catches the braise that never declared itself. **A batch anchor is exempt or the rule would break the long-cook toggle outright** — both anchors sit on day 1 but are cooked on prep day, the same `prep_day_batch_slot_ids` `build_cook_event` counts fridge days from. `BATCH_ROAST_RULE` became `build_batch_roast_rule(config, days)` and now names the days the validator will accept, emitting nothing when none qualify, since asking for a dish certain to be rejected is a guaranteed wasted 30s–3min call |
 | `ISSUES.md` 5 | Can't open a batch-cooking recipe | Phase 6c — body opens the shared `open_detail` |
 | `ISSUES.md` 6 | Rename "Today" to "Daily View" | Shipped post-phase-3 (rail label only; function names unchanged) |
 | `ISSUES.md` 7 | Library cards clickable only on the title | Phase 6d — `catalog_card` mirrors `meal_card`'s split |

@@ -170,13 +170,18 @@
   "inventory_to_clear": [],
   "location_rules": {
     "Holiday": {
+      "allows_long_cook": false,
       "breakfast_mode": "skip",
       "dinner_mode": "skip",
       "lunch_mode": "skip",
       "notes": "Holiday food - eaten out, not planned",
       "snack_mode": "skip"
     },
+    "Home": {
+      "allows_long_cook": true
+    },
     "Office": {
+      "allows_long_cook": false,
       "lunch_mode": "leftover",
       "max_prep_minutes": 0,
       "restrictions": [
@@ -185,6 +190,7 @@
       ]
     },
     "Outing": {
+      "allows_long_cook": false,
       "dinner_mode": "leftover",
       "lunch_mode": "skip",
       "lunch_skip_estimate": {
@@ -196,6 +202,7 @@
       "notes": "Dining out or packed nutrition"
     },
     "WFH": {
+      "allows_long_cook": true,
       "lunch_mode": "cook",
       "max_prep_minutes": 15,
       "restrictions": [

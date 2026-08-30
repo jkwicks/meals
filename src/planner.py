@@ -6,7 +6,7 @@ import os
 import random
 import time
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 import instructor
 from dotenv import load_dotenv
@@ -38,6 +38,7 @@ from shopping import (
     aggregate_cook_events,
     categorize_department,
     collect_unique_plants,
+    ingredient_draws_on,
     format_shopping_list_markdown,
     format_shopping_list_text,
     round_ingredient_quantity,
@@ -197,6 +198,68 @@ def prep_limit_for(day: str) -> int:
     """The active prep ceiling that applies on `day`."""
     return WEEKEND_PREP_LIMIT_MINUTES if day in WEEKEND_DAYS else WEEKNIGHT_PREP_LIMIT_MINUTES
 
+
+# Wall-clock ceiling, in minutes, for a day with no room for an unattended
+# cook. Deliberately NOT a second reading of the two limits above: those count
+# *active* minutes, and the whole reason a 4-hour braise reached a Tuesday is
+# that it truthfully reported 25 of them. Active minutes are a claim on your
+# attention; elapsed minutes are a claim on your presence, and a dish can pass
+# one while failing the other. 90 leaves a weeknight room for a 30-minute
+# active dish that then sits an hour in the oven, and rules out the braise.
+WEEKNIGHT_ELAPSED_LIMIT_MINUTES = 90
+
+
+def day_allows_long_cook(day: str, config: Optional[dict] = None) -> bool:
+    """Whether `day` has the *hours* in it for a long, mostly unattended cook.
+
+    The one notion of "a day with room to cook", read by both halves of a rule
+    that used to exist on only one of them: `favorite_fits_day` (which slots a
+    saved `long_oven_cook` favourite may take) and
+    `reject_misplaced_long_cook` (which days a *generated* one may land on). A second copy would let the
+    two disagree about a Tuesday, and the favourite path would go on being the
+    only one enforced.
+
+    **A location's own declaration wins, in both directions.**
+    `location_rules.<location>.allows_long_cook` is the answer when the day's
+    `base_schedule` location states one, so a WFH Tuesday qualifies — a slow
+    cooker started at 8am on a work-from-home day is genuinely fine — and a
+    Saturday declared `Outing` does not, because you cannot start a braise on
+    a day you are out. That the shipped config *narrows* a weekend day this
+    way is the point rather than a side effect: the rule this replaces keyed
+    on the calendar, and the complaint against it was that the calendar is not
+    where you are.
+
+    Falls back to the weekend test whenever the location says nothing. That is
+    three cases — an absent `base_schedule`, an unknown location, and a
+    `location_rules` entry with no `allows_long_cook` key — and they collapse
+    into one here because `week.location_rule` already collapses the first two
+    into `{}`, which is the whole reason to call it rather than reach into
+    both config sections again. So a config predating this key plans
+    byte-identically to before it existed, which is the same tolerance
+    `inventory_instruction` extends to an empty pantry list.
+
+    Note this deliberately does not touch `prep_limit_for`, whose
+    weeknight-versus-weekend split stays exactly as it was. Widening the
+    *active* ceiling on a WFH day would say you have three hands-on hours on a
+    working Tuesday, which is a different and false claim.
+    """
+    declared = location_rule(config or {}, day).get("allows_long_cook")
+    if declared is None:
+        return day in WEEKEND_DAYS
+    return bool(declared)
+
+
+def long_cook_days(days: List[str], config: Optional[dict] = None) -> List[str]:
+    """Which of `days` allow a long cook, in the order given.
+
+    The prompt side of `day_allows_long_cook`: the model has to be told the
+    same days it is then judged against, which is the rule
+    `WEEKEND_PREP_LIMIT_MINUTES` already learned the hard way — a weekend
+    recipe at 200 minutes once passed validation while violating its own
+    brief, because the limit was stated in the prompt and nowhere else.
+    """
+    return [day for day in days if day_allows_long_cook(day, config)]
+
 # Stops the model from hitting a high protein budget by linearly scaling a
 # single low-density ingredient (6 eggs, 500g yoghurt) instead of composing a
 # realistic dish. Multiple dense protein sources combined instead.
@@ -288,21 +351,40 @@ DINNER_VARIETY_RULE = (
 # candidate. Asking for exactly one, and ruling the rest out, is what keeps
 # `generate_sunday_prep_session`'s candidate list small and genuinely
 # "aggregate this one batch" rather than every braise-ish dinner qualifying.
-BATCH_ROAST_RULE = (
-    "- Make exactly ONE dinner this week a genuinely long (60+ minutes), "
-    "mostly hands-off oven roast/bake or slow-cooker/braise, and set its "
-    "long_oven_cook to true (per the long_oven_cook rule below). Prefer "
-    "whichever day suits a slower, lazier cook — a weekend day, if one is "
-    "listed below — unless that day's own brief points somewhere else. Every "
-    "other dinner stays normal-length, active-cook, and must NOT be marked "
-    "long_oven_cook.\n"
-)
+def build_batch_roast_rule(config: dict, days: List[str]) -> str:
+    """Ask for exactly one long oven cook this week, on a day that can take it.
 
-# The anchor-aware sibling of BATCH_ROAST_RULE, above. That rule leaves day
+    Was a bare constant preferring "a weekend day, if one is listed below",
+    which was the right instinct and unenforceable: nothing rejected a model
+    that put a 4-hour braise on a Tuesday while truthfully reporting 25 active
+    minutes. Now that `reject_misplaced_long_cook` does, this has to name the
+    days that check will accept — the same told-the-rule-you-are-judged-against
+    coupling `prep_limit_for` has with `build_slot_brief`.
+
+    **Emits nothing when no day in scope can take one**, which is the half
+    that would otherwise be a guaranteed retry: asking for a long cook the
+    validator is certain to reject burns the full 30s—3min call to discover a
+    contradiction already visible in the config. A week entirely of Office and
+    Outing days simply gets seven ordinary dinners, and
+    `generate_sunday_prep_session` already no-ops without a candidate.
+    """
+    permitted = long_cook_days(days, config)
+    if not permitted:
+        return ""
+    return (
+        "- Make exactly ONE dinner this week a genuinely long (60+ minutes), "
+        "mostly hands-off oven roast/bake or slow-cooker/braise, and set its "
+        "long_oven_cook to true (per the long_oven_cook rule below). It must "
+        f"fall on one of these days: {', '.join(permitted)} — those are the "
+        "days with the hours in them. Every other dinner stays "
+        "normal-length, active-cook, and must NOT be marked long_oven_cook.\n"
+    )
+
+# The anchor-aware sibling of build_batch_roast_rule, above. That rule leaves day
 # choice to the model; this one is used instead whenever `week.spread_batch`
 # has already picked the day (config["long_cook_anchor"], set only by
 # ui_generation.apply_batch_selections) — the model just executes the choice,
-# communicated per-slot via LONG_COOK_ANCHOR_SLOT_DIRECTIVE. BATCH_ROAST_RULE
+# communicated per-slot via LONG_COOK_ANCHOR_SLOT_DIRECTIVE. build_batch_roast_rule
 # itself stays wired to its old gate for the CLI's "enable_sunday_prep but no
 # anchor" case — see generate_meal_type_week's gating below.
 BATCH_ROAST_ANCHOR_RULE = (
@@ -968,6 +1050,128 @@ LONG_OVEN_COOK_RULE = (
     "recipe, or a no-cook dish, even one you're making in bulk.\n"
 )
 
+# The companion `long_oven_cook` never had, and the reason a 4-hour braise
+# could land on a Tuesday while every check passed: `prep_time_minutes` counts
+# only hands-on minutes, so a braise honestly reports 25 and clears the
+# 30-minute weeknight ceiling it ought to fail. Neither number describes how
+# long the dish actually takes, and `long_oven_cook` is a self-report the
+# model is free to simply not set. This is the measured field the day rule
+# below is enforced against.
+ELAPSED_TIME_RULE = (
+    "- Report total_time_minutes for every recipe: the whole wall-clock time "
+    "from starting the dish to eating it, INCLUDING unattended time (oven, "
+    "slow cooker, simmering, marinating, proving, chilling). It is always "
+    "greater than or equal to prep_time_minutes, which counts only the "
+    "hands-on minutes — a braise with 25 minutes of active work and 4 "
+    "hours in the oven is prep_time_minutes 25, total_time_minutes 265. "
+    "Where a dish has no unattended time the two are equal. Report it "
+    "honestly: it is checked against the day's schedule, not against how "
+    "impressive the dish sounds.\n"
+)
+
+
+def build_long_cook_day_rule(config: dict, days: List[str]) -> str:
+    """Which of this call's days have the hours for a long, unattended cook.
+
+    The prompt half of `reject_misplaced_long_cook`, and it exists because that
+    validator is hard: a model rejected for breaking a rule it was never given
+    burns a 30s—3min retry to discover a constraint one sentence would have
+    stated. `WEEKEND_PREP_LIMIT_MINUTES` learned the same lesson from the
+    other direction — it was once stated in the prompt and enforced nowhere,
+    so a 200-minute weekend recipe passed validation while violating its own
+    brief.
+
+    Emits nothing when every day in scope allows one, which is the common case
+    for a single weekend `generate_day` call and keeps that prompt unchanged.
+    Says only the ceiling when none do, because naming an empty list of
+    permitted days reads as a riddle.
+    """
+    permitted = long_cook_days(days, config)
+    if len(permitted) == len(days):
+        return ""
+    ceiling = (
+        "- On any other day keep total_time_minutes at or under "
+        f"{WEEKNIGHT_ELAPSED_LIMIT_MINUTES} minutes and long_oven_cook "
+        "false: those days have no room for a dish that sits for hours, "
+        "however little hands-on work it needs.\n"
+    )
+    if not permitted:
+        return (
+            "- None of the days below has room for a long, mostly unattended "
+            "cook. Keep every recipe's total_time_minutes at or under "
+            f"{WEEKNIGHT_ELAPSED_LIMIT_MINUTES} minutes and long_oven_cook "
+            "false — this is about the hours in the day, not the hands-on "
+            "work, so a braise needing only 20 minutes of attention still "
+            "does not fit.\n"
+        )
+    return (
+        "- Only these days have room for a long, mostly unattended cook "
+        f"(oven, slow cooker, braise): {', '.join(permitted)}.\n"
+    ) + ceiling
+
+
+def reject_misplaced_long_cook(pairs, config: Optional[dict]) -> None:
+    """Raise if a long cook landed on a day with no hours in it.
+
+    The hard half of a rule that was soft on the generated side and hard on
+    the favourite side, which is how the two came to disagree: a saved
+    `long_oven_cook` favourite could not take a Thursday, while a *generated*
+    dinner could put a 4-hour braise there and pass every check on the way.
+    `build_batch_roast_rule` states a preference and nothing enforced it,
+    `prep_time_minutes` counts only the hands-on minutes so a braise clears
+    the weeknight ceiling honestly, and `long_oven_cook` is the model's own
+    self-report. Both halves now read `day_allows_long_cook`.
+
+    **Two ways to fail, because one field alone catches only half of it.**
+    `long_oven_cook` is set by a cooperative model and simply omitted by a
+    careless one; `total_time_minutes` is the measured claim
+    (`ELAPSED_TIME_RULE`) and is what catches the braise that never flagged
+    itself. Either one over the line rejects, which is what makes the
+    unflagged case reachable at all.
+
+    **A batch anchor is exempt, and the whole rule would be wrong without
+    it.** `apply_batch_selections` anchors both batches on day 1 — Monday, on
+    the shipped config — but that food is cooked on **prep day**, the Sunday
+    *before* the week starts (`week.PREP_DAY_INDEX`). The anchor's grid day is
+    only where its leftover chain has to start, so judging it against Monday's
+    schedule would reject the one dish in the week most deliberately given the
+    hours, and would break the long-cook toggle outright. Same two slot ids
+    `build_cook_event` already counts fridge days from.
+
+    `total_time_minutes` is `None` on every recipe saved before it existed, and
+    None is "unknown", never 0 — an unknown elapsed time falls through to the
+    flag alone, the same pre-migration tolerance `history_styles` extends to
+    old history entries.
+
+    Raising is load-bearing, not defensive: instructor catches it and hands the
+    model its own output back to retry.
+    """
+    exempt = prep_day_batch_slot_ids(config)
+    for day, recipe in pairs:
+        if slot_id(day, recipe.meal_type) in exempt:
+            continue
+        if day_allows_long_cook(day, config):
+            continue
+        elapsed = recipe.total_time_minutes
+        if recipe.long_oven_cook:
+            raise ValueError(
+                f"{day}: \"{recipe.name}\" is marked long_oven_cook, but "
+                f"{day} has no room for a long, mostly unattended cook. "
+                "Replace it with a dish that is ready end to end in "
+                f"{WEEKNIGHT_ELAPSED_LIMIT_MINUTES} minutes or less, or move "
+                "the long cook to one of the days the rules list as having "
+                "the hours for it."
+            )
+        if elapsed is not None and elapsed > WEEKNIGHT_ELAPSED_LIMIT_MINUTES:
+            raise ValueError(
+                f"{day}: \"{recipe.name}\" takes {elapsed} minutes end to "
+                f"end, over the {WEEKNIGHT_ELAPSED_LIMIT_MINUTES}-minute limit "
+                f"for {day}. Its {recipe.prep_time_minutes} minutes of "
+                "hands-on work is not the problem — the hours it then sits "
+                "are. Replace it with a dish that is ready end to end within "
+                "the limit."
+            )
+
 # The three rules that differ by axis: whether "respect the style", "vary the
 # ingredients" and "hit your budget" are scoped across one day's meal types or
 # across one meal type's days.
@@ -1090,8 +1294,10 @@ def build_generation_rules(
     active) and the `diet_styles` catalog those keys resolve against;
     everything else is a caller decision, so this stays a pure string
     builder with no I/O and no model knowledge. `days` is passed straight
-    through to `build_sourcing_rule`, which is the only rule here that needs
-    to know which cook days are in scope.
+    through to `build_sourcing_rule` and `build_long_cook_day_rule`, the two
+    rules here that need to know which cook days are in scope — one because
+    what the shops stock varies by day, the other because what the *day*
+    has room for does.
     """
     dietary_rules = config["dietary_rules"]
     return (
@@ -1125,6 +1331,8 @@ def build_generation_rules(
         "- Leave servings and prep_notes at their schema defaults — Python "
         "fills those in.\n"
         f"{LONG_OVEN_COOK_RULE}"
+        f"{ELAPSED_TIME_RULE}"
+        f"{build_long_cook_day_rule(config, days)}"
         f"{response_shape_rule}"
         "- Do not show your work, explain your reasoning, or narrate your "
         "process. Respond with the structured data only."
@@ -1550,7 +1758,12 @@ class AppConfig(BaseModel):
     serving_rules: ServingRules = Field(default_factory=ServingRules)
     shopping: ShoppingConfig = Field(default_factory=ShoppingConfig)
     training_schedule: List[Dict[str, Any]] = Field(default_factory=list)
-    inventory_to_clear: List[str] = Field(default_factory=list)
+    # Two shapes, both legal: a bare string is an unquantified item, a dict is
+    # `{"item": ..., "quantity_g": ...}`. Typed loosely for the same reason
+    # `location_rules` is — the shape is still open, and `inventory_entries` is
+    # the single reader that validates it, dropping a malformed entry with a
+    # warning rather than costing a week of generation over a config typo.
+    inventory_to_clear: List[Union[str, Dict[str, Any]]] = Field(default_factory=list)
     enable_sunday_prep: bool = False
     max_prep_active_mins: int = 120
     dietary_rules: DietaryRules = Field(default_factory=DietaryRules)
@@ -2631,15 +2844,15 @@ def eligible_favorites(
     return [record for _, record in sorted(candidates, key=lambda pair: pair[0])]
 
 
-def favorite_fits_day(record: dict, day: str) -> bool:
-    """False for a `long_oven_cook` favourite on a weeknight.
+def favorite_fits_day(record: dict, day: str, config: Optional[dict] = None) -> bool:
+    """False for a `long_oven_cook` favourite on a day with no hours in it.
 
-    A *generated* dinner is asked to put the week's one long cook on a
-    weekend (`BATCH_ROAST_RULE`), but a favourite never passes through that
-    prompt: `select_favorite_assignments` places dinners at cuisine run ends,
-    which is a rule about protecting blocks and says nothing about the day
-    having the hours in it. Nothing downstream catches it either —
-    `prep_limit_for`'s 30-minute weeknight ceiling counts *active* minutes,
+    A *generated* dinner is asked to put the week's one long cook on a day
+    that suits it (`build_batch_roast_rule`), but a favourite never passes
+    through that prompt: `select_favorite_assignments` places dinners at
+    cuisine run ends, which is a rule about protecting blocks and says nothing
+    about the day having the hours in it. Nothing downstream caught it either
+    — `prep_limit_for`'s 30-minute weeknight ceiling counts *active* minutes,
     and a braise honestly reports the 20 that are hands-on rather than the
     8-10 hours it then sits in the oven, so it clears the cap it ought to
     fail. That is how a "Slow Cooked Beef Cheeks" imported from Keep came to
@@ -2647,22 +2860,26 @@ def favorite_fits_day(record: dict, day: str) -> bool:
     catalog are long cooks, so this is a recurring shape rather than one bad
     record.
 
-    Weekend rather than a `base_schedule` check, even though that config
-    knows Tuesday is WFH and a slow cooker started at 8am on a
-    work-from-home day is genuinely fine: weeknight-versus-weekend is the
-    split `prep_limit_for` and `BATCH_ROAST_RULE` already draw, and a second,
-    subtler notion of "a day with room to cook" is one more thing to keep in
-    agreement with them. Widening this to the days you are actually home is a
-    real improvement, and belongs here when it happens.
+    **Which days those are is `day_allows_long_cook`, not the weekend.** This
+    rule used to key on the calendar, with its own docstring recording that
+    widening it to the days you are actually home was "a real improvement, and
+    belongs here when it happens" — the worry being a second, subtler notion
+    of "a day with room to cook" that would have to stay in agreement with
+    `prep_limit_for` and the batch-roast rule. It is not a second notion: it
+    is the *other axis*. Active minutes are a claim on your attention and stay
+    weeknight-versus-weekend; elapsed hours are a claim on your presence, and
+    that is what a braise needs and what `base_schedule` already knows. The
+    generated path now reads the identical function, so there is one answer
+    rather than two.
 
     Reads the catalog record's raw dict rather than a validated `Recipe`
     because selection runs before anything is validated — `generate_week_plan`
     skips a record too broken to load, and until then an absent flag reads as
     False exactly as `Recipe.long_oven_cook`'s own default does.
     """
-    if day in WEEKEND_DAYS:
+    if not (record.get("recipe") or {}).get("long_oven_cook"):
         return True
-    return not (record.get("recipe") or {}).get("long_oven_cook")
+    return day_allows_long_cook(day, config)
 
 
 def cuisine_run_ends(slots: List[SlotSpec]) -> List[SlotSpec]:
@@ -2745,8 +2962,9 @@ def select_favorite_assignments(
       whose slots do not exist is one that cannot be seen to be wrong.
 
     Cutting across all three: a favourite marked `long_oven_cook` is only
-    ever offered a weekend slot (`favorite_fits_day`, which explains why).
-    On a weeknight it is passed over and the next eligible favourite takes
+    ever offered a day with the hours in it (`favorite_fits_day`, which
+    explains why, and `day_allows_long_cook`, which decides which days those
+    are). Elsewhere it is passed over and the next eligible favourite takes
     that day instead — so the day still gets a dish, and the long cook waits
     for a day with the hours in it rather than being dropped for the week.
     Breakfast is the one case with no per-day choice left to make, since a
@@ -2789,7 +3007,7 @@ def select_favorite_assignments(
                 favorites, "breakfast", reuse_days.get("breakfast", 7),
                 last_scheduled, today, used,
             )
-            if all(favorite_fits_day(record, slot.day) for slot in claimed)
+            if all(favorite_fits_day(record, slot.day, config) for slot in claimed)
         ]
         if pick:
             record = pick[0]
@@ -2804,7 +3022,7 @@ def select_favorite_assignments(
         )
         if not pick:
             break
-        fits = [record for record in pick if favorite_fits_day(record, slot.day)]
+        fits = [record for record in pick if favorite_fits_day(record, slot.day, config)]
         # `continue`, not `break`: nothing eligible suits *this* day, but a
         # later slot may be a weekend one that it does suit. Only an empty
         # `pick` means the favourites are actually spent.
@@ -2828,7 +3046,7 @@ def select_favorite_assignments(
         )
         if not pick:
             break
-        fits = [record for record in pick if favorite_fits_day(record, slot.day)]
+        fits = [record for record in pick if favorite_fits_day(record, slot.day, config)]
         if not fits:
             continue
         record = fits[0]
@@ -3053,6 +3271,21 @@ class Recipe(BaseModel):
     ingredients: List[Ingredient]
     instructions: List[str] = Field(..., description="Ordered preparation steps")
     prep_time_minutes: int = Field(..., ge=0)
+    total_time_minutes: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Total wall-clock time from starting the dish to eating it, in "
+            "minutes, INCLUDING unattended time — oven, slow cooker, "
+            "simmering, marinating, proving, chilling. Always >= "
+            "prep_time_minutes, which counts only the hands-on minutes. A "
+            "braise needing 25 minutes of active work and 4 hours in the "
+            "oven is prep_time_minutes 25 and total_time_minutes 265. For a "
+            "dish with no unattended time the two are equal. Defaults to "
+            "None (older saved recipes predate this field and their elapsed "
+            "time is unknown rather than zero)."
+        ),
+    )
     servings: int = Field(
         default=1,
         ge=1,
@@ -3090,6 +3323,7 @@ class Recipe(BaseModel):
             "False (older saved recipes predate this field)."
         ),
     )
+
 
     @field_validator("prep_time_minutes")
     @classmethod
@@ -3201,6 +3435,28 @@ class DayRecipes(BaseModel):
     recipes: List[Recipe]
 
     @model_validator(mode="after")
+    def enforce_long_cook_day(self, info: ValidationInfo) -> "DayRecipes":
+        """A long cook may only land on a day with the hours in it.
+
+        Reads the single `day` out of instructor's context, exactly as
+        `Recipe.enforce_prep_limit` does and for the same reason: this axis is
+        one call for one day. `MealTypeWeekRecipes` spans up to seven and runs
+        the same check over its own day keys. Both call
+        `planner.reject_misplaced_long_cook`, which is also what
+        `build_long_cook_day_rule` states in the prompt, so the model is told
+        the rule it is then judged against. The shared function is named apart
+        from these two methods deliberately: a bare same-named call inside a
+        method body resolves to the global and reads like recursion.
+        """
+        context = info.context or {}
+        day = context.get("day")
+        if day:
+            reject_misplaced_long_cook(
+                ((day, recipe) for recipe in self.recipes), context.get("config")
+            )
+        return self
+
+    @model_validator(mode="after")
     def reject_untrimmable_macro_miss(self, info: ValidationInfo) -> "DayRecipes":
         """Bounce a response too far off budget for the portion trim to rescue.
 
@@ -3271,6 +3527,19 @@ class MealTypeWeekRecipes(BaseModel):
                     f"{day}: prep_time_minutes {recipe.prep_time_minutes} exceeds the "
                     f"{prep_limit_for(day)}-minute limit; simplify the recipe to fit."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_long_cook_day(self, info: ValidationInfo) -> "MealTypeWeekRecipes":
+        """Per-day version of DayRecipes.enforce_long_cook_day (see that
+        docstring). Over `self.recipes`' own day keys, since a single call here
+        spans up to seven days each needing their own answer — the same shape
+        as `enforce_prep_limit` directly above, and the same shared function
+        underneath, so the two axes cannot disagree about a Tuesday.
+        """
+        reject_misplaced_long_cook(
+            self.recipes.items(), (info.context or {}).get("config")
+        )
         return self
 
     @model_validator(mode="after")
@@ -3568,8 +3837,9 @@ def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
     stamp.
 
     Empty for a CLI run, whose legacy `enable_sunday_prep` path names no
-    anchor in advance (`BATCH_ROAST_RULE` lets the model pick its own day),
-    so those weeks count spans exactly as they always have.
+    anchor in advance (`build_batch_roast_rule` lets the model pick its own
+    day, from the ones that have the hours), so those weeks count spans
+    exactly as they always have.
     """
     config = config or {}
     return {
@@ -4262,29 +4532,171 @@ def cap_to_weighted_share(
     return {key: budget[key] * factor for key in MACRO_KEYS}, True
 
 
+def inventory_entries(config: dict) -> List[Tuple[str, Optional[float]]]:
+    """`inventory_to_clear` as `(name, grams or None)` pairs.
+
+    The list takes two shapes and always has: a bare string is an unquantified
+    item ("half a bag of spinach"), and `{"item": ..., "quantity_g": ...}` is
+    one the ledger can actually reason about. Both are legal on purpose — a
+    quantity is genuinely unknown for some things, and requiring one would
+    make the honest answer unexpressible. A string keeps exactly the behaviour
+    this list had before quantities existed: named as a priority every day,
+    never spent, never exhausted.
+
+    Grams rather than counts, for the same reason every other quantity in this
+    app is grams: the ledger is spent against `Ingredient.quantity_g`, and a
+    tin that had to be converted to grams somewhere would be converted twice
+    and differently. A tin of tuna is about 95 g drained.
+
+    A malformed entry is dropped with a warning rather than raised on — the
+    same policy `split_targets` applies to a malformed `meal_overrides`, and
+    for the same reason: a config typo must not cost a week of generation.
+    """
+    entries: List[Tuple[str, Optional[float]]] = []
+    # `.get`, not `[...]`: `AppConfig` gives this field a `default_factory`, so
+    # a config with no `inventory_to_clear` at all is legal and a reader has to
+    # agree — the same fallback `planning_rule` documents for its own section.
+    for entry in config.get("inventory_to_clear") or []:
+        if isinstance(entry, dict):
+            name = str(entry.get("item") or "").strip()
+            raw = entry.get("quantity_g")
+            if not name:
+                logger.warning("inventory_to_clear: ignoring entry with no item name: %r", entry)
+                continue
+            try:
+                quantity = None if raw is None else float(raw)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "inventory_to_clear: ignoring unreadable quantity_g %r for %s", raw, name
+                )
+                quantity = None
+            if quantity is not None and quantity <= 0:
+                quantity = None
+            entries.append((name, quantity))
+            continue
+        name = str(entry).strip()
+        if name:
+            entries.append((name, None))
+    return entries
+
+
+def seed_inventory_ledger(config: dict) -> Dict[str, float]:
+    """`{item name: grams remaining}`, for the quantified entries only.
+
+    The week-wide count each generation stage spends and passes on — the same
+    shape as `seafood_used` for `sourcing.max_seafood_meals_per_week`, and the
+    same reason it has to be counted rather than merely stated: no single
+    generation call sees more than its own axis, so handing every meal type
+    the full pantry is what let four of them write the same tin of tuna into
+    four different recipes with nothing tracking that it was spent the first
+    time.
+
+    A dict where the seafood cap is an int, which is the only real difference:
+    an item runs out on its own without taking the others with it.
+
+    Unquantified entries are deliberately absent. There is no number to
+    decrement, so a ledger holding them would have to invent one, and
+    `inventory_instruction` names them every stage exactly as it always did.
+    """
+    return {
+        name: quantity
+        for name, quantity in inventory_entries(config)
+        if quantity is not None
+    }
+
+
+def spend_inventory(
+    ledger: Dict[str, float], events: Iterable["CookEvent"]
+) -> Dict[str, float]:
+    """Draw `events`' ingredients down against `ledger`, in place. Returns what was spent.
+
+    Counted per cook event rather than per slot that eats it, the same call
+    `is_seafood_meal` makes for the seafood cap: a bulk-cooked tray of thighs
+    feeding three lunches came out of the fridge once. `CookEvent.recipe` is
+    already scaled to its full batch by `build_cook_event`, so the grams here
+    are the grams the shopping list would buy — the two read the same numbers,
+    which is what stops the ledger and the list disagreeing about one dish.
+
+    Floored at 0 rather than going negative: a recipe legitimately calls for
+    more than the house holds, and the honest reading of that is "the item is
+    gone", not "you owe 200 g". The overshoot is not tracked because nothing
+    would read it — the item is off the priority list either way, and it was
+    always going on the shopping list in full (the list says what a recipe
+    needs, not what you still have to buy).
+
+    Matching is `shopping.ingredient_draws_on`, so the ledger cannot disagree
+    with the shopping list about whether two names are the same food.
+    """
+    spent: Dict[str, float] = {}
+    for event in events:
+        for ingredient in event.recipe.ingredients:
+            for name in ledger:
+                if ledger[name] <= 0 or not ingredient_draws_on(name, ingredient.name):
+                    continue
+                used = min(ledger[name], float(ingredient.quantity_g))
+                ledger[name] -= used
+                spent[name] = spent.get(name, 0.0) + used
+                # One ingredient draws on at most one pantry item: two entries
+                # both matching it would otherwise each be charged the full
+                # amount, spending the house's stock twice over on one dish.
+                break
+    return spent
+
+
 def inventory_instruction(config: dict) -> str:
     """Prompt line telling the model to build around food already in the house.
 
-    `inventory_to_clear` is a plain list of things to use up ("400g chicken
-    thighs", "half a bag of spinach"). It is a priority, never a constraint:
-    the styles, cuisines and macro budgets still win, because a model told it
-    *must* use an item will wedge it into a breakfast where it doesn't belong.
+    `inventory_to_clear` holds things to use up. An entry may be a bare string
+    ("half a bag of spinach") or carry a quantity in grams; see
+    `inventory_entries`. It is a priority, never a constraint: the styles,
+    cuisines and macro budgets still win, because a model told it *must* use an
+    item will wedge it into a breakfast where it doesn't belong.
+
+    **A quantified item states what is left, not what was there**, read off
+    `config["inventory_ledger"]` — injected per run and decremented between
+    stages by `generate_week_plan`, the same in-memory-only channel
+    `select_nudge_foods` uses for `nudge_foods` and on the same terms: it must
+    never reach disk, and `save_config_keys` is the one write path that could
+    take it there. An exhausted item drops out of the line entirely rather than
+    being announced as gone, since the sentence is a list of things to reach
+    for and a spent item is not one.
+
+    Without a ledger (a single-meal regeneration, or a list with no quantities
+    in it) every entry is named exactly as it was before quantities existed.
 
     Note these items are still costed as ordinary ingredients, so they appear
     on the shopping list — the list says what a recipe needs, not what you have
-    yet to buy.
+    yet to buy. Subtracting the pantry from it is a separate change and needs
+    the ledger to survive the run, which it deliberately does not.
     """
-    items = [
-        str(item).strip()
-        for item in config["inventory_to_clear"]
-        if str(item).strip()
-    ]
+    ledger = config.get("inventory_ledger")
+    items: List[str] = []
+    quantified = False
+    for name, quantity in inventory_entries(config):
+        if quantity is None or ledger is None or name not in ledger:
+            items.append(name)
+            continue
+        remaining = ledger[name]
+        if remaining <= 0:
+            continue
+        items.append(f"{name} ({remaining:.0f}g left)")
+        quantified = True
     if not items:
         return ""
+    # Only stated when an amount is actually shown. A sentence explaining how
+    # to read quantities, in a line carrying none, is a rule about nothing —
+    # and every rule in this prompt costs attention the recipe needs.
+    amount_clause = (
+        "Where an amount is given that is all there is, so do not plan more "
+        "of it than that across the meals in this request. "
+        if quantified
+        else ""
+    )
     return (
         "- We already have these at home and want them used up first — prefer "
         "them over buying more of the same kind of thing, and spread them "
         f"across the day's meals where they genuinely fit: {', '.join(items)}. "
+        f"{amount_clause}"
         "Never force one into a meal it doesn't suit, and never break a meal's "
         "style, cuisine or macro budget to use one up.\n"
     )
@@ -4698,7 +5110,7 @@ def generate_meal_type_week(
 
     Four of the rules it sends exist only because this axis can see the whole
     week at once: `DINNER_VARIETY_RULE` (protein spread across the nights),
-    `BATCH_ROAST_RULE` (which single night gets the long oven cook),
+    `build_batch_roast_rule` (which single night gets the long oven cook),
     `build_cuisine_continuity_rule` (which days share a cuisine, and that they
     do so on purpose) and `SHAKE_ROTATION_RULE` (the other shakes this week).
     None of them can be stated by a per-slot brief, and none of them survive
@@ -4733,7 +5145,7 @@ def generate_meal_type_week(
     batch_roast_instruction = (
         BATCH_ROAST_ANCHOR_RULE
         if anchors_this_axis(long_cook_anchor)
-        else BATCH_ROAST_RULE
+        else build_batch_roast_rule(config, days)
         if meal_type == "dinner" and config["enable_sunday_prep"]
         else ""
     )
@@ -4968,7 +5380,7 @@ def generate_sunday_prep_session(
     a 3rd dish into the session nothing actually asked for.
 
     A week with neither anchor set falls back to `long_oven_cook` alone —
-    the CLI's legacy `enable_sunday_prep` path, where `BATCH_ROAST_RULE`
+    the CLI's legacy `enable_sunday_prep` path, where `build_batch_roast_rule`
     lets the model pick its own day rather than Python anchoring one in
     advance, so there is no slot_id to match against. A week with no
     candidate dish under either path has nothing to aggregate, so this
@@ -5005,7 +5417,7 @@ def generate_sunday_prep_session(
     # into the session even though nothing asked it to.
     #
     # `enable_sunday_prep` alone (the CLI's legacy path, no anchor known in
-    # advance because BATCH_ROAST_RULE lets the model pick freely) still
+    # advance because build_batch_roast_rule lets the model pick freely) still
     # falls back to flag detection — there is no slot_id to match against.
     anchor_ids = {value for value in (long_cook_anchor, bulk_prep_anchor) if value}
     if anchor_ids:
@@ -5457,6 +5869,15 @@ async def generate_week_plan(
     # handing every meal type the same full cap — is what makes the limit
     # genuinely week-wide, since no single call can see more than its own axis.
     seafood_used = 0
+    # The same seed-then-spend shape again, a dict rather than a count: what
+    # is left of the quantified pantry after every stage before this one. Each
+    # stage reads it through `config["inventory_ledger"]` (injected in memory,
+    # never written to disk — see `select_nudge_foods` for the same channel),
+    # so a later meal type is told what an earlier one actually used rather
+    # than being handed the full pantry and writing the same tin into a fourth
+    # recipe. Empty when nothing in the list carries a quantity, which leaves
+    # `inventory_instruction` emitting exactly the line it always did.
+    inventory_ledger = seed_inventory_ledger(config)
 
     by_id = spec.by_id()
     # What the meals this run actually generates may spend: the day's target
@@ -5527,6 +5948,14 @@ async def generate_week_plan(
 
         if progress_callback:
             progress_callback(meal_type, len(cook_days))
+
+        # Publish what is left of the pantry to the stage about to run.
+        # In-memory only, the channel `nudge_foods` already uses — and the
+        # reason `save_config_keys` merges named keys rather than saving the
+        # config it is handed: this one must never reach disk, since a count
+        # decremented by a run that has not happened yet would be a config
+        # file describing a fridge nobody has opened.
+        config["inventory_ledger"] = dict(inventory_ledger)
 
         if all_cook_days:
             # This stage's per-day budget: split what's left of each day
@@ -5675,6 +6104,19 @@ async def generate_week_plan(
                 # call must not discard them — the same "one failure must not
                 # cost what already succeeded" rule as the per-meal-type catch
                 # itself.
+
+            spent = spend_inventory(inventory_ledger, stage_events.values())
+            if note_callback:
+                for name, grams in sorted(spent.items()):
+                    remaining = inventory_ledger[name]
+                    note_callback(
+                        f"{meal_type}: used {grams:.0f}g of {name} from the pantry"
+                        + (
+                            f", {remaining:.0f}g left"
+                            if remaining > 0
+                            else " — none left for the later meals"
+                        )
+                    )
 
             for event in stage_events.values():
                 protein = extract_main_protein(event.recipe)

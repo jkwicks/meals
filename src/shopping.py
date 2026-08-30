@@ -460,6 +460,50 @@ def round_ingredient_quantity(name: str, quantity_g: float, department: str) -> 
     return rounded if rounded > 0 else increment
 
 
+def ingredient_draws_on(pantry_item: str, ingredient_name: str) -> bool:
+    """Whether `ingredient_name` is drawing on the pantry item `pantry_item`.
+
+    The inventory ledger's matcher (`planner.spend_inventory`), here rather
+    than in `planner.py` for the reason every naming fact lives in this module:
+    "are these two ingredient names the same food" already has an answer, and a
+    third notion of it would be a third chance to disagree with the shopping
+    list about whether a week bought one cottage cheese or two.
+
+    **Containment, not the equality `normalize_name` gives.** That key answers
+    "is this the same purchase", which is right for combining lines and too
+    strict here: a pantry entry is written the way you would say it out loud
+    ("chicken thighs") while a recipe names the cut it needs ("Chicken thigh
+    fillets, diced"), and word-sorted equality separates those. So the pantry
+    item's words have to be *present* in the ingredient's, not equal to them.
+
+    Two guards keep containment from over-reaching, and both matter more than
+    the widening does — an ingredient wrongly matched tells later meal types an
+    item is spent when it is still in the fridge, which silently withdraws a
+    priority the user asked for:
+
+    - **Departments must agree**, which is what stops "chicken" being spent by
+      a Chicken broth and "oats" by an Oat milk. Same `categorize_department`
+      the shopping list sorts by and `collect_unique_plants` filters on.
+    - **A state the pantry item states must be matched**, so "frozen sardines"
+      is not drawn down by a tin of them — the distinction `STATE_QUALIFIERS`
+      already exists to keep. An unstated state matches anything, so plain
+      "spinach" is spent by frozen spinach.
+
+    Failing to match is the safe direction and is why these guards are worth
+    their misses (a "Spinach and ricotta filling" is a Dairy & Eggs line and
+    does not draw on spinach): an unmatched ingredient leaves the item unspent,
+    which is exactly how the pantry behaved before it had quantities at all.
+    """
+    pantry_base, pantry_states = resolve_ingredient(pantry_item)
+    ingredient_base, ingredient_states = resolve_ingredient(ingredient_name)
+    pantry_words = set(key_words(pantry_base))
+    if not pantry_words or not pantry_words <= set(key_words(ingredient_base)):
+        return False
+    if pantry_states and pantry_states != ingredient_states:
+        return False
+    return categorize_department(pantry_item) == categorize_department(ingredient_name)
+
+
 def aggregate_recipes(
     recipes: Sequence["Recipe"], offsets: Optional[Sequence[int]] = None
 ) -> ShoppingList:
