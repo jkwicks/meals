@@ -23,6 +23,10 @@ all — there is no "Save" for them, only "Review" (to change them) or
 no model call to be fully decided, which is what `generation.save_grid`
 exists for: it writes `state.week_plan` straight to disk, the same file a
 generation writes, without asking the LLM for anything.
+
+"Discard" is the one button here that asks first. Everything else in this bar
+is reversible or additive; that one throws away inputs which were never
+written to disk and so have nothing to be restored from.
 """
 
 from dataclasses import dataclass
@@ -33,7 +37,19 @@ from nicegui import ui
 from ui_context import UIContext
 from ui_generation import GenerationHandles
 from ui_review import ReviewHandles
-from ui_theme import RADIUS_CARD, SPACE_BASE, SPACE_SECTION, SPACE_TIGHT, TEXT_BODY, TEXT_MICRO
+from ui_theme import (
+    RADIUS_CARD,
+    RADIUS_PANEL,
+    SPACE_BASE,
+    SPACE_HAIR,
+    SPACE_PAGE,
+    SPACE_SECTION,
+    SPACE_TIGHT,
+    SURFACE_PANEL,
+    TEXT_BODY,
+    TEXT_HEAD,
+    TEXT_MICRO,
+)
 
 
 @dataclass
@@ -47,6 +63,64 @@ def build_staged_bar(
     state = ctx.state
     refreshables = ctx.refreshables
 
+    # ---- discard, behind a confirmation --------------------------------
+    # This is the only irreversible button on the page: target overrides,
+    # training edits and pantry rows are never written to disk, so there is
+    # nothing to reload them from — "Discard" is the one action here whose
+    # undo is retyping everything. It sat one unlabelled click away from a
+    # bar whose whole job is to say how much is pending, immediately beside
+    # "Review", which is the button a reader actually wants.
+    #
+    # Built once, outside `bar()`: `bar` is `@ui.refreshable` and repaints on
+    # four topics, so a dialog constructed inside it would stack another copy
+    # into the page on every repaint. Same reason `ui_generation`'s progress
+    # dialog is built at factory time and merely *opened* by the run — see
+    # its comment. The body is its own refreshable so the list of what is
+    # about to be thrown away is current at the moment of opening, not at the
+    # moment of construction.
+
+    @ui.refreshable
+    def discard_body() -> None:
+        changes = state.pending_changes()
+        ui.label(
+            f"Throw away {len(changes)} pending change(s)?"
+        ).classes(f"{TEXT_HEAD} font-semibold text-slate-200")
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_HAIR} w-full"
+        ):
+            for change in changes:
+                ui.label(f"· {change.summary}").classes(f"{TEXT_MICRO} text-slate-400")
+        ui.label(
+            "Target, training and pantry edits are never written to disk, so "
+            "there is nothing to undo this from — they would have to be "
+            "retyped. Grid edits are re-read from the saved week."
+        ).classes(f"{TEXT_MICRO} text-slate-400")
+
+    with ui.dialog() as discard_dialog:
+        with ui.element("div").classes(
+            f"{SURFACE_PANEL} {RADIUS_PANEL} p-{SPACE_PAGE} w-[26rem] max-w-full "
+            f"flex flex-col gap-{SPACE_BASE}"
+        ):
+            discard_body()
+            with ui.element("div").classes(
+                f"flex flex-row flex-wrap items-center justify-end gap-{SPACE_BASE} w-full"
+            ):
+                ui.button("Keep them", on_click=discard_dialog.close).props(
+                    "dense flat no-caps size=sm"
+                ).classes("text-slate-400")
+                # Slate, not rose. Rose already means a failed slot and an
+                # off-target reading; a destructive-action red would be a
+                # third meaning on a hue the palette contract caps at two,
+                # and this dialog exists precisely so the *words* carry the
+                # warning. See the `ui-work` skill's palette table.
+                ui.button(
+                    "Discard changes", icon="delete_sweep", on_click=lambda: on_discard()
+                ).props("dense no-caps size=sm outline").classes("text-slate-200")
+
+    def open_discard() -> None:
+        discard_body.refresh()
+        discard_dialog.open()
+
     async def on_discard() -> None:
         # `reload_from_disk` alone only ever discarded grid edits (it
         # re-reads week_plan.json); a button reading "Discard pending
@@ -54,6 +128,7 @@ def build_staged_bar(
         # away too. `discard_pending_inputs` is the other three quarters —
         # see its docstring for why this is allowed to be stronger than a
         # generation, which deliberately leaves them alone.
+        discard_dialog.close()
         state.discard_pending_inputs()
         await generation.reload_from_disk()
 
@@ -77,7 +152,7 @@ def build_staged_bar(
             )
             ui.label(summaries).classes(f"{TEXT_MICRO} text-amber-200/70 truncate")
             ui.space()
-            ui.button("Discard pending changes", on_click=on_discard).props(
+            ui.button("Discard pending changes", on_click=open_discard).props(
                 "dense flat no-caps size=sm"
             ).classes("text-slate-400")
             ui.button("Review", icon="fact_check", on_click=review.open).props(

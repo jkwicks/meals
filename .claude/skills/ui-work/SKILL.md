@@ -21,12 +21,15 @@ section you need from it; you rarely need all of it:
 | the rail, its buttons, a destination | "The rail's action block", "Module layout" |
 | the Today / Daily View destination | "The Today tab" and its three subsections |
 | the day inspector | "The day inspector" |
-| the review dialog, staged-changes bar, target curve | "The review dialog and the staged-changes bar" |
+| the review dialog, staged-changes bar, target curve | "The review dialog and the staged-changes bar", "Discard asks first" |
+| the Plan panel's banners, the empty state | "Two things a Plan panel says in front of its grid" |
+| the generation progress dialog | "The generation dialog says which meal types are banked" |
 | Insights, any chart | "Insights" |
 | Settings | "Settings' Daily Targets panel", "Settings' three read views" |
 | the shopping drawer | "Shopping list drawer" |
 | PDF / Markdown export | "Printing and PDF export" |
 | tokens, the scale's history | "The type, spacing and radius scale" |
+| surfaces, elevation, a fill that vanished | "The three surfaces" |
 
 ## Where a change goes
 
@@ -127,6 +130,45 @@ absorb growth from both a larger type scale and a wider gap at once.
 `rounded` (cards, boxes, inputs) · `rounded-lg` (dialogs, panels) ·
 `rounded-full` (bars, dots, pills). `rounded-md` and `rounded-xl` are not
 used; both currently appear and are legacy.
+
+## Elevation — three surfaces, and no border may say which
+
+`SURFACE_PAGE` / `SURFACE_PANEL` / `SURFACE_INSET` / `SURFACE_CARD_LIFT` in
+`ui_theme.py`, plus `surface_css()` for the one that is set on `body`.
+
+| | is | painted on |
+|---|---|---|
+| `SURFACE_PAGE` | slate-950, via `surface_css()` on `body` | the ground. It shows in the gutters and between regions and never holds content |
+| `SURFACE_PANEL` | `bg-slate-900` | the header, the rail's wrapper, `ui.tab_panels`, every dialog, the shopping drawer, the canvas's sticky meal-type gutter |
+| `SURFACE_INSET` | `bg-slate-950/30` | a box recessed *into* a panel — a settings read view, an Insights chart frame, the Plan empty state |
+| `SURFACE_CARD_LIFT` | `shadow-sm` | a meal card, raised off its panel |
+
+The app had exactly one of these before: the ground was Quasar's own
+`#121212`, the tab panels were `bg-transparent` on top of it, and there was a
+single `shadow-*` class in the whole front end. Nothing read as foreground.
+
+Four things about it are worth not re-deriving:
+
+- **A card is `SURFACE_PANEL` plus its status tint, and that is free.** Every
+  `STATUS_STYLES` fill is translucent, so painting the panel slate-900 put
+  each tint onto slate-900 with no call site touched.
+- **Elevation is fill and shadow, never border.** A card's border and 3px left
+  accent are structural colour (four slot statuses); a neutral border bright
+  enough to read as raised would be a fifth meaning on that exact edge.
+- **Two fills had to move with the ground, both for the same reason.** A
+  translucent fill is only visible against what is behind it: the cook tint
+  went `emerald-400/[0.07]` → `/[0.12]` (the one card that costs you an
+  evening was the least distinguishable thing on the page), and skip went
+  `slate-900/40` → `slate-950/40`, since at slate-900 over a slate-900 panel
+  it composited to *exactly nothing*. Anything at `/60` or below over the old
+  ground is worth re-checking against the new one; `ui_insights`' adherence
+  tiles and `ui_catalog_browser`'s row hover were the two that vanished.
+- **The rail's surface is a wrapper div, not the `ui.tabs()`.** `.q-tabs`
+  carries a height of its own and ignores `self-stretch`, so the painted
+  column stopped under the last tab. That was invisible while the ground was
+  `#121212` and is not now — a general lesson: raising the contrast between
+  surfaces exposes every element that was sized to its content rather than to
+  its column.
 
 ## Colour: structural, semantic and categorical are three different things
 

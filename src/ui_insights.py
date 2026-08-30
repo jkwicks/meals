@@ -66,6 +66,7 @@ from ui_theme import (
     SPACE_PAGE,
     SPACE_SECTION,
     SPACE_TIGHT,
+    SURFACE_INSET,
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
@@ -382,7 +383,7 @@ def _adherence_tiles(view) -> None:
         for status, count in view.counts.items():
             with ui.element("div").classes(
                 f"flex flex-col gap-{SPACE_HAIR} px-{SPACE_SECTION} py-{SPACE_BASE} "
-                f"{RADIUS_CARD} bg-slate-900/60 min-w-[5.5rem]"
+                f"{RADIUS_CARD} {SURFACE_INSET} min-w-[5.5rem]"
             ):
                 with ui.element("div").classes(
                     f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} min-w-0"
@@ -399,7 +400,7 @@ def _adherence_tiles(view) -> None:
         if view.as_planned_pct is not None:
             with ui.element("div").classes(
                 f"flex flex-col gap-{SPACE_HAIR} px-{SPACE_SECTION} py-{SPACE_BASE} "
-                f"{RADIUS_CARD} bg-slate-900/60 min-w-[5.5rem]"
+                f"{RADIUS_CARD} {SURFACE_INSET} min-w-[5.5rem]"
             ):
                 ui.label(f"{view.as_planned_pct:.0f}%").classes(
                     f"{TEXT_HEAD} font-semibold text-slate-200"

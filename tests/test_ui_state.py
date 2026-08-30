@@ -2736,3 +2736,77 @@ class TestChartLabelsAreFormattedInTheViewModel(unittest.TestCase):
         about every band but its own — the encoding moves into words."""
         view = ui_state.intake_panel(planned(4), {"daily_actuals": logged(4)})
         self.assertIn("dashed line is the plan", view.detail)
+
+
+class TestGenerationStagesBankWhatIsActuallyDone(unittest.TestCase):
+    """The progress dialog's per-stage checklist.
+
+    Its whole difficulty is that `generate_week_plan`'s `progress_callback`
+    fires *before* each meal type's call, so the count it hands back is
+    stages **started**, never stages finished. Reading it as "finished" would
+    tick a stage as banked up to three minutes before its recipes exist —
+    which is precisely the window this list is being watched during.
+    """
+
+    STAGES = ("dinner", "lunch", "breakfast", "snack")
+
+    def views(self, started, cooks=None, complete=False):
+        return ui_state.generation_stage_views(
+            self.STAGES, started, cooks or {}, complete
+        )
+
+    def states(self, *args, **kwargs):
+        return [v.state for v in self.views(*args, **kwargs)]
+
+    def test_nothing_started_is_four_pending_stages(self):
+        self.assertEqual(self.states(0), [ui_state.GENERATION_STAGE_PENDING] * 4)
+
+    def test_the_first_callback_marks_the_first_stage_running_not_done(self):
+        """One `on_meal_type` has fired, so dinner is in flight — and is the
+        one thing on screen that must not read as finished."""
+        self.assertEqual(
+            self.states(1),
+            [
+                ui_state.GENERATION_STAGE_RUNNING,
+                ui_state.GENERATION_STAGE_PENDING,
+                ui_state.GENERATION_STAGE_PENDING,
+                ui_state.GENERATION_STAGE_PENDING,
+            ],
+        )
+
+    def test_a_later_stage_starting_is_what_banks_the_one_before_it(self):
+        self.assertEqual(
+            self.states(3),
+            [
+                ui_state.GENERATION_STAGE_BANKED,
+                ui_state.GENERATION_STAGE_BANKED,
+                ui_state.GENERATION_STAGE_RUNNING,
+                ui_state.GENERATION_STAGE_PENDING,
+            ],
+        )
+
+    def test_the_last_stage_is_banked_only_by_the_run_returning(self):
+        """No callback ever fires after the final meal type, so without
+        `complete` the last line would spin forever on a successful run."""
+        self.assertEqual(self.states(4)[-1], ui_state.GENERATION_STAGE_RUNNING)
+        self.assertEqual(
+            self.states(4, complete=True), [ui_state.GENERATION_STAGE_BANKED] * 4
+        )
+
+    def test_a_run_that_came_apart_leaves_the_stage_that_was_in_flight_running(self):
+        """`complete` stays False when `generate_week_plan` raises, and that
+        reads correctly: the stage still showing as running is the one that
+        was in flight when the run failed."""
+        self.assertEqual(self.states(2)[1], ui_state.GENERATION_STAGE_RUNNING)
+
+    def test_a_stage_prints_no_count_until_its_callback_reported_one(self):
+        """`cooks` is filled by the same callback, so a pending stage has
+        genuinely not been counted — a `0` there would claim it has nothing
+        to cook, which is a different and often wrong statement."""
+        views = self.views(2, cooks={"dinner": 4, "lunch": 0})
+        self.assertEqual(views[0].detail, "4 recipe(s)")
+        self.assertEqual(views[1].detail, "nothing to cook")
+        self.assertEqual(views[2].detail, "")
+
+    def test_labels_read_as_the_dialog_prints_them(self):
+        self.assertEqual([v.label for v in self.views(0)][:2], ["Dinners", "Lunches"])

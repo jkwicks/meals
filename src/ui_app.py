@@ -144,12 +144,14 @@ from ui_theme import (
     SPACE_HAIR,
     SPACE_SECTION,
     SPACE_TIGHT,
+    SURFACE_PANEL,
     TEXT_BODY,
     TEXT_HEAD,
     TEXT_MICRO,
     WEEK_SELECTION_LABELS,
     card_hover_css,
     chain_css,
+    surface_css,
     typography_css,
     week_grid_scroll,
 )
@@ -194,6 +196,11 @@ async def planner_page() -> None:
         # `ui_theme.typography_css` for why the figure stack is redefined
         # through `.font-mono` rather than through 39 edited call sites.
         typography_css()
+        + "\n"
+        # The page ground, which is what every panel below is raised off. See
+        # `ui_theme.surface_css` for why Quasar's own dark body colour had to
+        # be overridden rather than left alone.
+        + surface_css()
         + "\n"
         # Quasar's page container assumes comfortable padding; a 7-column week
         # needs the horizontal space back.
@@ -243,7 +250,9 @@ async def planner_page() -> None:
     insights = build_insights(ctx, biometrics)
     staged_bar = build_staged_bar(ctx, review, generation)
 
-    with ui.header(bordered=True).classes(f"bg-slate-900 px-{SPACE_SECTION} py-{SPACE_BASE} flex flex-col gap-{SPACE_BASE}"):
+    with ui.header(bordered=True).classes(
+        f"{SURFACE_PANEL} px-{SPACE_SECTION} py-{SPACE_BASE} flex flex-col gap-{SPACE_BASE}"
+    ):
         with ui.element("div").classes(f"flex flex-row items-baseline gap-{SPACE_SECTION}"):
             # The wordmark. CHANGE-QUEUE.md filed this for the top of the
             # rail, on the stated premise that the app named itself nowhere on
@@ -342,6 +351,7 @@ async def planner_page() -> None:
         telemetry.telemetry,
         cards.canvas,
         plan.week_failures,
+        plan.empty_state,
         shopping.shopping_panel,
         review.targets_editor,
         review.training_editor,
@@ -625,22 +635,51 @@ async def planner_page() -> None:
         # whichever day is being browsed, so an auto-width rail would resize —
         # and shift the canvas sideways out from under the header's grid —
         # every time you stepped through the week. See `RAIL_WIDTH_CLASS`.
-        with ui.tabs().props("vertical dense").classes(
-            f"bg-slate-900 border-r border-slate-800 shrink-0 py-{SPACE_BASE} {RAIL_WIDTH_CLASS}"
-        ) as rail:
-            plan_tab = ui.tab("Plan", icon="calendar_view_week").props("no-caps")
-            today_tab = ui.tab("Daily View", icon="today").props("no-caps")
-            rail_actions()
-            library_tab = ui.tab("Library", icon="menu_book").props("no-caps")
-            insights_tab = ui.tab("Insights", icon="insights").props("no-caps")
-            settings_tab = ui.tab("Settings", icon="settings").props("no-caps")
-            # The label becomes the day being browsed ("Daily View · Sun 23 Aug",
-            # or "Mon 24 Aug" once you step away). Injected rather than computed
-            # here: `build_today` owns which day is on screen, and it ran well
-            # before this tab existed.
-            today.bind_tab(today_tab)
+        # The rail's *surface* is this wrapper, not the `ui.tabs()` inside
+        # it. `.q-tabs` sizes to its own tabs and ignores `self-stretch` (it
+        # carries an explicit height of its own), so painting the surface on
+        # it left the column ending under the last tab with the row's ground
+        # showing for the rest of the height. That was invisible while the
+        # page ground was Quasar's `#121212` — near enough to `slate-900` to
+        # pass — and is not once the ground is `SURFACE_PAGE`. A plain div
+        # has no such height and does take the row's `items-stretch`.
+        #
+        # `flex-nowrap` for the reason the `ui-work` skill gives: `flex-col`
+        # does not undo Quasar's `flex-wrap: wrap`, and a wrapping column
+        # whose content outgrows it lays a second column out beside the first
+        # rather than overflowing.
+        #
+        # `ui.tab_panels(rail, ...)` binds to the tabs element by reference,
+        # never by DOM position, so wrapping it changes nothing about the
+        # wiring below.
+        with ui.element("div").classes(
+            f"{SURFACE_PANEL} border-r border-slate-800 shrink-0 self-stretch "
+            f"flex flex-col flex-nowrap {RAIL_WIDTH_CLASS}"
+        ):
+            with ui.tabs().props("vertical dense").classes(
+                f"bg-transparent w-full py-{SPACE_BASE}"
+            ) as rail:
+                plan_tab = ui.tab("Plan", icon="calendar_view_week").props("no-caps")
+                today_tab = ui.tab("Daily View", icon="today").props("no-caps")
+                rail_actions()
+                library_tab = ui.tab("Library", icon="menu_book").props("no-caps")
+                insights_tab = ui.tab("Insights", icon="insights").props("no-caps")
+                settings_tab = ui.tab("Settings", icon="settings").props("no-caps")
+                # The label becomes the day being browsed ("Daily View · Sun 23 Aug",
+                # or "Mon 24 Aug" once you step away). Injected rather than computed
+                # here: `build_today` owns which day is on screen, and it ran well
+                # before this tab existed.
+                today.bind_tab(today_tab)
 
-        with ui.tab_panels(rail, value=plan_tab).classes("w-full flex-1 bg-transparent p-0"):
+        # `SURFACE_PANEL`, not the `bg-transparent` this carried: a
+        # destination panel is a surface in its own right, and leaving it
+        # transparent put every card straight onto the page ground with
+        # nothing between them to be raised off. See `ui_theme`'s elevation
+        # table — this one line is what makes a meal card's translucent status
+        # tint composite onto slate-900 rather than onto the body.
+        with ui.tab_panels(rail, value=plan_tab).classes(
+            f"w-full flex-1 {SURFACE_PANEL} p-0"
+        ):
             with ui.tab_panel(plan_tab).classes("p-0"):
                 plan.panel()
             with ui.tab_panel(today_tab).classes("p-0"):
