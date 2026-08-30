@@ -166,6 +166,29 @@ def week_grid_scroll(inset: bool = False):
     return element.on("scroll", js_handler=WEEK_GRID_SCROLL_SYNC_JS)
 
 
+# ---- the Library table ----------------------------------------------------
+# The Library's eight *data* columns: name, meal type, servings, calories,
+# protein, carbs, fat, last eaten. Two more columns bracket them — the
+# favourite toggle on the left, edit/delete on the right — and are deliberately
+# not tracks in this list: they are siblings of the clickable row body, never
+# cells inside it, so a click on one cannot bubble into the handler that opens
+# the recipe. `ui_cards.meal_card` and the old catalog card made exactly the
+# same split, for exactly that reason; here it also means one click handler per
+# row instead of one per cell.
+CATALOG_TABLE_COLS = (
+    "grid-cols-[minmax(9rem,1fr)_5.5rem_4rem_4.5rem_3.5rem_3.5rem_3.5rem_5.5rem]"
+)
+CATALOG_ROW_LEAD = "w-8"  # the favourite toggle
+CATALOG_ROW_TAIL = "w-16"  # edit + delete
+
+# Below this width the eight tracks are all at their floors, and the table
+# scrolls horizontally rather than crushing a recipe name to one word per line
+# — the same choice `WEEK_GRID_COLS` makes for the week's day columns. The
+# figure is the tracks' own floors plus the two bracketing columns and the
+# gaps between them; it lives beside them so the two can't drift apart.
+CATALOG_TABLE_MIN_W = "min-w-[46rem]"
+
+
 # The two cached weeks the app keeps on disk at once (see
 # `repository.LocalJSONRepository._week_plan_path`). "current" is the
 # original single-file layout (week_plan.json); "next" is stored alongside it

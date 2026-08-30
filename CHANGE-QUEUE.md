@@ -1,7 +1,8 @@
 # Change queue
 
 Every unfinished item and known defect, consolidated from `ui-redesign.md`,
-`future-ideas.md` and `ISSUES.md`, in recommended priority order.
+`future-ideas.md`, `ISSUES.md` and the 2026-08-30 front-end review
+(`glm-suggestions.md`), in recommended priority order.
 
 **Why this file exists separately from the other two.** `ui-redesign.md` is
 work that waits on nothing and `future-ideas.md` is work that waits on a
@@ -78,14 +79,31 @@ now ranked 1–3 is in the second state, with no recommendation standing. The
 corollary is that "blocked by: one decision" is not a reason to skip an item
 when picking what to do next — it is a reason to start it with a question.
 
+**Why the front-end block ranks 5–7 rather than higher or lower.** Items
+1–4 are signals the app cannot currently see at all; 5–7 are the surface
+every session already passes through, and none is blocked on work — only the
+accent and the wordmark wait on a name. They rank below 1–4 because polish on
+a working surface is worth less than a signal that does not exist, and above
+the API entries because those have no consumer today: `/api` is read-only,
+nothing outside NiceGUI calls it, and both the write routes and the generated
+types are groundwork for a front end nobody has asked for. Every item in 5–7
+was verified against the running code on 2026-08-30 rather than against the
+review that raised them — **four of that review's proposals did not survive
+that check** and are recorded as deliberately excluded inside the entries, so
+they are not re-filed as fresh ideas later.
+
 **This file's own cross-references are by name, not by number**, the same
 rule CLAUDE.md states for citing it from anywhere else. They had gone stale
 by one after an earlier renumber — "item 8" pointing at what had become
 item 7, in three places — which is the argument for the rule rather than
 against it: a number here has a shelf life of exactly one release, and this
-renumber (2–9 → 1–8) is the fifth. The anchor links carry a number and are
-the one thing a renumber has to be checked against; all nine were re-checked
-against their headings this time.
+renumber is the sixth. This one is an *insertion* rather than a closure —
+the front-end block below took 5–7 and pushed the three API entries and food
+waste down to 8–11 — which is the same hazard from the other direction, and
+the first time this file has had one. The anchor links carry a number and are
+the one thing a renumber has to be checked against; the four moved anchors
+were re-checked against their headings, and the three body cross-references
+all point at items 2 and 4, which did not move.
 
 ## Size scale
 
@@ -105,12 +123,16 @@ against their headings this time.
 | 2 | [Adherence and workout-completion tracking (5b)](#2--adherence-and-workout-completion-tracking-5b) | Feature | L | two decisions |
 | 3 | [Pantry inventory ledger with real quantities](#3--pantry-inventory-ledger-with-real-quantities) | Feature | L | two decisions |
 | 4 | [Trend charts / the Insights destination (5c)](#4--trend-charts--the-insights-destination-5c) | Feature | L | **data** |
-| 5 | [Write and generation routes on the API](#5--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
-| 6 | [OpenAPI schema is off, so there are no generated types](#6--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
-| 7 | [No auth on `/api`](#7--no-auth-on-api) | Feature | S | only if exposed |
-| 8 | [Food waste tracking](#8--food-waste-tracking) | Feature | XL | not scoped |
+| 5 | [The front end declares no typography, and its muted text is below AA](#5--the-front-end-declares-no-typography-and-its-muted-text-is-below-aa) | Tech debt | S | — |
+| 6 | [The UI reads flat, and three moments are missing](#6--the-ui-reads-flat-and-three-moments-are-missing) | Tech debt | M | — |
+| 7 | [The app has no name, mark, accent or favicon](#7--the-app-has-no-name-mark-accent-or-favicon) | Feature | S | one decision |
+| 8 | [Write and generation routes on the API](#8--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 9 | [OpenAPI schema is off, so there are no generated types](#9--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
+| 10 | [No auth on `/api`](#10--no-auth-on-api) | Feature | S | only if exposed |
+| 11 | [Food waste tracking](#11--food-waste-tracking) | Feature | XL | not scoped |
 
-Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed), each XS–M
+Plus six smaller deferrals in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed)
+and ten [front-end craft items](#front-end-craft-items--small-none-urgent), each XS–M
 and none urgent.
 
 ---
@@ -277,7 +299,155 @@ only a session the watch missed needs the manual mark that item is about.
 
 ---
 
-## 5 — Write and generation routes on the API
+## 5 — The front end declares no typography, and its muted text is below AA
+
+**Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** —
+&nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
+the code the same day
+
+`grep font-family src/` returns nothing. The one `ui.add_css` call in the app
+sets page padding, the leftover-chain CSS and the card hover glow and stops
+there, so the whole UI renders in Quasar's default Roboto and the 39
+`font-mono` figures render in whatever monospace the viewer's OS happened to
+pick. For an app whose primary surface is seven columns of macros meant to be
+scanned vertically, that is the largest gap between what it does and how it
+looks.
+
+| | change | size | note |
+|---|---|---|---|
+| a | Declare a UI stack and a figure stack in `ui_app.py`'s existing `add_css` | XS | Self-hosted or a system stack — no CDN, matching the app's otherwise offline-capable posture |
+| b | `font-feature-settings: "tnum"` on figure text | XS | The 39 `font-mono` sites already align; this is for the telemetry and card figures that are not mono |
+| c | Contrast floor — no `text-slate-600` at any size, no `text-slate-500` at `TEXT_MICRO` | S | **102 sites**, not the ~15 the review estimated: 78 `text-slate-500`, 24 `text-slate-600` |
+
+(c) is the only one with real cost, and it is a defect rather than a
+preference: `slate-600` on `slate-900` measures about 2.3:1 and `slate-500`
+about 3.9:1 against AA's 4.5:1 floor for small text — and `TEXT_MICRO` is
+10px, so the worst pairing in the app is also one of its most common. The
+rule belongs in the `ui-work` skill's colour section once applied, beside the
+palette table, where `slate` is already documented as "the neutral ground,
+not a meaning".
+
+**`TEXT_MICRO` 10px → 11px is filed here and must not ride along with (a)–(c).**
+The review costs it as a tiny one-line change; it *is* one line, and the cost
+is entirely verification. `RAIL_WIDTH_PX` is pinned at 168,
+`WEEK_GRID_HEADER_INSET_STYLE` derives the header grid's position from it, day
+columns floor around 110px, and `ui_cards.meal_card` carries a comment saying
+its status badge row is "the one row on the card with no width to spare". A
+10% bump on the most-used size in a nine-column layout can reflow all of
+that. Do it alone, measure at 1280px and 1440px, and mirror the new value
+into the skill's type table — that table is the canonical statement of the
+scale, so a change made only in `ui_theme.py` leaves the contract lying.
+
+---
+
+## 6 — The UI reads flat, and three moments are missing
+
+**Type:** Tech debt &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:** —
+&nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified against
+the code the same day
+
+There is exactly one `shadow-*` class in the entire front end
+(`ui_generation.py`'s progress dialog). Everything else is `slate-900`/`950`
+fills separated by 1px borders, so at this density every surface carries
+identical visual weight and nothing reads as foreground. That is the accurate
+core of the review.
+
+| | change | size | note |
+|---|---|---|---|
+| a | Three surfaces — page `slate-950`, panels/rail/dialogs `slate-900`, cards `slate-900` + `shadow-sm` | M | **Fills and shadows only.** See the trap below |
+| b | Brighten the cook-card fill `emerald-400/[0.07]` → `/0.12` | XS | One line in `ui_theme.STATUS_STYLES`, reversible |
+| c | Empty-state hero for a week that has never been generated | S | New branch in `ui_plan.panel()` |
+| d | Per-stage checkmarks in the generation dialog | XS | `on_meal_type` already fires per meal type with its cook count |
+| e | Confirmation on "Discard pending changes" | XS | `ui_staged_bar.on_discard` throws away grid edits *and* pending inputs with no prompt |
+
+**The trap in (a): the card border is already spoken for.** The review
+proposes giving cards "a brighter border (`slate-700/60`)", which collides
+head-on with `STATUS_STYLES`, where a card's border and its 3px left accent
+are *structural* colour — emerald cook, sky leftover, slate skip, rose not
+generated. A neutral border bright enough to read as elevation would compete
+with four meanings already living on that exact edge, and would read as a
+fifth slot status, which the skill names as the specific thing not to do.
+Elevation has to come from fill and shadow; the borders stay where the
+palette contract put them.
+
+**(d) is an hour, not the two-to-three days the review costs it at.**
+`ui_generation.py` already builds a persistent dialog with a
+`linear_progress` bar, a status label and a live `ui.log` fed by
+`note_callback`, and `on_meal_type` fires *on the loop* before each stage
+with the meal type and its recipe count. Everything a staged readout needs is
+already arriving; only the rendering is missing. Worth correcting in writing
+because the review's own phasing puts (d) in a three-day block and it would
+otherwise be deferred on a cost it does not have.
+
+**(c) does not reuse an existing gate.** The review says `state.week_plan is
+None` "already gates the shopping list the same way" — it gates the PDF and
+HTML *exports* in `ui_app.py`. The grid renders SKIP cards off the spec
+regardless of whether a plan exists, so this is a new branch, not a moved one.
+
+**Two of the review's items under this theme are deliberately excluded, and
+should not be re-filed.** Card interior padding, proposed as `SPACE_TIGHT` →
+`SPACE_BASE`, rests on a misread: `meal_card` is already `p-{SPACE_BASE}` and
+the `SPACE_TIGHT` is the row gap, which is exactly the job the spacing scale
+assigns it ("between rows inside one card"). And hiding the Insights
+destination until enough data exists contradicts the decision recorded in
+`ui_insights.py`'s own docstring — the empty state is deliberate, reads live
+counts so the message ages correctly, and now prints `adaptive_tdee_view`'s
+verdict rather than restating the rule; hiding it would additionally make the
+rail's shape depend on how much biometric data you happen to hold.
+
+---
+
+## 7 — The app has no name, mark, accent or favicon
+
+**Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** one
+decision &nbsp;·&nbsp; **Source:** `glm-suggestions.md` (2026-08-30), verified
+against the code the same day
+
+`ui.run(title="AI Weekly Meal Planner")` is the only place the app names
+itself, and that string is a description rather than a name. Nothing appears
+on screen at all: the page opens straight into the week date pill and the
+grid, and the browser tab carries NiceGUI's default icon.
+
+**The decision is the name**, and it blocks (b) and (c) but not (a) or (d).
+
+| | change | size | note |
+|---|---|---|---|
+| a | Favicon | XS | `favicon=` is a kwarg on `ui.run()` — an emoji or an SVG path, *not* `add_head_html` as the review proposed. Unblocked: any mark will do |
+| b | Wordmark at the top of the rail, above the Plan tab | S | Must not measure wider than `RAIL_WIDTH_PX` |
+| c | One named accent token, used only on Generate and the wordmark | S | Must clear the palette table first |
+| d | Emoji → Material icons, **both** ⚡ sites together | S | A paired change; see below |
+
+**(b)'s constraint is not cosmetic.** `RAIL_WIDTH_CLASS` is pinned because
+`ui.tabs()` sizes a vertical rail to its widest child, and
+`WEEK_GRID_HEADER_INSET_STYLE` insets the header's copy of the week grid by
+exactly that many pixels so it sits over the canvas. Anything in the rail
+measuring wider slides every day's telemetry off its column — which is why
+every existing `rail_button` is `w-full`, `TEXT_MICRO` and `align=left`
+rather than intrinsically sized. A wordmark is an ordinary non-tab child of
+`ui.tabs()`, the same shape `rail_actions` already uses, so the mechanism
+exists; only the width rule has to be honoured.
+
+**(c) has to clear the palette table before a hue is picked.** Each hue there
+means at most two things and a third meaning is named as the specific thing
+not to do; amber, emerald, sky, rose, violet, orange, cyan and indigo are all
+spoken for. A brand accent is a ninth role, so it needs an unclaimed hue or a
+documented exception — not a quiet reuse of Quasar's `primary`, which is what
+happens today and is why the Generate button currently has no accent anyone
+chose.
+
+**(d) is a paired change, not a find-and-replace.** ⚡ appears in two
+unrelated places: `ui_theme.PREP_BADGE_STYLES` ("Prepped on Sun") and
+`ui_telemetry`'s day marker, where `•` means a target override and `⚡` an
+edited training session. Swapping one and leaving the other has one glyph
+meaning two things in adjacent surfaces. The skill also records that ⚡ and ❄️
+are load-bearing rather than decorative — they are what let the fridge/freezer
+badges give up their hues, which is what freed cyan for fibre — so a
+replacement icon has to carry the same weight the emoji does, and `•`/`⚡`
+has to move as a pair or not at all.
+
+---
+
+## 8 — Write and generation routes on the API
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5, deliberately out of scope
@@ -299,7 +469,7 @@ recorded decision with a known cost rather than an assumption.
 
 ---
 
-## 6 — OpenAPI schema is off, so there are no generated types
+## 9 — OpenAPI schema is off, so there are no generated types
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -318,7 +488,7 @@ against the NiceGUI app object.
 
 ---
 
-## 7 — No auth on `/api`
+## 10 — No auth on `/api`
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Source:**
 `ui-redesign.md` phase 5
@@ -335,7 +505,7 @@ not before.
 
 ---
 
-## 8 — Food waste tracking
+## 11 — Food waste tracking
 
 **Type:** Feature &nbsp;·&nbsp; **Size:** XL (not scoped) &nbsp;·&nbsp;
 **Source:** `future-ideas.md` 5c, "Not scoped at all yet"
@@ -367,6 +537,29 @@ small enough to fold into adjacent work. Listed so the queue is complete.
 | No daily fibre target | Feature | M | `fiber_g` is reported everywhere and budgeted nowhere, deliberately — it has no term in `calories ≈ 4p + 4c + 9f`. A real target needs a term in `calculate_macro_targets` and a per-slot share in `split_targets`. Displaying `32/xx` today would invent a goal the planner never aimed at. |
 | The bulk-prep **lunch** anchor keeps its from-scratch prep time | Bug (minor) | XS | `ui_state.slot_views` collapses a prep-session dish to `SUNDAY_PREP_REHEAT_MINUTES` on `sunday_prepped and event.meal_type == "dinner"` — a test written when only the long cook was anchored. `apply_batch_selections` anchors bulk prep on **lunch**, so that card shows the full cook time for a dish that was cooked on prep day. Found while fixing the fridge-day origin (below); left alone deliberately, since "how long does it take" is a different question from "how old is it" and the shake still has to be excluded either way. |
 | Fast 800's calorie ceiling as a hard target | Feature | S | Currently expressed as food-selection guidance inside whatever budget the day was already given, because `hydrate_dynamic_targets` owns every day's calorie number and a second diet-style-driven adjustment would double-count. If the real ceiling is ever wanted, it belongs *inside* `hydrate_dynamic_targets`, not as a config knob beside it. |
+
+---
+
+## Front-end craft items — small, none urgent
+
+Raised by the same 2026-08-30 review and verified against the code, but each
+individually too small to rank against the list above. All are XS–S, and each
+folds naturally into whichever of items 5–7 is already touching that file —
+which is the point of listing them here rather than filing ten entries that
+would drown the ranking this file exists to provide.
+
+| Item | Type | Size | Detail |
+|---|---|---|---|
+| No line-height tokens | Tech debt | S | The type scale carries four sizes and no matching leading, so multi-line prose in Insights and Settings sets at the same tightness as a one-line card figure. A `leading-*` per scale step, added to the skill's type table alongside the sizes. |
+| Toasts are the one off-brand component | Tech debt | S | `ui.notify` renders stock Quasar — its own radius, type and colour — and is used at ~15 call sites in `ui_generation.py` alone. Restyle globally from `ui_app.py`'s `add_css`, not per call. |
+| The phase-2 token sweep never finished | Tech debt | S | A literal `p-6` in `ui_cards.py`'s recipe dialog where `SPACE_PAGE` is the token, ~40 `mt-*`/`mb-*` margins across nine files, and stray `rounded-md`/`rounded-xl`. All three are named in the skill as deliberate phase-1 leftovers for phase 2, which restructured containers and did not come back for them. |
+| No entrance motion on the grid | Feature | XS | 28 cards appear at once on load. A per-index `transition-delay` staggered over ~200ms is pure CSS emitted once from the page function — note `ui.add_css` from inside a `@ui.refreshable` stacks a copy into the head on every repaint, so it must not be emitted from `canvas`. |
+| Panel refreshes blink rather than cross-fade | Feature | S | A `duration-150` opacity transition on refreshable containers. Cheapest of the motion items and the most visible, since a refresh fires on nearly every edit. |
+| The recipe dialog has no entrance | Feature | XS | The most-opened modal in the app appears instantly. A scale-0.98→1 over `duration-200`. |
+| The shopping drawer has no loading state | Feature | S | It blanks during a plan load rather than showing a skeleton. Smallest payoff of the five motion items — the load is usually fast enough not to be seen. |
+| Settings reads like a debug panel | Feature | S | Internal vocabulary on a user-facing surface: "sync checkpoints", `readiness_log`, raw OpenRouter model ids. Labels only — the three integration dialogs stay read-only, per phase 6e's "the row that owns a piece of state keeps owning it". |
+| Tooltip placement and delay vary | Tech debt | XS | ~29 tooltip sites, several already `max-w-xs` and several not. A consistency pass, no behaviour change. |
+| Nothing on the page reads as its title | Feature | XS | The scale tops out at `TEXT_DISPLAY` (18px), used for dialog titles. Promote the week date pill in `ui_telemetry.week_banner` to that weight so *it* anchors the page — **not** a fifth size, which the skill names as the thing to resist. |
 
 ---
 

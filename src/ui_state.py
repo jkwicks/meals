@@ -64,7 +64,7 @@ from nutrition_engine import (
     propose_training_schedule,
     resolve_current_weight_kg,
 )
-from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository
+from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository, catalog_matches
 from ui_theme import (
     LINK_COLOURS,
     LINK_SOURCE_MEAL,
@@ -445,6 +445,12 @@ class PlannerState:
     # whole point is that a browser tab's list doesn't jump around under a
     # card the user is mid-click on.
     recipe_catalog: List[dict] = field(default_factory=list)
+    # `meal_history.json` as it stood at page load — one entry per cooked day,
+    # carrying `recipe_names`, and the only record anywhere of *when* a recipe
+    # was actually eaten. It backs the Library table's "Last eaten" column and
+    # nothing else. Read once and kept, exactly like `recipe_catalog` above:
+    # the one thing that appends to it is a generation, which reloads it.
+    history: List[dict] = field(default_factory=list)
     catalog_search: str = ""
     # The full-screen catalog browser's own filters — separate from
     # catalog_search above so typing in one surface doesn't silently refilter
@@ -453,6 +459,14 @@ class PlannerState:
     catalog_browser_search: str = ""
     catalog_browser_meal_type: str = "All"
     catalog_browser_favorites_only: bool = False
+    # Which column the Library table is ordered by, and which way. Session
+    # state like every other filter above it — a sort is a way of looking at
+    # the catalog, not a fact about it, so it resets with the tab rather than
+    # reaching `config/`. The default reproduces the card grid's own order
+    # (see `CATALOG_SORT_COLUMNS`), so replacing the grid with a table moved
+    # nothing on first paint.
+    catalog_browser_sort: str = "favorite"
+    catalog_browser_sort_desc: bool = False
     # Which card the swap modal is open for, and its in-progress filter/pick.
     # Held on state rather than as dialog-local variables so `swap_dialog_body`
     # can be a plain `@ui.refreshable` that reads state, the same pattern
@@ -525,6 +539,7 @@ class PlannerState:
         )
         state._original_training_schedule = [dict(session) for session in state.training_schedule]
         state.recipe_catalog = await repository.load_recipe_catalog()
+        state.history = await repository.load_history()
         await state.reload_plan(repository)
         return state
 
@@ -966,6 +981,52 @@ class PlannerState:
         # read live off week_plan.cook_events — no _spec rebuild needed.
         self.edited = True
         return None
+
+    # ---- the Library table ------------------------------------------
+
+    def catalog_rows(self) -> List["CatalogRow"]:
+        """Every catalog entry passing the Library's filters, as table rows,
+        in the order its column headers currently ask for.
+
+        Filter, projection and sort are one call because a table is one
+        answer: the widget module renders what it is handed rather than
+        deciding any part of it, which is what makes the whole column set
+        testable without a NiceGUI harness. `catalog_matches` is the same
+        filter `/api/recipes` uses — see its note in `repository.py` for what
+        happened the last time those two were written out separately.
+        """
+        return sort_catalog_rows(
+            build_catalog_rows(
+                [
+                    entry
+                    for entry in self.recipe_catalog
+                    if catalog_matches(
+                        entry,
+                        favorites_only=self.catalog_browser_favorites_only,
+                        meal_type=self.catalog_browser_meal_type,
+                        search=self.catalog_browser_search,
+                    )
+                ],
+                self.history,
+            ),
+            self.catalog_browser_sort,
+            self.catalog_browser_sort_desc,
+        )
+
+    def sort_catalog_by(self, column: str) -> None:
+        """Clicking a column header: the same column flips direction, a new
+        column starts ascending. An unknown column is ignored rather than
+        stored, so a header added to the table without a key in
+        `CATALOG_SORT_COLUMNS` fails visibly (nothing happens) instead of
+        silently resetting the order the next repaint.
+        """
+        if column not in CATALOG_SORT_COLUMNS:
+            return
+        if self.catalog_browser_sort == column:
+            self.catalog_browser_sort_desc = not self.catalog_browser_sort_desc
+        else:
+            self.catalog_browser_sort = column
+            self.catalog_browser_sort_desc = False
 
     def planning_config(self, *, ignore_overrides_for: Optional[str] = None) -> dict:
         """Config as the *next* generation will see it.
@@ -1877,6 +1938,265 @@ def slot_target_budget(state: PlannerState, view: SlotView) -> Optional[dict]:
         return None
     source_id = slot.id if slot.mode == MODE_COOK else slot.source
     return budgets.get(source_id or "")
+
+
+# ---- the Library's row view model ----------------------------------------
+# The Library destination is a table, and every column in it except the name
+# is *derived*: per-serving macros off a validated `Recipe`, and a last-cooked
+# date read out of `meal_history.json`. Both derivations live here rather than
+# in `ui_catalog_browser` for the standing reason this module exists — it is
+# the only UI module with tests, and a column quietly reading the wrong field
+# is exactly the failure an element-tree harness could not see.
+
+
+def catalog_slot_view(entry: dict) -> Optional[SlotView]:
+    """A catalog entry, reshaped into the same `SlotView` the grid's own
+    cards render from — `ui_cards.recipe_detail` reads a `SlotView`, not a
+    raw recipe dict, and building a second detail renderer would be a second
+    place for the two to disagree about how a recipe reads. There is no
+    day/meal-type slot behind a catalog entry, so those fields are left at
+    their defaults; `status=STATUS_COOK` is the closest of the four statuses
+    to "a real, cookable recipe", which is all a catalog entry ever claims to
+    be. Returns None for a stored recipe that no longer validates (a manual
+    edit to the JSON, say), so a bad entry can still be deleted from the
+    table without crashing it on click.
+
+    It moved here from `ui_catalog_browser._detail_view` when the Library
+    became a table: the row needs the same validated `Recipe` its macro
+    columns are read off, so validating once per row and carrying the view on
+    it replaces validating once to draw the card and again on every click.
+    """
+    try:
+        recipe = Recipe.model_validate(entry["recipe"])
+    except Exception:
+        return None
+    return SlotView(
+        day="",
+        meal_type=recipe.meal_type,
+        status=STATUS_COOK,
+        title=recipe.name,
+        mode=MODE_COOK,
+        portions=recipe.servings,
+        prep_minutes=recipe.prep_time_minutes,
+        macros=recipe.per_serving_macros,
+        recipe=recipe,
+    )
+
+
+def catalog_history_window(history: List[dict]) -> Optional[str]:
+    """The earliest date the retained history still covers, or None.
+
+    This is what a blank Last eaten cell *means*. `record_week_history` keeps
+    `history_max_entries` (28) day entries, so the window is about four weeks:
+    a recipe absent from it was either never cooked or last cooked before the
+    window opened, and nothing stored can tell those two apart. Printing the
+    window's first date once above the table says which question the column is
+    answering, rather than leaving an em dash to be read as "never".
+    """
+    dates = sorted(
+        str(entry.get("date") or "")[:10] for entry in history if entry.get("date")
+    )
+    return dates[0] if dates else None
+
+
+def last_eaten_index(history: List[dict], today: date) -> Dict[str, date]:
+    """recipe name -> the most recent date it was cooked on, never later than
+    `today`.
+
+    Keyed by *name* because that is the only handle `meal_history.json` keeps:
+    `record_week_history` stores `recipe_names`, never ids or content keys, so
+    a renamed catalog entry legitimately loses its history here. Matching on
+    `recipe_content_key` instead — the key every other catalog lookup uses —
+    would need history to carry ingredients, which is a storage change and a
+    migration; the name is what the file actually has.
+
+    **A future-dated entry is skipped, and that is the whole reason this takes
+    a clock.** History records the *plan's* dates, not the day a run happened
+    (`record_week_history` reads `week_start_date`), so generating next week
+    writes seven entries dated ahead of today. Counting those would have the
+    column claim you had last night's dinner on Thursday — the file is the
+    app's rotation memory, which is a record of what has been *served*, and
+    "eaten" is a strictly smaller thing. `recent_recipe_names` is right to
+    ignore the distinction (a dish planned for Thursday should not also be
+    generated for Tuesday); a column headed "Last eaten" is not.
+
+    An entry whose `date` won't parse is skipped rather than raising, the same
+    tolerance `history_styles()` extends to pre-rewrite entries: history can't
+    be regenerated, so a single bad line must not cost the whole column.
+    """
+    latest: Dict[str, date] = {}
+    for entry in history:
+        try:
+            cooked = date.fromisoformat(str(entry.get("date") or "")[:10])
+        except ValueError:
+            continue
+        if cooked > today:
+            continue
+        for name in entry.get("recipe_names") or []:
+            key = str(name).strip()
+            if key and latest.get(key, date.min) < cooked:
+                latest[key] = cooked
+    return latest
+
+
+def last_eaten_label(cooked: Optional[date], today: date) -> str:
+    """A compact reading of a last-cooked date: relative inside a week, an
+    absolute date beyond it.
+
+    Relative is right at the near end because "have I had this recently" is a
+    question with a week-ish horizon — `favorite_reuse_days` is 7 for
+    breakfast and 21 for lunch — and wrong at the far end, where "17d ago"
+    against "23d ago" is arithmetic the reader has to redo for every pair of
+    rows they compare. `last_eaten_index` never hands this a future date — it
+    drops those — so there is no negative-count branch to get wrong; the
+    absolute form catches one anyway, since this is a plain formatter and the
+    caller is where that rule actually lives.
+    """
+    if cooked is None:
+        return "—"
+    days = (today - cooked).days
+    if days == 0:
+        return "Today"
+    if days == 1:
+        return "Yesterday"
+    if 1 < days < 7:
+        return f"{days}d ago"
+    return f"{cooked.day} {cooked:%b}"
+
+
+@dataclass
+class CatalogRow:
+    """One row of the Library table.
+
+    `entry` is carried verbatim because the row's own controls act on the
+    stored record, not on this projection of it — favorite, rename and delete
+    all key off `entry["id"]`/`entry["recipe"]`, and handing them the record
+    they already expect keeps the table from becoming a second definition of
+    what a catalog entry is.
+
+    `macros` is per serving and `servings` is what the recipe yields, which is
+    the pair a reader needs to judge a row at all: the same dish stored at 6
+    servings and at 1 differs by a factor of six in every stored total, and
+    only the per-serving figure compares across rows. `view` is None for a
+    stored recipe that no longer validates — the row still renders and can
+    still be deleted, it just isn't clickable and has no macros.
+    """
+
+    entry: dict
+    id: str
+    name: str
+    meal_type: str
+    is_favorite: bool
+    servings: int
+    macros: Optional[Dict[str, float]]
+    tags: List[str]
+    last_eaten: Optional[date]
+    last_eaten_label: str
+    view: Optional[SlotView]
+
+    @property
+    def readable(self) -> bool:
+        """Whether the stored recipe still validates — i.e. whether this row
+        has macros to show and a detail dialog to open."""
+        return self.view is not None
+
+
+def build_catalog_rows(
+    entries: List[dict],
+    history: Optional[List[dict]] = None,
+    today: Optional[date] = None,
+) -> List[CatalogRow]:
+    """`CatalogRow` per entry, in the order given. Pure but for the clock,
+    which is a default rather than a read (the same seam
+    `planner.build_rejection_rule` takes `today` for) so a test can age a
+    cooked date without touching the machine's own.
+    """
+    today = today or date.today()
+    cooked_on = last_eaten_index(history or [], today)
+    rows = []
+    for entry in entries:
+        recipe = entry.get("recipe") or {}
+        name = str(recipe.get("name") or "")
+        view = catalog_slot_view(entry)
+        cooked = cooked_on.get(name.strip())
+        rows.append(
+            CatalogRow(
+                entry=entry,
+                id=str(entry.get("id") or ""),
+                name=name,
+                meal_type=str(recipe.get("meal_type") or ""),
+                is_favorite=bool(entry.get("is_favorite")),
+                # The recipe's own `servings`, not `view.portions` — they are
+                # the same number today, and reading it off the raw record is
+                # what keeps the column populated for an entry that failed to
+                # validate.
+                servings=int(recipe.get("servings") or 1),
+                macros=view.macros if view else None,
+                tags=[
+                    label
+                    for flag, label in (
+                        ("long_oven_cook", "Long cook"),
+                        ("bulk_prep_friendly", "Bulk prep"),
+                    )
+                    if recipe.get(flag)
+                ],
+                last_eaten=cooked,
+                last_eaten_label=last_eaten_label(cooked, today),
+                view=view,
+            )
+        )
+    return rows
+
+
+# Which columns the table can be ordered by. `favorite` is the default and is
+# deliberately the *composite* the Library has always sorted by — favourites
+# together, then meal type, then name — because that is the shape a "are my
+# favourites right" pass wants before any other question, and because it makes
+# the table's default order byte-identical to the card grid's it replaced.
+CATALOG_SORT_COLUMNS = (
+    "favorite",
+    "name",
+    "meal_type",
+    "servings",
+    "calories",
+    "protein_g",
+    "net_carbs_g",
+    "fat_g",
+    "last_eaten",
+)
+
+
+def _catalog_sort_key(column: str):
+    if column == "favorite":
+        return lambda row: (not row.is_favorite, row.meal_type, row.name.lower())
+    if column == "name":
+        return lambda row: (row.name.lower(),)
+    if column == "meal_type":
+        return lambda row: (row.meal_type, row.name.lower())
+    if column == "servings":
+        return lambda row: (row.servings, row.name.lower())
+    if column == "last_eaten":
+        # `date.min` for a row outside the retained window, so ascending reads
+        # "longest since I cooked this" and descending reads "most recent
+        # first". Sorting the unknowns to one predictable end beats scattering
+        # them, since "not in the window" is itself the answer to the question
+        # the ascending sort asks.
+        return lambda row: (row.last_eaten or date.min, row.name.lower())
+    return lambda row: ((row.macros or {}).get(column, 0.0), row.name.lower())
+
+
+def sort_catalog_rows(
+    rows: List[CatalogRow], column: str, descending: bool = False
+) -> List[CatalogRow]:
+    """`rows` ordered by one column, name-tiebroken.
+
+    An unknown column falls back to the default rather than raising: the only
+    way to reach one is a stale sort field on a state object, and an
+    unsortable table is a worse answer than a differently sorted one.
+    """
+    if column not in CATALOG_SORT_COLUMNS:
+        column = CATALOG_SORT_COLUMNS[0]
+    return sorted(rows, key=_catalog_sort_key(column), reverse=descending)
 
 
 # ---- the sync-status view model ------------------------------------------

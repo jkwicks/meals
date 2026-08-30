@@ -2138,3 +2138,248 @@ class TestTrainingProposalsView(unittest.TestCase):
         [row] = view.rows
         self.assertFalse(row.adds)
         self.assertEqual(row.evidence, "never recorded on 3 observed Sundays")
+
+
+# --------------------------------------------------------------------------
+# The Library table
+# --------------------------------------------------------------------------
+
+
+def catalog_entry(
+    name="Green Chicken Curry",
+    meal_type="dinner",
+    servings=2,
+    favorite=False,
+    entry_id="r1",
+    **recipe_kw,
+):
+    """One `recipes_master.json` record, in the shape the repository writes."""
+    recipe = make_recipe(name=name, servings=servings).model_copy(
+        update={"meal_type": meal_type, **recipe_kw}
+    )
+    return {
+        "id": entry_id,
+        "content_key": entry_id,
+        "recipe": recipe.model_dump(),
+        "is_favorite": favorite,
+        "source": "imported",
+    }
+
+
+class TestCatalogRowsAreDerivedNotStored(unittest.TestCase):
+    """Every Library column but the name is computed, so each one is a place a
+    silently-wrong field would render perfectly and mean nothing.
+
+    The two the card grid never showed — servings and last eaten — are the
+    ones with a real rule behind them: macros are per *serving* (the same dish
+    stored at 6 servings and at 1 differs by a factor of six in every stored
+    total, and only the per-serving figure compares across rows), and a
+    last-cooked date is read out of `meal_history.json` by name, capped at
+    today.
+    """
+
+    def test_macros_are_per_serving_not_the_recipes_total(self):
+        rows = ui_state.build_catalog_rows([catalog_entry(servings=4)])
+        [row] = rows
+        recipe = Recipe.model_validate(row.entry["recipe"])
+        self.assertEqual(row.servings, 4)
+        self.assertAlmostEqual(
+            row.macros["calories"], recipe.total_macros["calories"] / 4, places=3
+        )
+
+    def test_a_recipe_that_no_longer_validates_still_makes_a_row(self):
+        """A hand-edited JSON must leave the entry deletable, which means it
+        has to render — the card grid made the same allowance, and the table
+        keeps it by carrying a None `view` rather than dropping the row."""
+        broken = catalog_entry()
+        broken["recipe"] = {"name": "Half a recipe"}
+        [row] = ui_state.build_catalog_rows([broken])
+        self.assertFalse(row.readable)
+        self.assertIsNone(row.macros)
+        self.assertEqual(row.name, "Half a recipe")
+
+    def test_the_flags_the_card_showed_as_tags_survive_as_a_list(self):
+        [row] = ui_state.build_catalog_rows(
+            [catalog_entry(long_oven_cook=True, bulk_prep_friendly=True)]
+        )
+        self.assertEqual(row.tags, ["Long cook", "Bulk prep"])
+
+
+class TestLastEatenReadsHistory(unittest.TestCase):
+    """`meal_history.json` is the only record of when a recipe was cooked, and
+    it is keyed by recipe *name* — that is what the file holds.
+
+    The clock is a parameter here, never a read, per the standing rule the
+    suite learned when the date rolled over mid-session: a fixture may read
+    the clock, an assertion may not depend on what it said.
+    """
+
+    TODAY = date(2026, 8, 30)
+
+    @staticmethod
+    def history(*rows):
+        return [{"date": day, "recipe_names": names} for day, names in rows]
+
+    def test_the_most_recent_of_several_cookings_wins(self):
+        index = ui_state.last_eaten_index(
+            self.history(
+                ("2026-08-10", ["Green Chicken Curry"]),
+                ("2026-08-24", ["Green Chicken Curry"]),
+                ("2026-08-17", ["Green Chicken Curry"]),
+            ),
+            self.TODAY,
+        )
+        self.assertEqual(index["Green Chicken Curry"], date(2026, 8, 24))
+
+    def test_a_week_planned_ahead_is_not_something_you_have_eaten(self):
+        """`record_week_history` stores the *plan's* dates, so generating next
+        week writes seven future-dated entries. Counting them would have a
+        column headed "Last eaten" claim a dinner you have not had yet."""
+        index = ui_state.last_eaten_index(
+            self.history(("2026-09-03", ["Green Chicken Curry"])), self.TODAY
+        )
+        self.assertEqual(index, {})
+
+    def test_a_future_entry_does_not_hide_a_real_past_one(self):
+        index = ui_state.last_eaten_index(
+            self.history(
+                ("2026-08-24", ["Green Chicken Curry"]),
+                ("2026-09-03", ["Green Chicken Curry"]),
+            ),
+            self.TODAY,
+        )
+        self.assertEqual(index["Green Chicken Curry"], date(2026, 8, 24))
+
+    def test_an_unparseable_date_is_skipped_not_raised(self):
+        """History can't be regenerated, so one bad line must not cost the
+        whole column — the same tolerance `history_styles()` extends."""
+        index = ui_state.last_eaten_index(
+            self.history(("", ["Ghost Dish"]), ("2026-08-24", ["Green Chicken Curry"])),
+            self.TODAY,
+        )
+        self.assertEqual(list(index), ["Green Chicken Curry"])
+
+    def test_a_recipe_outside_the_window_reads_as_a_dash(self):
+        [row] = ui_state.build_catalog_rows(
+            [catalog_entry(name="Never Cooked")], history=[], today=self.TODAY
+        )
+        self.assertIsNone(row.last_eaten)
+        self.assertEqual(row.last_eaten_label, "—")
+
+    def test_the_window_a_dash_is_measured_against_is_reportable(self):
+        """A blank cell means "not cooked since <date>", never "never" — the
+        stored history can't tell those apart, so the surface has to say which
+        question it is answering."""
+        self.assertEqual(
+            ui_state.catalog_history_window(
+                self.history(("2026-08-24", []), ("2026-08-03", []))
+            ),
+            "2026-08-03",
+        )
+        self.assertIsNone(ui_state.catalog_history_window([]))
+
+    def test_near_dates_read_relatively_and_far_ones_absolutely(self):
+        label = ui_state.last_eaten_label
+        self.assertEqual(label(self.TODAY, self.TODAY), "Today")
+        self.assertEqual(label(self.TODAY - timedelta(days=1), self.TODAY), "Yesterday")
+        self.assertEqual(label(self.TODAY - timedelta(days=3), self.TODAY), "3d ago")
+        self.assertEqual(label(self.TODAY - timedelta(days=21), self.TODAY), "9 Aug")
+        self.assertEqual(label(None, self.TODAY), "—")
+
+
+class TestCatalogSorting(unittest.TestCase):
+    """A table's columns are its comparisons, so the sort is the feature —
+    and its default has to be the order the card grid already used, or
+    replacing the grid would silently reshuffle a catalog nobody asked to
+    reshuffle."""
+
+    def rows(self):
+        return ui_state.build_catalog_rows(
+            [
+                catalog_entry(name="Zucchini Soup", entry_id="a", servings=6),
+                catalog_entry(name="Apple Porridge", entry_id="b", meal_type="breakfast"),
+                catalog_entry(name="Beef Cheeks", entry_id="c", favorite=True),
+            ],
+            history=[{"date": "2026-08-24", "recipe_names": ["Zucchini Soup"]}],
+            today=date(2026, 8, 30),
+        )
+
+    def test_the_default_is_favourites_then_meal_type_then_name(self):
+        ordered = ui_state.sort_catalog_rows(self.rows(), "favorite")
+        self.assertEqual(
+            [row.name for row in ordered],
+            ["Beef Cheeks", "Apple Porridge", "Zucchini Soup"],
+        )
+
+    def test_a_column_sorts_by_its_own_figure(self):
+        ordered = ui_state.sort_catalog_rows(self.rows(), "servings", descending=True)
+        self.assertEqual(ordered[0].name, "Zucchini Soup")
+
+    def test_rows_outside_the_history_window_sort_to_one_end(self):
+        """Ascending "last eaten" asks "what have I gone longest without", and
+        never-cooked is the answer to that, not a row to scatter."""
+        ordered = ui_state.sort_catalog_rows(self.rows(), "last_eaten")
+        self.assertEqual(ordered[-1].name, "Zucchini Soup")
+        self.assertTrue(all(row.last_eaten is None for row in ordered[:-1]))
+
+    def test_an_unknown_column_falls_back_rather_than_raising(self):
+        ordered = ui_state.sort_catalog_rows(self.rows(), "nonsense")
+        self.assertEqual(ordered[0].name, "Beef Cheeks")
+
+    def test_clicking_a_header_twice_flips_direction(self):
+        state = make_state()
+        state.sort_catalog_by("calories")
+        self.assertEqual(state.catalog_browser_sort, "calories")
+        self.assertFalse(state.catalog_browser_sort_desc)
+        state.sort_catalog_by("calories")
+        self.assertTrue(state.catalog_browser_sort_desc)
+        state.sort_catalog_by("name")
+        self.assertEqual(state.catalog_browser_sort, "name")
+        self.assertFalse(state.catalog_browser_sort_desc)
+
+    def test_an_unknown_column_is_never_stored(self):
+        state = make_state()
+        state.sort_catalog_by("nonsense")
+        self.assertEqual(state.catalog_browser_sort, "favorite")
+
+
+class TestCatalogRowsHonourTheLibraryFilters(unittest.TestCase):
+    """`PlannerState.catalog_rows` is filter, projection and sort in one call
+    — the widget renders what it is handed. The filter is `catalog_matches`,
+    the same one `/api/recipes` uses; see its note in `repository.py` for what
+    happened the last time those two were written out separately."""
+
+    def state(self):
+        state = make_state()
+        state.recipe_catalog = [
+            catalog_entry(name="Zucchini Soup", entry_id="a"),
+            catalog_entry(name="Apple Porridge", entry_id="b", meal_type="breakfast"),
+            catalog_entry(name="Beef Cheeks", entry_id="c", favorite=True),
+        ]
+        return state
+
+    def test_everything_by_default(self):
+        self.assertEqual(len(self.state().catalog_rows()), 3)
+
+    def test_the_favourites_filter_reaches_the_rows(self):
+        state = self.state()
+        state.catalog_browser_favorites_only = True
+        self.assertEqual([row.name for row in state.catalog_rows()], ["Beef Cheeks"])
+
+    def test_the_meal_type_filter_reaches_the_rows(self):
+        state = self.state()
+        state.catalog_browser_meal_type = "breakfast"
+        self.assertEqual([row.name for row in state.catalog_rows()], ["Apple Porridge"])
+
+    def test_the_search_filter_reaches_the_rows(self):
+        state = self.state()
+        state.catalog_browser_search = "cheek"
+        self.assertEqual([row.name for row in state.catalog_rows()], ["Beef Cheeks"])
+
+    def test_the_sort_selection_reaches_the_rows(self):
+        state = self.state()
+        state.sort_catalog_by("name")
+        self.assertEqual(
+            [row.name for row in state.catalog_rows()],
+            ["Apple Porridge", "Beef Cheeks", "Zucchini Soup"],
+        )

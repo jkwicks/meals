@@ -398,6 +398,12 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             # while "Next Week" is showing must not overwrite "current".
             await REPOSITORY.save_week_plan(week_plan.model_dump(), state.week_selection)
             await record_week_history(week_plan, REPOSITORY, config)
+            # `meal_history.json` just grew, and the Library table's
+            # "Last eaten" column is the only reader of it held on state.
+            # Re-read here rather than at the next page load, for the same
+            # reason `recipe_catalog` is kept in sync by every handler that
+            # mutates it: the copy on state is the one the UI believes.
+            state.history = await REPOSITORY.load_history()
         except Exception as exc:
             # Per-day failures never reach here — generate_week_plan absorbs
             # those into WeekPlan.failures. This is the whole run coming apart
@@ -415,7 +421,9 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         # Saved before adopted, so the grid can't show a week that isn't on
         # disk — `edited` clearing is a claim that they match.
         state.adopt_plan(week_plan)
-        refreshables.refresh("plan")
+        # "catalog" as well as "plan": the run just appended to history, so
+        # the Library table's "Last eaten" column is stale until it repaints.
+        refreshables.refresh("plan", "catalog")
 
         if week_plan.failures:
             ui.notify(
@@ -538,6 +546,12 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             )
             await REPOSITORY.save_week_plan(plan.model_dump(), state.week_selection)
             await record_week_history(plan, REPOSITORY, config, days=[day])
+            # `meal_history.json` just grew, and the Library table's
+            # "Last eaten" column is the only reader of it held on state.
+            # Re-read here rather than at the next page load, for the same
+            # reason `recipe_catalog` is kept in sync by every handler that
+            # mutates it: the copy on state is the one the UI believes.
+            state.history = await REPOSITORY.load_history()
         except Exception as exc:
             ui.notify(
                 f"Regenerating {day} failed: {short_error(exc)}",
@@ -554,7 +568,9 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         # Saved before adopted, same ordering as a full generation — the grid
         # can't show a day that isn't on disk.
         state.adopt_plan(plan)
-        refreshables.refresh("plan")
+        # "catalog" as well as "plan": the run just appended to history, so
+        # the Library table's "Last eaten" column is stale until it repaints.
+        refreshables.refresh("plan", "catalog")
 
         # regenerate_single_day writes one failures entry per cook slot on
         # `day` (see planner.py) — any of them present means the whole call
@@ -616,6 +632,12 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
             )
             await REPOSITORY.save_week_plan(plan.model_dump(), state.week_selection)
             await record_week_history(plan, REPOSITORY, config, days=[day])
+            # `meal_history.json` just grew, and the Library table's
+            # "Last eaten" column is the only reader of it held on state.
+            # Re-read here rather than at the next page load, for the same
+            # reason `recipe_catalog` is kept in sync by every handler that
+            # mutates it: the copy on state is the one the UI believes.
+            state.history = await REPOSITORY.load_history()
         except Exception as exc:
             ui.notify(
                 f"Regenerating {slot_label(target_slot_id)} failed: {short_error(exc)}",
@@ -632,7 +654,9 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         # Saved before adopted, same ordering as a full generation — the grid
         # can't show a meal that isn't on disk.
         state.adopt_plan(plan)
-        refreshables.refresh("plan")
+        # "catalog" as well as "plan": the run just appended to history, so
+        # the Library table's "Last eaten" column is stale until it repaints.
+        refreshables.refresh("plan", "catalog")
         ui.notify(f"Regenerated {slot_label(target_slot_id)}", type="positive")
 
         # `view` is the SlotView captured before this call — its `.recipe` is
