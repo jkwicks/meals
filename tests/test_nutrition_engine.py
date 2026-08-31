@@ -269,6 +269,37 @@ class TestMacroTargets(unittest.TestCase):
         """`DaySchedule` is extra='forbid', so diagnostics must stay nested."""
         self.assertEqual(set(self.result), set(ne.MACRO_KEYS) | {"basis"})
 
+    def test_the_fibre_target_is_not_assembled_here(self):
+        """It is derived from the day's *final* calories, and `calories` above
+        is not that figure — `planner.hydrate_dynamic_targets` still has the
+        training uplift to replay onto it and any diet-style ceiling to take
+        it `min()` against. A figure computed here would be wrong on exactly
+        the days that move, which is the same "after the uplift, not before
+        it" argument that places the ceiling."""
+        self.assertNotIn("fiber_g", self.result)
+        self.assertNotIn("fiber_g", ne.MACRO_KEYS)
+
+    def test_the_floor_is_what_binds_on_an_ordinary_day(self):
+        """`max(floor, calories/1000 * 14)`, and on a deficit day the floor is
+        the half doing the work — the energy term reaches 30 g only above
+        ~2143 kcal."""
+        self.assertEqual(ne.calculate_fiber_target_g(1722.0), 30.0)
+        self.assertAlmostEqual(ne.calculate_fiber_target_g(3000.0), 42.0)
+
+    def test_a_deficit_day_does_not_lose_its_fibre_target(self):
+        """The reason it is a max rather than the scale alone: an 800 kcal
+        Fast 800 day scales to 11 g, which would cut the target exactly as
+        the deficit that made the day small starts to need the satiety. Same
+        argument that locks protein to the *target* weight."""
+        self.assertEqual(ne.calculate_fiber_target_g(800.0), 30.0)
+
+    def test_the_floor_is_per_person(self):
+        """`user_profile.fiber_floor_g`, resolved by `planner.fiber_floor_g`
+        for both of the app's target paths — one reader, so the drawer, the
+        header and generation cannot disagree about the number."""
+        self.assertEqual(ne.calculate_fiber_target_g(1000.0, 25.0), 25.0)
+        self.assertEqual(ne.calculate_fiber_target_g(1000.0, None), 30.0)
+
     def test_body_fat_reading_switches_to_katch_mcardle(self):
         result = ne.calculate_macro_targets(
             PROFILE, {"weight_kg": 100.0, "body_fat_pct": 25.0}

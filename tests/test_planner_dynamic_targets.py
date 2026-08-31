@@ -140,7 +140,24 @@ class TestHydrationFallsBack(unittest.TestCase):
         """
         config = config_with()
         with self.assertLogs("meals", level="WARNING"):
-            self.assertIs(planner.hydrate_dynamic_targets(config, None), config)
+            fallen_back = planner.hydrate_dynamic_targets(config, None)
+        for day, entry in config["weekly_schedule"].items():
+            for key in planner.MACRO_KEYS:
+                if key in entry:
+                    self.assertEqual(fallen_back["weekly_schedule"][day][key], entry[key])
+
+    def test_the_fallback_still_resolves_a_fibre_target(self):
+        """The one figure a failed engine call does not cost, because it never
+        needed the body: `calculate_fiber_target_g` wants the day's calories
+        and a floor. Returning the config untouched here would have
+        `/api/targets` omitting fibre on a machine with no weigh-in while the
+        telemetry header printed one — the "one number, one call" rule at the
+        end of CLAUDE.md, reached from the storage side."""
+        config = config_with()
+        with self.assertLogs("meals", level="WARNING"):
+            fallen_back = planner.hydrate_dynamic_targets(config, None)
+        for entry in fallen_back["weekly_schedule"].values():
+            self.assertEqual(entry["fiber_g"], 30.0)
 
     def test_the_fallback_is_announced(self):
         """One note, not one per day: every day fails identically, because they
@@ -151,9 +168,20 @@ class TestHydrationFallsBack(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("config.json targets", notes[0])
 
-    def test_an_unfilled_profile_is_left_alone(self):
-        config = config_with(user_profile={"protein_multiplier": 1.8, "activity_level": "light_office"})
-        self.assertIs(planner.hydrate_dynamic_targets(config, WEIGH_IN), config)
+    def test_an_unfilled_profile_leaves_every_macro_alone(self):
+        """Fibre is the exception and says why in
+        `test_the_fallback_still_resolves_a_fibre_target` above: it is derived
+        from the day rather than from the body, so an empty `user_profile`
+        does not stop it resolving."""
+        config = config_with(
+            user_profile={"protein_multiplier": 1.8, "activity_level": "light_office"}
+        )
+        hydrated = planner.hydrate_dynamic_targets(config, WEIGH_IN)
+        for day, entry in config["weekly_schedule"].items():
+            for key in planner.MACRO_KEYS:
+                if key in entry:
+                    self.assertEqual(hydrated["weekly_schedule"][day][key], entry[key])
+            self.assertEqual(hydrated["weekly_schedule"][day]["fiber_g"], 30.0)
 
 
 class TestTrainingUpliftSurvivesHydration(unittest.TestCase):

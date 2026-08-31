@@ -285,6 +285,16 @@ class TestTargetsRoute(APITestCase):
         for day_targets in body["weekly_schedule"].values():
             self.assertEqual(day_targets["protein_g"], 144.0)
 
+    def test_the_fibre_target_is_reported_with_or_without_a_weigh_in(self):
+        """Derived from the day's calories rather than from the body, so a
+        failed engine call does not cost it — and must not, or this route
+        would omit a figure the telemetry header prints either way."""
+        without = self.client.get("/api/targets").json()
+        self.assertEqual(without["weekly_schedule"]["Monday"]["fiber_g"], 30.0)
+        run_sync(self.repo.save_biometric_entry({"date": "2026-08-20", "weight_kg": 90.0}))
+        with_weigh_in = self.client.get("/api/targets").json()
+        self.assertEqual(with_weigh_in["weekly_schedule"]["Monday"]["fiber_g"], 30.0)
+
 
 if __name__ == "__main__":
     unittest.main()

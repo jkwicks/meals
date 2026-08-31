@@ -2085,14 +2085,16 @@ class TestAdaptiveTdeeView(unittest.TestCase):
 
 
 class TestFibreAgainstWhatWasLogged(unittest.TestCase):
-    """Planned fibre beside what Cronometer logged for the same date.
+    """Planned fibre, against its target, beside what Cronometer logged.
 
-    CHANGE-QUEUE.md's fibre item. Fibre is the one nutrient the app holds a
-    planned figure for and — until `CRONOMETER_MACRO_COLUMNS` learned
-    `fiber_g` — no measured counterpart to, which is also the one nutrient
-    with no target to divide either figure by. So the pair sits side by side
-    and never over a divider: `32/24` would read as a goal that was missed,
-    and there is no goal.
+    CHANGE-QUEUE.md's fibre items, both of them — the readout, and then the
+    target the appendix's last row asked for. **Which pair takes a divider and
+    which does not is the whole rule, and only half of it changed.**
+    `planned/target` is the `actual/target` shape the rest of the telemetry
+    row already carries, and it is honest now that the planner aims at a
+    figure. `logged` is still not that: a measurement is not a goal, so it
+    stays beside the pair. `32/24` would read as a goal that was missed, and
+    that is still not what the sync is saying.
     """
 
     @staticmethod
@@ -2112,21 +2114,32 @@ class TestFibreAgainstWhatWasLogged(unittest.TestCase):
         )
         return state
 
-    def test_the_planned_figure_alone_when_nothing_was_logged(self):
+    def test_a_plan_predating_the_target_still_prints_its_bare_figure(self):
+        """`week_plan.targets` has no `fiber_g` for a week generated before
+        fibre had a target, and gets back exactly the label the header printed
+        then — the same pre-migration tolerance `logged_actuals_for` draws for
+        a plan with no `week_start_date`."""
         view = ui_state.fibre_view(32.0, None)
         self.assertEqual(view.label, "FIB 32g")
         self.assertEqual(view.logged_label, "")
         self.assertIsNone(view.delta)
         self.assertIn("no target", view.detail)
 
-    def test_a_logged_day_sits_beside_the_plan_never_over_it(self):
-        view = ui_state.fibre_view(32.0, 24.0)
-        self.assertEqual(view.label, "FIB 32g")
+    def test_the_target_takes_the_divider(self):
+        view = ui_state.fibre_view(32.0, None, 38.0)
+        self.assertEqual(view.label, "FIB 32/38g")
+        self.assertIn("38g target", view.detail)
+
+    def test_a_logged_day_sits_beside_the_pair_never_under_it(self):
+        view = ui_state.fibre_view(32.0, 24.0, 38.0)
+        self.assertEqual(view.label, "FIB 32/38g")
         self.assertEqual(view.logged_label, "logged 24g")
+        # The guard: exactly one divider on the row, and it is the target's.
+        self.assertNotIn("/", view.logged_label)
         self.assertEqual(view.delta, -8.0)
-        # The guard the whole item turns on: no denominator anywhere, because
-        # a logged figure is a second measurement, not a goal.
-        self.assertNotIn("/", view.label + view.logged_label)
+        # Signed against the plan, never against the target beside it — two
+        # different questions, and only one is about the sync agreeing with
+        # the kitchen.
         self.assertIn("vs plan", view.detail)
 
     def test_the_planned_half_is_the_plans_own_fibre(self):
@@ -2135,6 +2148,27 @@ class TestFibreAgainstWhatWasLogged(unittest.TestCase):
         self.assertEqual(view.planned, state.totals_for("Monday")["fiber_g"])
         self.assertGreater(view.planned, 0.0)
         self.assertIsNone(view.logged)
+
+    def test_the_target_is_the_stored_plans_own(self):
+        """`targets_for` — the same denominator every other figure in the
+        telemetry row divides by, so fibre reads the stored plan or the live
+        preview on exactly the rule `target_is_staged` already applies."""
+        state = self.state_with_fibre()
+        state.week_plan = state.week_plan.model_copy(
+            update={
+                "targets": {
+                    day: dict(target, fiber_g=38.0)
+                    for day, target in state.week_plan.targets.items()
+                }
+            }
+        )
+        self.assertEqual(state.fibre_for("Monday").target, 38.0)
+
+    def test_a_week_generated_before_the_target_reports_none(self):
+        """The fixture's own plan states no `fiber_g`, which is every week
+        generated before this release — and the header prints what it always
+        printed rather than inventing a denominator."""
+        self.assertIsNone(self.state_with_fibre().fibre_for("Monday").target)
 
     def test_a_log_is_matched_by_date_not_by_weekday(self):
         """`planner.logged_intake_for` refuses every day but today because a
@@ -2786,16 +2820,41 @@ class TestIntakeAndMacroAccuracy(unittest.TestCase):
         view = ui_state.intake_panel(planned(4), {"daily_actuals": logged(4)})
         self.assertEqual(view.headline, "-200 kcal/day against plan")
 
-    def test_fibre_is_absent_from_macro_accuracy(self):
-        """It is reported and never budgeted, so it has no planned figure to
-        divide by. A percentage column would invent the target the rule
-        exists to refuse."""
+    def test_fibre_is_absent_while_the_window_predates_the_target(self):
+        """Not because fibre has no target — it does now — but because a
+        history entry written before it states no `fiber_g`, and a mean taken
+        over those days would read as a 0 g plan massively overshot rather
+        than as a plan nobody made."""
         view = ui_state.macro_accuracy_panel(planned(4), {"daily_actuals": logged(4)})
         self.assertNotIn("fiber_g", [row.key for row in view.rows])
         self.assertEqual(
             [row.key for row in view.rows],
             ["calories", "protein_g", "net_carbs_g", "fat_g"],
         )
+
+    def test_fibre_joins_once_every_paired_day_states_a_target(self):
+        history = planned(4)
+        for entry in history:
+            entry["targets"]["fiber_g"] = 30.0
+        rows = logged(4)
+        for row in rows:
+            row["fiber_g"] = 24.0
+        view = ui_state.macro_accuracy_panel(history, {"daily_actuals": rows})
+        fibre = next(row for row in view.rows if row.key == "fiber_g")
+        self.assertAlmostEqual(fibre.pct, 80.0, places=1)
+
+    def test_one_day_short_of_a_target_omits_the_row_entirely(self):
+        """All-or-nothing, the same precondition `WeightTrendPanel.
+        target_in_range` applies to its own line: a figure that can only be
+        drawn honestly for part of the window is not drawn."""
+        history = planned(4)
+        for entry in history[1:]:
+            entry["targets"]["fiber_g"] = 30.0
+        rows = logged(4)
+        for row in rows:
+            row["fiber_g"] = 24.0
+        view = ui_state.macro_accuracy_panel(history, {"daily_actuals": rows})
+        self.assertNotIn("fiber_g", [row.key for row in view.rows])
 
     def test_a_macro_row_reports_its_share_of_plan(self):
         view = ui_state.macro_accuracy_panel(planned(4), {"daily_actuals": logged(4)})

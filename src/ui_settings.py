@@ -54,6 +54,7 @@ from ui_state import (
 )
 from ui_today import location_row, session_chip
 from ui_theme import (
+    DERIVED_TARGET_MACROS,
     PIPELINE_STAGES,
     RADIUS_CARD,
     RADIUS_PANEL,
@@ -251,7 +252,9 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                             on_change=lambda event, m=macro: on_mode(m, event),
                         ).props("dense no-caps unelevated size=sm").classes(TEXT_MICRO)
                     else:
-                        ui.label("Fixed" if macro == "fat_g" else "Yours").classes(
+                        ui.label(
+                            "Fixed" if macro in DERIVED_TARGET_MACROS else "Yours"
+                        ).classes(
                             f"{TEXT_MICRO} px-{SPACE_TIGHT} py-{SPACE_HAIR} {RADIUS_PILL} "
                             "bg-slate-700/40 text-slate-400 shrink-0"
                         )
