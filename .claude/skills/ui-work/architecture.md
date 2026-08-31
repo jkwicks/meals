@@ -15,7 +15,7 @@ section for the area you are changing; you rarely need all of it.
 
 `ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density
 desktop UI: a header of 7 per-day macro bars, a persistent staged-changes bar
-beneath it, and a slim vertical rail choosing one of five destinations — Plan
+beneath it, and a slim vertical rail choosing one of six destinations — Plan
 (the week grid), Today, Library, Insights, Settings — each owning the full
 canvas below the bar (see "Module layout" and "Five destinations, one rail"
 below). The rail also carries **every control the app has** — see "The rail's
@@ -460,7 +460,7 @@ everything before the refresh-topic registration at the bottom.
 
 Phase 6b of `ui-redesign.md`. Five buttons — Generate, Shopping, Shuffle
 styles, PDF menu, Mobile page — sitting in the rail between the Plan/Daily
-View tabs and the Library/Insights/Settings ones. **The five destinations
+View tabs and the Shopping/Library/Insights/Settings ones. **The six destinations
 answer "what am I looking at"; these answer "what do I want to do", and
 nothing else on the page is clickable chrome** except the header's week
 selector (which changes scope, not state) and the staged-changes bar. They
@@ -1152,7 +1152,7 @@ current picks are fine as they are.
 
 This button lived in the Plan destination's own header row until phase 6b
 moved it to the rail. Same reason, better satisfied: a rail button is
-visible from all five destinations, not only from Plan.
+visible from all six destinations, not only from Plan.
 
 ### Garmin's recorded week, offered against the declared one
 
@@ -1280,7 +1280,7 @@ and therefore a second value to disagree with the first.
 
 **Dialogs, not more sections in the panel**, on the maintainer's call
 (ISSUES.md item 8 asks for a "popup/page" for each): the rail is deliberately
-five destinations, these are reference views rather than places to work, and
+six destinations, these are reference views rather than places to work, and
 three tables stacked under the panel's three selects would bury the selects.
 Each body is `@ui.refreshable` and repainted by `open_stage` *on open* rather
 than registered on a refresh topic — two of them read live state
@@ -1389,7 +1389,7 @@ one, deliberately: `base_schedule` and `training_schedule` are keyed by
 weekday and apply to every week, so dating them against the loaded plan would
 read as a claim about this particular Monday.
 
-## Shopping list drawer
+## Shopping list — a drawer *and* a destination
 
 A right-hand slide-over (opened from the rail's action block) rather than a
 dialog: the list
@@ -1397,12 +1397,61 @@ is read *against* the grid, and a modal would cover the week it describes. One
 section per `shopping_windows()` trip, grouped into departments by
 `aggregate_cook_events` — by cook day, never eating day.
 
-It is derived from the plan on every repaint and is in `refresh_all()`, so a
-leftover link that grows a batch also grows the quantities to buy. The
-checkboxes are deliberately not persisted: it is a scratch list for one trip,
-and storing ticks would be more state able to disagree with `week_plan.json`.
-Days in `WeekPlan.failures` get an explicit note per window, because a short
-list is otherwise indistinguishable from a cheap week.
+**And a sixth rail destination, drawing the same panel.** CHANGE-QUEUE.md
+asked whether shopping should be promoted; the answer is `both`, because the
+two are different jobs. 420px beside the grid is the right shape for reading a
+trip against the week it belongs to — which is the drawer's whole documented
+reason for existing and is why it survives — and the wrong shape for working
+through one. `build_shopping(ctx)` returns `build_panel`, which the
+destination calls at its own render position.
+
+Three things about that sharing are load-bearing:
+
+- **`@ui.refreshable` binds to where it was first called**, so the drawer and
+  the destination need one instance each. `ShoppingPanels` is a small handle
+  holding both and exposing a single `.refresh()`; that one object is what
+  `ui_app.py` registers on `"plan"`/`"shopping"`/`"shopping_days"`. The
+  registration block runs *before* the rail is built, so the destination's
+  instance does not exist yet at registration time — a list that is appended
+  to later is the fix, and it keeps a detail private to this module from
+  becoming an ordering rule in the page shell.
+- **The Daily-shop toggle lives inside the refreshable, not beside it.** Two
+  instances both read `state.daily_shop_mode`, so flipping it in the drawer
+  has to move the switch on the destination. A control built once outside
+  would be the "second control free to disagree" objection the week select
+  already answers by repainting the first rather than adding a second.
+- **Nothing else moved.** One builder means the two cannot come to differ
+  about a trip — the `ui_inspector.py`-reuses-`ui_today.py` precedent.
+
+It is derived from the plan on every repaint, so a leftover link that grows a
+batch also grows the quantities to buy. Days in `WeekPlan.failures` get an
+explicit note per window, because a short list is otherwise indistinguishable
+from a cheap week.
+
+**The ticks are still not persisted, and they now survive a repaint.** Those
+are different claims and only the first had ever been decided: storing them
+would be more state able to disagree with `week_plan.json` and that argument
+stands, but they were living in the DOM inside a `@ui.refreshable` registered
+on two topics, so any edit that repainted wiped them **mid-shop**.
+`PlannerState.shopping_ticks` is the middle path — per-client, dies with the
+tab, never reaches `data/`. Keyed `(window label, item name)`, because
+`aggregate_cook_events` combines by normalised name so a name is unique within
+one window, and the same ingredient on two trips is two purchases that must
+tick independently.
+
+**The department header is a band with a count, and that is what makes it a
+header.** It was 10px uppercase slate-400 with nothing else on the row, which
+is skimmable straight past in a column of 10px item labels; a count is
+information no item line could carry, and a `border-b` separates the groups
+without spending a hue. The same problem is far sharper in the Keep copy,
+where every pasted line becomes a checkbox — see CLAUDE.md's "The order a list
+is walked, and the two lines that are not items".
+
+**The ⏳ went with the rest of the emoji.** It was the last one in the front
+end, sitting inline in a checkbox *label string* rather than as an element,
+which is how it survived v0.38.0's pass. The buy-late and pantry notes are now
+a `TEXT_MICRO` slate-400 label under the checkbox — no hue, per the palette
+table, since amber already means five things.
 
 "Copy for Keep" uses `format_shopping_list_keep` (one line per item, since Keep
 turns each pasted line into a checkbox) and `ui.run_javascript`. Two things

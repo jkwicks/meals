@@ -456,7 +456,17 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                 "No favorites match — clear the filter or import one."
             ).classes(f"{TEXT_BODY} text-slate-400 italic")
 
-        with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-h-64 overflow-y-auto"):
+        # `flex-nowrap`, the same fix `ui_shopping.py`'s drawer needed and
+        # found by generalising it: Quasar's `.flex` sets `flex-wrap: wrap`,
+        # Tailwind's `flex-col` does not undo it, and a wrapping column that
+        # outgrows `max-h-64` lays a second column out beside the first rather
+        # than overflowing — so this `overflow-y-auto` never fired. The
+        # shipped catalog has 36 dinner favourites, so this was not
+        # hypothetical; it was just less visible than the drawer's, because a
+        # dialog has room to the right and a 420px slide-over does not.
+        with ui.element("div").classes(
+            f"flex flex-col flex-nowrap gap-{SPACE_TIGHT} max-h-64 overflow-y-auto"
+        ):
             for favorite in matches:
                 recipe = favorite["recipe"]
                 macros = Recipe.model_validate(recipe).per_serving_macros

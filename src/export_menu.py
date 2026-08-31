@@ -32,7 +32,7 @@ a re-downloaded plan can't disagree with stale ticks from a previous week.
 
 import io
 from html import escape as html_escape
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -51,7 +51,16 @@ from reportlab.platypus import (
 )
 
 from planner import CookEvent, Recipe, SundayPrepSession, WeekPlan
-from shopping import ShoppingItem, aggregate_cook_events, format_quantity, format_shopping_list_text
+from shopping import (
+    ShoppingItem,
+    aggregate_cook_events,
+    apply_pantry,
+    format_quantity,
+    format_shopping_list_text,
+    ordered_departments,
+    pantry_covered_line,
+    pantry_note,
+)
 from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, humanize, slot_label
 
 # --------------------------------------------------------------------------
@@ -562,14 +571,30 @@ def _department_item_table(items: List[ShoppingItem], columns: int = 2) -> Table
     return table
 
 
-def _shopping_list_pages(week_plan: WeekPlan) -> list:
+PantryEntries = Optional[Sequence[Tuple[str, Optional[float]]]]
+
+
+def _week_shopping_list(week_plan: WeekPlan, pantry: PantryEntries):
+    """The week's list, with the pantry already off it.
+
+    One helper for both export paths so a PDF and the mobile page cannot
+    disagree about a week — the same reason `repository.catalog_matches`
+    exists for the Library grid and `/api/recipes`. `pantry` is
+    `planner.inventory_entries` output threaded down from whoever holds a
+    config; `None` means nobody does, and the list is what the recipes need.
+    """
+    shopping_list = aggregate_cook_events(week_plan.cook_events, week_plan.days)
+    return apply_pantry(shopping_list, pantry) if pantry else shopping_list
+
+
+def _shopping_list_pages(week_plan: WeekPlan, pantry: PantryEntries = None) -> list:
     """The whole week's shopping, grouped by department in a
     catalog-style grid, followed by a plain-text page built from the same
     `format_shopping_list_text` the CLI and shopping-drawer copy buttons
     use — so the wording can't drift between the styled table and the copy
     someone pastes into their phone at the shop.
     """
-    shopping_list = aggregate_cook_events(week_plan.cook_events, week_plan.days)
+    shopping_list = _week_shopping_list(week_plan, pantry)
 
     flow: list = [
         Paragraph("Shopping List", STYLES["Heading1"]),
@@ -580,9 +605,14 @@ def _shopping_list_pages(week_plan: WeekPlan) -> list:
         Spacer(1, 10),
     ]
 
-    for department in sorted(shopping_list.categories):
+    for department in ordered_departments(shopping_list):
         flow.append(Paragraph(escape(department), STYLES["SectionHeading"]))
         flow.append(_department_item_table(shopping_list.categories[department]))
+
+    covered = pantry_covered_line(shopping_list)
+    if covered:
+        flow.append(Spacer(1, 6))
+        flow.append(Paragraph(escape(covered), STYLES["SubText"]))
 
     flow.append(PageBreak())
     flow.append(Paragraph("Plain-Text Version", STYLES["Heading2"]))
@@ -597,7 +627,7 @@ def _shopping_list_pages(week_plan: WeekPlan) -> list:
     return flow
 
 
-def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
+def build_week_menu_pdf(week_plan: WeekPlan, pantry: PantryEntries = None) -> bytes:
     """The whole week as a magazine-style PDF: a page-1 summary grid, an
     optional Sunday prep checklist, one page per recipe grouped into a
     section per meal type, then a department-grouped shopping list.
@@ -664,7 +694,7 @@ def build_week_menu_pdf(week_plan: WeekPlan) -> bytes:
 
     # --- Shopping list, grouped by department ---
     if week_plan.cook_events:
-        story.extend(_shopping_list_pages(week_plan))
+        story.extend(_shopping_list_pages(week_plan, pantry))
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buffer.getvalue()
@@ -881,16 +911,17 @@ def _html_prep_section(session: SundayPrepSession) -> str:
     )
 
 
-def _html_shopping_section(week_plan: WeekPlan) -> str:
+def _html_shopping_section(week_plan: WeekPlan, pantry: PantryEntries = None) -> str:
     if not week_plan.cook_events:
         return ""
-    shopping_list = aggregate_cook_events(week_plan.cook_events, week_plan.days)
+    shopping_list = _week_shopping_list(week_plan, pantry)
     departments = []
-    for department in sorted(shopping_list.categories):
+    for department in ordered_departments(shopping_list):
         rows = "".join(
             '<li class="shop-row" onclick="this.classList.toggle(\'done\')">'
             f'<span class="shop-name">{html_escape(item.name)}</span>'
             f'<span class="shop-qty">{html_escape(format_quantity(item.name, item.total_amount_g))}</span>'
+            + (f'<span class="shop-note">{html_escape(pantry_note(item))}</span>' if pantry_note(item) else "")
             + ('<span class="shop-note">buy fresh closer to the day</span>' if item.buy_late else "")
             + "</li>"
             for item in shopping_list.categories[department]
@@ -907,7 +938,7 @@ def _html_shopping_section(week_plan: WeekPlan) -> str:
     )
 
 
-def build_week_menu_html(week_plan: WeekPlan) -> str:
+def build_week_menu_html(week_plan: WeekPlan, pantry: PantryEntries = None) -> str:
     """The whole week as one self-contained, mobile-sized HTML page: a
     sticky nav, a day-by-day summary, an optional Sunday prep checklist,
     every recipe with tap-to-strike steps, and a tap-to-check shopping list.
@@ -946,7 +977,7 @@ def build_week_menu_html(week_plan: WeekPlan) -> str:
     )
 
     prep_html = _html_prep_section(week_plan.sunday_prep_session) if week_plan.sunday_prep_session else ""
-    shopping_html = _html_shopping_section(week_plan)
+    shopping_html = _html_shopping_section(week_plan, pantry)
 
     return (
         "<!doctype html>\n"

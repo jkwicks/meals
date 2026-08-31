@@ -12,6 +12,7 @@ the repository's own `run_sync`-wrapped save methods, the same convention
 `test_sync_service.py`/`test_history.py` use, rather than hand-written JSON.
 """
 
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -23,8 +24,23 @@ sys.path.insert(0, str(_ROOT / "src"))
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import api  # noqa: E402
 from api import build_api_router  # noqa: E402
-from planner import CookEvent, Ingredient, Recipe  # noqa: E402
+from generation_jobs import (  # noqa: E402
+    JOB_FAILED,
+    JOB_RUNNING,
+    JOB_SUCCEEDED,
+    SOURCE_API,
+    SOURCE_UI,
+    GenerationJobs,
+)
+from planner import (  # noqa: E402
+    CookEvent,
+    Ingredient,
+    Recipe,
+    WeekNotValidError,
+    WeekPlan,
+)
 from repository import (  # noqa: E402
     CATALOG_MEAL_TYPE_ANY,
     LocalJSONRepository,
@@ -90,8 +106,12 @@ class APITestCase(unittest.TestCase):
             data_dir=self.tmp.name,
             biometrics_path=str(Path(self.tmp.name) / "biometrics.json"),
         )
+        # A throwaway registry per case, the same reason the repository is
+        # a temp directory: the single-flight claim is process-wide state, so
+        # a shared one would make these order-dependent.
+        self.jobs = GenerationJobs()
         app = FastAPI()
-        app.include_router(build_api_router(self.repo))
+        app.include_router(build_api_router(self.repo, self.jobs))
         self.client = TestClient(app)
 
 
@@ -294,6 +314,317 @@ class TestTargetsRoute(APITestCase):
         run_sync(self.repo.save_biometric_entry({"date": "2026-08-20", "weight_kg": 90.0}))
         with_weigh_in = self.client.get("/api/targets").json()
         self.assertEqual(with_weigh_in["weekly_schedule"]["Monday"]["fiber_g"], 30.0)
+
+
+# --------------------------------------------------------------------------
+# Generation: the one write route, and the job it answers with
+# --------------------------------------------------------------------------
+
+
+def stub_generation(recorder, failures=None, raises=None):
+    """A `generate_and_store_week` that stores a week without a model call.
+
+    Substituted at `api.generate_and_store_week` — the module-level import is
+    the seam, the same swap-and-restore `test_meal_selection.py` uses for
+    `planner._generate_meal_type_events`. It *does* save through the
+    repository, because "the finished week comes back through GET
+    /api/weeks/{id} rather than on the job" is a contract worth testing end to
+    end rather than asserting about in a comment.
+    """
+
+    async def stub(
+        repository,
+        config=None,
+        *,
+        week_identifier="current",
+        week_start=None,
+        servings=None,
+        spec_transform=None,
+        on_ready=None,
+        progress_callback=None,
+        note_callback=None,
+    ):
+        recorder["config"] = config
+        recorder["week_identifier"] = week_identifier
+        recorder["week_start"] = week_start
+        recorder["servings"] = servings
+        if raises is not None:
+            raise raises
+        if progress_callback:
+            progress_callback("breakfast", 2)
+            progress_callback("dinner", 3)
+        if note_callback:
+            note_callback("Trimmed Monday dinner to budget")
+        plan = make_week_plan_dict()
+        plan["failures"] = dict(failures or {})
+        await repository.save_week_plan(plan, week_identifier)
+        return WeekPlan.model_validate(plan)
+
+    return stub
+
+
+class TestGenerationJobRegistry(unittest.TestCase):
+    """The registry alone — no FastAPI, no repository.
+
+    `GenerationJobs.run` is awaited directly rather than reached through
+    `start`, which is what that split exists for: asserting on a spawned task
+    means asserting on a scheduler.
+    """
+
+    def setUp(self):
+        self.jobs = GenerationJobs()
+
+    def test_only_one_run_may_be_claimed_at_a_time(self):
+        first = self.jobs.claim(SOURCE_API, "current")
+        self.assertIsNotNone(first)
+        self.assertIsNone(self.jobs.claim(SOURCE_UI, "next"))
+        self.jobs.release(first)
+        self.assertIsNotNone(self.jobs.claim(SOURCE_UI, "next"))
+
+    def test_the_claim_names_who_holds_it(self):
+        """A 409 has to be able to say "a browser tab is generating", which is
+        the whole reason a UI run is recorded here and not only an API one."""
+        self.jobs.claim(SOURCE_UI, "current")
+        self.assertEqual(self.jobs.active.source, SOURCE_UI)
+
+    def test_a_finished_run_records_what_it_saw(self):
+        job = self.jobs.claim(SOURCE_API, "current")
+        self.jobs.stage_started(job, "breakfast")
+        self.jobs.note(job, "Trimmed Monday dinner")
+
+        async def work():
+            return "done"
+
+        asyncio.run(self.jobs.run(job, work))
+        self.assertEqual(job.status, JOB_SUCCEEDED)
+        self.assertEqual(job.stages_started, ["breakfast"])
+        self.assertEqual(job.notes, ["Trimmed Monday dinner"])
+        self.assertIsNotNone(job.finished_at)
+        self.assertIsNone(self.jobs.active)
+
+    def test_a_failed_run_releases_the_claim(self):
+        """The claim must not survive its run — a guard that leaks is worse
+        than no guard, because nothing can generate again until a restart."""
+        job = self.jobs.claim(SOURCE_API, "current")
+
+        async def work():
+            raise RuntimeError("provider fell over")
+
+        asyncio.run(self.jobs.run(job, work))
+        self.assertEqual(job.status, JOB_FAILED)
+        self.assertIn("provider fell over", job.error)
+        self.assertIsNone(self.jobs.active)
+
+    def test_a_rejected_grid_is_reported_apart_from_a_failed_call(self):
+        """`WeekNotValidError` means no API call was ever paid for, so a
+        client can tell "fix your config" from "retry" without parsing a
+        message."""
+        job = self.jobs.claim(SOURCE_API, "current")
+
+        async def work():
+            raise WeekNotValidError(["Monday:lunch leftover has no source"])
+
+        asyncio.run(self.jobs.run(job, work))
+        self.assertEqual(job.status, JOB_FAILED)
+        self.assertEqual(
+            job.validation_errors, ["Monday:lunch leftover has no source"]
+        )
+
+    def test_a_pydantic_error_does_not_crash_the_handler(self):
+        """`WeekNotValidError.errors` is a list and pydantic's own `errors` is
+        a *method*, so the duck-typed read has to check. instructor raises
+        exactly that when a model cannot satisfy the schema, so a bare
+        `list(exc.errors)` would fail inside the handler that exists to stop
+        an exception escaping — taking the claim with it."""
+        from pydantic import BaseModel, ValidationError
+
+        class Model(BaseModel):
+            x: int
+
+        with self.assertRaises(ValidationError) as caught:
+            Model(x="not an int")
+
+        job = self.jobs.claim(SOURCE_API, "current")
+
+        async def work():
+            raise caught.exception
+
+        asyncio.run(self.jobs.run(job, work))
+        self.assertEqual(job.status, JOB_FAILED)
+        self.assertEqual(job.validation_errors, [])
+        self.assertIsNone(self.jobs.active)
+
+    def test_release_never_demotes_a_run_that_already_failed(self):
+        job = self.jobs.claim(SOURCE_API, "current")
+        self.jobs.fail(job, "boom")
+        self.jobs.release(job, JOB_SUCCEEDED)
+        self.assertEqual(job.status, JOB_FAILED)
+
+    def test_recent_is_newest_first_and_bounded(self):
+        jobs = GenerationJobs(max_retained=3)
+        for _ in range(5):
+            job = jobs.claim(SOURCE_API, "current")
+            jobs.release(job)
+        self.assertEqual(len(jobs.recent()), 3)
+        self.assertGreater(jobs.recent()[0].started_at, "")
+        self.assertEqual(len(jobs.recent(limit=2)), 2)
+
+    def test_the_running_job_is_never_evicted(self):
+        """A client polling a run still in flight must not be told it never
+        existed, however many finished runs queue up behind it."""
+        jobs = GenerationJobs(max_retained=2)
+        running = jobs.claim(SOURCE_API, "current")
+        for _ in range(4):
+            # Nothing else can claim while `running` holds it, so these are
+            # recorded by hand — the eviction rule is what is under test, not
+            # the claim.
+            jobs._remember(
+                type(running)(
+                    id=f"finished-{_}",
+                    week_identifier="current",
+                    source=SOURCE_API,
+                    started_at="2026-08-31T00:00:00+00:00",
+                    status=JOB_SUCCEEDED,
+                )
+            )
+        self.assertIsNotNone(jobs.get(running.id))
+        self.assertIs(jobs.active, running)
+
+
+class TestGenerationRoute(APITestCase):
+    def setUp(self):
+        super().setUp()
+        self._real = api.generate_and_store_week
+        self.addCleanup(setattr, api, "generate_and_store_week", self._real)
+        self.recorder = {}
+
+    def _await_job(self, job_id, tries=200):
+        """Poll until the background task lands.
+
+        `TestClient` is used as a context manager by the callers so one portal
+        (and one loop) spans every request — without that, the task spawned
+        during the POST is abandoned when the per-request portal closes. No
+        sleep: each round trip through the portal is itself a loop turn.
+        """
+        for _ in range(tries):
+            body = self.client.get(f"/api/jobs/{job_id}").json()
+            if body["status"] != JOB_RUNNING:
+                return body
+        self.fail(f"job {job_id} never finished")
+
+    def test_generating_returns_a_job_and_stores_the_week(self):
+        api.generate_and_store_week = stub_generation(self.recorder)
+        with self.client:
+            started = self.client.post("/api/weeks/current/generate")
+            self.assertEqual(started.status_code, 202)
+            job = started.json()
+            self.assertEqual(job["status"], JOB_RUNNING)
+            self.assertEqual(job["source"], SOURCE_API)
+            self.assertEqual(job["week_identifier"], "current")
+            # The stages are named on the 202 itself, so a client has a
+            # denominator before the first poll.
+            self.assertIn("dinner", job["stages"])
+
+            finished = self._await_job(job["id"])
+
+        self.assertEqual(finished["status"], JOB_SUCCEEDED)
+        self.assertEqual(finished["stages_started"], ["breakfast", "dinner"])
+        self.assertEqual(finished["notes"], ["Trimmed Monday dinner to budget"])
+        self.assertIsNotNone(finished["finished_at"])
+        # The week itself is not on the job — it comes back through the read
+        # route, which is the whole reason the job carries no plan.
+        week = self.client.get("/api/weeks/current")
+        self.assertEqual(week.status_code, 200)
+        self.assertEqual(week.json()["days"], DAYS)
+
+    def test_the_request_body_reaches_the_spec(self):
+        api.generate_and_store_week = stub_generation(self.recorder)
+        with self.client:
+            job = self.client.post(
+                "/api/weeks/next/generate",
+                json={"week_start": "Sunday", "servings": 4},
+            ).json()
+            self._await_job(job["id"])
+        self.assertEqual(self.recorder["week_identifier"], "next")
+        self.assertEqual(self.recorder["week_start"], "Sunday")
+        self.assertEqual(self.recorder["servings"], 4)
+        # Generating "next" must not touch "current" — the same rule
+        # `ui_generation` states about the header's week select.
+        self.assertEqual(self.client.get("/api/weeks/current").status_code, 404)
+        self.assertEqual(self.client.get("/api/weeks/next").status_code, 200)
+
+    def test_a_second_run_is_refused_while_one_is_in_flight(self):
+        api.generate_and_store_week = stub_generation(self.recorder)
+        with self.client:
+            first = self.client.post("/api/weeks/current/generate").json()
+            # Claimed synchronously in the route, so this is refused without
+            # depending on where the background task has got to.
+            clash = self.client.post("/api/weeks/current/generate")
+            self.assertEqual(clash.status_code, 409)
+            self.assertIn(first["id"], clash.json()["detail"])
+            self.assertIn(SOURCE_API, clash.json()["detail"])
+            self._await_job(first["id"])
+            # And the claim is released, so the next one is accepted.
+            again = self.client.post("/api/weeks/current/generate")
+            self.assertEqual(again.status_code, 202)
+            self._await_job(again.json()["id"])
+
+    def test_a_browser_tab_holding_the_claim_refuses_the_route(self):
+        """The cross-client half — `PlannerState.generating` cannot see the
+        route and the route cannot see it, so `ui_generation.run_generation`
+        claims here instead."""
+        self.jobs.claim(SOURCE_UI, "current")
+        clash = self.client.post("/api/weeks/current/generate")
+        self.assertEqual(clash.status_code, 409)
+        self.assertIn(SOURCE_UI, clash.json()["detail"])
+
+    def test_per_meal_type_failures_ride_on_a_succeeded_run(self):
+        """A failed meal must not fail the week, so these are not a failed
+        job — a client has to read both fields."""
+        api.generate_and_store_week = stub_generation(
+            self.recorder, failures={"Monday:dinner": "provider returned nothing"}
+        )
+        with self.client:
+            job = self.client.post("/api/weeks/current/generate").json()
+            finished = self._await_job(job["id"])
+        self.assertEqual(finished["status"], JOB_SUCCEEDED)
+        self.assertEqual(
+            finished["failures"], {"Monday:dinner": "provider returned nothing"}
+        )
+
+    def test_a_rejected_grid_lands_on_the_job_not_the_response(self):
+        """The POST is 202 whatever happens next: validation needs the config
+        loaded and the grid built, which is the run's own first step. The
+        distinction survives on the job instead."""
+        api.generate_and_store_week = stub_generation(
+            self.recorder, raises=WeekNotValidError(["Monday:lunch has no source"])
+        )
+        with self.client:
+            started = self.client.post("/api/weeks/current/generate")
+            self.assertEqual(started.status_code, 202)
+            finished = self._await_job(started.json()["id"])
+        self.assertEqual(finished["status"], JOB_FAILED)
+        self.assertEqual(finished["validation_errors"], ["Monday:lunch has no source"])
+        # Nothing was stored, so the read route still says there is no week.
+        self.assertEqual(self.client.get("/api/weeks/current").status_code, 404)
+
+    def test_jobs_are_listed_newest_first(self):
+        api.generate_and_store_week = stub_generation(self.recorder)
+        with self.client:
+            first = self.client.post("/api/weeks/current/generate").json()
+            self._await_job(first["id"])
+            second = self.client.post("/api/weeks/next/generate").json()
+            self._await_job(second["id"])
+            listed = self.client.get("/api/jobs").json()
+        self.assertEqual([job["id"] for job in listed], [second["id"], first["id"]])
+
+    def test_unknown_job_is_404(self):
+        self.assertEqual(self.client.get("/api/jobs/nope").status_code, 404)
+
+    def test_unknown_week_identifier_is_rejected_before_anything_is_claimed(self):
+        response = self.client.post("/api/weeks/bogus/generate")
+        self.assertEqual(response.status_code, 422)
+        self.assertIsNone(self.jobs.active)
 
 
 if __name__ == "__main__":

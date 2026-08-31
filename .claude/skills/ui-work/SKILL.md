@@ -344,7 +344,24 @@ day marker was `•` / `⚡`. All four are Material icons now: `kitchen` /
   the prep column's last timeline phase laid itself out at x=423, inside the
   Monday day column and 143px clear of its own 135px track, and the cell's
   `absolute` positioning made that invisible rather than merely wrong. Any
-  `flex flex-col` that is expected to scroll needs `flex-nowrap`.
+  `flex flex-col` that is **expected to scroll** needs `flex-nowrap`; a
+  column that simply grows with the page does not, which is why 60-odd of
+  them across this front end are fine without it.
+
+  **Two more instances shipped and were being used.** `ui_shopping.py`'s
+  drawer root is the one a user actually hit: a week's list started a second
+  column off the 420px edge, taking the Copy-for-Keep buttons and every trip
+  after the first with it, and the `overflow-y-auto` on that same element
+  never fired because vertically the content *did* fit. It was reported as
+  "the shopping list seems a forgotten part of the app", which is what a
+  feature looks like when half of it renders off-screen.
+  `ui_cards.py`'s swap-with-favourite list was the second, found by
+  generalising rather than by report — `max-h-64 overflow-y-auto` over a
+  catalog with 36 dinner favourites in it — and it was less visible only
+  because a dialog has room to its right where a slide-over does not. **The
+  grep that finds them is `flex flex-col` without `flex-nowrap`, narrowed to
+  the ones that also carry `overflow-y`/`max-h`**, and it is worth running
+  before believing a scrolling surface is thin.
 - **A flex or grid item's default `min-width`/`min-height` is `auto`, which
   refuses to shrink below its content's natural size — including a wrapper
   that's just passing width down to an `overflow-x: auto` grid inside it.**
@@ -413,6 +430,16 @@ none of which draw a mark. Insights joined it with the trend charts, which is
 worth noting because this paragraph previously said the topic had no third
 member to grow: **a topic's membership is a fact about today's readers, not a
 property of the topic.**
+
+**A registered "section" need not be one `@ui.refreshable`.**
+`ui_shopping.ShoppingPanels` is one object with a `.refresh()` that fans out
+to every instance of the shopping panel — the drawer's and the destination's,
+since `@ui.refreshable` binds to where it was first called and the two are
+built at different points in the page. `Refreshables` de-dupes by `id` and
+calls `.refresh()` on whatever it was handed, so nothing in the registry had
+to change. The alternative was moving every `refreshables.on(...)` call below
+the rail so the later instance could be reached, which would turn a detail
+private to one module into a page-shell ordering rule.
 
 `"plan"` gained the header's week select for the opposite reason — it is not
 that the select changed, but that a *second* thing now changes the week.

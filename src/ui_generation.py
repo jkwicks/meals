@@ -17,6 +17,8 @@ from typing import Callable, Dict, Optional, Tuple
 
 from nicegui import ui
 
+from generation_jobs import SOURCE_UI
+
 from planner import (
     REJECTION_REASON_LABELS,
     RejectionEntry,
@@ -147,6 +149,8 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
     state = ctx.state
     REPOSITORY = ctx.repository
     refreshables = ctx.refreshables
+    # Process-wide, unlike the three above — see `UIContext.jobs`.
+    JOBS = ctx.jobs
 
     # ---- reload -------------------------------------------------------
 
@@ -522,6 +526,25 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
     async def run_generation(button) -> None:
         if state.generating:
             return
+        # Two claims, because there are two races and `state.generating` only
+        # ever covered one of them. It is per-client (see its comment on
+        # `PlannerState`), so it stops *this* tab clicking twice and cannot
+        # see another tab or the `POST /api/weeks/…/generate` route — both of
+        # which write the same `week_plan.json`. `ctx.jobs` is the
+        # process-wide claim, and it is taken second so a busy notice only
+        # ever names somebody else's run.
+        job = JOBS.claim(SOURCE_UI, state.week_selection)
+        if job is None:
+            active = JOBS.active
+            ui.notify(
+                "Another generation is already running"
+                + (f" (started by the {active.source})." if active else ".")
+                + " Wait for it to finish — both would write the same week.",
+                type="warning",
+                multi_line=True,
+                close_button=True,
+            )
+            return
         # Claimed before the first `await`, not just before the API calls:
         # every await below is a point where a second click gets its turn, and
         # the guard is worthless if it can be passed twice in between.
@@ -529,6 +552,14 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         try:
             await generate_week(button)
         finally:
+            # `generate_week` reports its own outcome through the progress
+            # dialog and `ui.notify`, and swallows its exception, so the
+            # registry is deliberately not told which it was — a job stamped
+            # "succeeded" because nothing propagated would be the API
+            # inventing a status for a run it never watched. What the record
+            # carries for a UI run is what it honestly knows: who held the
+            # claim, and from when until when.
+            JOBS.release(job)
             state.generating = False
             button.props(remove="loading")
             progress_dialog.close()

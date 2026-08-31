@@ -811,6 +811,197 @@ class TestAggregateCookEvents(unittest.TestCase):
         self.assertEqual(shopping.aggregate_cook_events([], DAYS).items(), [])
 
 
+class TestDepartmentOrder(unittest.TestCase):
+    """The walk order, which was `sorted()` in seven independent places.
+
+    Alphabetical is a zigzag through a shop — Dairy, Fish, Grains, Herbs,
+    Meat, Nuts, Pantry, Produce sends you to the chilled aisle first and the
+    entrance last. `DEPARTMENT_ORDER` is one constant behind all seven.
+    """
+
+    def test_the_walk_starts_at_produce_and_ends_at_the_cold_counter(self):
+        out = shopping.aggregate_cook_events(
+            [
+                cook_event(
+                    "Monday",
+                    "dinner",
+                    [("Salmon fillet", 300), ("Spinach", 100), ("Rice", 200)],
+                )
+            ],
+            DAYS,
+        )
+        walk = shopping.ordered_departments(out)
+        self.assertLess(walk.index("Produce"), walk.index("Grains & Bakery"))
+        self.assertLess(walk.index("Grains & Bakery"), walk.index("Fish & Seafood"))
+
+    def test_it_is_not_department_keywords_order(self):
+        """That list is match precedence, specific -> general, and reusing it
+        would pin Pantry first forever because "Beef broth" has to be claimed
+        before "beef"."""
+        precedence = [department for department, _ in shopping.DEPARTMENT_KEYWORDS]
+        self.assertEqual(precedence[0], "Pantry")
+        self.assertNotEqual(shopping.DEPARTMENT_ORDER[0], "Pantry")
+
+    def test_an_unnamed_department_sorts_last_by_name(self):
+        """Adding a keyword group without touching the order degrades to the
+        old behaviour for that group rather than silently placing it first."""
+        self.assertGreater(
+            shopping.department_sort_key("Bottle Shop"),
+            shopping.department_sort_key("Fish & Seafood"),
+        )
+
+    def test_every_renderer_walks_the_same_way(self):
+        out = shopping.aggregate_cook_events(
+            [cook_event("Monday", "dinner", [("Salmon fillet", 300), ("Spinach", 100)])],
+            DAYS,
+        )
+        walk = shopping.ordered_departments(out)
+        for text in (
+            shopping.format_shopping_list_text(out),
+            shopping.format_shopping_list_markdown(out),
+            shopping.format_shopping_list_keep(out),
+        ):
+            seen = [d for d in walk if d.upper() in text.upper()]
+            self.assertEqual(seen, walk, text)
+        self.assertEqual(
+            [item.department for item in out.items()],
+            [d for d in walk for _ in out.categories[d]],
+        )
+
+
+class TestKeepFormat(unittest.TestCase):
+    """Google Keep turns **every** pasted line into a checkbox, which is what
+    both fixes here are about: a bare department name arrives in the shop
+    looking exactly like something to buy."""
+
+    def list_of(self, *ingredients):
+        return shopping.aggregate_cook_events(
+            [cook_event("Monday", "dinner", list(ingredients))], DAYS
+        )
+
+    def test_a_department_is_ruled_off_rather_than_left_bare(self):
+        text = shopping.format_shopping_list_keep(self.list_of(("Spinach", 100)))
+        self.assertIn("── PRODUCE ──", text)
+        self.assertNotIn("\nProduce\n", text)
+
+    def test_the_payload_names_its_trip(self):
+        """The toast said which window was copied and the payload did not, so
+        two trips pasted into Keep were indistinguishable once it had gone."""
+        out = self.list_of(("Spinach", 100))
+        self.assertIn("═══ Shop Wednesday ═══", shopping.format_shopping_list_keep(out, trip="Shop Wednesday"))
+        self.assertNotIn("═══", shopping.format_shopping_list_keep(out))
+
+    def test_the_two_rules_are_told_apart(self):
+        text = shopping.format_shopping_list_keep(self.list_of(("Spinach", 100)), trip="Shop Sunday")
+        self.assertNotEqual(shopping.KEEP_TRIP_RULE, shopping.KEEP_DEPARTMENT_RULE)
+        self.assertEqual(text.splitlines()[0].count(shopping.KEEP_TRIP_RULE), 2)
+
+    def test_no_blank_lines_or_bullets_ever(self):
+        """Either would become an extra junk item in the list."""
+        text = shopping.format_shopping_list_keep(
+            self.list_of(("Spinach", 100), ("Salmon fillet", 300)), trip="Shop Sunday"
+        )
+        self.assertTrue(all(line.strip() for line in text.splitlines()))
+        self.assertFalse(any(line.startswith(("-", "*", "#")) for line in text.splitlines()))
+
+
+class TestPantrySubtraction(unittest.TestCase):
+    """`apply_pantry` — item 2 of the change queue.
+
+    Render time and never a stored count: the generation ledger deliberately
+    dies with its run, and this asks the different question of what is still
+    worth buying, from the hand-edited `inventory_to_clear` itself.
+    """
+
+    def list_of(self, *ingredients):
+        return shopping.aggregate_cook_events(
+            [cook_event("Monday", "dinner", list(ingredients))], DAYS
+        )
+
+    def test_a_quantified_entry_comes_off_the_line(self):
+        out = shopping.apply_pantry(self.list_of(("Chicken breast", 800)), [("chicken breast", 500.0)])
+        item = out.items()[0]
+        self.assertEqual(item.total_amount_g, 300)
+        self.assertEqual(item.pantry_deducted_g, 500)
+        self.assertEqual(item.original_amount_g, 800)
+
+    def test_a_line_the_pantry_covers_leaves_the_list_but_is_still_named(self):
+        """A stale pantry is the failure mode here, so a line that vanished
+        with no trace would be the one you could not notice was wrong."""
+        out = shopping.apply_pantry(self.list_of(("Chicken breast", 400)), [("chicken breast", 900.0)])
+        self.assertEqual(out.items(), [])
+        self.assertEqual(len(out.pantry_covered), 1)
+        self.assertIn("Chicken breast", shopping.pantry_covered_line(out))
+
+    def test_an_unquantified_entry_annotates_and_never_subtracts(self):
+        """There is no number to subtract, and inventing one is exactly what
+        `inventory_entries` keeps two entry shapes to avoid."""
+        out = shopping.apply_pantry(self.list_of(("Spinach", 200)), [("spinach", None)])
+        item = out.items()[0]
+        self.assertEqual(item.total_amount_g, 200)
+        self.assertTrue(item.pantry_unquantified)
+        self.assertEqual(item.pantry_deducted_g, 0)
+        self.assertIn("pantry", shopping.pantry_note(item))
+
+    def test_an_entry_is_a_budget_across_the_list_not_a_per_line_discount(self):
+        events = [
+            cook_event("Monday", "dinner", [("Chicken thigh fillets, diced", 400)]),
+            cook_event("Tuesday", "lunch", [("Chicken thigh", 400)]),
+        ]
+        # One line: both names normalise together, so spend it against the
+        # combined 800g and check the remainder rather than the split.
+        out = shopping.apply_pantry(
+            shopping.aggregate_cook_events(events, DAYS), [("chicken thighs", 600.0)]
+        )
+        self.assertEqual(sum(item.total_amount_g for item in out.items()), 200)
+
+    def test_a_small_remainder_is_still_a_remainder(self):
+        """A threshold below which the leftover was "close enough" would be a
+        number nobody chose."""
+        out = shopping.apply_pantry(self.list_of(("Chicken breast", 605)), [("chicken breast", 600.0)])
+        self.assertEqual(out.items()[0].total_amount_g, 5)
+
+    def test_one_ingredient_draws_on_at_most_one_entry(self):
+        """Two entries both matching a line would each be charged for it,
+        spending the house's stock twice over on one dish — the rule
+        `spend_inventory` already states."""
+        out = shopping.apply_pantry(
+            self.list_of(("Chicken breast", 900)),
+            [("chicken breast", 400.0), ("chicken", 400.0)],
+        )
+        self.assertEqual(out.items()[0].total_amount_g, 500)
+
+    def test_the_department_guard_still_holds(self):
+        """"chicken" must not be spent by a chicken broth — the same guard
+        that keeps the ledger and the list agreeing about one dish."""
+        out = shopping.apply_pantry(self.list_of(("Chicken broth", 500)), [("chicken", 500.0)])
+        self.assertEqual(out.items()[0].total_amount_g, 500)
+        self.assertFalse(out.items()[0].from_pantry)
+
+    def test_an_empty_pantry_changes_nothing_at_all(self):
+        """A config with no `inventory_to_clear` renders byte-identically to
+        before this existed — the convention every rule here follows."""
+        original = self.list_of(("Chicken breast", 400), ("Spinach", 100))
+        out = shopping.apply_pantry(original, [])
+        self.assertEqual(
+            shopping.format_shopping_list_text(out),
+            shopping.format_shopping_list_text(original),
+        )
+        self.assertEqual(shopping.pantry_covered_line(out), "")
+
+    def test_the_keep_copy_omits_a_covered_line_but_keeps_a_reduced_one(self):
+        """A checkbox for something you are not buying is the junk item that
+        format exists to avoid; a reduced line is still a purchase."""
+        out = shopping.apply_pantry(
+            self.list_of(("Chicken breast", 400), ("Spinach", 200)),
+            [("chicken breast", 900.0), ("spinach", 50.0)],
+        )
+        text = shopping.format_shopping_list_keep(out)
+        self.assertNotIn("Chicken breast", text)
+        self.assertIn("Spinach", text)
+        self.assertIn("150g", text)
+
+
 class TestCollectUniquePlants(unittest.TestCase):
     """The telemetry header's plant count — diversity, not quantity."""
 
