@@ -1,395 +1,114 @@
 # Change queue
 
-Every unfinished item and known defect, consolidated from `ui-redesign.md`,
-`future-ideas.md`, `ISSUES.md` and the 2026-08-30 front-end review
-(`glm-suggestions.md`), in recommended priority order.
+**Every unfinished item and known defect, ranked in one list.** Each entry
+carries its type, size, what blocks it, and where it was first recorded, plus
+a [Verified closed](#verified-closed--do-not-re-file) table so a shipped item
+is not re-filed as a new idea. This is the **only current** planning
+document; the four it consolidated are history.
 
-**Why this file exists separately from the other two.** `ui-redesign.md` is
-work that waits on nothing and `future-ideas.md` is work that waits on a
-product decision or on runtime data — a split that answers "may I start
-this?" but not "what should I start?", because neither file ranks against
-the other and neither holds the defects recorded in CLAUDE.md as they were
-found. This file ranks everything in one list. The other two stay the place
-where an item’s full reasoning lives; entries below point at them rather
-than restating them. **`ui-redesign.md` now contributes nothing at all**:
-its last unfiled thread shipped in v0.33.0 and finding 3, its last filed
-one, shipped in v0.36.0. The document is now wholly history.
+It replaced `ui-redesign.md` (work that waited on nothing) and
+`future-ideas.md` (work that waited on a product decision or on runtime data)
+on one point: that split answered "may I start this?" and never "what should
+I start?", because neither ranked against the other and neither held the
+defects recorded in CLAUDE.md at the moment they were found. Those two keep
+the `-deprecated` suffix and remain the place an item's full *reasoning*
+lives — entries here point at them rather than restating them. `ISSUES.md` is
+the maintainer's own defect register from before phases 6a–6e: read it for
+the original wording of a complaint, never for what is still open. All four
+sources are now exhausted except `future-ideas.md`, which contributes the two
+entries whose Source column says so.
 
-**Provenance is stated per item**, because several of the entries below were
-never filed anywhere — they were recorded in CLAUDE.md prose at the moment a
-phase decided not to fix them, which is a good habit for keeping the *why*
-and a bad one for ever getting back to them. The first item this queue ranked
-was one of those, and is now closed; so is the phase 4 aside that led it
-until v0.33.0, which was recorded in prose in two documents and filed in
-neither. The rejection decay v0.34.0 closed is the counter-example worth
-keeping in view: it came from `future-ideas.md` with all three of its
-questions already written down, so the work was choosing between answers
-rather than reconstructing what the question had been. The adherence item
-v0.35.0 closed is the same shape and makes the point twice over: its two
-decisions were stated in `future-ideas.md`, and the *re-scoping* note that
-halved the work was one this file added later, in the entry itself. An entry
-is worth amending as the ground under it moves, not only when it is closed.
+**Verified against the code at `main`, v0.41.0** — not against any document's
+account of itself, which is how several stale claims were caught.
 
-**Everything here was verified against the code on 2026-08-27**, not against
-the documents' own account of themselves, and re-checked against `main` at
-**v0.41.0**. Twelve releases have now closed whatever this queue ranked first
-at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
-Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
-and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
-nothing ever ran, **v0.32.0** the amber/violet collision *and* the fibre
-readout with no measured half, **v0.33.0** the training schedule proposed
-from Garmin activity, **v0.34.0** the rejection list that never decayed,
-**v0.35.0** the plan nothing ever checked against what was eaten,
-**v0.36.0** the Insights destination that described its own blocker instead
-of evaluating it, **v0.37.0** the pantry that could be spent five times over,
-the two long-cook deferrals it turned out to be sitting next to, *and* two of
-the three front-end entries — the typography the app never declared and the
-name it never had — and **v0.38.0** the third and last of them, the UI that
-read flat.
+## How to read this file
 
-**v0.39.0 broke that streak deliberately, and is the first release in twelve
-to close nothing the ranking held.** It emptied the *appendix* instead —
-three of its four remaining rows, leaving only the daily fibre target — on
-the argument the appendix had been making about itself since v0.37.0: a
-deferral recorded alone is read alone, and these had each been sitting in
-CLAUDE.md prose since the release that decided against them. The ranked list
-is unchanged and item 1 is still item 1. Two of the three had been mis-costed
-in prose while the table beside them was right, which is the correction the
-appendix's own intro now carries.
+- **Cite entries by name, never by number.** The numbers renumber on every
+  release that closes something — twelve times so far, twice in one release
+  once, and once by an insertion that moved half the list — so "item 3" in a
+  comment has a shelf life of one release. This file's own cross-references
+  had gone stale by one in three places before the rule existed. **The anchor
+  links in the table below still carry a number, and they are the one thing a
+  renumber has to be checked against.**
+- **Provenance is stated per entry**, because several were never filed
+  anywhere: they were recorded in CLAUDE.md prose at the moment a phase
+  decided not to fix them, which keeps the *why* and loses the *what next*.
+  Six such deferrals were eventually found by reading the code against the
+  document; all six have shipped.
 
-**v0.40.0 finished the appendix, and the row it took was the one v0.39.0 had
-argued was different in kind.** The daily fibre target was left standing on
-the reasoning that it "has to change what a macro budget *is*" — and nothing
-about a macro budget changed. `MACRO_KEYS` had simply been answering two
-questions at once ("which keys have a term in `calories ≈ 4p + 4c + 9f`" and
-"which keys have a target"), which were the same set only while fibre was the
-one nutrient reported and not aimed at. Separating them was the feature; the
-budget arithmetic is byte-identical. **A row filed as different in kind is
-worth re-reading for whether the difference is in the work or in a name doing
-two jobs.** The ranked list is again unchanged and item 1 is still item 1 —
-two releases running, which is now the state to notice rather than an
-accident.
+## Rules this file has learned
 
-**v0.41.0 closed four items and took the top three of them off a list that
-was one day old.** The shopping block was filed on the morning of 2026-08-31
-and shipped that afternoon — the shortest life any entry here has had, and by
-some distance. Three things about it are worth keeping:
+Distilled from thirteen releases. Each was paid for at least once.
 
-- **The two blocking decisions were put to the maintainer before a line was
-  built**, which makes it four of the last six releases to clear one that
-  way. Both were answered against this file's own standing recommendation on
-  one count and with it on the other: the pantry took the render-time
-  subtraction as recommended, and shopping became a destination *and* stayed
-  a drawer, which was the option this file had costed as "the most capable
-  and the most expensive" and which turned out to be about forty lines,
-  because the expense was in the surfaces and the two surfaces already
-  existed.
-- **The entry's one unverified claim was the entry's most important one**,
-  and the way it got confirmed is the lesson. It asked for five minutes with
-  devtools on the drawer; what actually settled it was `grep` against the two
-  stylesheets in `venv/`, which showed Quasar defining `.flex{flex-wrap:wrap}`
-  and Tailwind's `.flex-col` setting only `flex-direction`. **A layout claim
-  can sometimes be verified from the cascade rather than from the symptom**,
-  and that is both cheaper and stronger than a screenshot.
-- **A fourth item closed that this file never ranked.** The generation route
-  was being written in the working tree while the shopping block was being
-  filed, and both went out together. The entry it belonged to is amended
-  rather than deleted, because the write routes are still open and the
-  reasoning for the half that shipped is worth keeping beside them.
-All three of the source docs' stale claims are now settled: `ISSUES.md`
-item 9 was already fixed, `ui-redesign.md`'s phase 4 aside is filed *and*
-shipped, and `future-ideas.md`'s out-of-date 5c biometric counts stopped
-mattering when the entry they blocked closed.
+**On filing**
 
-**`ui-redesign.md` is now closed out entirely.** v0.33.0 shipped its last
-*unfiled* thread (the phase 4 aside about proposing the schedule from Garmin
-activity, "worth filing there rather than leaving it here", then never filed
-anywhere); v0.36.0 shipped finding 3, the last of its properly-filed ones.
-**`glm-suggestions.md` joined it in v0.38.0**: all three of its ranked
-entries have now shipped, and what is left of that review is the eleven craft
-items below, which were never ranked. Everything still ranked in this queue
-comes from `future-ideas.md` or `ISSUES.md`.
+- **Verify a report against the code the day it is filed, not the day it is
+  picked up.** Five proposals from one front-end review did not survive that
+  check. And verifying a review's *premises* is not the same as verifying its
+  *proposals* — one entry asserted the app "names itself nowhere on screen"
+  while three lines of `ui.header()` said otherwise, which changed the answer
+  and not merely the reasoning.
+- **A claim can sometimes be verified from the mechanism rather than the
+  symptom**, which is cheaper and stronger. The shopping drawer's sideways
+  scroll was filed as "five minutes with devtools" and settled instead by two
+  greps: Quasar defines `.flex{flex-wrap:wrap}` and Tailwind's `.flex-col`
+  overrides only `flex-direction`.
+- **A size written in prose and a size written in the table beside it are two
+  claims, and only one of them gets read.** The prose was wrong twice; the
+  Size column was right both times.
+- **The closed table is not a place a to-do can live** — nor is CLAUDE.md
+  prose, nor a deferral note inside a shipped feature. Anything decided
+  against belongs in the ranked list on the day it is decided.
+- **A closed row's *reasoning* can go stale even though its verdict cannot**,
+  and nobody re-reads a closed row. A closure is a change of *fact* for
+  whatever cited it, not just a link to repoint — the by-name rule stops a
+  reference dangling and does nothing to stop one going false. Five repairs
+  so far, four of them a rewrite rather than a repoint.
 
-**The front-end review's three entries are worth reading together now they
-are all closed, because the same thing happened to each.** In every one, the
-part this file had *corrected* in writing was the part that made the work
-cheap: the identity item's premise (the app named itself nowhere) was untrue
-and knowing so is what kept the wordmark in the header; the contrast rule as
-filed would have left 39 body labels under AA, and the entry's own
-measurement is what caught it; and this one had already established that
-`week_plan is None` gates the exports rather than the shopping list, and had
-re-costed the checklist from three days to an hour. **A review is worth
-verifying against the code at the moment it is filed, not at the moment it is
-picked up** — none of those three corrections would have survived being left
-to a reader eight releases later, and two of them look like agreement rather
-than correction unless the disagreement is written down.
+**On picking what to do next**
 
-**"Blocked by: data" turned out to be a statement about the *page*, not
-about the work.** Finding 3 sat at the top of this queue behind a trigger —
-`calculate_adaptive_tdee` returning a number and ~14 rows in both lists —
-that was still unmet on the day it shipped: 6 weigh-ins across a 5-day span
-against a floor of 7. It shipped anyway, and the reason is the strongest
-argument this file has yet made for *starting* a blocked item. The thing
-actually blocked was a chart being **worth looking at**; what was not
-blocked was the page saying, per readout, which precondition was unmet — and
-the stub demonstrated the cost of leaving that undone, because it printed
-the counts and named the rule without ever evaluating it, which is precisely
-the failure v0.30.0 had already fixed one floor down. **A wait is worth
-re-reading as two questions: what needs the data, and what only needs to
-report that the data is missing.** The second half is almost never blocked,
-and it is what stops the first half from having to be noticed by a human
-later.
+- **"Blocked by: one decision" is a reason to start with a question, not a
+  reason to skip.** Five of the last seven releases cleared one that way,
+  four of them in a single exchange before a line was built.
+- **Re-read a blocking decision before asking it.** Its *options* age even
+  when its question doesn't: one storage question proposed two files and was
+  answered with a third shape it had not listed, because the codebase had
+  grown that shape after the question was written.
+- **A blocking decision that other ranked items build underneath outranks one
+  that blocks only itself.** Answering "drawer or destination" first is what
+  stopped two shopping items being built twice.
+- **"Blocked by: data" is two questions.** What needs the data, and what only
+  needs to *report* that the data is missing. The second is almost never
+  blocked, and it is what stops the first having to be noticed by a human
+  later — the Insights destination shipped its whole verdict layer against
+  preconditions that were still unmet.
+- **Three ways to pick, and they are not the same.** The *ranking* answers
+  "what is most worth doing". A *theme* answers "what is cheapest together",
+  and is only worth choosing on when the second item genuinely gets cheaper —
+  not merely more convenient to review. A *bundle* is several things too small
+  to rank hanging off one stated premise, which is how they get done at all.
+- **A row's rank is a fact about the row, not about what is next to it.** A
+  craft item does not ride along because something adjacent is being worked,
+  and is not promoted because its neighbour closed.
+- **A row filed as "different in kind" is worth re-reading for whether the
+  difference is in the work or in a name doing two jobs.** The daily fibre
+  target was deferred for having to "change what a macro budget is"; nothing
+  about a budget changed, because `MACRO_KEYS` had simply been answering two
+  questions at once.
 
-**That paragraph read "the ranked list is still one decision and four items
-nothing needs" until 2026-08-31, and three shopping entries went in above
-all four of them.** Two releases running had ended by noting that item 1 was
-still item 1 and that this was "the state to notice rather than an
-accident" — and the thing worth noticing turned out to be that the list had
-gone quiet because nothing new was being *read against the code*, not
-because nothing was wrong. What broke the run was not a release. It was the
-maintainer using a surface and saying it felt forgotten, and an hour spent
-checking that report against `ui_shopping.py` and `shopping.py`.
+**On where the work turns out to be**
 
-**The list had no defect in it, and that was a fact about this file rather
-than about the app.** Its opening sentence promises "every unfinished item
-and known defect"; the Type column had only ever said Feature or Tech debt,
-because every defect this queue has held was found during a phase that then
-fixed it. Item 1 is the first entry filed as a fault in shipped, working,
-weekly-used code — six parts, four of them individually too small to rank,
-bundled on v0.38.0's precedent. **Nothing in the eleven-release streak came
-from anybody using the app**, which is the gap this insertion actually
-exposes, and it is worth more than the three entries.
-
-The three sat above the readiness check-in for three different reasons,
-stated separately because only one of them generalises. The first was a live
-defect and the cheapest thing in the file. The second was a want this queue
-had already recorded in words and then filed nowhere — note that it was
-hiding in the **closed table**, which no rule of this file had yet said was
-not a place a to-do can live. The third was above the readiness check-in only
-because it was a *sequencing* decision: unanswered, it made the other two
-partly rebuildable, where the readiness question gates nothing but its own
-work. **A blocking decision that other ranked items build underneath is worth
-more than one that blocks only itself**, and that is the rule worth keeping.
-
-**All three closed in v0.41.0, the day after they were filed, and the
-sequencing argument is the one that paid.** Answering "drawer or destination"
-first cost one question and made the other two land in a builder that both
-surfaces share; answering it afterwards would have meant rebuilding the
-department bands, the tick handling and the pantry annotations a second time.
-The other two rules generalised less than they looked: the defect was cheap
-because it was six small things behind one premise (v0.38.0's bundle shape,
-not v0.37.0's theme), and the want was cheap because
-`shopping.ingredient_draws_on` had already been written for the ledger. **Two
-of the three were cheap for reasons that were facts about the code, and only
-the third was cheap because of where it was ranked.**
-
-**The release also closed something the ranking never saw**, which is worth
-recording beside them: the generation-over-HTTP half of the API entry was
-built in the working tree before this session began, and it went out in the
-same release. A queue cannot rank what is already being written, but it can
-notice: the entry it belonged to was amended rather than left describing a
-design question that had been answered, which is the same repair the by-name
-rule keeps producing.
-
-With the three gone the shape is what it was before them, minus one blocker:
-the readiness check-in is again item 1 and again the only entry with a
-product question in it, the three API entries are filed so that "read-only
-except generation, localhost-only" stays a recorded decision rather than an
-assumption — and the first of those is no longer blocked on a design pass,
-because v0.41.0 did it — and one XL is unscoped. Nothing is waiting on data. **Taking the craft table on a theme** also still
-stands as an option — v0.37.0 established that as a legitimate second way to
-pick — but note that one of its rows now has a parent again for the first
-time since v0.38.0 (see below).
-
-**A third fetched-and-discarded signal turned out to be the enabling
-half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
-away; v0.32.0 found Cronometer's fibre column uncaptured beside a planned
-figure with no measured counterpart; v0.33.0 found `fetch_cardio_activities`
-in exactly the first shape — fetched on every sync, printed, stored nowhere
-— and it was the missing input for the schedule proposal, not a separate
-tidy-up. The pattern is worth stating because it has now paid three times:
-**ask what each sync actually feeds, and check the answer against the
-running code rather than against any document.**
-
-v0.35.0 is the same pattern seen from the far end and worth recording as
-such: `activity_log` had a reader within one release of being stored, and
-that reader is what shrank this queue's largest remaining item from an L
-with two schemas to one file and a derived read. **A signal with a consumer
-keeps paying**; the three above are the case for storing one, and this is
-the case for checking, before writing a new schema, whether something
-already stored answers most of the question.
-
-**Three of the last eight releases closed more than one item each**, which is
-worth noting because the top of this queue has moved by more than one place
-three times now. v0.31.0: the `/api/recipes` duplication was an XS with no decision
-in it, and the sync item's single blocking decision — which of three shapes
-— was answered by taking the one this file already recommended, a launchd
-job outside the app process. v0.32.0: the amber/violet pass and the fibre
-item were independent, and shipped together only because the palette work
-had to touch every `ui_*` module anyway and the fibre readout lands in one
-of them. v0.33.0 closed one, and it was an L; v0.34.0 closed one M;
-v0.35.0 closed one that had been filed as an L and turned out to be smaller
-than filed, because half of it had already been built for another reason.
-v0.37.0 closed **five**, in two unrelated groups, and the two groups were
-picked two different ways — which is the most useful thing about it. The
-first three (the pantry ledger plus both appendix deferrals) went on a
-**theme** rather than a ranking: all three change what food ends up in a
-slot, which is not a question this file's priority order was built to answer.
-**That is worth recording as a legitimate second way to pick.** The ranking
-answers "what is most worth doing"; a theme answers "what is cheapest to do
-together", and here the saving was real and one-directional —
-`day_allows_long_cook` was written for the favourite half and the generated
-half then cost about a third of its filed M, because the rule it had to be
-checked against already existed by the time it was reached. The ledger shared
-nothing with them and was simply the item the theme was chosen for.
-
-The other two (typography/contrast, and the name/mark/accent) went on the
-**ranking**, straight down the list. They shared a theme too — both are the
-front end's presentation layer, both touch `ui_theme.py` and the `ui-work`
-skill — but that is not why they were picked, and the distinction matters
-because the saving was much smaller than the first group's: the contrast
-sweep touched 110 sites across ten modules and the identity work touched four
-constants and two call sites, with nothing either learned from the other
-beyond one shared `add_css` call. **A theme is worth choosing on when the
-second item gets cheaper; the front-end pair only got more convenient to
-review.** Both would have been the same work in separate releases.
-
-**v0.38.0 closed one item that behaved like five**, which is the third
-pattern and the one this file had not yet recorded. Its five lettered parts
-were filed as M/XS/S/XS/XS and were genuinely independent — an elevation
-pass, a fill, a banner, a checklist and a confirmation, in five different
-modules — so this was a *bundle*, not a theme: nothing in it made anything
-else in it cheaper. What it had instead was a shared premise. Four of the
-five are cheap on their own and none of them would ever have been picked
-alone, because "the app has one shadow in it" and "Discard has no
-confirmation" are each too small to rank; **stating the premise once and
-hanging five small things off it is how they got done at all.** The one real
-saving was accidental and ran the other way — (a) turned up the flaws that
-(b) and two unfiled fills had been hiding, so the M got slightly larger
-rather than the XS's getting smaller.
-
-**A decision-blocked item is unblocked by asking, not by waiting.** Three
-releases have now cleared one — and v0.38.0 is the first in eight that
-cleared *none*, because the only item left carrying a decision is the one at
-the top. That is now the whole shape of the ranked list, and it is stated
-above rather than left to be noticed. The three that did clear one cleared it
-differently: v0.31.0's
-sync item had three candidate shapes and this file had already recommended
-one, so the decision was made by reading. v0.34.0's rejection decay did not
-— its three questions were open, and the whole cost of clearing them was
-putting them to the maintainer and building against the answers. v0.35.0's
-adherence item was the same shape as v0.34.0's and is the strongest case
-yet: it had carried **two** decisions and an L since the doc was written,
-and both were answered in one exchange before a line was built. **v0.37.0
-makes it three of the last four**, and the pantry ledger is the clearest case
-yet for the corollary: it carried an L and *two* decisions, and one of them
-this file had already answered in the entry itself ("the doc's own
-recommendation is to skip the camera entirely for v1"), so only one was ever
-really open. Both were settled in a single exchange before a line was built.
-The morning readiness check-in is the last item still in that state, with no
-recommendation standing. "Blocked by: one decision" is not a reason to skip
-an item when picking what to do next — it is a reason to start it with a
-question.
-
-**A blocking decision is also worth re-reading before it is asked.** This
-entry's storage question proposed two files and was answered with one file
-holding two lists — an option it had not listed, because `biometrics.json`
-had grown its multi-section shape after the question was written. Its
-workout question had already half-answered itself in a note added later
-("this shrank in v0.33.0 and should be re-scoped"), and that note was worth
-more than the original proposal. **An old decision's options age; the
-question rarely does.**
-
-**The front-end block was three items and is now none.** It ranked directly
-below the readiness check-in, because polish on a working surface is worth
-less than a signal the app cannot currently see at all, and above the API
-entries, because those
-have no consumer today — `/api` is read-only, nothing outside NiceGUI calls
-it, and both the write routes and the generated types are groundwork for a
-front end nobody has asked for. v0.37.0 closed two of the three and v0.38.0
-the last. Every one of them was verified against the
-running code on 2026-08-30 rather than against the review that raised them —
-**four of that review's proposals did not survive that check** and are
-recorded as deliberately excluded inside the entries, so they are not
-re-filed as fresh ideas later.
-
-**A fifth proposal did not survive contact with the code**, and it is worth
-recording beside those four because it failed differently: the name/mark item
-asserted that the app "names itself nowhere on screen", and an icon and a
-title string had sat in `ui.header()` since before v0.23.0. The other four
-were reasonable readings that turned out wrong on a detail; this one was a
-statement of fact about a file, contradicted by three lines of that file. It
-also changed the answer rather than merely the premise — the wordmark stayed
-in the header instead of moving to the rail as filed, because `ui.header()`
-is `position: fixed` and the rail is not. **Verifying a review's premises is
-not the same as verifying its proposals**, and this queue had done only the
-second.
-
-**This file's own cross-references are by name, not by number**, the same
-rule CLAUDE.md states for citing it from anywhere else. They had gone stale
-by one after an earlier renumber — "item 8" pointing at what had become
-item 7, in three places — which is the argument for the rule rather than
-against it: a number here has a shelf life of exactly one release, and this
-renumber is the eleventh. One of the ten was an *insertion* rather than a
-closure — the front-end block took 5–7 and pushed the three API entries and
-food waste down to 8–11 — which was the same hazard from the other
-direction, and the only time this file has had one. **v0.37.0 renumbered
-twice**, which is also a first: the pantry ledger closed and moved everything
-below it up by one, and then two front-end items closed out of the *middle*
-of the list, moving the four below them up by two. A closure at the top shifts
-every number by the same amount; a closure in the middle shifts only what is
-under it, so the two halves of the list moved by different distances in one
-release. All six remaining anchors were re-checked against their headings
-afterwards, not between the two passes. **v0.38.0's is the plainest renumber
-this file has had** — one closure at position 2, everything below it up by
-one, five anchors re-checked — and it is worth noting only because it is the
-first since the front-end block landed that moves the *whole* remaining list
-rather than one half of it. **The appendix shrank in the same
-release**, which no previous renumber has had to account for: two of its six
-rows closed alongside the ledger, because all three were the same question
-asked about different halves of the app.
-
-**A body cross-reference has now pointed at a closing item twice
-running**, which is the case the by-name rule exists for. Neither time was
-it left as a dangling anchor, and both times the repair was a change of
-*fact* rather than of link: v0.35.0 turned the trend-charts entry's "two of
-these charts have no data source" into "both data sources now exist, and
-here is what is thin about the new one", and the food-waste entry's citation
-of adherence into a note on why a `skipped` mark is *not* a waste signal.
-v0.36.0 closed the trend-charts entry itself, so food waste — which cited it
-as the nearest thing to a shared design question — now cites it as shipped,
-and says what that did and did not settle. **A closed item is a change of
-fact for whatever cited it, not just a link to repoint.**
-
-v0.37.0 made the same repair a third time and in the cheapest possible form,
-because the citation was already by name: the craft-items preamble said each
-of its rows "folds naturally into whichever of items 4–6 is already touching
-that file" — a **numeric** reference, and one that had been stale for two
-renumbers, pointing at the three API and food-waste entries rather than at
-the front-end block it plainly meant. It is the only numeric cross-reference
-this file still contained, it was wrong, and nothing caught it because a
-prose number cannot dangle the way an anchor can. It now names the item.
-
-**v0.38.0 made it a fourth time, and the repair was to delete the reference
-rather than repoint it.** That same preamble's replacement named **The UI
-reads flat** as the item its rows folded into; that item is now closed and it
-was the last front-end entry in the ranking, so there is nothing for the
-craft rows to fold into at all. Repointing it at the next-nearest entry would
-have been the numeric mistake in words — a citation kept alive past the fact
-it was asserting. It now says they no longer attach to anything, and what to
-do instead. **The by-name rule stops a reference dangling; it does not stop
-one going false**, and this is the third consecutive release in which the
-repair was a change of fact.
-
-**v0.40.0 made it a fifth time, and this one was inside the closed table.**
-The Insights row shipped in v0.36.0 records, as part of its reasoning, that
-"macro accuracy is a percentage axis and `MACRO_KEYS`-only so fibre keeps its
-no-denominator rule". That was true when written and stopped being true the
-moment fibre got a target — in a row nobody would think to re-read, because
-its own item was closed. The row is amended rather than rewritten: the
-reasoning is still what that release decided, and what changed under it is
-worth saying beside it. **A closed row's *reasoning* can go stale even when
-its verdict cannot**, which is the one place this file had not yet looked.
+- **Ask what each sync actually feeds, and check against the running code.**
+  Three separate signals were fetched on every sync and thrown away, and each
+  turned out to be the *enabling* half of a ranked item rather than a
+  tidy-up. Conversely, before writing a new schema, check whether something
+  already stored answers most of the question — that check halved this
+  queue's largest remaining item.
+- **Nothing in the eleven-release streak came from anybody using the app.**
+  What broke it was the maintainer saying a surface felt forgotten, and an
+  hour spent checking that report against two modules. It produced this
+  file's first `Defect`, in shipped, working, weekly-used code — and the gap
+  it exposed is worth more than the entries it produced.
 
 ## Size scale
 
@@ -411,14 +130,12 @@ its verdict cannot**, which is the one place this file had not yet looked.
 | 4 | [No auth on `/api`](#4--no-auth-on-api) | Feature | S | only if exposed |
 | 5 | [Food waste tracking](#5--food-waste-tracking) | Feature | XL | not scoped |
 
-[The appendix](#appendix--deferrals-recorded-in-claudemd-never-filed) is
-empty — v0.40.0 took its last row. Eleven
-[front-end craft items](#front-end-craft-items--small-none-urgent) remain,
-each XS–S and none urgent. **The numbering above moved by three on
-2026-08-31 and then by three again**: the shopping block was inserted at the
-top that morning and closed by v0.41.0 the same day, which is the shortest
-life any entry in this file has had. Every anchor link here still carries a
-number, and that is the one thing a renumber has to be checked against.
+Eleven [front-end craft items](#front-end-craft-items--small-none-urgent)
+remain below, each XS–S and none urgent. **The numbering above moved by three
+on 2026-08-31 and by three again the same day**, when the shopping block was
+inserted at the top and then closed by v0.41.0 — the shortest life any entry
+here has had. Every anchor link carries a number; that is the one thing a
+renumber has to be checked against.
 
 ---
 
@@ -548,120 +265,32 @@ before it can be estimated at all.
 
 ---
 
-## Appendix — deferrals recorded in CLAUDE.md, never filed
-
-Each of these was decided against at the moment a feature shipped, with the
-reasoning captured in prose and no entry anywhere. Listed so the queue was
-complete; **all six have now shipped** — two in v0.37.0, three in v0.39.0 and
-the last in v0.40.0 — so what follows is the record of what filing them
-taught, not a to-do list.
-
-**The appendix's own framing is what each closure corrected**, every time,
-which is the single most useful thing it produced.
-
-The v0.37.0 pair were both long-cook placement, one on the favourite path and
-one on the generated one, each filed separately because each was noticed at a
-different moment. Read together they were one question ("which days have the
-hours in them") with one answer, and the second was nearly free once the
-first had a function to name. **A deferral recorded alone is worth re-reading
-beside its neighbours before it is estimated**: the generated-path row was
-filed as an M on the strength of "a schema, prompt and validator change
-together", which it did need, and which came to about a third of the work
-because the day rule it had to be checked against already existed by then.
-
-**v0.39.0 corrected the sentence that used to open this section**, which read
-"None is urgent; all are small enough to fold into adjacent work". The second
-half was never true and the table below it said so in its own Size column:
-two of the six were M, and one of those two — the day picker — was the
-largest single item in the appendix by a distance. **A size written in prose
-and a size written in the table beside it are two claims, and only one of
-them gets read.** The prose is gone rather than repaired; the column was
-right all along.
-
-What the three that closed together actually show is the *opposite* of
-folding: none of them touched the same file as another, none got cheaper for
-the others having shipped, and the reason to do them in one release was
-simply that they were the whole remaining appendix bar one. Two of the three
-had been mis-sized in different directions — the prep-time bug was filed XS
-and was one line plus a fixture, exactly as costed; the Fast 800 ceiling was
-filed S and *stayed* S only because its own deferral note had already named
-where the answer had to live ("inside `hydrate_dynamic_targets`, not as a
-config knob beside it"), which is the same thing v0.34.0's rejection decay
-demonstrated about a question written down in full.
-
-**v0.40.0 closed the last one, and the appendix is now empty.** The daily
-fibre target was the row v0.39.0 deliberately left standing, on the argument
-that it was the only one here that had to change what a macro budget *is*.
-That argument was right and the conclusion drawn from it was not: what the
-work actually needed was to stop `MACRO_KEYS` answering two questions at once.
-It had meant both "the keys with a term in `calories ≈ 4p + 4c + 9f`" and "the
-keys with a target" for as long as fibre was the only nutrient reported and
-not aimed at, and the whole feature is the observation that only the first of
-those is a fact about the tuple. Nothing about a macro budget changed; a
-second, orthogonal axis was added beside it. **A row filed as "this one is
-different in kind" is worth re-reading for whether the difference is in the
-work or in a name doing two jobs** — see the closed table for the rest.
-
-There is nothing left to list here. The section stays, with its history
-above, because the pattern it recorded is the point: six deferrals decided in
-prose at the moment a feature shipped, filed nowhere, found only because
-someone read the code against the document. Anything decided against from
-here belongs in this table on the day it is decided.
-
----
-
 ## Front-end craft items — small, none urgent
 
-Raised by the same 2026-08-30 review and verified against the code, but each
-individually too small to rank against the list above. All are XS–S. Listing
-them here rather than filing eleven entries is the point: they would drown
-the ranking this file exists to provide.
+Raised by the 2026-08-30 front-end review and verified against the code, but
+each individually too small to rank against the list above. All are XS–S.
+Listing them here rather than filing eleven entries is the point: they would
+drown the ranking this file exists to provide.
 
-**v0.39.0 is the first test of that, and it held.** The Daily View day picker
-closed out of the appendix — a front-end item, touching `ui_today.py`,
-`ui_app.py`, `ui_state.py` and `ui_theme.py` between them, which is four of
-the files these rows name. Not one of them moved. The two that were closest
-to the work (the phase-2 token sweep, and tooltip consistency — the crossing
-chevron grew one) stayed exactly where they are, because a sub-change filed
-against its parent item is not allowed to ride along; see the `TEXT_MICRO`
-note below, which is the same rule stated the other way round.
+**They fold into nothing, and that changes how to take them.** This sentence
+used to name whichever larger item was already touching the same files; every
+such item has now closed, and repointing it at the next-nearest entry would
+be a citation kept alive past the fact it was asserting. **Take them as a
+batch on a theme instead**: the four motion rows are one afternoon and one
+decision about duration, and the three token/vocabulary rows are one sweep.
+That is the "a theme is worth choosing on when the second item gets cheaper"
+rule, applied where it actually holds.
 
-**One of them had a parent for exactly one day, and the rule held both
-times.** *The shopping drawer has no loading state* sat under **The shopping
-list has been left behind** from the morning of 2026-08-31 until v0.41.0
-closed that entry the same day — the shortest-lived parent this file has had,
-and the row did not move in either direction. It did not ride along while the
-parent was open, on the rule stated twice below and demonstrated by v0.39.0's
-day picker; and it is not now orphaned into the ranking because the parent
-closed, which is the same rule read backwards. **A row's rank is a fact about
-the row, not about what happens to be next to it.** There is a second reason
-specific to this pairing —
-item 1(a) is a layout defect whose whole value is being shipped alone and
-looked at, and adding a skeleton to a drawer whose column behaviour is under
-repair makes it harder to tell which change fixed what.
+**No row here has ever moved because something adjacent shipped**, which is
+the rule being tested rather than a coincidence — three larger items have now
+touched these files in passing without any row riding along. *The shopping
+drawer has no loading state* had a parent for exactly one day and did not
+move in either direction.
 
-**The other ten still fold into nothing, and that changes how to take them.**
-The sentence here used to read "each folds naturally into whichever larger
-item is already touching that file — today that means **The UI reads
-flat**"; that item closed in v0.38.0 and was the last front-end entry in the
-ranking, so there was nothing left for them to ride along on. Two of them were in fact
-touched by it in passing — the elevation pass emitted CSS from `ui_app.py`'s
-single `add_css` call, which is the same call the toast restyle and the grid
-stagger would use, and it converted a handful of literals the phase-2 sweep
-had left — but neither row moved, because riding along is exactly what a
-sub-change filed against its parent item is not allowed to do (see the
-`TEXT_MICRO` note below). **Take them as a batch on a theme instead**: the
-four motion rows are one afternoon and one decision about duration, and the
-three token/vocabulary rows are one sweep. That is v0.37.0's "a theme is
-worth choosing on when the second item gets cheaper", applied where it now
-actually holds.
-
-**The `TEXT_MICRO` row is the exception to that "folds into" sentence, and it
-says so.** It arrived here from inside the typography item v0.37.0 closed,
-which carried an explicit instruction not to let it ride along — the only
-time this file has filed a sub-change *against* the item it was written in.
-That instruction held: the typography and contrast work shipped and the size
-did not move.
+**The `TEXT_MICRO` row is the one filed from *inside* a larger item**, with an
+explicit instruction not to let it ride along — the only time this file has
+done that. The instruction held: the typography and contrast work shipped and
+the size did not move.
 
 | Item | Type | Size | Detail |
 |---|---|---|---|
@@ -681,14 +310,16 @@ did not move.
 
 ## Verified closed — do not re-file
 
-Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
-6a–6e and reads as open; it isn't.
+Checked against the running code. `ISSUES.md` predates phases 6a–6e and reads
+as open; it isn't — only its item 10 (the morning readiness check-in) is
+still live. `ui-redesign.md` and the front-end review have nothing left at
+all, filed or unfiled.
 
 | Source | Item | Closed by |
 |---|---|---|
 | maintainer report, 2026-08-31 | The shopping list had been left behind — six parts, one premise | Shipped in **v0.41.0**. (a) three `flex flex-col` containers in `ui_shopping.py` had no `flex-nowrap`, so the drawer's `overflow-y-auto` never fired and a week's list started a second column off the 420px edge. **The one claim this entry filed as inferred is now measured**, and not with devtools: Quasar ships `.flex{display:flex;flex-wrap:wrap}` and Tailwind's `.flex-col` sets only `flex-direction`, so the wrap is a fact about the two stylesheets rather than a story about a symptom. (b) `DEPARTMENT_ORDER`, one constant behind the seven `sorted(categories)` call sites. (c) a department band with a count in the drawer, `── DAIRY & EGGS ──` in the Keep copy. (d) `═══ trip ═══` heading that copy. (e) the rail badge reads `PlannerState.shopping_item_count()` — measured on the live week the day it was fixed, the badge said **86** over a drawer showing **120**. (f) ticks moved from the DOM to `PlannerState.shopping_ticks`; still never persisted, and no longer wiped mid-shop by a repaint. **A seventh part was found by generalising (a)** — `ui_cards.py`'s swap-with-favourite list is the same wrapping column over a 36-entry catalog — which is the argument for fixing a class of bug rather than an instance. |
 | the v0.37.0 pantry-ledger row in this very table | The shopping list asked you to buy what was already in the house | Shipped in **v0.41.0** — `shopping.apply_pantry`, taking the second of the three shapes this entry proposed: subtract at render time from `inventory_to_clear` itself, never from a stored count. Every one of v0.37.0's arguments for a run-scoped ledger survives intact, because the two ask different questions of one hand-edited list. A quantified entry is subtracted, an unquantified one only annotated (the two entry shapes are two statements, and collapsing them would invent a quantity or discard one); a line the pantry covers outright is lifted onto `ShoppingList.pantry_covered` and *named*, because a stale pantry is the failure mode and a line that vanished with no trace is the one you could not notice was wrong. CLAUDE.md's standing claim that this "needs the ledger to survive the run" was the thing that turned out to be false. |
-| maintainer question, 2026-08-31 | Should shopping be its own destination? | Answered **both**, shipped in **v0.41.0**. The drawer's documented reason for existing is that a list is read *against* the grid, and that is a different job from working through a trip — 420px is right for the first and wrong for the second. `build_shopping(ctx)` now returns `build_panel`, which a sixth rail destination calls at its own render position; `ShoppingPanels` is one registered section fanning out to both instances, so they cannot drift. **The sequencing worry this entry was ranked on turned out to be real and cheap**: items 1 and 2 did build inside the drawer, and none of it was built twice, because sharing one builder was a refactor of about forty lines rather than a second surface. |
+| maintainer question, 2026-08-31 | Should shopping be its own destination? | Answered **both**, shipped in **v0.41.0**. The drawer's documented reason for existing is that a list is read *against* the grid, and that is a different job from working through a trip — 420px is right for the first and wrong for the second. `build_shopping(ctx)` now returns `build_panel`, which a sixth rail destination calls at its own render position; `ShoppingPanels` is one registered section fanning out to both instances, so they cannot drift. **The sequencing worry this entry was ranked on turned out to be real and cheap**: the defect fix and the pantry subtraction both did build inside the drawer, and none of it was built twice, because sharing one builder was a refactor of about forty lines rather than a second surface. |
 | `ui-redesign.md` phase 5, "the reason phase 5 stopped" | Generation had no HTTP shape, so the API could not start a run | Shipped in **v0.41.0** — `generation_jobs.py`, a `202`-with-a-job-id `POST`, `/api/jobs[/{id}]`, and one single-flight claim shared by the route and the page. **The design question was answered by counting the events, not by weighing the three protocols**: `progress_callback` fires once per meal type, so a dozen events across a quarter of an hour is not a streaming problem — and SSE and a WebSocket both need the job registry underneath them anyway, which makes polling the substrate rather than a third peer. What is left of that entry is the write routes, now an unblocked M. |
 | `ISSUES.md` 1 | Header space, repeated day names, header/canvas misalignment | Phase 6a (alignment + one day identity), 6b (stat block → `week_banner`) |
 | `ISSUES.md` 2 | All controls from the left panel | Phase 6b — the rail's action block |
