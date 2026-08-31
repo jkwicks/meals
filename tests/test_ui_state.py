@@ -34,6 +34,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import ui_state  # noqa: E402
+from repository import run_sync  # noqa: E402
 from nutrition_engine import (  # noqa: E402
     PROPOSAL_ADD,
     PROPOSAL_DROP,
@@ -582,6 +583,16 @@ class TestSundayPrepBadges(unittest.TestCase):
                 update={"meal_type": "breakfast", "prep_time_minutes": 5}
             ),
         )
+        # The bulk-prep anchor. `apply_batch_selections` puts it on **lunch**
+        # while the long cook takes dinner, which is the whole reason
+        # `prep_minutes` can't ask about meal_type.
+        lunch_event = CookEvent(
+            slot_id="Monday:lunch", day="Monday", meal_type="lunch",
+            portions=3, eaten_by=["Monday:lunch"],
+            recipe=make_recipe(name="Bulk Prep Soup").model_copy(
+                update={"meal_type": "lunch", "prep_time_minutes": 45}
+            ),
+        )
         unrelated_event = CookEvent(
             slot_id="Wednesday:dinner", day="Wednesday", meal_type="dinner",
             portions=2, eaten_by=["Wednesday:dinner"],
@@ -589,10 +600,12 @@ class TestSundayPrepBadges(unittest.TestCase):
         )
         state.week_plan = state.week_plan.model_copy(
             update={
-                "cook_events": [dinner_event, shake_event, unrelated_event],
+                "cook_events": [dinner_event, shake_event, lunch_event, unrelated_event],
                 "sunday_prep_session": SundayPrepSession(
                     total_active_minutes=90,
-                    candidate_slot_ids=["Monday:dinner", "Monday:breakfast"],
+                    candidate_slot_ids=[
+                        "Monday:dinner", "Monday:breakfast", "Monday:lunch"
+                    ],
                 ),
             }
         )
@@ -623,6 +636,16 @@ class TestSundayPrepBadges(unittest.TestCase):
         reheat estimate the dinner anchor does."""
         views = self.make_state_with_session().slot_views()
         self.assertEqual(views["Monday:breakfast"].prep_minutes, 5)
+
+    def test_the_bulk_prep_lunch_anchor_collapses_too(self):
+        """The bug this replaced: the collapse tested `meal_type == "dinner"`,
+        written when the long cook was the only anchor. `apply_batch_selections`
+        anchors bulk prep on lunch, so that card showed its full 45-minute
+        from-scratch cook for a dish that came out of the pan on prep day —
+        while the badge right beside it correctly said "fridge"."""
+        views = self.make_state_with_session().slot_views()
+        self.assertEqual(views["Monday:lunch"].prep_badge, "fridge")
+        self.assertEqual(views["Monday:lunch"].prep_minutes, SUNDAY_PREP_REHEAT_MINUTES)
 
     def test_an_unrelated_cook_gets_no_badge(self):
         views = self.make_state_with_session().slot_views()
@@ -881,6 +904,26 @@ class TestDayContextTraining(unittest.TestCase):
 STALE_WEEK_START = "2020-01-06"
 
 
+class FakeWeekRepository:
+    """The one method `switch_week` reaches for, over a dict of stored weeks.
+
+    Nothing else about the repository is exercised by stepping, and a real
+    `LocalJSONRepository` here would put a temp directory and a JSON round
+    trip in front of an assertion about which day the picker lands on.
+    """
+
+    def __init__(self, plans: dict):
+        self.plans = plans
+
+    async def load_week_plan(self, week_identifier: str = "current"):
+        return self.plans.get(week_identifier)
+
+
+def step(state: ui_state.PlannerState, delta: int, repository=None) -> None:
+    """`step_viewed_day`, bridged for a synchronous test — see `run_sync`."""
+    run_sync(state.step_viewed_day(repository or FakeWeekRepository({}), delta))
+
+
 def make_stale_state() -> ui_state.PlannerState:
     """A plan dated to a week that is definitively not the current one."""
     state = make_state()
@@ -955,7 +998,7 @@ class TestViewedDay(unittest.TestCase):
         state = make_current_state()
         today = state.today_day()
         state.select_day(today)
-        state.step_viewed_day(1 if state.days.index(today) == 0 else -1)
+        step(state, 1 if state.days.index(today) == 0 else -1)
         self.assertNotEqual(state.viewed_day(), today)
         self.assertFalse(state.viewing_today())
         self.assertTrue(state.week_covers_today())
@@ -974,22 +1017,28 @@ class TestViewedDay(unittest.TestCase):
 
     def test_stepping_moves_through_the_week(self):
         state = make_stale_state()
-        state.step_viewed_day(1)
+        step(state, 1)
         self.assertEqual(state.viewed_day(), "Tuesday")
-        state.step_viewed_day(1)
+        step(state, 1)
         self.assertEqual(state.viewed_day(), "Wednesday")
-        state.step_viewed_day(-2)
+        step(state, -2)
         self.assertEqual(state.viewed_day(), "Monday")
 
     def test_stepping_clamps_at_both_ends(self):
-        """Clamped, not wrapped: the loaded plan holds exactly these days, and
-        wrapping the last day round to the first would pretend it is a loop."""
+        """Clamped, not wrapped, at the ends of the *timeline*.
+
+        This fixture has never scanned disk, so `_known_weeks` vouches only
+        for the loaded week and the timeline is exactly its seven columns —
+        which is the point: a state that never crossed a week behaves exactly
+        as it did before it could. Wrapping the last day round to the first
+        would pretend the calendar is a loop, then as now.
+        """
         state = make_stale_state()
-        state.step_viewed_day(-1)
+        step(state, -1)
         self.assertEqual(state.viewed_day(), state.days[0])
-        state.step_viewed_day(99)
+        step(state, 99)
         self.assertEqual(state.viewed_day(), state.days[-1])
-        state.step_viewed_day(1)
+        step(state, 1)
         self.assertEqual(state.viewed_day(), state.days[-1])
 
     def test_the_reset_clears_rather_than_repoints(self):
@@ -999,6 +1048,165 @@ class TestViewedDay(unittest.TestCase):
         state.select_day("Wednesday")
         state.select_day(None)
         self.assertIsNone(state.selected_day)
+
+    def test_an_edge_step_does_not_move_when_there_is_nowhere_to_go(self):
+        """None, not the day it started on. A caller cannot tell "did not
+        move" from "must not move" — which is exactly what a disabled chevron
+        wants to be told."""
+        state = make_stale_state()
+        state.select_day(state.days[-1])
+        self.assertIsNone(state.step_target(1))
+        self.assertIsNone(make_stale_state().step_target(-1))
+
+
+class TestSteppingCrossesWeeks(unittest.TestCase):
+    """The picker steps off the end of one cached week into the next.
+
+    Clamped at Sunday for four releases, on two stated objections — an async
+    load of the other plan, and "a second control free to disagree with the
+    header's week selector". Both are answered rather than dodged: the load
+    is `scan_cached_weeks`, and there is no second control because the chevron
+    drives the existing selector through `switch_week`, which stays the only
+    writer of `week_selection`.
+    """
+
+    def make_two_week_state(self, selection="current"):
+        state = make_stale_state()
+        plan = state.week_plan.model_dump(mode="json")
+        state.week_selection = selection
+        state.cached_weeks = {"current", "next"}
+        return state, FakeWeekRepository({"current": plan, "next": dict(plan)})
+
+    def test_stepping_off_the_last_day_lands_on_the_next_week_s_first(self):
+        state, repo = self.make_two_week_state()
+        state.select_day(state.days[-1])
+        step(state, 1, repo)
+        self.assertEqual(state.week_selection, "next")
+        self.assertEqual(state.viewed_day(), state.days[0])
+
+    def test_stepping_back_off_the_first_day_lands_on_the_previous_week_s_last(self):
+        state, repo = self.make_two_week_state(selection="next")
+        state.select_day(state.days[0])
+        step(state, -1, repo)
+        self.assertEqual(state.week_selection, "current")
+        self.assertEqual(state.viewed_day(), state.days[-1])
+
+    def test_the_outer_ends_still_clamp(self):
+        """Past the last cached week there is genuinely nothing, and wrapping
+        round to the first would pretend the calendar is a ring."""
+        state, repo = self.make_two_week_state(selection="next")
+        state.select_day(state.days[-1])
+        self.assertIsNone(state.step_target(1))
+        state, repo = self.make_two_week_state()
+        state.select_day(state.days[0])
+        self.assertIsNone(state.step_target(-1))
+
+    def test_an_uncached_neighbour_is_not_offered(self):
+        """The reason `scan_cached_weeks` reads the other week at page load.
+        Spilling into an empty week strands the reader: `viewed_day()` is None
+        with no plan, so there is no picker left to step back with."""
+        state, _ = self.make_two_week_state()
+        state.cached_weeks = {"current"}
+        state.select_day(state.days[-1])
+        self.assertIsNone(state.step_target(1))
+
+    def test_a_step_that_crosses_reports_which_week_it_lands_in(self):
+        """What the edge chevron's tooltip says. Crossing changes what the
+        whole page shows, so it must not be the one gesture that does that
+        without announcing it."""
+        state, _ = self.make_two_week_state()
+        state.select_day(state.days[-1])
+        self.assertEqual(state.step_target(1), ("next", state.days[0]))
+
+    def test_a_multi_day_step_crosses_cleanly(self):
+        """The timeline is one flat list, so a step longer than the remaining
+        days is not a special case."""
+        state, repo = self.make_two_week_state()
+        state.select_day(state.days[-1])
+        step(state, 2, repo)
+        self.assertEqual(state.week_selection, "next")
+        self.assertEqual(state.viewed_day(), state.days[1])
+
+    def test_today_stays_reachable_from_the_other_week(self):
+        """The reset button reads disk, not the plan on screen. Step forward
+        into a week with no today in it and that is exactly when a way back is
+        most wanted — reading the loaded plan would hide the button there."""
+        state, repo = self.make_two_week_state()
+        state.weeks_covering_today = {"current"}
+        state.week_selection = "next"
+        self.assertFalse(state.week_covers_today())
+        self.assertTrue(state.today_is_reachable())
+        run_sync(state.go_to_today(repo))
+        self.assertEqual(state.week_selection, "current")
+        self.assertIsNone(state.selected_day)
+
+    def test_the_reset_is_not_offered_when_no_cached_week_holds_today(self):
+        state, _ = self.make_two_week_state()
+        state.weeks_covering_today = set()
+        self.assertFalse(state.today_is_reachable())
+
+    def test_an_unscanned_state_behaves_exactly_as_it_did_before(self):
+        """`_known_weeks`' fallback. An empty `cached_weeks` means "not asked
+        yet", never "nothing exists" — reading it as the latter would disable
+        both chevrons on a state with a perfectly good week loaded."""
+        state = make_stale_state()
+        self.assertEqual(state.cached_weeks, set())
+        self.assertEqual(state.step_target(1), ("current", state.days[1]))
+        state.select_day(state.days[-1])
+        self.assertIsNone(state.step_target(1))
+
+
+class TestScanningWhichWeeksExist(unittest.TestCase):
+    """`scan_cached_weeks` and the maintenance `adopt_plan` does after it.
+
+    The scan probes disk once, at page load. Everything after that happens to
+    the *selected* week — a reload read it, a generation wrote it — so its two
+    entries are kept where that happens rather than by re-probing.
+    """
+
+    def plan_dict(self) -> dict:
+        return make_stale_state().week_plan.model_dump(mode="json")
+
+    def test_it_finds_both_weeks(self):
+        state = make_stale_state()
+        run_sync(state.scan_cached_weeks(
+            FakeWeekRepository({"current": self.plan_dict(), "next": self.plan_dict()})
+        ))
+        self.assertEqual(state.cached_weeks, {"current", "next"})
+
+    def test_a_missing_neighbour_is_simply_absent(self):
+        state = make_stale_state()
+        run_sync(state.scan_cached_weeks(FakeWeekRepository({})))
+        self.assertEqual(state.cached_weeks, {"current"})
+
+    def test_a_corrupt_neighbour_does_not_take_down_the_page(self):
+        """A `next` week that will not validate is treated as absent. The page
+        was only ever asked to show `current`, and refusing to load at all
+        would make an unrelated week's bad file fatal."""
+        state = make_stale_state()
+        run_sync(state.scan_cached_weeks(FakeWeekRepository({"next": {"nonsense": 1}})))
+        self.assertEqual(state.cached_weeks, {"current"})
+
+    def test_it_records_which_week_holds_today(self):
+        state = make_current_state()
+        run_sync(state.scan_cached_weeks(
+            FakeWeekRepository({"next": make_stale_state().week_plan.model_dump(mode="json")})
+        ))
+        self.assertEqual(state.weeks_covering_today, {"current"})
+        self.assertEqual(state.today_week(), "current")
+
+    def test_adopting_a_plan_keeps_the_selected_week_s_entries_honest(self):
+        state = make_stale_state()
+        state.cached_weeks = {"current", "next"}
+        state.week_selection = "next"
+        state.adopt_plan(None)
+        self.assertEqual(state.cached_weeks, {"current"})
+        state.adopt_plan(make_stale_state().week_plan)
+        self.assertEqual(state.cached_weeks, {"current", "next"})
+
+
+class TestViewedDayColumns(unittest.TestCase):
+    """`week_covers_today` is stricter than `today_day() is not None`."""
 
     def test_covering_today_is_about_the_columns_not_the_span(self):
         """A grid narrower than seven days has a span wider than its columns.

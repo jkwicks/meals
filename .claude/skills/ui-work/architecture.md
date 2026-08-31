@@ -867,12 +867,63 @@ Four things in it are decisions:
   loaded on. The "Today" reset button clears the key rather than re-pointing
   it — the same reasoning as `set_target` dropping an override that matches
   the file.
-- **Stepping clamps at both ends rather than wrapping or spilling into the
-  next week.** The loaded `week_plan` holds exactly these seven days;
-  continuing past the last one would mean an async load of the other cached
-  plan (`current`/`next`) plus a second control free to disagree with the
-  header's week selector. The chevrons disable at the ends instead. Crossing
-  weeks is a real feature, and a bigger one than this.
+
+  **It now crosses back, too** (`go_to_today`), and its visibility reads
+  `today_is_reachable()` — `weeks_covering_today`, a fact about disk — rather
+  than `week_covers_today()`, a fact about the plan on screen. Step forward
+  into next week and the loaded plan has no today in it at all, which is
+  precisely when a way back is most wanted; keying off the loaded plan would
+  hide the button exactly there.
+- **Stepping crosses into the adjacent cached week, and clamps only at the
+  outer ends of the timeline.** This paragraph read "clamps at both ends
+  rather than wrapping or spilling into the next week" for four releases, on
+  two objections — an async load of the other cached plan, and "a second
+  control free to disagree with the header's week selector". Both are
+  answered rather than dodged.
+
+  `PlannerState.browsable_timeline` is the concatenation of each *cached*
+  week's columns, and `step_target(delta)` is one index step along it,
+  returning `(week, day)` or None. It can be that simple because `days` is
+  derived from config rather than from the plan — both weeks are the same
+  seven weekdays in the same rotation, so crossing is an index step and never
+  a re-read of anybody's day list.
+
+  - **There is no second control, because the chevron drives the existing
+    one.** `switch_week` remains the only writer of `week_selection`, and the
+    header select is now `@ui.refreshable` and registered on `"plan"`, so it
+    repaints from that value. `go()` widens its own refresh from `"today"` to
+    `"plan"` exactly when the week changed — the canvas, the telemetry row and
+    the shopping panel are all describing the week that just moved under them.
+  - **The async load is `scan_cached_weeks`, run once from `.load()`.** It
+    probes the week that is not on screen and records two facts: which weeks
+    have a plan (`cached_weeks`) and which have a column for today
+    (`weeks_covering_today`). That buys an honest disabled state — a chevron
+    is offered only when there is something on the other side of it, which is
+    the standard the clamped version already set for itself. Spilling first
+    and discovering the week is empty afterwards *strands* the reader:
+    `viewed_day()` is None with no plan, so there is no picker left to step
+    back with.
+  - **A chevron asks `step_target`, never the day's index.** The answer now
+    depends on whether the neighbour is cached, and a chevron deciding that
+    for itself would be a second copy of the rule free to disagree with the
+    one that acts. None means "would not move", which is what a disabled
+    chevron says.
+  - **An edge step announces where it goes.** Crossing changes what the whole
+    page shows and — like the header select it drives — drops unsaved grid
+    edits, so it must not be the one gesture in the app that does that
+    silently. The tooltip names the week and the bare weekday: the other
+    week's `week_start_date` is not in hand (the scan read that plan to answer
+    whether it exists, not to keep it), and a tooltip is the last place to
+    print a plausible-looking wrong date.
+  - **A state that never scanned behaves exactly as it did before.**
+    `_known_weeks` reads an empty set as "not asked yet", never "nothing
+    exists", and falls back to what the loaded plan alone vouches for. Every
+    test fixture is in that state, and so is anything built before the scan
+    lands.
+
+  Still never wrapping, and still for the original reason: past the last
+  cached week there is genuinely nothing, and looping Sunday back to Monday
+  would pretend the calendar is a ring.
 - **`week_covers_today()` is stricter than `today_day() is not None`, and the
   gap is the point.** `today_in_week` answers "is today inside this week's
   seven-day *span*" — a question about dates — while the grid is drawn from

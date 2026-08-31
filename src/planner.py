@@ -682,14 +682,15 @@ def build_diet_style_rule(config: dict) -> str:
     block rotation, since a diet style is followed for the whole week rather
     than picked per day.
 
-    Deliberately carries no numeric lever — no calorie ceiling, no macro
-    override. `weekly_schedule`/`hydrate_dynamic_targets` already own the
-    day's numbers (see CLAUDE.md's "Targets come from the body, not the
-    file"), and a second calorie-adjusting input would risk exactly the kind
-    of double-count that section warns about for training uplift. Fast 800's
-    calorie discipline is expressed as food-selection guidance instead —
-    simple, lean, low-added-fat dishes — inside whatever budget the day was
-    already given.
+    **This rule still carries no numeric lever**, and that has not changed
+    now that `diet_style_calorie_ceiling` exists: the ceiling is applied
+    inside `hydrate_dynamic_targets`, where the day's calories are already
+    decided, and never restated here. Telling the model a number the budget
+    it was handed already reflects is how a model starts optimising for the
+    number instead of the food — the same failure `FIBER_REPORTING_RULE`'s
+    second sentence exists to head off. What this rule sends about Fast 800
+    is what it always sent: simple, lean, low-added-fat dishes, inside
+    whatever budget the day was given.
 
     Empty when no active styles are configured (the default), so the prompt
     is byte-identical to before this feature existed — same convention as
@@ -710,6 +711,44 @@ def build_diet_style_rule(config: dict) -> str:
         "flavour tradition, a dietary approach is what to prioritize within "
         "it, and a dish should satisfy both at once:\n" + lines
     )
+
+
+def diet_style_calorie_ceiling(config: dict) -> Optional[float]:
+    """The lowest whole-day calorie ceiling any active diet style declares.
+
+    Fast 800's real-world hook is a calorie ceiling, and until now it was
+    expressed only as food-selection guidance in `build_diet_style_rule` —
+    "simple, lean, low-added-fat dishes" inside whatever budget the day was
+    already given. That was the right call while the alternative on offer was
+    a second config knob sitting *beside* `weekly_schedule`, which is exactly
+    the competing source of truth `hydrate_dynamic_targets` exists to prevent.
+
+    **A ceiling is not that, and the difference is idempotence.** The reason
+    an adjustment was refused is that hydration runs twice — the UI hydrates
+    for its own live preview and generation hydrates the same config again —
+    and anything that *shifts* a number shifts it twice. `min()` does not:
+    applying the ceiling to an already-capped day returns the same figure,
+    which is the identical property that made a stated target safe to take
+    verbatim rather than unwinding the training uplift off it.
+
+    **Lowest wins when several styles declare one.** A ceiling is a bound
+    somebody chose to live inside, so two active styles both declaring one are
+    two bounds and only the tighter is actually being kept. Averaging them
+    would produce a number neither style asked for — the same reason
+    `reconcile_adaptive_tdee` chooses one TDEE rather than blending two.
+
+    None — no active style, or none of the active ones declaring a ceiling —
+    is the default and every day plans exactly as it did before this existed.
+    """
+    catalog = config.get("diet_styles") or {}
+    active = (config.get("dietary_rules") or {}).get("active_diet_styles") or []
+    ceilings = [
+        float(catalog[key]["calorie_ceiling"])
+        for key in active
+        if key in catalog and catalog[key].get("calorie_ceiling") is not None
+    ]
+    return min(ceilings) if ceilings else None
+
 
 class RejectionEntry(BaseModel):
     """One "why did you regenerate this" answer — see CLAUDE.md's "Rejection
@@ -1526,6 +1565,14 @@ class DietStyle(BaseModel):
 
     label: str
     principles: str
+    # The one numeric lever a diet style is allowed, and it is a *ceiling*
+    # rather than an adjustment — see `diet_style_calorie_ceiling` for why
+    # that distinction is the whole reason this can exist at all without
+    # reopening the double-count `hydrate_dynamic_targets` guards against.
+    # None (the default, and every style but Fast 800) means the style says
+    # nothing about the day's energy and shapes food selection alone, which
+    # is how all twelve behaved before this field existed.
+    calorie_ceiling: Optional[float] = None
 
 
 class SourcingRules(BaseModel):
@@ -2231,6 +2278,19 @@ def hydrate_dynamic_targets(
     `basis["tdee_source"]` records which won. Omit `biometrics` — as the pure
     function's existing callers do — and it is the plain formula, unchanged.
 
+    **An active diet style may cap the result, and only cap it.**
+    `diet_style_calorie_ceiling` reads the lowest `calorie_ceiling` any entry
+    in `dietary_rules.active_diet_styles` declares — Fast 800's 800 kcal is
+    the one that ships — and the computed figure is taken `min()` against it,
+    after the training uplift is replayed. After, because a ceiling is a
+    statement about what the day may *total*, not about the base it was built
+    from; and `min()` rather than a subtraction because this function runs
+    twice on the same config and only an idempotent operation survives that
+    (see the stated-target note below, which is the same lesson). A day whose
+    calories are stated — either mode — is not capped at all: a stated target
+    is the day's final number by definition, and a ceiling that overrode one
+    would be the second source of truth this whole section refuses.
+
     Three things it deliberately preserves rather than computes:
 
     - **Each day's `net_carbs_g`.** It is passed *into* the engine rather than
@@ -2296,6 +2356,18 @@ def hydrate_dynamic_targets(
     uplift = config.get("training_uplift") or {}
     pins = config.get("training_pins") or {}
     weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
+    # None whenever no active diet style declares one, which is the shipped
+    # state — `active_diet_styles` is empty by default, so every day below
+    # is byte-identical to before this existed.
+    ceiling = diet_style_calorie_ceiling(config)
+    capped_days: List[str] = []
+    # Days where the ceiling lands below what the locked protein and the
+    # day's own carbs already cost. `derive_fat_g` floors at 0, so the budget
+    # stops reconciling against `calories ~= 4p + 4c + 9f` — reported rather
+    # than silently corrected, the same answer `split_targets` gives an
+    # overspent `meal_overrides` and `cap_to_weighted_share` gives a capped
+    # surplus: show the gap, do not distort a number to hide it.
+    unaffordable_days: List[str] = []
 
     # Computed once for the week, not per day: it reads the whole weigh-in and
     # logged-intake series, which every day of this config shares. Returns None
@@ -2365,6 +2437,12 @@ def hydrate_dynamic_targets(
                 calories = float(day_targets["calories"])
             else:
                 calories = base["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
+                # After the uplift, not before it: the ceiling bounds what the
+                # day may total, and a workout does not buy an exemption from
+                # a bound its owner chose to eat inside.
+                if ceiling is not None and calories > ceiling:
+                    capped_days.append(day)
+                    calories = ceiling
             if is_manual(day, "protein_g"):
                 protein_g = float(day_targets["protein_g"])
             else:
@@ -2373,6 +2451,8 @@ def hydrate_dynamic_targets(
             net_carbs_g = round(
                 DEFAULT_NET_CARBS_G if day_carbs is None else day_carbs, 1
             )
+            if ceiling is not None and protein_g * 4 + net_carbs_g * 4 > calories:
+                unaffordable_days.append(day)
             hydrated = dict(
                 day_targets,
                 calories=round(calories),
@@ -2412,6 +2492,40 @@ def hydrate_dynamic_targets(
         # `next(iter(schedule))`. Nothing to hydrate is the file's own state,
         # not a failure, so hand back what we were given.
         return config
+
+    if capped_days:
+        # One line naming the days, not one line per day: the ceiling is a
+        # single standing decision and seven copies of it would bury the
+        # per-call generation timing this log exists for.
+        if log:
+            logger.info(
+                "diet-style calorie ceiling of %.0f kcal applied to %s",
+                ceiling, ", ".join(capped_days),
+            )
+        if note_callback:
+            note_callback(
+                f"Capped {len(capped_days)} day(s) at the {ceiling:.0f} kcal "
+                "diet-style ceiling"
+            )
+    if unaffordable_days:
+        # Worth a warning rather than a silent 0 g of fat: protein is locked
+        # to the *target* weight and carbs come straight off
+        # `weekly_schedule`, so a ceiling below their combined cost is a
+        # config disagreement the user has to resolve — by raising the
+        # ceiling, or by cutting that day's `net_carbs_g`.
+        if log:
+            logger.warning(
+                "the %.0f kcal diet-style ceiling is below what locked protein and "
+                "carbs already cost on %s — fat floors at 0 and those days will not "
+                "reconcile against 4p + 4c + 9f. Raise the ceiling or lower "
+                "weekly_schedule's net_carbs_g.",
+                ceiling, ", ".join(unaffordable_days),
+            )
+        if note_callback:
+            note_callback(
+                f"{len(unaffordable_days)} day(s) cannot fit locked protein and "
+                f"carbs under the {ceiling:.0f} kcal ceiling"
+            )
 
     if basis is None:
         # Every switchable macro is manual, so nothing was computed and there

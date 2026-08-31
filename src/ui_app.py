@@ -290,18 +290,37 @@ async def planner_page() -> None:
                 await state.switch_week(REPOSITORY, target)
                 refreshables.refresh("plan")
 
-            # No `bind_value` here on purpose: binding would let NiceGUI's
-            # polling loop write `state.week_selection` the moment the user
-            # picks an option, before `switch_week` has loaded that week's
-            # plan — every other piece of state (`week_plan`, `edited`, the
-            # spec) would then disagree with `week_selection` until the
-            # `await` above finishes. `switch_week` is the only thing that's
-            # allowed to set it, and only once the load it names has landed.
-            ui.select(
-                WEEK_SELECTION_LABELS,
-                value=state.week_selection,
-                on_change=on_week_selection_change,
-            ).props("dense outlined size=sm").classes("text-slate-200 w-32")
+            # Refreshable because this select is no longer the only thing that
+            # changes the week: the Daily View's chevrons step off the end of
+            # one week into the next (`PlannerState.step_target`), and a
+            # select still showing "Current Week" over next week's grid is
+            # exactly the "second control free to disagree with the header's
+            # week selector" that kept the picker clamped for four releases.
+            # It answers that by *being* the second control's display —
+            # `switch_week` remains the only writer of `week_selection`, and
+            # this repaints from it.
+            #
+            # Registered on "plan" rather than a topic of its own: every
+            # crossing repaints the canvas, the telemetry row and the shopping
+            # panel anyway, and a select owns no cursor for the focus-theft
+            # trap that keeps other sections off that topic.
+            @ui.refreshable
+            def week_selector() -> None:
+                # No `bind_value` here on purpose: binding would let NiceGUI's
+                # polling loop write `state.week_selection` the moment the
+                # user picks an option, before `switch_week` has loaded that
+                # week's plan — every other piece of state (`week_plan`,
+                # `edited`, the spec) would then disagree with
+                # `week_selection` until the `await` above finishes.
+                # `switch_week` is the only thing that's allowed to set it,
+                # and only once the load it names has landed.
+                ui.select(
+                    WEEK_SELECTION_LABELS,
+                    value=state.week_selection,
+                    on_change=on_week_selection_change,
+                ).props("dense outlined size=sm").classes("text-slate-200 w-32")
+
+            week_selector()
 
             ui.label().classes(f"{TEXT_BODY} text-slate-400").bind_text_from(
                 state,
@@ -347,6 +366,7 @@ async def planner_page() -> None:
     # trap is about, so it can safely be part of it.
     refreshables.on(
         "plan",
+        week_selector,
         telemetry.week_banner,
         telemetry.telemetry,
         cards.canvas,

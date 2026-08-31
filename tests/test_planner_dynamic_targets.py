@@ -197,6 +197,112 @@ class TestTrainingUpliftSurvivesHydration(unittest.TestCase):
         self.assertEqual(self.hydrated["weekly_schedule"]["Monday"]["net_carbs_g"], 173.8)
 
 
+class TestDietStyleCeilingCapsTheDay(unittest.TestCase):
+    """The one numeric lever a diet style has, applied where the day's
+    calories are already decided rather than as a knob beside them.
+
+    The reading half — which ceiling wins, and when there is none — is in
+    `test_diet_styles.py`. These pin what hydration does with the number, and
+    the two properties that made a ceiling admissible at all where an
+    *adjustment* was refused: it is idempotent across the two hydration
+    passes, and it never overrides a target somebody stated.
+    """
+
+    def config(self, ceiling=800, active=("fast_800",), **overrides) -> dict:
+        return config_with(
+            diet_styles={
+                "fast_800": {
+                    "label": "Fast 800",
+                    "principles": "Simple, lean, low-added-fat.",
+                    "calorie_ceiling": ceiling,
+                },
+            },
+            dietary_rules={"active_diet_styles": list(active)},
+            **overrides,
+        )
+
+    def test_a_computed_day_is_capped(self):
+        hydrated = planner.hydrate_dynamic_targets(self.config(ceiling=1600), WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1600)
+
+    def test_a_day_already_under_the_ceiling_is_untouched(self):
+        """`min()`, not an assignment: a ceiling of 2400 sits above the
+        engine's 1910 and must leave every figure exactly where it was."""
+        hydrated = planner.hydrate_dynamic_targets(self.config(ceiling=2400), WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+
+    def test_no_active_style_leaves_the_day_alone(self):
+        hydrated = planner.hydrate_dynamic_targets(self.config(active=()), WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], DYNAMIC_KCAL)
+
+    def test_hydrating_twice_lands_on_the_same_number(self):
+        """The property that made this admissible at all. The UI hydrates for
+        its own live preview and generation hydrates that same config again;
+        anything that *shifts* a figure shifts it twice, which is exactly how
+        an earlier uplift-unwinding pass took a 2200 kcal override to 1850.
+        """
+        once = planner.hydrate_dynamic_targets(self.config(ceiling=1600), WEIGH_IN)
+        twice = planner.hydrate_dynamic_targets(once, WEIGH_IN)
+        self.assertEqual(
+            twice["weekly_schedule"]["Monday"]["calories"],
+            once["weekly_schedule"]["Monday"]["calories"],
+        )
+        self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
+
+    def test_a_stated_target_is_not_capped(self):
+        """A stated figure is the day's *final* number, whichever route stated
+        it. A ceiling that overrode one would be the second source of truth
+        this whole section refuses — and would make flipping calories to
+        manual silently move the day, which is the exact bug `target_modes`
+        was introduced to fix."""
+        hydrated = planner.hydrate_dynamic_targets(
+            self.config(ceiling=800, target_modes={"calories": "manual"}), WEIGH_IN
+        )
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1500)
+
+    def test_a_workout_does_not_buy_an_exemption(self):
+        """Capped *after* the uplift is replayed: the ceiling bounds what the
+        day may total, not the base it was built from. 1910 + 350 = 2260,
+        capped to 1600."""
+        adjusted = planner.apply_training_adjustments(
+            self.config(
+                ceiling=1600,
+                meal_types=["breakfast", "lunch", "dinner", "snack"],
+                meal_weights={"breakfast": 0.3, "lunch": 0.3, "dinner": 0.3, "snack": 0.1},
+                training_schedule=[{
+                    "day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+                    "estimated_burn_kcal": 350,
+                }],
+            )
+        )
+        hydrated = planner.hydrate_dynamic_targets(adjusted, WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1600)
+
+    def test_a_ceiling_below_the_locked_macros_reports_rather_than_hides_it(self):
+        """Protein is locked to the *target* weight (144 g = 576 kcal) and
+        carbs come straight off `weekly_schedule` (130 g = 520 kcal), so an
+        800 kcal ceiling cannot pay for both. `derive_fat_g` floors at 0 and
+        the day stops reconciling against 4p + 4c + 9f — surfaced as a note,
+        never corrected into a number nobody chose, which is the same answer
+        `split_targets` gives an overspent `meal_overrides`.
+        """
+        notes = []
+        hydrated = planner.hydrate_dynamic_targets(
+            self.config(ceiling=800), WEIGH_IN, notes.append
+        )
+        monday = hydrated["weekly_schedule"]["Monday"]
+        self.assertEqual(monday["calories"], 800)
+        self.assertEqual(monday["protein_g"], LOCKED_PROTEIN_G)
+        self.assertEqual(monday["fat_g"], 0.0)
+        self.assertTrue(any("cannot fit locked protein" in note for note in notes))
+
+    def test_an_affordable_cap_notes_only_the_cap(self):
+        notes = []
+        planner.hydrate_dynamic_targets(self.config(ceiling=1600), WEIGH_IN, notes.append)
+        self.assertTrue(any("diet-style ceiling" in note for note in notes))
+        self.assertFalse(any("cannot fit locked protein" in note for note in notes))
+
+
 def cook_slot(meal_type: str, mode: str = MODE_COOK) -> SlotSpec:
     return SlotSpec(
         id=planner.slot_id("Monday", meal_type), day="Monday", meal_type=meal_type, mode=mode

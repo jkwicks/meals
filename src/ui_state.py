@@ -96,6 +96,7 @@ from ui_theme import (
     SYNC_UNCHECKED,
     TRAINING_TYPE_LABELS,
     TRAINING_TYPES,
+    WEEK_SEQUENCE,
     macro_band,
     pluralize,
 )
@@ -608,6 +609,17 @@ class PlannerState:
     # `save_week_plan` call below. Switching it is what `switch_week` does;
     # plain reloads/generation act on whichever value is already here.
     week_selection: str = "current"
+    # Which of `WEEK_SEQUENCE`'s weeks actually have a plan on disk, and which
+    # of those have a calendar span covering today. Both are facts about
+    # storage rather than about this tab, and both are read by the day picker:
+    # the first says whether a chevron at the edge of the week has anywhere to
+    # go, the second is where its "Today" button goes back to once you have
+    # stepped into another week and the loaded plan no longer has a today in
+    # it. Seeded by `scan_cached_weeks` at load and kept current for the
+    # *selected* week by `adopt_plan`, which is the only thing that changes
+    # what is on disk under it.
+    cached_weeks: Set[str] = field(default_factory=set)
+    weeks_covering_today: Set[str] = field(default_factory=set)
     week_start: str = ""
     servings: int = 2
     shop_days: List[str] = field(default_factory=list)
@@ -822,6 +834,7 @@ class PlannerState:
         state.history = await repository.load_history()
         state.adherence = await repository.load_adherence()
         await state.reload_plan(repository)
+        await state.scan_cached_weeks(repository)
         return state
 
     async def reload_plan(self, repository: LocalJSONRepository) -> None:
@@ -860,6 +873,87 @@ class PlannerState:
         self._spec = None
         self._spec_shape = ()
         self.edited = False
+        # The selected week is the only one anything here can change — a
+        # reload just read it, a generation just wrote it — so its two
+        # entries are maintained where that happens rather than by re-probing
+        # the disk. `scan_cached_weeks` answers for the others, once.
+        for week_set, holds in (
+            (self.cached_weeks, plan is not None),
+            (self.weeks_covering_today, self._plan_covers_today(plan)),
+        ):
+            if holds:
+                week_set.add(self.week_selection)
+            else:
+                week_set.discard(self.week_selection)
+
+    def _known_weeks(self, scanned: Set[str], selection_holds: bool) -> Set[str]:
+        """`scanned`, or what the loaded plan alone can vouch for if it is empty.
+
+        `scan_cached_weeks` is what fills these, and it runs from `.load()`.
+        A `PlannerState` built any other way — every test fixture, and
+        anything constructed before the scan lands — has never probed disk,
+        and an empty set there means "not asked yet", not "nothing exists".
+        Reading it as the latter would silently disable both chevrons and the
+        Today button on a state that has a perfectly good week loaded.
+
+        Falling back to the selection makes an unscanned state behave exactly
+        as this tab did before it could cross weeks: one week, clamped at both
+        ends. The fallback can never over-claim, because the two facts it
+        substitutes — a plan is loaded, and it has a column for today — are
+        the same two the scan would record for that week anyway.
+        """
+        if scanned:
+            return scanned
+        return {self.week_selection} if selection_holds else set()
+
+    def _plan_covers_today(self, plan: Optional["WeekPlan"]) -> bool:
+        """Whether `plan` has a *column* for today, not merely a span over it.
+
+        The same stricter test `week_covers_today` applies to the loaded plan,
+        asked of an arbitrary one — `today_in_week` answers a question about
+        dates while the grid is drawn from `self.days`, and it is the columns
+        a picker can navigate to.
+        """
+        if plan is None:
+            return False
+        return (
+            today_in_week(plan.week_start_date, plan.days, plan.generated_at) in self.days
+        )
+
+    async def scan_cached_weeks(self, repository: LocalJSONRepository) -> None:
+        """Which of `WEEK_SEQUENCE`'s weeks exist on disk, and which holds today.
+
+        One extra small read per page load, for the week that is not on
+        screen. That buys the picker an *honest disabled state*: a chevron at
+        the edge of the week can only be offered when there is something on
+        the other side of it, which is the same standard the clamped version
+        already set for itself ("a disabled chevron is the honest edge"). The
+        alternative — spill first, discover the week is empty afterwards —
+        strands the reader on a destination with no picker to step back with,
+        since `viewed_day()` is None once there is no plan.
+
+        A week whose file will not validate is treated as absent rather than
+        raised: a corrupt `next` week must not take down a page load that was
+        only ever asked to show `current`.
+        """
+        cached: Set[str] = set()
+        covering: Set[str] = set()
+        for week in WEEK_SEQUENCE:
+            if week == self.week_selection:
+                plan = self.week_plan
+            else:
+                raw = await repository.load_week_plan(week)
+                try:
+                    plan = WeekPlan.model_validate(raw) if raw else None
+                except ValidationError:
+                    plan = None
+            if plan is None:
+                continue
+            cached.add(week)
+            if self._plan_covers_today(plan):
+                covering.add(week)
+        self.cached_weeks = cached
+        self.weeks_covering_today = covering
 
     @property
     def days(self) -> List[str]:
@@ -922,20 +1016,106 @@ class PlannerState:
         """Browse to `day`, or pass None to go back to following today."""
         self.selected_day = day if day in self.days else None
 
-    def step_viewed_day(self, delta: int) -> None:
-        """Move `delta` days through the week, clamped at both ends.
+    def browsable_timeline(self) -> List[Tuple[str, str]]:
+        """Every `(week, day)` the picker can reach, in calendar order.
 
-        Clamped rather than wrapped, and deliberately not spilling into the
-        other cached week: `week_plan` holds exactly these seven days, and
-        stepping past Sunday would mean an async load of the "next" plan plus
-        a second control able to disagree with the header's week selector.
-        The chevrons disable at the ends instead.
+        The concatenation of each *cached* week's columns. It can be this
+        simple only because `days` is derived from config rather than from the
+        plan — both weeks are the same seven weekdays in the same rotation, so
+        crossing from one to the next is an index step and never a re-read of
+        anybody's day list.
+        """
+        return [
+            (week, day)
+            for week in WEEK_SEQUENCE
+            if week in self._known_weeks(self.cached_weeks, self.week_plan is not None)
+            for day in self.days
+        ]
+
+    def step_target(self, delta: int) -> Optional[Tuple[str, str]]:
+        """Where stepping `delta` days lands: `(week, day)`, or None to stay put.
+
+        The whole rule, kept pure so the picker's chevrons can ask it twice —
+        once to decide whether to disable themselves, once to act — and so it
+        is testable without a repository. `step_viewed_day` is the two-line
+        application on top.
+
+        **Stepping crosses into the adjacent cached week rather than clamping
+        at Sunday**, which is what this used to do. The two objections
+        recorded against crossing were an async load of the other plan and "a
+        second control free to disagree with the header's week selector", and
+        both are answered rather than dodged: the load is what
+        `scan_cached_weeks` has already decided is worth doing, and there is
+        no second control because the chevron *drives* the existing selector —
+        `switch_week` is still the only thing that writes `week_selection`,
+        and the header select repaints from it.
+
+        Still clamped at the outer ends, and still for the original reason:
+        beyond the last cached week there is genuinely nothing, and wrapping
+        round to the first would pretend the calendar is a loop. None is what
+        a clamp reads as here, so a caller cannot tell "did not move" apart
+        from "must not move" — which is exactly what a disabled chevron wants.
         """
         day = self.viewed_day()
-        days = self.days
-        if day is None or day not in days:
+        if day is None or day not in self.days:
+            return None
+        timeline = self.browsable_timeline()
+        here = (self.week_selection, day)
+        if here not in timeline:
+            return None
+        landed = timeline[
+            min(max(timeline.index(here) + delta, 0), len(timeline) - 1)
+        ]
+        return None if landed == here else landed
+
+    async def step_viewed_day(self, repository: LocalJSONRepository, delta: int) -> None:
+        """Apply `step_target`, loading the other cached week if it crosses.
+
+        Async because crossing a week reads one from disk. Every within-week
+        step still touches nothing but `selected_day`, so the common case
+        awaits nothing.
+        """
+        target = self.step_target(delta)
+        if target is None:
             return
-        self.selected_day = days[min(max(days.index(day) + delta, 0), len(days) - 1)]
+        week, day = target
+        if week != self.week_selection:
+            await self.switch_week(repository, week)
+        self.select_day(day)
+
+    def today_week(self) -> Optional[str]:
+        """The earliest cached week with a column for today, or None.
+
+        What a "Today" reset goes back to. It has to be a fact about *disk*
+        rather than about the loaded plan, or the reset button would
+        disappear the moment stepping forward landed on a week that has no
+        today in it — which is precisely when it is most wanted.
+        """
+        covering = self._known_weeks(self.weeks_covering_today, self.week_covers_today())
+        return next((w for w in WEEK_SEQUENCE if w in covering), None)
+
+    def today_is_reachable(self) -> bool:
+        """Whether a "Today" reset would actually do something.
+
+        Same "only offered when it would move you" test the clamped version
+        applied to the loaded week, widened to the whole timeline.
+        """
+        home = self.today_week()
+        if home is None:
+            return False
+        return home != self.week_selection or not self.viewing_today()
+
+    async def go_to_today(self, repository: LocalJSONRepository) -> None:
+        """Return to today, crossing back into its week if we have left it.
+
+        Clears `selected_day` rather than re-pointing it at today's name — the
+        "follow today" state is a distinct one, and storing the resolved name
+        would pin the tab to whichever day the reset happened on.
+        """
+        home = self.today_week()
+        if home is not None and home != self.week_selection:
+            await self.switch_week(repository, home)
+        self.select_day(None)
 
     def open_inspector(self, day: str) -> None:
         """Open the day inspector for `day` — see `ui_inspector.py`."""
@@ -2147,6 +2327,12 @@ class PlannerState:
             # can't disagree about how old the food is.
             prep_badge, prep_origin = "", ""
             sunday_prepped = is_sunday_prepped(event, self.week_plan)
+            # Computed beside it rather than inside the branch below: the
+            # badge asks "how old is this food" and `prep_minutes` further
+            # down asks "how long does it take", and both turn on the same
+            # narrower question of whether the pan was actually on before the
+            # week started.
+            prepped_ahead = is_prepped_ahead(event, self.week_plan)
             if sunday_prepped:
                 fridge_safe_days = self.config["inventory_rules"]["fridge_safe_days"]
                 # Per-slot distance from its cook day, not `span_days`'s
@@ -2156,7 +2342,7 @@ class PlannerState:
                 # anchor's own slot is 1, not 0, for a prep-session batch:
                 # it was cooked the day before the week started.
                 days_since_cook = spec.day_index(slot.day) - cook_day_index(
-                    spec, event.day, is_prepped_ahead(event, self.week_plan)
+                    spec, event.day, prepped_ahead
                 )
                 frozen = days_since_cook >= fridge_safe_days
                 prep_badge = "freezer" if frozen else "fridge"
@@ -2184,13 +2370,21 @@ class PlannerState:
                     if slot.mode == MODE_LEFTOVER
                     # The shake candidate rides along in the same session
                     # (`find_shake_candidate`) but is never cooked ahead —
-                    # each morning genuinely blends it fresh — so only the
-                    # dinner-axis anchors (bulk-prep/long-cook) collapse to
-                    # the reheat estimate here; meal_type is what tells the
-                    # two apart, since both are MODE_COOK and sunday_prepped.
+                    # each morning genuinely blends it fresh — so it keeps
+                    # its own prep time while the batch anchors collapse to
+                    # the reheat estimate. `is_prepped_ahead` is exactly that
+                    # distinction, and asking it rather than re-deriving it
+                    # is the fix: this used to test `event.meal_type ==
+                    # "dinner"`, which was a faithful proxy for "cooked on
+                    # prep day" only while the long cook was the sole anchor.
+                    # `apply_batch_selections` anchors bulk prep on **lunch**,
+                    # so that card showed the full from-scratch cook time for
+                    # a dish that came out of the pan the day before the week
+                    # started — and a third batch axis would have reopened it
+                    # a third time.
                     else (
                         SUNDAY_PREP_REHEAT_MINUTES
-                        if sunday_prepped and event.meal_type == "dinner"
+                        if prepped_ahead
                         else event.recipe.prep_time_minutes
                     )
                 ),
