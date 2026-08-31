@@ -76,6 +76,7 @@ from ui_theme import (
     training_icon,
     TRAINING_ACCENT,
     TRAINING_NOTE_BADGES,
+    WEEK_SELECTION_LABELS,
     link_line,
     telemetry_bar,
 )
@@ -476,6 +477,7 @@ def build_today(
     ctx: UIContext, cards: CardHandles, adherence: AdherenceHandles
 ) -> TodayHandles:
     state = ctx.state
+    REPOSITORY = ctx.repository
     refreshables = ctx.refreshables
     tab = None
 
@@ -505,36 +507,81 @@ def build_today(
         tab = element
         sync_tab_label()
 
-    def go(step: int = 0, day: Optional[str] = None, reset: bool = False) -> None:
+    async def go(step: int = 0, day: Optional[str] = None, reset: bool = False) -> None:
         """Every day change goes through here, so none can forget the label.
 
         `today_view` is a single refreshable covering the whole panel, so one
         refresh repaints the picker, the strip, the bar and the cards
         together — there is no narrower topic worth carving out, since a day
         change genuinely invalidates all four.
+
+        Async because two of the three branches can now cross into the other
+        cached week, which is a disk read. When they do they also change
+        `week_selection`, so the refresh widens to `"plan"` — the header's
+        week select, the 28-card canvas, the telemetry row and the shopping
+        panel are all reading the week that just changed underneath them, and
+        `"today"` would leave every one of them describing the old one. That
+        is the "second control free to disagree with the header's week
+        selector" objection, answered by refreshing the first control rather
+        than by adding a second.
         """
+        week_before = state.week_selection
         if reset:
-            state.select_day(None)
+            await state.go_to_today(REPOSITORY)
         elif day is not None:
             state.select_day(day)
         elif step:
-            state.step_viewed_day(step)
+            await state.step_viewed_day(REPOSITORY, step)
         sync_tab_label()
-        refreshables.refresh("today")
+        refreshables.refresh(
+            "plan" if state.week_selection != week_before else "today"
+        )
+
+    def chevron(icon: str, step: int) -> None:
+        """One end of the picker, disabled exactly when it cannot move.
+
+        `step_target` is asked rather than the day's index compared against
+        the ends: the answer now depends on whether the *adjacent week* is
+        cached, and a chevron deciding that for itself would be a second copy
+        of the rule free to disagree with the one that acts. It returns None
+        for "would not move", which is the same thing a disabled chevron says.
+
+        An edge step announces where it goes. Crossing a week changes what the
+        whole page is showing — and, like the header select it drives, drops
+        unsaved grid edits — so it must not be the one gesture in the app that
+        does that without saying so.
+        """
+        target = state.step_target(step)
+        button = ui.button(
+            icon=icon, on_click=lambda: go(step=step)
+        ).props(
+            f"dense flat size=sm {'disable' if target is None else ''}"
+        ).classes("text-slate-400")
+        if target is not None and target[0] != state.week_selection:
+            with button:
+                # The weekday name alone, deliberately: the other week's
+                # `week_start_date` is not in hand here — `scan_cached_weeks`
+                # read that plan to answer whether it exists, not to keep it —
+                # and a tooltip is the last place to print a plausible-looking
+                # wrong date. `format_day_label` degrades to exactly this for
+                # a plan that has no start date either, so the two cases spell
+                # the same and neither invents one.
+                ui.tooltip(
+                    f"{WEEK_SELECTION_LABELS[target[0]]} · "
+                    f"{format_day_label(target[1], None, short=True)}"
+                )
 
     def day_nav(day: str) -> None:
         days = state.days
-        index = days.index(day) if day in days else 0
         today = state.today_day()
 
         with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
-            # Clamped, not wrapping — `step_viewed_day` stops at both ends
-            # because the loaded plan holds exactly these seven days. A
-            # disabled chevron is the honest edge; wrapping Sunday round to
-            # Monday would silently pretend the week is a loop.
-            ui.button(icon="chevron_left", on_click=lambda: go(step=-1)).props(
-                f"dense flat size=sm {'disable' if index == 0 else ''}"
-            ).classes("text-slate-400")
+            # Steps into the adjacent cached week rather than clamping at the
+            # ends of this one — see `PlannerState.step_target`. Still clamped
+            # at the outer ends of the timeline, and still never wrapping: the
+            # last cached week has genuinely nothing after it, and looping
+            # Sunday back to Monday would pretend the calendar is a ring.
+            chevron("chevron_left", -1)
 
             for name in days:
                 selected = name == day
@@ -591,13 +638,14 @@ def build_today(
                     if tip:
                         ui.tooltip(" · ".join(tip))
 
-            ui.button(icon="chevron_right", on_click=lambda: go(step=1)).props(
-                f"dense flat size=sm {'disable' if index == len(days) - 1 else ''}"
-            ).classes("text-slate-400")
+            chevron("chevron_right", 1)
 
-            # Only offered when it would actually do something: there is a
-            # today in this week, and you are not on it.
-            if state.week_covers_today() and not state.viewing_today():
+            # Only offered when it would actually do something — the same test
+            # as before, widened from the loaded week to the whole timeline.
+            # It has to read disk rather than the plan on screen: step forward
+            # into next week and the loaded plan has no today in it at all,
+            # which is exactly when a way back is most wanted.
+            if state.today_is_reachable():
                 ui.button(
                     "Today", icon="today", on_click=lambda: go(reset=True)
                 ).props("dense flat no-caps size=sm").classes("text-sky-300")

@@ -87,6 +87,74 @@ class TestBuildDietStyleRule(unittest.TestCase):
         self.assertIn("Fast 800", rules)
 
 
+class TestDietStyleCalorieCeiling(unittest.TestCase):
+    """`diet_style_calorie_ceiling` — the one numeric lever a diet style has.
+
+    The reading half only. What hydration then *does* with the number is
+    pinned in `test_planner_dynamic_targets.py`, which owns the fixture and
+    the hand-worked figures the cap is measured against — the same split the
+    code makes, since this function knows nothing about a day.
+    """
+
+    def catalog(self, **ceilings) -> dict:
+        styles = {
+            key: dict(entry) for key, entry in BASE_CONFIG["diet_styles"].items()
+        }
+        for key, value in ceilings.items():
+            styles[key]["calorie_ceiling"] = value
+        return styles
+
+    def config(self, active, **ceilings) -> dict:
+        return dict(
+            BASE_CONFIG,
+            diet_styles=self.catalog(**ceilings),
+            dietary_rules=dict(BASE_CONFIG["dietary_rules"], active_diet_styles=active),
+        )
+
+    def test_no_active_style_has_no_ceiling(self):
+        self.assertIsNone(planner.diet_style_calorie_ceiling(self.config([], fast_800=800)))
+
+    def test_an_active_style_without_one_has_no_ceiling(self):
+        """Eleven of the twelve shipped styles declare nothing, and must go on
+        meaning "this style says nothing about the day's energy"."""
+        self.assertIsNone(
+            planner.diet_style_calorie_ceiling(self.config(["mediterranean_diet"]))
+        )
+
+    def test_an_active_style_declaring_one_reports_it(self):
+        self.assertEqual(
+            planner.diet_style_calorie_ceiling(self.config(["fast_800"], fast_800=800)),
+            800.0,
+        )
+
+    def test_the_lowest_wins_when_two_declare_one(self):
+        """Two bounds are two bounds and only the tighter is actually kept.
+        Averaging would produce a number neither style asked for — the same
+        reason `reconcile_adaptive_tdee` picks one TDEE rather than blending."""
+        config = self.config(
+            ["mediterranean_diet", "fast_800"], mediterranean_diet=1600, fast_800=800
+        )
+        self.assertEqual(planner.diet_style_calorie_ceiling(config), 800.0)
+
+    def test_a_config_predating_the_field_reports_nothing(self):
+        """No `diet_styles` key at all — the same tolerance
+        `build_diet_style_rule` extends, not a KeyError."""
+        self.assertIsNone(
+            planner.diet_style_calorie_ceiling(
+                {"dietary_rules": {"active_diet_styles": ["fast_800"]}}
+            )
+        )
+
+    def test_the_rule_text_never_states_the_number(self):
+        """The ceiling is applied where the day's calories are decided and is
+        deliberately not restated in the prompt: a model told the number
+        starts optimising for it instead of for the food, which is the failure
+        `FIBER_REPORTING_RULE`'s second sentence exists to head off."""
+        rule = planner.build_diet_style_rule(self.config(["fast_800"], fast_800=800))
+        self.assertIn("Fast 800", rule)
+        self.assertNotIn("800 kcal", rule)
+
+
 class TestAppConfigValidatesDietStyles(unittest.TestCase):
     def test_unknown_active_style_fails_at_load(self):
         raw = dict(
@@ -118,6 +186,12 @@ class TestRealConfig(unittest.TestCase):
         self.assertIn("mediterranean_diet", config["diet_styles"])
         self.assertIn("fast_800", config["diet_styles"])
         self.assertEqual(config["dietary_rules"]["active_diet_styles"], [])
+        # Shipped, but inert: nothing is active, so `diet_style_calorie_ceiling`
+        # reports None and every day plans exactly as it did before the field
+        # existed.
+        self.assertEqual(config["diet_styles"]["fast_800"]["calorie_ceiling"], 800.0)
+        self.assertIsNone(config["diet_styles"]["mediterranean_diet"]["calorie_ceiling"])
+        self.assertIsNone(planner.diet_style_calorie_ceiling(config))
 
 
 class TestIngredientRulesReadTheirContext(unittest.TestCase):

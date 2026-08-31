@@ -454,18 +454,65 @@ placed right after the cuisine rule (`style_rule`) and before the variety
 rule, because cuisine and diet style are both "what approach" — variety is a
 different concern.
 
-**Deliberately no numeric lever.** Fast 800's real-world hook is a low
-calorie ceiling, but `weekly_schedule`/`hydrate_dynamic_targets` already own
-every day's calorie number (see below), computed from the body and the
-config's `deficit`/`target_weight_kg` gap — a second, diet-style-driven
-calorie adjustment would be exactly the kind of double-count
-`hydrate_dynamic_targets` already has to guard against for training uplift.
-So Fast 800 is expressed as food-selection guidance instead — simple,
-lean, low-added-fat dishes — inside whatever budget the day was already
-given, not as a competing source of truth for the number itself. If Fast
-800's actual calorie ceiling is ever wanted as a hard target, it belongs as
-an adjustment inside `hydrate_dynamic_targets`, not as a second config knob
-sitting beside it.
+**One numeric lever, and it is a ceiling rather than an adjustment.**
+`DietStyle.calorie_ceiling` is optional and None on eleven of the twelve;
+`fast_800` declares 800. `planner.diet_style_calorie_ceiling(config)` reads
+the lowest one any *active* style declares, and `hydrate_dynamic_targets`
+takes the day's computed calories `min()` against it.
+
+This section previously said there was **no** numeric lever, and the
+objection it recorded was right: `weekly_schedule`/`hydrate_dynamic_targets`
+already own every day's calorie number, computed from the body and the
+config's `deficit`/`target_weight_kg` gap, so a second diet-style-driven
+calorie *adjustment* would be exactly the double-count that function already
+guards against for training uplift. It also named where the answer would
+have to live — "inside `hydrate_dynamic_targets`, not as a second config knob
+sitting beside it" — and that is where it is.
+
+**A ceiling is admissible where an adjustment was not, and the difference is
+idempotence.** Hydration runs twice on the same config: the UI hydrates for
+its own live preview and generation hydrates it again. Anything that *shifts*
+a number shifts it twice — which is the exact failure an earlier
+uplift-unwinding pass produced, taking a 2200 kcal override down to 1850.
+`min()` applied to an already-capped day returns the same figure, the same
+property that makes a stated target safe to take verbatim.
+
+Four things about it are decisions:
+
+- **After the training uplift, not before.** A ceiling bounds what the day may
+  *total*, not the base it was built from, so a workout does not buy an
+  exemption from a bound its owner chose to eat inside.
+- **A stated target is never capped.** `target_is_stated` — either
+  `target_modes` or a review-dialog `target_locks` entry — means somebody
+  said this number on purpose, and it is the day's final figure by
+  definition. A ceiling overriding one would be the second source of truth
+  this whole section refuses, and would make flipping calories to manual
+  silently move the day, the exact bug `target_modes` exists to prevent.
+- **Lowest wins when two active styles both declare one.** Two bounds are two
+  bounds and only the tighter is being kept; averaging would produce a figure
+  neither style asked for — the same reason `reconcile_adaptive_tdee` picks
+  one TDEE rather than blending two.
+- **An unaffordable ceiling is reported, not corrected.** Protein is locked to
+  the target weight (144 g = 576 kcal) and carbs come straight off
+  `weekly_schedule`, so an 800 kcal ceiling cannot pay for both on the shipped
+  numbers. `derive_fat_g` floors at 0 and the day stops reconciling against
+  `calories ~= 4p + 4c + 9f`; hydration logs a warning naming the days and
+  emits a note. That is this codebase's standing answer whenever the numbers
+  do not reconcile — an overspent `meal_overrides` floors the rest at 0 and
+  warns, `cap_to_weighted_share` drops its surplus rather than moving it,
+  `apply_protein_floor` does nothing and logs. Raise the ceiling or lower that
+  day's `net_carbs_g`; do not have the code pick a number nobody chose.
+
+**The prompt still never states the number.** `build_diet_style_rule` sends
+what it always sent — simple, lean, low-added-fat dishes, inside whatever
+budget the day was given. Telling the model a figure the budget it was handed
+already reflects is how a model starts optimising for the number instead of
+the food, which is what `FIBER_REPORTING_RULE`'s second sentence exists to
+head off.
+
+`active_diet_styles` is empty in the shipped config, so
+`diet_style_calorie_ceiling` returns None and every day plans byte-identically
+to before this existed.
 
 **All twelve are soft guidance, including the two — Paleo and AIP — that read
 like hard elimination lists.** "Exclude all grains, legumes and dairy" is
@@ -1521,10 +1568,23 @@ Three things about it are decisions:
   row of cards all badged "fridge" is two surfaces disagreeing about one
   batch.
 
-Still measured from the anchor day, deliberately: `slot_views`' collapse to
-`SUNDAY_PREP_REHEAT_MINUTES` tests `event.meal_type == "dinner"`, so the
-bulk-prep **lunch** anchor keeps showing its from-scratch prep time. That is a
-different question (how long it takes, not how old it is) and a separate fix.
+**Both anchors' prep time collapses too, and one of them did not for two
+releases.** `slot_views`' collapse to `SUNDAY_PREP_REHEAT_MINUTES` used to
+test `event.meal_type == "dinner"`, which was a faithful proxy for "cooked on
+prep day" only while the long cook was the sole anchor. `apply_batch_
+selections` anchors bulk prep on **lunch**, so that card showed its full
+from-scratch cook time for a dish that came out of the pan the day before the
+week started — while the fridge badge immediately beside it, counting from
+`cook_day_index`, correctly said otherwise. Two surfaces on one card
+disagreeing about one batch, which is the same failure the badge and the
+storage note were reconciled to avoid.
+
+It asks `planner.is_prepped_ahead` now — the function that already *names*
+the rule, and the same one `days_since_cook` reads two lines above it. That
+is the fix rather than a wider `in ("lunch", "dinner")` test: the shake still
+has to be excluded (it is only *portioned* ahead, and blends fresh each
+training morning), `is_prepped_ahead` is already exactly that distinction,
+and a third batch axis added later cannot reopen the bug a third time.
 
 `spread_batch` returns `None` for an anchor that never grew past what an
 ordinary dinner already gets for free, which is the same "no batch happened"
@@ -2912,7 +2972,11 @@ bootstrap into a wall of 429s halfway through.
 - `dietary_rules.active_diet_styles` (Mediterranean, Fast 800, DASH, the Total
   Wellbeing Diet, ...) is soft guidance, not a hard constraint like the two
   rules above — it shapes food selection via the generation prompt rather
-  than rejecting a recipe. See "Diet styles" under Architecture.
+  than rejecting a recipe. Its **one** hard effect is
+  `DietStyle.calorie_ceiling`, which caps the day's computed calories inside
+  `hydrate_dynamic_targets` and never reaches the prompt at all; Fast 800's
+  800 is the only one declared, and nothing is active by default. See "Diet
+  styles" under Architecture.
 - **Fibre is tracked but never targeted** — `Ingredient.fiber_g` is reported
   and displayed, and is deliberately absent from every macro budget. Since
   the Cronometer sync captures `fiber_g`, the telemetry header prints what
@@ -2952,17 +3016,17 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_composition.py` | style/cuisine resolution, cuisine blocks, workout breakfasts |
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
-| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the protein floor, logged-intake substitution, adaptive TDEE |
+| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein), the protein floor, logged-intake substitution, adaptive TDEE |
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
-| `test_diet_styles.py` | the diet-style axis and `Ingredient`'s two hard rules |
+| `test_diet_styles.py` | the diet-style axis, its one numeric lever (which `calorie_ceiling` wins, and that the prompt never states the number), and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip, and the pantry ledger — both entry shapes, the containment match and the two guards on it, and what a spent item stops being told to the model |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |

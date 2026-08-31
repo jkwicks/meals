@@ -290,6 +290,14 @@ CATALOG_TABLE_MIN_W = "min-w-[46rem]"
 # as week_plan_next.json. Keys are what's passed to `load_week_plan`/
 # `save_week_plan`, values are what the header select shows.
 WEEK_SELECTION_LABELS = {"current": "Current Week", "next": "Next Week"}
+# The same two identifiers in **calendar order**, which is the fact the Daily
+# View's day picker steps along when a chevron runs off the end of one week
+# (`PlannerState.step_target`). Derived from the dict rather than written out
+# again: a second tuple beside it would be free to disagree about membership
+# *or* about order, and only one of those two disagreements would ever look
+# like a bug. Dict order is insertion order, and the insertion order above is
+# deliberate.
+WEEK_SEQUENCE = tuple(WEEK_SELECTION_LABELS)
 
 # A slot's render status is its mode, except that a cook (or the cook a
 # leftover points at) whose day failed to generate has no recipe to show. That

@@ -119,7 +119,8 @@
     },
     "fast_800": {
       "label": "Fast 800",
-      "principles": "Keep dishes simple and calorie-light within the given budget: lean protein and vegetables first, minimal added fat, sauce or oil, and no refined carbs padding the plate."
+      "principles": "Keep dishes simple and calorie-light within the given budget: lean protein and vegetables first, minimal added fat, sauce or oil, and no refined carbs padding the plate.",
+      "calorie_ceiling": 800
     },
     "dash": {
       "label": "DASH Diet",

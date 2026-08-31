@@ -414,6 +414,18 @@ worth noting because this paragraph previously said the topic had no third
 member to grow: **a topic's membership is a fact about today's readers, not a
 property of the topic.**
 
+`"plan"` gained the header's week select for the opposite reason — it is not
+that the select changed, but that a *second* thing now changes the week.
+`ui_today`'s edge chevrons step into the adjacent cached week, and a select
+still reading "Current Week" over next week's grid is the "second control
+free to disagree" objection that kept the picker clamped for four releases.
+The answer is to make the *first* control repaint from `week_selection`,
+never to add a second one: `switch_week` stays that field's only writer. It
+sits on `"plan"` rather than a topic of its own because every crossing
+repaints the canvas, the telemetry row and the shopping panel anyway, and a
+select owns no cursor for the focus-theft trap that keeps other sections off
+that topic.
+
 ## Targets: read the resolved number, never the file
 
 `config["weekly_schedule"][day]["calories"]` and `["protein_g"]` are **inert**
