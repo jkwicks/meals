@@ -397,6 +397,7 @@
   "user_profile": {
     "activity_level": "light_office",
     "birth_date": "1971-01-10",
+    "fiber_floor_g": 30.0,
     "gender": "male",
     "height_cm": 183.0,
     "protein_multiplier": 1.8,

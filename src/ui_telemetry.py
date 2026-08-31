@@ -173,9 +173,12 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                 # the stored plan (or fail to appear on one that isn't).
                 training = state.training_edited_for(day)
                 staged = state.target_is_staged(day)
-                # Planned fibre, and what Cronometer logged for that calendar
-                # date if anything — the one macro with a measured figure and
-                # no target to divide it by. See `ui_state.fibre_view`.
+                # Planned fibre against its target, and what Cronometer
+                # logged for that calendar date if anything. The target half
+                # arrived with `nutrition_engine.calculate_fiber_target_g`;
+                # the logged half stays beside the pair rather than under it,
+                # because a measurement is not a goal. See
+                # `ui_state.fibre_view`, which owns both rules.
                 fibre = state.fibre_for(day)
                 # Opens the day inspector (`ui_inspector.py`) — a floating
                 # overlay, so this never reflows the grid it's clicked from.
@@ -270,13 +273,14 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                             ui.label(
                                 f"{short} {totals[key]:.0f}/{float(target[key]):.0f}{unit}"
                             ).classes(f"{TEXT_MICRO} font-mono {MACRO_TINTS[key]}")
-                        # Fibre rides on the same row but carries no
-                        # denominator, because there is no fibre target to
-                        # divide by (`planner.NUTRIENT_KEYS`) — printing one
-                        # would invent a goal the planner never aimed at.
-                        # `fibre_view` holds that rule; the widget only
-                        # prints what it returns, including the tolerance for
-                        # a plan generated before `fiber_g` existed.
+                        # Fibre rides on the same row and now carries the
+                        # same `actual/target` shape as its neighbours, since
+                        # there is a target to divide by. `fibre_view` holds
+                        # that rule — including the fallback to a bare
+                        # `FIB 32g` for a plan generated before fibre had a
+                        # target, and for one generated before `fiber_g`
+                        # existed at all. The widget only prints what it
+                        # returns.
                         ui.label(fibre.label).classes(
                             f"{TEXT_MICRO} font-mono {MACRO_TINTS['fiber_g']}"
                         )

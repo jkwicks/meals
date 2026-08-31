@@ -23,8 +23,10 @@ from pydantic import (
 
 from nutrition_engine import (
     ADAPTIVE_TDEE_TOLERANCE,
+    DEFAULT_FIBER_FLOOR_G,
     DEFAULT_NET_CARBS_G,
     calculate_adaptive_tdee,
+    calculate_fiber_target_g,
     calculate_macro_targets,
 )
 from repository import (
@@ -167,20 +169,27 @@ PAID_MODEL_MAX_TOKENS = 16000
 # Everything that scales linearly with an ingredient's quantity — the budgeted
 # four above, plus fibre.
 #
-# **Fibre is reported, never budgeted, and the split is the whole point.**
-# Every budget in this module is checked against the identity
-# `calories ~= 4p + 4c + 9f` — `split_targets` scales all four together,
-# `apply_protein_floor` moves calories with protein at 4 kcal/g to preserve it,
-# and `DayRecipes.reject_untrimmable_macro_miss` bounces a response whose
-# calories don't reconcile. Fibre does not participate in that identity (it is
-# already excluded from `net_carbs_g` by definition), so adding it to
-# `MACRO_KEYS` would put a fifth number into arithmetic that has no term for
-# it. It rides on `NUTRIENT_KEYS` instead: scaled by the portion trim like any
-# other quantity, summed for display, and invisible to every budget.
+# **`MACRO_KEYS` names the keys with a term in `calories ~= 4p + 4c + 9f`, not
+# the keys with a target.** It answered both questions until fibre got a target
+# of its own (`nutrition_engine.calculate_fiber_target_g`), and the split
+# between the two is now the thing to keep straight:
 #
-# Giving fibre a daily *target* is a real feature and a bigger one — it needs a
-# term in `nutrition_engine.calculate_macro_targets` and a per-slot share in
-# `split_targets`. This is deliberately not that.
+# - **Identity operations walk `MACRO_KEYS`.** `derive_fat_g` solves the
+#   equation, `apply_protein_floor` moves calories with protein at 4 kcal/g to
+#   preserve it, and `DayRecipes.reject_untrimmable_macro_miss` bounces a
+#   response whose calories don't reconcile. Fibre has no term in any of them —
+#   it is already excluded from `net_carbs_g` by definition — so putting it
+#   there would drop a fifth number into arithmetic with nowhere to put it.
+# - **Proportional operations may walk `NUTRIENT_KEYS`.** A portion trim, a
+#   recipe total and a per-slot share are all linear in quantity and care
+#   nothing for the identity, which is what lets fibre take a briefed share of
+#   a day without ever entering a budget check.
+#
+# So fibre now has a daily target, a per-slot share and a denominator on the
+# telemetry header — and still no validator, because a single scale factor
+# cannot change a macro ratio and rejecting a fibre-light response would cost a
+# 30s-3min retry that nothing downstream could act on. See `split_targets`'
+# fibre pass and `FIBER_TARGET_RULE`.
 NUTRIENT_KEYS = MACRO_KEYS + ("fiber_g",)
 
 WEEKEND_DAYS = {"Saturday", "Sunday"}
@@ -687,7 +696,7 @@ def build_diet_style_rule(config: dict) -> str:
     inside `hydrate_dynamic_targets`, where the day's calories are already
     decided, and never restated here. Telling the model a number the budget
     it was handed already reflects is how a model starts optimising for the
-    number instead of the food — the same failure `FIBER_REPORTING_RULE`'s
+    number instead of the food — the same failure `FIBER_TARGET_RULE`'s
     second sentence exists to head off. What this rule sends about Fast 800
     is what it always sent: simple, lean, low-added-fat dishes, inside
     whatever budget the day was given.
@@ -1066,20 +1075,38 @@ def workout_session_id(time: str, session_type: str) -> str:
 
 # Sets the field `generate_sunday_prep_session` selects its candidates by. A
 # call that omits this rule can never contribute to a prep session.
-# Fibre is reported, never budgeted (see `NUTRIENT_KEYS`), and this rule has
-# to say both halves. The field has a 0.0 default, so a model that simply
-# omits it produces a silently fibre-free week rather than an error — which is
-# why asking for it explicitly is worth a prompt line rather than left to the
-# schema description. The second sentence is the important one: without it a
-# model told to "report fibre" starts *optimising* for it, swapping ingredients
-# to raise a number nothing is aiming at and pulling the recipe off the macro
-# budget that actually is checked.
-FIBER_REPORTING_RULE = (
+# Fibre now has a target (`nutrition_engine.calculate_fiber_target_g`) and a
+# per-slot share (`split_targets`), and this rule is what changed when it got
+# one. It used to end "tracked for reporting only and has no target: never
+# ... pick an ingredient to raise it", which was the right instruction while
+# there was nothing to aim at and is exactly backwards now there is.
+#
+# **The clause that had to survive the rewrite is the one about trading.** A
+# model told to hit a number will hit it out of whatever it has, and the four
+# macros are the budget that actually is checked — a recipe that buys 6 g of
+# fibre with 200 kcal of extra lentils passes no validator this app has.
+# Fibre is bought by *substitution at constant macros* (wholegrain for
+# refined, legumes in place of some starch, skins left on, the vegetable
+# already in the dish chosen for its fibre), which is genuinely how the
+# nutrient works, so the rule names the mechanism rather than only forbidding
+# the alternative — "don't trade" alone leaves a model with a target and no
+# permitted way to reach it, which is the shape of rule it drops.
+#
+# The field still has a 0.0 default, so a model that simply omits it produces
+# a silently fibre-free week rather than an error, which is why asking for it
+# explicitly is worth a prompt line rather than left to the schema
+# description.
+FIBER_TARGET_RULE = (
     "- Report fiber_g for every ingredient — the dietary fibre in that "
     "quantity, in grams, in addition to net_carbs_g (which already excludes "
-    "it). This is tracked for reporting only and has no target: never trade "
-    "calories, protein, carbs or fat against it, and never pick an "
-    "ingredient to raise it.\n"
+    "it). Each meal below states a fibre target alongside its macro budget: "
+    "reach it by CHOOSING higher-fibre forms of what the dish already "
+    "contains — wholegrain rather than refined, legumes in place of some of "
+    "the starch, vegetables and fruit with their skins, nuts and seeds "
+    "already in the recipe — never by adding food on top. The calorie, "
+    "protein, carb and fat budget is the hard constraint and fibre is a goal "
+    "inside it: never trade any of the four against fibre, and if the two "
+    "conflict, hit the macros and report the fibre you actually have.\n"
 )
 
 LONG_OVEN_COOK_RULE = (
@@ -1366,7 +1393,7 @@ def build_generation_rules(
         "every ingredient's quantity_g and its calories/protein_g/net_carbs_g/"
         "fat_g for a SINGLE serving too. Do not multiply by the number of "
         "people or by any batch size — Python scales the recipe afterwards.\n"
-        f"{FIBER_REPORTING_RULE}"
+        f"{FIBER_TARGET_RULE}"
         "- Leave servings and prep_notes at their schema defaults — Python "
         "fills those in.\n"
         f"{LONG_OVEN_COOK_RULE}"
@@ -1739,11 +1766,29 @@ class UserProfile(BaseModel):
     # recomposition range; it is a multiplier rather than a gram figure so it
     # keeps meaning the same thing as the weight it multiplies changes.
     protein_multiplier: float = 1.8
+    # Grams of fibre below which a day is never planned, whatever its energy.
+    # A flat number rather than a multiplier because fibre scales with the
+    # volume of food eaten, not with the body eating it —
+    # `nutrition_engine.calculate_fiber_target_g` supplies the energy half and
+    # this is the floor it may only ever raise. Defaulted from the engine's own
+    # constant so the number is stated once.
+    fiber_floor_g: float = DEFAULT_FIBER_FLOOR_G
     activity_level: str = "light_office"
 
 
 class DaySchedule(BaseModel):
     """One `weekly_schedule.<day>` entry: the day's whole-day macro target.
+
+    **There is deliberately no `fiber_g` here**, even though the day now has a
+    fibre target. Fat is stated *and* recomputed, which is a historical
+    accident this section tolerates rather than repeats: a key the file may
+    write and the app then ignores is a second place for a number to be wrong,
+    which is the whole complaint the note at the end of CLAUDE.md makes about
+    `weekly_schedule`'s inert calories. Fibre is derived from the day's final
+    calorie figure by `calculate_fiber_target_g`, appears on the hydrated
+    config and on `WeekPlan.targets`, and is not a file key — so `extra=forbid`
+    naming the file and the line is what a hand-written one gets, rather than
+    silent acceptance and silent replacement.
 
     `meal_overrides` stays a loose `Dict[str, Any]` — see the module-level
     note above about `meal_overrides_for` owning per-item tolerance for a
@@ -2205,6 +2250,21 @@ def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float
     return max(0, (calories - (protein_g * 4 + net_carbs_g * 4)) / 9)
 
 
+def fiber_floor_g(config: dict) -> float:
+    """`user_profile.fiber_floor_g`, or the engine's default.
+
+    One reader rather than two `.get` chains, for the reason the note at the
+    end of CLAUDE.md gives about `planned_targets`: a number the UI displays
+    and a number a run plans against must come from one call. An unfilled
+    `user_profile` — the state a fresh checkout is in — still has a fibre
+    floor, because unlike a calorie target it needs nothing about the body to
+    be known.
+    """
+    profile = config.get("user_profile") or {}
+    floor = profile.get("fiber_floor_g")
+    return DEFAULT_FIBER_FLOOR_G if floor is None else float(floor)
+
+
 def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
     """One day's whole-day macro target, with fat derived rather than read.
 
@@ -2233,6 +2293,11 @@ def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
     net_carbs_g = day_targets["net_carbs_g"]
 
     fat_g = derive_fat_g(calories, protein_g, net_carbs_g)
+    # Derived from the day's calories the same way fat is, and by the same
+    # function `hydrate_dynamic_targets` uses, so the file path and the engine
+    # path cannot disagree about a Thursday. `fiber_g` on the day is ignored if
+    # stated, exactly as `fat_g` is.
+    fiber_g = calculate_fiber_target_g(calories, fiber_floor_g(config))
 
     return {
         "day_of_week": day_of_week,
@@ -2240,11 +2305,47 @@ def calculate_daily_targets(day_of_week: str, config: dict) -> dict:
         "protein_g": protein_g,
         "net_carbs_g": net_carbs_g,
         "fat_g": round(fat_g, 1),
+        "fiber_g": round(fiber_g, 1),
     }
 
 
 def week_targets(spec: WeekSpec, config: dict) -> Dict[str, dict]:
     return {day: calculate_daily_targets(day, config) for day in spec.days}
+
+
+def with_fiber_targets(config: dict, floor_g: Optional[float] = None) -> dict:
+    """`config` with every `weekly_schedule` day carrying its fibre target.
+
+    The fallback half of `hydrate_dynamic_targets`, split out because that
+    function has **four** ways to hand back a schedule and only one of them
+    runs the engine. Every fibre figure is derived from the day's own
+    calories, so the three no-engine paths can produce the identical number
+    without one — and they have to, or `/api/targets` (which reads the
+    hydrated `weekly_schedule` straight out) would report fibre on a machine
+    with a weigh-in and omit it on one without, while the telemetry header
+    read `calculate_daily_targets` and printed a figure either way. That is
+    the "one number, one call" rule at the end of CLAUDE.md, reached from the
+    storage side.
+    """
+    schedule = config.get("weekly_schedule") or {}
+    if not schedule:
+        return config
+    floor = fiber_floor_g(config) if floor_g is None else floor_g
+    return dict(
+        config,
+        weekly_schedule={
+            day: dict(
+                entry,
+                fiber_g=round(
+                    calculate_fiber_target_g(
+                        float(entry.get("calories") or 0.0), floor
+                    ),
+                    1,
+                ),
+            )
+            for day, entry in schedule.items()
+        },
+    )
 
 
 def hydrate_dynamic_targets(
@@ -2262,8 +2363,14 @@ def hydrate_dynamic_targets(
     scale reported body fat, Mifflin-St Jeor otherwise), TDEE from the activity
     factor, and a deficit that slides with the remaining gap to
     `target_weight_kg`. Returns a new config — this module never mutates the
-    one it's handed — with each day's `calories`, `protein_g` and `fat_g`
-    replaced and everything else about the day left alone.
+    one it's handed — with each day's `calories`, `protein_g`, `fat_g` and
+    `fiber_g` replaced and everything else about the day left alone.
+
+    **`fiber_g` is derived, never owned, which is why it has no
+    `target_modes` entry.** `TARGET_MODE_MACROS` exists for the two macros
+    with two possible sources; fibre, like fat, has exactly one
+    (`nutrition_engine.calculate_fiber_target_g` of the day's final calorie
+    figure), so a toggle for it would be a control that changes nothing.
 
     **TDEE comes from measurement once there is enough of it.** Given the full
     `biometrics` file (not just the latest weigh-in),
@@ -2351,10 +2458,13 @@ def hydrate_dynamic_targets(
     if not any(profile.get(key) for key in ("target_weight_kg", "height_cm", "birth_date")):
         # An all-defaults UserProfile (every field None) means the section
         # isn't filled in, not that it's absent — nothing to hydrate from.
-        return config
+        # Fibre still resolves: it needs the day's calories and a floor, and
+        # neither is a fact about the body.
+        return with_fiber_targets(config)
 
     uplift = config.get("training_uplift") or {}
     pins = config.get("training_pins") or {}
+    floor_g = fiber_floor_g(config)
     weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
     # None whenever no active diet style declares one, which is the shipped
     # state — `active_diet_styles` is empty by default, so every day below
@@ -2417,7 +2527,7 @@ def hydrate_dynamic_targets(
                 )
             if note_callback:
                 note_callback(f"Using config.json targets — {message}")
-            return config
+            return with_fiber_targets(config, floor_g)
         basis = base["basis"]
     try:
         for day, day_targets in config["weekly_schedule"].items():
@@ -2459,6 +2569,17 @@ def hydrate_dynamic_targets(
                 protein_g=round(protein_g, 1),
                 net_carbs_g=round(net_carbs_g, 1),
                 fat_g=round(derive_fat_g(calories, protein_g, net_carbs_g), 1),
+                # Derived from the day's *final* calorie figure — after the
+                # uplift and after the diet-style ceiling — for the same
+                # reason fat is: both are answers about the day that was
+                # settled, not about the base it was built from. It has no
+                # `target_modes` entry and cannot get one, because like fat
+                # it has only ever had one possible source; `is_manual`
+                # governs where the *calories* came from, and fibre follows
+                # whatever they turned out to be.
+                fiber_g=round(
+                    calculate_fiber_target_g(calories, floor_g), 1
+                ),
             )
             # The post-workout pin was worked out from the numbers just
             # replaced, so it has to be worked out again from the new ones —
@@ -2483,7 +2604,7 @@ def hydrate_dynamic_targets(
             )
         if note_callback:
             note_callback(f"Using config.json targets — {message}")
-        return config
+        return with_fiber_targets(config, floor_g)
 
     if not schedule:
         # An empty `weekly_schedule` never enters the loop, so nothing raises
@@ -4430,6 +4551,7 @@ def split_targets(
     multiplicity: Dict[str, int],
     config: dict,
     overrides: Optional[Dict[str, dict]] = None,
+    fiber_target_g: Optional[float] = None,
 ) -> Dict[str, dict]:
     """Divide the day's remaining macros into a per-meal budget.
 
@@ -4457,6 +4579,24 @@ def split_targets(
     `planning_rules.min_meal_protein_g` where the day can afford it — see
     `apply_protein_floor`. Weight alone gives the 0.10-weighted snack ~14 g of
     a 144 g day, which is a snack with no protein source in it.
+
+    **`fiber_target_g` is a fourth pass and deliberately a separate axis**, run
+    by `split_fibre_share` after everything above. Omit it — as
+    `PlannerState.default_skip_estimate` and every pre-target caller does — and
+    no budget carries `fiber_g` at all, which is byte-identical to before fibre
+    had a target. Three things follow from it being separate rather than a
+    fifth `MACRO_KEYS` entry, and all three are the point:
+
+    - **A `meal_overrides` pin does not pin fibre.** An override is a fixed
+      *energy* budget, which is the thing `meal_overrides` exists to state, and
+      energy says nothing about fibre — so a pinned meal takes its weighted
+      share of the day's fibre like any other. Allowing a fifth optional key in
+      an override would put a number there with no identity to check it
+      against.
+    - **Every cook slot shares it, pinned or not**, for the same reason.
+    - **The protein floor has no fibre counterpart.** That floor exists because
+      protein is dose-limited *per meal*; fibre is not, so a day that reaches
+      its figure across three meals has reached it.
     """
     overrides = overrides or {}
     weights_config = config["meal_weights"]
@@ -4475,7 +4615,11 @@ def split_targets(
             pinned[key] += override[key] * eaten_today
 
     if not flexible:
-        return budgets
+        # Every slot pinned by an override still owes the day its fibre — the
+        # pin is a statement about energy, not about the whole plate.
+        return split_fibre_share(
+            budgets, cook_slots, multiplicity, config, fiber_target_g
+        )
 
     left = {key: remaining[key] - pinned[key] for key in MACRO_KEYS}
     overspent = [key for key in MACRO_KEYS if left[key] < 0]
@@ -4495,7 +4639,9 @@ def split_targets(
     total_weight = sum(base[slot.id] * multiplicity.get(slot.id, 1) for slot in flexible)
     if total_weight <= 0:
         budgets.update({slot.id: dict(left) for slot in flexible})
-        return budgets
+        return split_fibre_share(
+            budgets, cook_slots, multiplicity, config, fiber_target_g
+        )
 
     budgets.update(
         {
@@ -4503,12 +4649,59 @@ def split_targets(
             for slot in flexible
         }
     )
-    return apply_protein_floor(
+    budgets = apply_protein_floor(
         budgets,
         [slot for slot in flexible if slot.mode == MODE_COOK],
         multiplicity,
         planning_rule(config, "min_meal_protein_g"),
     )
+    return split_fibre_share(budgets, cook_slots, multiplicity, config, fiber_target_g)
+
+
+def split_fibre_share(
+    budgets: Dict[str, dict],
+    cook_slots: List[SlotSpec],
+    multiplicity: Dict[str, int],
+    config: dict,
+    fiber_target_g: Optional[float],
+) -> Dict[str, dict]:
+    """Add each slot's `fiber_g` share of the day's fibre target to `budgets`.
+
+    The same `meal_weights` the macro split uses, normalised over the same
+    slots, so a bigger meal is asked for more fibre — which is honest, since a
+    bigger meal is more food. Returns `budgets` untouched when
+    `fiber_target_g` is None, and that is the whole of the migration story:
+    every caller that has not been taught about the target gets exactly the
+    dict it got before.
+
+    **A slot eaten more than once takes a proportionally larger share of the
+    day while its own figure stays one serving**, the identical rule the macro
+    split applies — the day's fibre is eaten as many times as the meal is.
+
+    An early return for a non-positive target rather than a division guard:
+    zero fibre asked for is a day with no fibre target, and writing `0.0` onto
+    every slot would put a figure in the prompt that reads as an instruction to
+    avoid fibre.
+    """
+    if fiber_target_g is None or fiber_target_g <= 0 or not cook_slots:
+        return budgets
+
+    weights_config = config["meal_weights"]
+    weight = {
+        slot.id: weights_config.get(slot.meal_type, 0.25) or 0.25 for slot in cook_slots
+    }
+    total = sum(weight[slot.id] * multiplicity.get(slot.id, 1) for slot in cook_slots)
+    if total <= 0:
+        return budgets
+
+    adjusted = dict(budgets)
+    for slot in cook_slots:
+        if slot.id not in adjusted:
+            continue
+        adjusted[slot.id] = dict(
+            adjusted[slot.id], fiber_g=fiber_target_g * weight[slot.id] / total
+        )
+    return adjusted
 
 
 def apply_protein_floor(
@@ -4983,6 +5176,15 @@ def build_slot_brief(
         f"{budget['protein_g']:.0f}g protein, {budget['net_carbs_g']:.0f}g net carbs, "
         f"{budget['fat_g']:.0f}g fat"
     )
+    # A separate part from the budget above, not a fifth figure inside it,
+    # because the two are different kinds of number and `FIBER_TARGET_RULE`
+    # says so: the four are the constraint and this is a goal to reach inside
+    # them. `.get` rather than an index — a caller that passed no
+    # `fiber_target_g` to `split_targets` has no key here, and the brief is
+    # then byte-identical to the one this app sent before fibre had a target.
+    fiber_budget = budget.get("fiber_g")
+    if fiber_budget:
+        parts.append(f"fibre target: {fiber_budget:.0f}g (aim for it within that budget)")
     if pinned:
         parts.append("[fixed budget for this meal — the other meals absorb the rest of the day]")
     if times_eaten_today > 1:
@@ -5028,6 +5230,13 @@ def generate_day(
     client = build_client(config.get("models"))
 
     remaining = {key: max(0.0, targets[key] - carried.get(key, 0.0)) for key in MACRO_KEYS}
+    # Fibre rides on the same subtraction: a leftover already brings its own,
+    # so only the gap is asked of the meals actually being cooked. `.get` on
+    # both sides — `targets` predates the fibre target when it comes from a
+    # hand-built dict, and `carried` is 0 for a day with no leftovers.
+    remaining["fiber_g"] = max(
+        0.0, float(targets.get("fiber_g") or 0.0) - float(carried.get("fiber_g") or 0.0)
+    )
 
     leftovers_instruction = (
         "- The following meals on this day are ALREADY FIXED (leftovers of an "
@@ -5049,7 +5258,10 @@ def generate_day(
     )
 
     overrides = meal_overrides_for(day, config)
-    budgets = split_targets(remaining, cook_slots, multiplicity, config, overrides)
+    budgets = split_targets(
+        remaining, cook_slots, multiplicity, config, overrides,
+        fiber_target_g=remaining["fiber_g"],
+    )
     slot_briefs = "\n".join(
         build_slot_brief(
             slot,
@@ -5099,6 +5311,12 @@ def generate_day(
         f"- Protein: {remaining['protein_g']:.0f} g\n"
         f"- Net carbs: {remaining['net_carbs_g']:.0f} g\n"
         f"- Fat: {remaining['fat_g']:.0f} g\n"
+        + (
+            f"- Fibre (a goal, not part of the calorie arithmetic): "
+            f"{remaining['fiber_g']:.0f} g\n"
+            if remaining.get("fiber_g")
+            else ""
+        )
     )
 
     model = resolve_planner_model(config)
@@ -6046,6 +6264,21 @@ async def generate_week_plan(
         apriori_budgets[day] = split_targets(
             plannable_targets[day], day_slots, day_multiplicity(spec, day), config,
             meal_overrides_for(day, config),
+            # The day's *whole* fibre target, and the only place this run
+            # computes one. Every stage below reads its slot's share back out
+            # of here rather than splitting again, which is what makes a
+            # meal's fibre brief the same number whichever stage generates it
+            # — see the note at the stage loop for why fibre must not cascade.
+            #
+            # Not reduced by `skip_estimate_totals`, unlike the macros above:
+            # a skip estimate carries the budgeted four alone, because the
+            # fibre in a meal nobody cooked isn't estimable and 0 is more
+            # honest than a guess. So a skipped-but-eaten slot leaves the
+            # day's fibre goal whole and simply isn't in the denominator that
+            # divides it, which is the same direction `targets` itself takes:
+            # the day's goal doesn't shrink because part of it was met at a
+            # restaurant.
+            fiber_target_g=float(targets[day].get("fiber_g") or 0.0),
         )
     for stage_index, meal_type in enumerate(order):
         # Every day this meal type is cooked, split by who cooks it. A slot
@@ -6128,6 +6361,27 @@ async def generate_week_plan(
                                 f"{day} {meal_type}: capped at {budget['calories']:.0f} kcal "
                                 "rather than absorbing the day's whole shortfall"
                             )
+                # **Fibre does not cascade, and this is where it is kept out.**
+                # Every macro above is a share of what is *left* of the day
+                # after each earlier stage's actual output, because the day's
+                # energy has to total. A fibre target is a goal to reach rather
+                # than a sum to spend, and models come back fibre-light far
+                # more often than fibre-heavy — so cascading it would pile the
+                # week's whole shortfall onto whichever meal type is generated
+                # last, which is precisely the failure `cap_to_weighted_share`
+                # exists to bound for calories and cannot bound here (a portion
+                # trim scales fibre with everything else and can no more add
+                # fibre than it can add protein).
+                #
+                # So the share comes from `apriori_budgets` — the day's full
+                # target, split once before any stage ran — and a meal that
+                # came back short simply leaves the day short, visibly, in the
+                # telemetry header's `FIB 24/30g`. Same standing answer as an
+                # orphaned leftover and a capped surplus: show the gap, do not
+                # distort a meal to hide it.
+                fibre_share = (apriori_budgets[day].get(this_slot) or {}).get("fiber_g")
+                if fibre_share:
+                    budget = dict(budget, fiber_g=fibre_share)
                 day_budgets[day] = budget
 
             carried_descriptions_by_day = {

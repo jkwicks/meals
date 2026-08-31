@@ -199,18 +199,26 @@ combination, and the same underlying flex/grid min-size trap, `SKILL.md`'s
 NiceGUI-traps list and this file's own phase-1 `meal_card` writeup below both
 already document.
 
-**Fibre is the one figure in the header printed without a denominator, and
-now the one with a second figure beside it.** Every other entry in a day's
-macro row is `actual/target`; `FIB 32g` is bare because there is no fibre
-target and `32/xx` would invent a goal the planner never aimed at (CLAUDE.md,
-"Fibre is reported, never budgeted"). Once `CRONOMETER_MACRO_COLUMNS` learned
-`fiber_g`, a logged figure exists for days that have actually happened — and
-it is emphatically not that missing denominator, so it renders as a **second
-label** (`logged 24g`, slate) beside the cyan planned one rather than as a
-second number inside it. A slash there would read as a goal that was missed.
+**Fibre is the one figure in the header carrying three numbers, and the rule
+is which two of them share a divider.** `FIB 24/30g · logged 22g`. The first
+pair is the `actual/target` shape every other entry in the row already
+carries, and it is honest since the planner started aiming at a figure
+(CLAUDE.md, "Fibre is targeted, and still has no term in the energy
+identity"). The logged half — from `CRONOMETER_MACRO_COLUMNS` — is
+emphatically *not* a second denominator, so it renders as a **second label**
+(`logged 22g`, slate) beside the cyan pair rather than as a number inside it.
+A slash there would read as a goal that was missed, which is not what a
+measurement says.
 
-`ui_state.fibre_view(planned, logged)` holds the rule and both formatted
-halves, and `PlannerState.fibre_for(day)` is what the header calls; the
+This paragraph used to state the opposite half — that `FIB 32g` was bare
+because no fibre target existed — and that was correct for four releases.
+What survived the target's arrival is the *logged* rule, which is the one
+worth remembering: it was never the missing denominator.
+
+`ui_state.fibre_view(planned, logged, target)` holds both rules and every
+formatted half, and `PlannerState.fibre_for(day)` is what the header calls,
+reading the target off `targets_for` so fibre follows the stored-plan versus
+live-preview branch every other figure in the row follows; the
 widget prints what it is handed. That is the standing "logic worth testing
 leaves the widget module" split, and here it is load-bearing rather than
 tidy: the phrasing *is* the guard. The lookup matches a `daily_actuals` row
@@ -219,7 +227,9 @@ by the day's **calendar date** (`day_date_iso`), not by weekday —
 carries only a weekday name, but a loaded `WeekPlan` carries
 `week_start_date`, so every column here has a real date. A plan predating
 that field, and a row synced before fibre was captured, both fall back to the
-planned figure alone.
+planned figure alone — as does a week generated before fibre had a target,
+which has no `fiber_g` in `week_plan.targets` and gets back exactly the bare
+label the header printed then.
 
 ### The type, spacing and radius scale
 
@@ -1214,17 +1224,26 @@ Where each macro's number comes from, and one of the two controls in the app
 that write to `config/` — the other is accepting a Garmin schedule proposal
 in the review dialog's Training Schedule section, which persists
 `training_schedule` on the same "a standing setting is not a per-week input"
-reasoning. Four rows — calories, protein, carbs, fat — each naming
+reasoning. Five rows — calories, protein, carbs, fat, fibre — each naming
 its source, its current figure for the week (collapsed to one number when
 every day agrees, a range when they don't) and, for the two on `auto`, the
 engine's own arithmetic behind it: "Katch-Mcardle BMR 1798 → TDEE 2472
 (formula) − 738 deficit (99.4 → 80.0 kg)".
 
-Calories and protein carry an Auto/Manual toggle; carbs and fat carry a chip
+Calories and protein carry an Auto/Manual toggle; the other three carry a chip
 saying they have no mode to switch and a sentence saying why (see
-`TARGET_SOURCE_ROWS` in `ui_theme.py`). **Naming all four rather than only the
-two with a control is the point** — the question the panel answers is "where
-does this number come from", and it has an answer for every macro.
+`TARGET_SOURCE_ROWS` in `ui_theme.py`). **Naming all of them rather than only
+the two with a control is the point** — the question the panel answers is
+"where does this number come from", and it has an answer for every figure the
+week is planned against.
+
+**Fibre is a row because it became one of those figures.** It arrived with the
+daily fibre target and could not be left off: a number the telemetry header
+prints as `FIB 24/30g` and whose origin is stated nowhere is the exact gap
+this panel exists to close. It reads "Fixed" rather than "Yours", via
+`DERIVED_TARGET_MACROS` — a named tuple rather than the `macro == "fat_g"`
+equality test that was there, which is how the row would silently have
+claimed somebody typed a figure the engine computes.
 
 Per-day number inputs appear under carbs always, and under a switchable macro
 once it is manual. They are debounced and written through

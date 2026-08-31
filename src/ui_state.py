@@ -2095,11 +2095,23 @@ class PlannerState:
         return rows[-1] if rows else None
 
     def fibre_for(self, day: str) -> "FibreView":
-        """What the day's recipes carry in fibre, beside what was logged."""
+        """What the day's recipes carry in fibre, against target, beside what
+        was logged.
+
+        The target comes from `targets_for` — the same call every other figure
+        in the telemetry row divides by — so fibre reads the day's live preview
+        or its stored plan on exactly the rule `target_is_staged` already
+        applies to calories and protein. A plan generated before fibre had a
+        target has no `fiber_g` in `week_plan.targets`, and gets the bare
+        planned figure back, which is what the header printed before this
+        existed.
+        """
         logged = (self.logged_actuals_for(day) or {}).get("fiber_g")
+        target = self.targets_for(day).get("fiber_g")
         return fibre_view(
             float(self.totals_for(day).get("fiber_g") or 0.0),
             float(logged) if isinstance(logged, (int, float)) else None,
+            float(target) if isinstance(target, (int, float)) and target > 0 else None,
         )
 
     def meal_adherence_for(self, day: str) -> "MealAdherenceView":
@@ -3038,65 +3050,77 @@ def sync_freshness(
 
 @dataclass
 class FibreView:
-    """A day's planned fibre, and — when Cronometer logged the day — what was
-    actually eaten beside it.
+    """A day's planned fibre against its target, and — when Cronometer logged
+    the day — what was actually eaten beside it.
 
-    **Fibre is reported, never budgeted** (`planner.NUTRIENT_KEYS`), so the
-    telemetry header prints a bare `FIB 32g` where every other figure in that
-    row carries `actual/target`: there is no fibre target, and `32/xx` would
-    invent a goal the planner never aimed at. That is still true here and is
-    what `logged` is *not* — a logged figure is not a goal, it is the same
-    quantity measured a second way, so the two sit side by side rather than
-    over a divider.
+    **Two numbers with a divider and one without, and which is which is the
+    whole rule.** `planned/target` is the same `actual/target` shape every
+    other figure in the telemetry row carries, and it is honest now that
+    `nutrition_engine.calculate_fiber_target_g` gives the day a figure to aim
+    at. `logged` is *not* that: it is the same quantity measured a second way,
+    not a goal, so it sits beside the pair rather than under it. This class
+    used to say a divider of any kind would invent a goal the planner never
+    aimed at, and that was exactly right until the planner started aiming at
+    one.
 
-    This is the only macro the app has one half of that pair and not the
-    other for: calories, protein, carbs and fat all have a target to be
-    measured against, and until `CRONOMETER_MACRO_COLUMNS` learned `fiber_g`
-    fibre had neither. `delta` is signed against the plan (`logged - planned`,
-    so negative means the day came in short of what was cooked for it) and is
-    None whenever `logged` is.
+    `target` is None for a week generated before fibre had one — a stored
+    `WeekPlan.targets` has no `fiber_g` — and `label` falls back to the bare
+    `FIB 32g` those weeks always printed. Same pre-migration tolerance
+    `logged_actuals_for` draws for a plan with no `week_start_date`.
+
+    `delta` stays signed against the **plan**, never against the target
+    (`logged - planned`, so negative means the day came in short of what was
+    cooked for it). Those are two different questions and only one of them is
+    about whether the sync agrees with the kitchen.
     """
 
     planned: float
     logged: Optional[float]
+    target: Optional[float]
     delta: Optional[float]
     label: str
     logged_label: str
     detail: str
 
 
-def fibre_view(planned: float, logged: Optional[float]) -> FibreView:
-    """`FibreView` for one day. Pure — the caller supplies both figures.
+def fibre_view(
+    planned: float, logged: Optional[float], target: Optional[float] = None
+) -> FibreView:
+    """`FibreView` for one day. Pure — the caller supplies all three figures.
 
     `logged` is None for every day nothing has been synced against, which is
     the normal state for the whole of a week planned ahead: only days that
-    have actually happened can have been logged. Those get the planned figure
-    alone, exactly as the header printed it before this existed.
+    have actually happened can have been logged. `target` defaults to None so
+    the two-argument call still answers the question it always did.
     """
-    label = f"FIB {planned:.0f}g"
+    label = f"FIB {planned:.0f}/{target:.0f}g" if target else f"FIB {planned:.0f}g"
+    against = (
+        f"{planned:.0f}g planned of a {target:.0f}g target"
+        if target
+        else f"{planned:.0f}g planned (tracked, no target)"
+    )
     if logged is None:
         return FibreView(
             planned=planned,
             logged=None,
+            target=target,
             delta=None,
             label=label,
             logged_label="",
-            detail=f"fibre: {planned:.0f}g planned (tracked, no target)",
+            detail=f"fibre: {against}",
         )
     delta = logged - planned
     return FibreView(
         planned=planned,
         logged=logged,
+        target=target,
         delta=delta,
         label=label,
         logged_label=f"logged {logged:.0f}g",
-        # Named as a comparison against the plan, never against a target —
-        # the wording is the whole guard against this reading as a goal that
-        # was missed.
-        detail=(
-            f"fibre: {planned:.0f}g planned, {logged:.0f}g logged "
-            f"({delta:+.0f}g vs plan) — still no target either way"
-        ),
+        # The logged half is named as a comparison against the *plan*, never
+        # against the target beside it — the wording is what stops a reader
+        # taking the sync's figure as the thing being scored.
+        detail=f"fibre: {against}, {logged:.0f}g logged ({delta:+.0f}g vs plan)",
     )
 
 
@@ -3549,9 +3573,10 @@ class AdherencePanel(InsightPanel):
         exists: `adherence.json` is keyed by date and slot, and the plans
         those dates were generated against are gone from `week_plan.json` the
         moment a new week is generated over them. A percentage of "meals
-        planned" would be a divider under a number nobody counted — the same
-        rule that keeps fibre off a denominator. Every surface printing this
-        has to say "of marks" in words.
+        planned" would be a divider under a number nobody counted, which is the
+        rule fibre was the other example of until it acquired a target
+        somebody actually aims at. Nothing counts the plans behind these
+        marks, so every surface printing this has to say "of marks" in words.
         """
         return (self.counts.get(ADHERENCE_EATEN, 0) / self.marks * 100) if self.marks else None
 
@@ -3817,13 +3842,20 @@ def macro_accuracy_panel(
     biometrics: Optional[dict],
     window_days: int = INSIGHT_WINDOW_DAYS,
 ) -> MacroAccuracyPanel:
-    """Mean logged against mean planned, one row per budgeted macro.
+    """Mean logged against mean planned, one row per targeted nutrient.
 
-    **`MACRO_KEYS`, so fibre is not here.** Fibre is reported and never
-    budgeted, so it has no planned figure to divide by — printing it in a
-    column of percentages would invent the target the whole rule exists to
-    refuse. It already has its honest readout: the telemetry header prints
-    planned and logged side by side with no divider between them.
+    **Fibre is here now, and only for the days that can carry it.** This
+    docstring used to say fibre had no planned figure to divide by, and the
+    filter below said `key not in MACRO_KEYS` on the strength of it — a
+    perfectly good rule that stopped being true the day
+    `nutrition_engine.calculate_fiber_target_g` gave the day a target. What is
+    still true is that a history entry written before that release carries no
+    `fiber_g` in its `targets`, and a mean taken over those days would read as
+    a 0 g plan massively overshot rather than as a plan nobody made. So the
+    row appears only when **every** paired day in the window states one, which
+    is the same all-or-nothing precondition `WeightTrendPanel.target_in_range`
+    applies to its own line: a figure that can only be drawn honestly for part
+    of the window is not drawn.
 
     Means rather than a per-day series because the question is different from
     `intake_panel`'s. That one asks which days went off; this asks whether
@@ -3834,18 +3866,22 @@ def macro_accuracy_panel(
     """
     days = paired_intake_days(history, biometrics, window_days)
     rows = []
-    # `MACRO_DETAIL_LABELS` for the wording and `MACRO_KEYS` for the
+    # `MACRO_DETAIL_LABELS` for the wording and `NUTRIENT_KEYS` for the
     # membership, rather than either alone: the labels are the three-letter
-    # forms a reader knows (PRO/CHO/FAT) but the list carries fibre, and
-    # `MACRO_KEYS` is the tuple that decides what has a budget anywhere else
-    # in the app. Filtering one by the other is what keeps the exclusion
-    # above from being a second hand-maintained list.
+    # forms a reader knows (PRO/CHO/FAT/FIB), and `NUTRIENT_KEYS` is the tuple
+    # that decides what has a target anywhere else in the app now that fibre
+    # has one. Filtering one by the other is what keeps this from becoming a
+    # second hand-maintained list.
     for key, label, _ in MACRO_DETAIL_LABELS:
-        if key not in MACRO_KEYS:
+        if key not in NUTRIENT_KEYS:
             continue
         planned = [float((target or {}).get(key) or 0) for _, target, _ in days]
         logged = [float((row or {}).get(key) or 0) for _, _, row in days]
         if not planned:
+            continue
+        if key not in MACRO_KEYS and not all(value > 0 for value in planned):
+            # A day predating the target states no figure. See the docstring:
+            # the row is omitted rather than averaged over a 0.
             continue
         mean_planned = sum(planned) / len(planned)
         mean_logged = sum(logged) / len(logged)

@@ -132,7 +132,11 @@ BASE_CONFIG = {
 
 class TestFibreIsReportedNotBudgeted(unittest.TestCase):
     """`NUTRIENT_KEYS` exists to keep fibre out of arithmetic built on
-    `calories ~= 4p + 4c + 9f`, while still scaling it with the portion."""
+    `calories ~= 4p + 4c + 9f`, while still scaling it with the portion.
+
+    Fibre now has a *target* as well (see `TestFibreHasATargetAndStillNoTerm`
+    below); everything in this class is about the half that did not change.
+    """
 
     def test_macro_keys_still_holds_exactly_the_budgeted_four(self):
         """The whole separation rests on this tuple not growing."""
@@ -186,6 +190,278 @@ class TestFibreIsReportedNotBudgeted(unittest.TestCase):
         )
         self.assertAlmostEqual(factor, 0.8, places=2)
         self.assertAlmostEqual(fitted.total_macros["fiber_g"], 9.6, places=1)
+
+
+# ---------------------------------------------------------------------------
+# Fibre: a target, and still no term in the energy identity
+# ---------------------------------------------------------------------------
+
+
+class TestFibreHasATargetAndStillNoTerm(unittest.TestCase):
+    """The daily fibre target — CHANGE-QUEUE.md's last appendix row.
+
+    The class above pins what stayed true; this one pins the two halves the
+    appendix named, "a term in `calculate_macro_targets` and a per-slot share
+    in `split_targets`", plus the thing that makes them safe: fibre took a
+    target without taking a term in `calories ~= 4p + 4c + 9f`.
+    """
+
+    def setUp(self):
+        self.config = dict(
+            BASE_CONFIG,
+            weekly_schedule={
+                day: {"calories": 2000.0, "protein_g": 150.0, "net_carbs_g": 150.0,
+                      "fat_g": 66.7}
+                for day in DAYS
+            },
+        )
+        self.spec = spec_with()
+        self.cook_slots = [
+            slot for slot in self.spec.slots if slot.day == "Monday"
+        ]
+        self.multiplicity = planner.day_multiplicity(self.spec, "Monday")
+        self.remaining = {
+            "calories": 2000.0, "protein_g": 150.0, "net_carbs_g": 150.0, "fat_g": 66.7,
+        }
+
+    def split(self, fiber_target_g=None, overrides=None):
+        return planner.split_targets(
+            self.remaining, self.cook_slots, self.multiplicity, self.config,
+            overrides or {}, fiber_target_g=fiber_target_g,
+        )
+
+    # -- the term ----------------------------------------------------------
+
+    def test_a_day_target_carries_a_fibre_figure(self):
+        """`calculate_daily_targets` derives it from the day's calories, the
+        same way it derives fat — one function, so the file path and the
+        engine path cannot disagree about a Thursday."""
+        target = planner.calculate_daily_targets("Monday", self.config)
+        self.assertEqual(target["fiber_g"], 30.0)
+
+    def test_the_energy_term_raises_the_floor_and_never_lowers_it(self):
+        """A 3000 kcal day scales past 30 g; the shipped deficit day does not
+        fall below it. See `nutrition_engine.calculate_fiber_target_g`."""
+        big = dict(self.config)
+        big["weekly_schedule"] = dict(
+            big["weekly_schedule"],
+            Monday=dict(big["weekly_schedule"]["Monday"], calories=3000.0),
+        )
+        self.assertEqual(
+            planner.calculate_daily_targets("Monday", big)["fiber_g"], 42.0
+        )
+
+    def test_the_floor_is_read_from_the_profile_by_one_function(self):
+        """`planner.fiber_floor_g` is the single reader, so the drawer, the
+        header and generation cannot disagree about the number."""
+        self.assertEqual(planner.fiber_floor_g({}), 30.0)
+        self.assertEqual(
+            planner.fiber_floor_g({"user_profile": {"fiber_floor_g": 25.0}}), 25.0
+        )
+
+    def test_it_is_not_a_weekly_schedule_key(self):
+        """Declared nowhere in `DaySchedule`, deliberately: a key the file may
+        write and the app then ignores is a second place for a number to be
+        wrong. `extra='forbid'` names the file and the line instead."""
+        with self.assertRaises(Exception):
+            planner.DaySchedule.model_validate(
+                {"calories": 2000.0, "protein_g": 150.0, "net_carbs_g": 150.0,
+                 "fat_g": 66.7, "fiber_g": 30.0}
+            )
+
+    # -- the per-slot share ------------------------------------------------
+
+    def test_the_shares_sum_to_the_days_target(self):
+        budgets = self.split(fiber_target_g=30.0)
+        total = sum(
+            budgets[slot.id]["fiber_g"] * self.multiplicity.get(slot.id, 1)
+            for slot in self.cook_slots
+        )
+        self.assertAlmostEqual(total, 30.0, places=6)
+
+    def test_the_share_follows_meal_weights(self):
+        """The same normalised `meal_weights` the macro split uses — a bigger
+        meal is more food and honestly carries more fibre."""
+        budgets = self.split(fiber_target_g=30.0)
+        self.assertAlmostEqual(budgets["Monday:breakfast"]["fiber_g"], 9.0, places=6)
+        self.assertAlmostEqual(budgets["Monday:snack"]["fiber_g"], 3.0, places=6)
+
+    def test_a_calorie_pin_does_not_pin_fibre(self):
+        """`meal_overrides` states a fixed *energy* budget, and energy says
+        nothing about fibre — so a pinned meal still owes the day its share.
+        The pinned macros stay verbatim, which is what the pin is for."""
+        overrides = {
+            "breakfast": {"calories": 500.0, "protein_g": 40.0, "net_carbs_g": 30.0,
+                          "fat_g": 20.0}
+        }
+        budgets = self.split(fiber_target_g=30.0, overrides=overrides)
+        self.assertEqual(budgets["Monday:breakfast"]["calories"], 500.0)
+        self.assertAlmostEqual(budgets["Monday:breakfast"]["fiber_g"], 9.0, places=6)
+
+    def test_a_day_of_nothing_but_pins_still_gets_its_fibre(self):
+        """`split_targets` returns early when no slot is flexible, and that
+        early return has to run the fibre pass too — the pins are about
+        energy, not about the whole plate."""
+        overrides = {
+            meal_type: {"calories": 500.0, "protein_g": 40.0, "net_carbs_g": 30.0,
+                        "fat_g": 20.0}
+            for meal_type in MEAL_TYPES
+        }
+        budgets = self.split(fiber_target_g=30.0, overrides=overrides)
+        total = sum(
+            budgets[slot.id]["fiber_g"] * self.multiplicity.get(slot.id, 1)
+            for slot in self.cook_slots
+        )
+        self.assertAlmostEqual(total, 30.0, places=6)
+
+    def test_omitting_the_target_produces_no_fibre_key_at_all(self):
+        """The migration story in one assertion: every caller that has not
+        been taught about the target — `PlannerState.default_skip_estimate`
+        among them — gets exactly the dict it got before."""
+        budgets = self.split()
+        self.assertNotIn("fiber_g", budgets["Monday:breakfast"])
+
+    def test_a_zero_target_writes_nothing_rather_than_zero(self):
+        """A `0.0` on every slot would read in the prompt as an instruction to
+        avoid fibre, which is not what "no target" means."""
+        self.assertNotIn("fiber_g", self.split(fiber_target_g=0.0)["Monday:lunch"])
+
+    # -- the identity is untouched ----------------------------------------
+
+    def test_the_macros_are_identical_with_and_without_a_fibre_target(self):
+        """The strongest statement that fibre took no term: adding the target
+        moves not one of the four numbers `calories ~= 4p + 4c + 9f` checks."""
+        without = self.split()
+        with_fibre = self.split(fiber_target_g=30.0)
+        for slot in self.cook_slots:
+            for key in planner.MACRO_KEYS:
+                self.assertAlmostEqual(
+                    without[slot.id][key], with_fibre[slot.id][key], places=9,
+                    msg=f"{slot.id}.{key} moved",
+                )
+
+    # -- the prompt --------------------------------------------------------
+
+    def test_the_brief_states_the_fibre_target_as_its_own_part(self):
+        """Separate from the macro budget, because the two are different kinds
+        of number and `FIBER_TARGET_RULE` says so: the four are the constraint
+        and fibre is a goal inside them."""
+        budgets = self.split(fiber_target_g=30.0)
+        brief = planner.build_slot_brief(
+            self.cook_slots[0], self.config, 1, budgets["Monday:breakfast"]
+        )
+        self.assertIn("fibre target: 9g", brief)
+        self.assertIn("budget (one serving)", brief)
+
+    def test_a_brief_without_a_target_is_the_one_this_app_always_sent(self):
+        budgets = self.split()
+        brief = planner.build_slot_brief(
+            self.cook_slots[0], self.config, 1, budgets["Monday:breakfast"]
+        )
+        self.assertNotIn("fibre", brief)
+
+    def test_the_rule_names_substitution_rather_than_only_forbidding_a_trade(self):
+        """The clause that had to survive the rewrite is "never trade" — but a
+        model given a target and no permitted way to reach it drops the rule,
+        so the mechanism is named too."""
+        self.assertIn("never trade", planner.FIBER_TARGET_RULE)
+        self.assertIn("wholegrain", planner.FIBER_TARGET_RULE)
+
+
+class TestTheFibreShareDoesNotCascade(unittest.IsolatedAsyncioTestCase):
+    """A meal's fibre brief is the same number whichever stage generates it.
+
+    The one design decision in this feature that is not obvious from the
+    appendix row, and the reason it is worth a test with a stubbed provider:
+    every *macro* budget is a share of what is **left** of the day after each
+    earlier stage's actual output, because the day's energy has to total.
+    Fibre is a goal rather than a sum to spend, and models come back
+    fibre-light far more often than fibre-heavy — so cascading it would pile
+    the week's whole shortfall onto whichever meal type runs last, which is
+    exactly the failure `cap_to_weighted_share` bounds for calories and could
+    not bound here (a portion trim scales fibre with everything else and can
+    no more add fibre than it can add protein).
+
+    The stub returns meals that come back deliberately *under* brief, so the
+    macro cascade visibly moves and the fibre share visibly does not.
+    """
+
+    async def asyncSetUp(self):
+        self.briefed = {}
+        self._real = planner._generate_meal_type_events
+
+        async def under_brief(meal_type, spec, config, day_budgets, *args, **kwargs):
+            self.briefed[meal_type] = {
+                day: dict(budget) for day, budget in day_budgets.items()
+            }
+            # A quarter of the calories asked for, and no fibre at all — the
+            # shape of drift this rule exists to stop compounding.
+            return {
+                wk.slot_id(day, meal_type): planner.CookEvent(
+                    slot_id=wk.slot_id(day, meal_type),
+                    day=day,
+                    meal_type=meal_type,
+                    portions=1,
+                    eaten_by=[wk.slot_id(day, meal_type)],
+                    recipe=recipe(
+                        f"{meal_type} {day}",
+                        meal_type=meal_type,
+                        calories=budget["calories"] / 4,
+                        protein_g=budget["protein_g"] / 4,
+                        net_carbs_g=budget["net_carbs_g"] / 4,
+                        fat_g=budget["fat_g"] / 4,
+                    ),
+                )
+                for day, budget in day_budgets.items()
+            }
+
+        planner._generate_meal_type_events = under_brief
+        config = dict(
+            BASE_CONFIG,
+            weekly_schedule={
+                day: {"calories": 2000, "protein_g": 150, "net_carbs_g": 150,
+                      "fat_g": 78}
+                for day in DAYS
+            },
+        )
+        await planner.generate_week_plan(
+            spec_with(), config, history=[], repository=_FakeRepository([])
+        )
+
+    async def asyncTearDown(self):
+        planner._generate_meal_type_events = self._real
+
+    def test_every_stage_is_briefed_the_same_fibre_share(self):
+        """Dinner runs first in `MEAL_TYPE_PRIORITY` and snack last, against a
+        day that has visibly emptied in between."""
+        shares = {
+            meal_type: round(budgets["Monday"]["fiber_g"], 6)
+            for meal_type, budgets in self.briefed.items()
+        }
+        weights = BASE_CONFIG["meal_weights"]
+        for meal_type, share in shares.items():
+            self.assertAlmostEqual(
+                share, 30.0 * weights[meal_type] / sum(weights.values()), places=6
+            )
+
+    def test_the_calorie_budget_did_cascade(self):
+        """The control: without this the test above would pass on a week where
+        nothing moved at all, and would be asserting nothing."""
+        last = list(self.briefed)[-1]
+        weights = BASE_CONFIG["meal_weights"]
+        # The last stage's slot is briefed well above its plain weighted share
+        # precisely because the earlier ones came back under — that is the
+        # cascade, and it is what makes the fibre assertion above meaningful.
+        # (Not compared against the *first* stage's own figure, which
+        # `apply_protein_floor` legitimately moves off its plain share by
+        # carrying calories with the protein it redistributes.)
+        share = 2000.0 * weights[last] / sum(weights.values())
+        self.assertGreater(self.briefed[last]["Monday"]["calories"], share * 1.5)
+        self.assertAlmostEqual(
+            self.briefed[last]["Monday"]["fiber_g"],
+            30.0 * weights[last] / sum(weights.values()),
+            places=6,
+        )
 
 
 # ---------------------------------------------------------------------------

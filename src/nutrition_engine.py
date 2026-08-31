@@ -107,6 +107,26 @@ ALPERT_SAFETY_FACTOR = 0.80
 # carb number, and `derive_fat_g` turns it into a high-fat day by itself.
 DEFAULT_NET_CARBS_G = 60.0
 
+# The fibre target, as two numbers rather than one, because fibre is the only
+# nutrient here whose requirement is genuinely part floor and part scale.
+#
+# `FIBER_G_PER_1000_KCAL` is the dietary reference figure — a bigger day is a
+# bigger volume of food and honestly carries more fibre — and sits in the same
+# class as `KCAL_PER_G_PROTEIN`: a constant of the domain, not a preference.
+# `DEFAULT_FIBER_FLOOR_G` is the preference half and is overridable per person
+# on `UserProfile.fiber_floor_g`; 30 g is the Australian adequate intake for
+# an adult man, between the 25 g AI for women and the 38 g suggested dietary
+# target for chronic-disease risk.
+#
+# **The floor is the load-bearing half, and it exists for the same reason the
+# protein figure is locked to the *target* weight rather than today's.** Scaled
+# alone, an 800 kcal Fast 800 day asks for 11 g — cutting the fibre target
+# exactly as the deficit that made the day small starts to need the satiety and
+# the gut microbiome that fibre is eaten for. A deficit does not shrink what the
+# gut needs, so the energy term may only ever raise the figure above the floor.
+FIBER_G_PER_1000_KCAL = 14.0
+DEFAULT_FIBER_FLOOR_G = 30.0
+
 # Smoothing factor for the weigh-in series. 0.3 keeps roughly a working week
 # of history in view: high enough to follow a real trend within a fortnight,
 # low enough that one dehydrated Monday morning doesn't move the estimate.
@@ -422,6 +442,32 @@ def derive_fat_g(calories: float, protein_g: float, net_carbs_g: float) -> float
     return max(0.0, (calories - spent) / KCAL_PER_G_FAT)
 
 
+def calculate_fiber_target_g(
+    calories: float, floor_g: Optional[float] = None
+) -> float:
+    """The day's fibre target in grams: a floor, raised by a big day.
+
+    `max(floor_g, calories / 1000 * FIBER_G_PER_1000_KCAL)` — see those two
+    constants for why it is a max rather than either half alone.
+
+    **This is the one target in the app with no term in
+    `calories ~= 4p + 4c + 9f`, and that is why it is derived here rather than
+    inside `calculate_macro_targets`' assembly.** Fat is what energy is *left*
+    once protein and carbs are paid for, so it can only be computed at the end
+    of that chain; fibre is orthogonal to the chain entirely and needs nothing
+    from it but the final calorie figure. Keeping it a separate function is
+    what lets `planner.calculate_daily_targets` — which never calls the engine
+    at all — derive the identical number from a `weekly_schedule` day.
+
+    Floored at 0 for an impossible (negative) calorie figure the same way
+    `derive_fat_g` is, and for the same reason: a negative gram count would
+    silently subtract from a per-meal share elsewhere.
+    """
+    floor = DEFAULT_FIBER_FLOOR_G if floor_g is None else float(floor_g)
+    scaled = max(0.0, calories) / 1000.0 * FIBER_G_PER_1000_KCAL
+    return max(0.0, max(floor, scaled))
+
+
 def calculate_macro_targets(
     user_profile: dict,
     latest_biometrics: Optional[dict] = None,
@@ -450,6 +496,17 @@ def calculate_macro_targets(
     Returns the four `MACRO_KEYS` at the top level — so
     `{k: result[k] for k in MACRO_KEYS}` drops straight into a
     `weekly_schedule` entry — plus a `basis` sub-dict showing the working.
+
+    **There is deliberately no `fiber_g` here, even though fibre now has a
+    target.** `calculate_fiber_target_g` derives it from the day's calories,
+    and `calories` above is not that figure: `planner.hydrate_dynamic_targets`
+    still has to replay the training uplift onto it and take it `min()`
+    against any diet-style ceiling. A fibre figure computed here would be
+    computed before both, and would therefore be wrong on exactly the days
+    that move — every training day and every capped one. Same "after the
+    uplift, not before it" argument the ceiling itself is placed by, which is
+    why the derivation is a function of its own that both of `planner`'s
+    target paths call once their calorie figure is final.
     The diagnostics are nested rather than flat precisely because
     `DaySchedule` is `extra="forbid"`: a flat `bmr` key would make the obvious
     `**result` splat fail schema validation.

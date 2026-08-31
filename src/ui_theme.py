@@ -750,8 +750,9 @@ MACRO_TINTS = {
     "protein_g": "text-sky-300",
     "net_carbs_g": "text-orange-300",
     "fat_g": "text-violet-300",
-    # Only read by the detail dialog and the day-totals row — fibre is not on
-    # the card strip this dict was originally written for.
+    # Read by the detail dialog, the day-totals row and the Insights macro
+    # chart — fibre is not on the card strip this dict was originally written
+    # for.
     "fiber_g": "text-cyan-300",
 }
 
@@ -766,12 +767,14 @@ MACRO_DETAIL_LABELS = [
     ("protein_g", "PRO", "g"),
     ("net_carbs_g", "CHO", "g"),
     ("fat_g", "FAT", "g"),
-    # Fibre is reported, never budgeted (see `planner.NUTRIENT_KEYS`), so it
-    # appears here — where there is room for it — and deliberately not on
-    # `MACRO_LABELS`' card strip, which is one seventh of the screen wide and
-    # carries only figures being compared against a target. It is tinted
-    # emerald rather than left grey so the strip still reads as a set, but it
-    # sits last because it is the one number with nothing to divide by.
+    # Fibre has a target now (`nutrition_engine.calculate_fiber_target_g`) and
+    # still has no term in `calories ~= 4p + 4c + 9f`, which is the distinction
+    # `planner.NUTRIENT_KEYS` keeps. It appears here — where there is room for
+    # it — and deliberately not on `MACRO_LABELS`' card strip, which is one
+    # seventh of the screen wide: the strip is already four figures at the
+    # width where `meal_card`'s status row has none to spare, and a fifth is a
+    # layout change rather than a labelling one. It sits last because it is the
+    # one number the energy arithmetic does not reconcile.
     ("fiber_g", "FIB", "g"),
 ]
 
@@ -839,15 +842,22 @@ TARGET_FIELDS = [
     ("net_carbs_g", "carbs g"),
 ]
 
-# How the Settings destination's Daily Targets section labels each macro, and
+# How the Settings destination's Daily Targets section labels each figure, and
 # what it is allowed to say about where the number comes from. The fourth
 # element is the unit; the third is None for the two switchable macros (the
-# toggle speaks for them) and a fixed sentence for the two that have no mode
+# toggle speaks for them) and a fixed sentence for the three that have no mode
 # to switch — carbs because the engine has no carb model and hands
 # `weekly_schedule`'s figure straight back, fat because `derive_fat_g` always
-# computes it from the other three. Stating those two outright is the point
-# of the section: "where does this number come from" has an answer for all
-# four macros, not only the two with a control beside them.
+# computes it from the other three, and fibre because
+# `calculate_fiber_target_g` always computes it from the day's calories.
+# Stating those outright is the point of the section: "where does this number
+# come from" has an answer for every figure the week is planned against, not
+# only the two with a control beside them.
+#
+# **Fibre is on this list because it is now one of those figures.** It has a
+# target, so it has a number, so it owes the reader the same sentence the
+# other four carry — the alternative is the one thing this section exists to
+# prevent, a figure on the telemetry header whose origin is stated nowhere.
 TARGET_SOURCE_ROWS = [
     ("calories", "Calories", None, "kcal"),
     ("protein_g", "Protein", None, "g"),
@@ -865,7 +875,22 @@ TARGET_SOURCE_ROWS = [
         "paid for.",
         "g",
     ),
+    (
+        "fiber_g",
+        "Fibre",
+        "Always derived — a floor of your own, raised on a bigger day. It is "
+        "the one target outside the calorie arithmetic, so it never moves the "
+        "four above it.",
+        "g",
+    ),
 ]
+
+# The rows above that carry no toggle because nothing could switch them: their
+# number has exactly one possible source. Named rather than tested for by
+# equality at the call site, which is how the fibre row would silently have
+# rendered as "Yours" — a claim that somebody typed a figure the engine
+# computes.
+DERIVED_TARGET_MACROS = ("fat_g", "fiber_g")
 
 # Indigo marks the Sunday prep column everywhere it appears (telemetry header,
 # canvas, pipeline row) — deliberately outside the emerald/sky/slate/rose

@@ -507,8 +507,8 @@ Four things about it are decisions:
 what it always sent — simple, lean, low-added-fat dishes, inside whatever
 budget the day was given. Telling the model a figure the budget it was handed
 already reflects is how a model starts optimising for the number instead of
-the food, which is what `FIBER_REPORTING_RULE`'s second sentence exists to
-head off.
+the food, which is what `FIBER_TARGET_RULE`'s last clause exists to head
+off.
 
 `active_diet_styles` is empty in the shipped config, so
 `diet_style_calorie_ceiling` returns None and every day plans byte-identically
@@ -1965,59 +1965,164 @@ derived, the same division `ui_review.day_target_row` uses.
 Fibre is deliberately **not** part of a skip estimate: the fibre in a meal
 nobody cooked isn't estimable, and 0 is more honest than a guess.
 
-### Fibre is reported, never budgeted
+### Fibre is targeted, and still has no term in the energy identity
 
-`Ingredient.fiber_g` exists and is summed everywhere a recipe's macros are,
-but it is **not** in `MACRO_KEYS`. That separation is the whole feature.
+**`MACRO_KEYS` names the keys with a term in `calories ~= 4p + 4c + 9f`, not
+the keys with a target.** It answered both questions for four releases,
+because fibre was the only nutrient the app reported and did not aim at. It
+now has a daily target, a per-slot share and a denominator on the telemetry
+header — and it is still not in `MACRO_KEYS`, which is the distinction the
+whole feature turns on.
 
-Every budget in `planner.py` is checked against `calories ~= 4p + 4c + 9f`:
+Every budget in `planner.py` is checked against that identity:
 `split_targets` scales all four together, `apply_protein_floor` moves calories
 with protein at 4 kcal/g to preserve it, `reject_untrimmable_macro_miss`
-bounces a response whose calories don't reconcile. Fibre has no term in that
-identity — it is already excluded from `net_carbs_g` by definition — so
-putting it in `MACRO_KEYS` would drop a fifth number into arithmetic with
-nowhere to put it.
+bounces a response whose calories don't reconcile. Fibre has no term in it —
+it is already excluded from `net_carbs_g` by definition — so putting it in
+`MACRO_KEYS` would drop a fifth number into arithmetic with nowhere to put it.
+The split is therefore **identity operations walk `MACRO_KEYS`, proportional
+ones may walk `NUTRIENT_KEYS`** (`MACRO_KEYS + ("fiber_g",)`): a portion trim,
+a recipe total and a per-slot share are all linear in quantity and care
+nothing for the identity, which is exactly what lets fibre take a briefed
+share of a day without entering a single budget check.
 
-`NUTRIENT_KEYS` (`MACRO_KEYS + ("fiber_g",)`) is what it rides on instead:
-everything linear in an ingredient's quantity. `Ingredient.scaled`,
-`Recipe.total_macros` and `sum_serving_macros` all walk it, so the portion
-trim halves fibre along with everything else; every budget-side consumer
-indexes `MACRO_KEYS` out of the result and never sees it.
+#### The target: a floor, raised by a big day
 
-Surfaced in three places, never with a denominator: the recipe dialog's macro
-strip (`MACRO_DETAIL_LABELS`), the telemetry header's day row as a bare `FIB
-32g` (with a logged figure beside it, never under it — see below), and the
-PDF/Markdown exports. Printing `32/xx` would invent a goal the planner never
-aimed at. A daily fibre *target* is a real feature and a bigger
-one — it needs a term in `nutrition_engine.calculate_macro_targets` and a
-per-slot share in `split_targets`. This is deliberately not that.
+`nutrition_engine.calculate_fiber_target_g(calories, floor_g)` is
+`max(floor_g, calories / 1000 x FIBER_G_PER_1000_KCAL)`. Two numbers because
+fibre is the one nutrient here whose requirement is genuinely part floor and
+part scale: 14 g/1000 kcal is the dietary reference figure and sits in the
+same class as `KCAL_PER_G_PROTEIN`, and `user_profile.fiber_floor_g` (30 g,
+the Australian adequate intake for an adult man) is the preference half.
 
-`fiber_g` defaults to `0.0`, which is what keeps recipes saved before it
+**The floor is the load-bearing one, for the same reason protein is locked to
+the *target* weight rather than today's.** Scaled alone, an 800 kcal Fast 800
+day asks for 11 g — cutting the fibre target exactly as the deficit that made
+the day small starts to need the satiety and the gut microbiome fibre is
+eaten for. A deficit does not shrink what the gut needs, so the energy term
+may only ever raise the figure. On the shipped ~1722–1850 kcal days the floor
+is what binds; above ~2143 kcal the scale takes over.
+
+Four things about where it is computed are decisions:
+
+- **It is not assembled inside `calculate_macro_targets`**, despite the
+  queue's own sketch of the work saying so. That function returns `calories`
+  *before* `hydrate_dynamic_targets` replays the training uplift onto it and
+  takes it `min()` against a diet-style ceiling, so a fibre figure computed
+  there would be wrong on precisely the days that move — every training day
+  and every capped one. Same "after the uplift, not before it" argument that
+  places the ceiling itself. It is a function of its own instead, called once
+  each calorie figure is final.
+- **Two callers, both final.** `hydrate_dynamic_targets` writes it onto every
+  hydrated day, and `calculate_daily_targets` derives it from
+  `weekly_schedule`'s post-hydration calories exactly as it derives `fat_g`.
+  One function, so the engine path and the file path cannot disagree about a
+  Thursday.
+- **Every hydration path writes it, including the three that give up.**
+  `with_fiber_targets` is the fallback: fibre needs the day's calories and a
+  floor, and neither is a fact about the body, so an unfilled `user_profile`
+  or a failed engine call does not cost it. Without that, `/api/targets`
+  (which reads the hydrated `weekly_schedule` straight out) would report
+  fibre on a machine with a weigh-in and omit it on one without, while the
+  telemetry header printed a figure either way — the "one number, one call"
+  rule at the end of this file, reached from the storage side.
+- **There is deliberately no `fiber_g` on `DaySchedule`, and no
+  `target_modes` entry.** A key the file may write and the app then ignores
+  is a second place for a number to be wrong, which is the whole complaint
+  this file makes about `weekly_schedule`'s inert calories; `fat_g` is stated
+  and recomputed as a historical accident, tolerated rather than repeated. And
+  `TARGET_MODE_MACROS` exists for the two macros with *two* possible sources —
+  fibre, like fat, has one, so a toggle for it would be a control that changes
+  nothing. Settings' Daily Targets panel says so in words instead, which is
+  that section's whole point: every figure the week is planned against owes
+  the reader a sentence about where it came from.
+
+#### The per-slot share, and the two things it deliberately is not
+
+`split_targets` gained a `fiber_target_g` keyword and a fourth pass
+(`split_fibre_share`) after the protein floor. Omit it — as
+`PlannerState.default_skip_estimate` and every pre-target caller does — and no
+budget carries `fiber_g` at all, which is byte-identical to before the target
+existed.
+
+- **A `meal_overrides` pin does not pin fibre.** An override states a fixed
+  *energy* budget, which is the thing `meal_overrides` exists for, and energy
+  says nothing about fibre — so a pinned meal takes its weighted share like
+  any other. A fifth optional key in an override would be a number with no
+  identity to check it against.
+- **There is no fibre counterpart to `apply_protein_floor`.** That floor
+  exists because protein is dose-limited *per meal*; fibre is not, so a day
+  that reaches its figure across three meals has reached it.
+- **The share does not cascade, and that is the one non-obvious decision.**
+  Every macro budget is a share of what is *left* of the day after each
+  earlier stage's actual output, because the day's energy has to total. A
+  fibre target is a goal rather than a sum to spend, and models come back
+  fibre-light far more often than fibre-heavy — so cascading it would pile the
+  week's whole shortfall onto whichever meal type runs last, which is exactly
+  the failure `cap_to_weighted_share` bounds for calories and could not bound
+  here (a portion trim scales fibre with everything else and can no more add
+  fibre than it can add protein). `generate_week_plan` therefore reads each
+  slot's share out of `apriori_budgets` — the day's full target, split once
+  before any stage ran — so **a meal's fibre brief is the same number
+  whichever stage generates it**, where its calorie brief legitimately is not.
+  A meal that comes back short leaves the day short, visibly, in the header's
+  `FIB 24/30g`. Same standing answer as an orphaned leftover and a capped
+  surplus: show the gap, do not distort a meal to hide it.
+- **A skip estimate still carries no fibre**, so a skipped-but-eaten slot
+  leaves the day's fibre goal whole and simply is not in the denominator that
+  divides it — the same direction `targets` itself takes for calories.
+
+#### There is still no validator, and the prompt rule reversed
+
+Nothing rejects a fibre-light response. A rejection costs a full 30s–3min
+retry, a single scale factor cannot change a macro ratio, and nothing
+downstream could act on the rejection — the same reasoning that keeps
+`diet_styles` and `sourcing` soft while `banned_ingredients` stays hard.
+
+`FIBER_REPORTING_RULE` **is now `FIBER_TARGET_RULE`**, renamed because its
+second sentence used to say the opposite of what a target means: "tracked for
+reporting only and has no target: never ... pick an ingredient to raise it".
+That was right while there was nothing to aim at.
+
+**The clause that had to survive the rewrite is the one about trading.** A
+model told to hit a number will hit it out of whatever it has, and the four
+macros are the budget that actually is checked — a recipe buying 6 g of fibre
+with 200 kcal of extra lentils passes no validator this app has. So the rule
+still forbids trading any of the four against fibre, and adds the mechanism:
+fibre is bought by **substitution at constant macros** (wholegrain for
+refined, legumes in place of some starch, skins left on, the vegetable already
+in the dish chosen for its fibre), which is genuinely how the nutrient works.
+Naming the mechanism is not decoration — "don't trade" alone leaves a model
+with a target and no permitted way to reach it, which is the shape of rule it
+drops entirely.
+
+`fiber_g` still defaults to `0.0`, which is what keeps recipes saved before it
 existed loadable — same pre-migration tolerance `history_styles()` extends to
-old `meal_history.json` entries. `FIBER_REPORTING_RULE` asks the model for it
-explicitly rather than relying on the schema description, because the default
-means an omitted field produces a silently fibre-free week rather than an
-error. The rule's second sentence is the important one: a model told to
-"report fibre" starts *optimising* for it and pulls the recipe off the budget
-that actually is checked.
+old `meal_history.json` entries — and the rule still asks for it explicitly
+rather than relying on the schema description, because that default means an
+omitted field produces a silently fibre-free week rather than an error.
 
 #### The one number that now has a measured counterpart
 
 Cronometer's daily-summary export carries fibre and
 `CRONOMETER_MACRO_COLUMNS` did not capture it, so of the five nutrients the
 app reports, fibre was the only one holding a *planned* figure and no
-measured one — while also being the only one with no target. The telemetry
-header's day row now prints `FIB 32g` and, beside it, `logged 24g` for a day
-Cronometer has a fibre figure for.
+measured one — while also, at the time, being the only one with no target.
+The telemetry header's day row prints `FIB 32/38g` and, beside it,
+`logged 24g` for a day Cronometer has a fibre figure for.
 
-**Side by side, never over a divider.** `32/24` in a row where every other
-entry is `actual/target` reads as a goal that was missed, and there is no
-goal — a logged figure is the same quantity measured a second way, which is
-exactly what makes the pair worth printing and exactly what stops it being a
-denominator. `ui_state.fibre_view` is where that rule lives, as a pure
-function returning both formatted halves, so the widget prints what it is
-handed rather than deciding it; `ui_telemetry.py` renders the logged half as
-a **second label**, in slate, for the same reason.
+**Which pair takes a divider and which does not, and only half of that
+changed.** `planned/target` is the `actual/target` shape every other figure
+in the row already carries and is honest now the planner aims at a number.
+`logged` is not that: it is the same quantity measured a second way, not a
+goal, so it sits *beside* the pair rather than under it — `32/24` would still
+read as a goal that was missed, and that is still not what the sync is
+saying. `ui_state.fibre_view` is where both rules live, as a pure function
+returning the formatted halves, so the widget prints what it is handed rather
+than deciding it; `ui_telemetry.py` renders the logged half as a **second
+label**, in slate, for the same reason. `delta` stays signed against the
+*plan*, never against the target beside it — two different questions, and
+only one is about the sync agreeing with the kitchen.
 
 **Capture and readout had to land together, or neither.** Capture alone
 reproduces the shape v0.29.0 closed for Garmin's sleep data: `daily_actuals`'
@@ -2034,9 +2139,9 @@ Three things it deliberately does not do:
 - **`MACRO_KEYS` is untouched.** `fiber_g` rides on `NUTRIENT_KEYS` on the
   measured side exactly as it does on the planned one, so
   `logged_intake_for`'s budget arithmetic and every `calories ~= 4p + 4c +
-  9f` check are byte-identical to before. This is not the appendix's daily
-  fibre *target*, which needs a term in `calculate_macro_targets` and a
-  per-slot share in `split_targets`.
+  9f` check are byte-identical to before. That stayed true when the daily
+  fibre *target* landed a release later: the target rides on
+  `NUTRIENT_KEYS` too, and not one identity operation walks it.
 - **An absent column is omitted, never zeroed** — `_prune` and
   `has_measurements` are unchanged, so every row synced before this existed
   reads as "no log" and shows the planned figure alone. A stored `0.0` would
@@ -2571,10 +2676,13 @@ supports**:
 - **Macro accuracy is a percentage axis.** 2000 kcal and 79 g of protein
   cannot share a value axis, and four separate charts would say less than
   one. The dashed rule at 100% is the plan.
-- **Fibre is not on it.** It is reported and never budgeted, so it has no
-  planned figure to divide by; a percentage column would invent the target
-  the rule exists to refuse. Its honest readout is already the telemetry
-  header's `FIB 32g · logged 24g`, side by side with no divider.
+- **Fibre is on it, and only for the days that can carry it.** It was
+  excluded while it had no planned figure to divide by. Now it has one, and
+  what is still true is that a history entry written before the target states
+  no `fiber_g` — a mean over those days would read as a 0 g plan massively
+  overshot rather than as a plan nobody made. So the row appears only when
+  **every** paired day in the window states one, the same all-or-nothing
+  precondition `WeightTrendPanel.target_in_range` applies to its own line.
 - **The adherence percentage's denominator is *marks*, and says so in
   words.** The plans those dates were generated against are gone from
   `week_plan.json` the moment a new week is generated over them, so "of meals
@@ -2977,11 +3085,15 @@ bootstrap into a wall of 429s halfway through.
   `hydrate_dynamic_targets` and never reaches the prompt at all; Fast 800's
   800 is the only one declared, and nothing is active by default. See "Diet
   styles" under Architecture.
-- **Fibre is tracked but never targeted** — `Ingredient.fiber_g` is reported
-  and displayed, and is deliberately absent from every macro budget. Since
-  the Cronometer sync captures `fiber_g`, the telemetry header prints what
-  was logged *beside* what was planned; neither is a target. See "Fibre is
-  reported, never budgeted" under Architecture.
+- **Fibre is targeted but never budgeted** — the day's figure comes from
+  `nutrition_engine.calculate_fiber_target_g` (a floor of
+  `user_profile.fiber_floor_g`, raised on a big day) and each meal is briefed
+  a weighted share of it, while `fiber_g` stays deliberately absent from
+  every *budget*: it has no term in `calories ~= 4p + 4c + 9f`, so no
+  validator checks it and no identity operation walks it. The Cronometer
+  sync's logged figure sits *beside* the planned/target pair rather than
+  under it. See "Fibre is targeted, and still has no term in the energy
+  identity" under Architecture.
 - `schedule.json`'s `sourcing` block is soft in the same way, and constrains
   what can be *bought* rather than what may be eaten. An ingredient that must
   never appear belongs in `banned_ingredients`; `sourcing` covers the
@@ -3016,20 +3128,20 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_composition.py` | style/cuisine resolution, cuisine blocks, workout breakfasts |
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
-| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein), the protein floor, logged-intake substitution, adaptive TDEE |
-| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
+| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the fibre target resolving on every hydration path including the three that give up on the engine, the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein), the protein floor, logged-intake substitution, adaptive TDEE |
+| `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the fibre target (which of its two halves binds, and that it is deliberately not assembled into `calculate_macro_targets`, where the uplift and the ceiling have not been applied yet), the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
 | `test_diet_styles.py` | the diet-style axis, its one numeric lever (which `calorie_ceiling` wins, and that the prompt never states the number), and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip, and the pantry ledger — both entry shapes, the containment match and the two guards on it, and what a spent item stops being told to the model |
-| `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre, the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
+| `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre — both halves: the reported one that never enters a budget, and the target with its per-slot share, the calorie pin that does not pin it, and the share that deliberately does not cascade (asserted against a stubbed provider returning meals under brief, so the macro cascade visibly moves and the fibre share visibly does not) — the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre beside what Cronometer logged for the same date, the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre against its target and beside what Cronometer logged for the same date (and which of those two pairs takes a divider), the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
-| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source`; plus `repository.catalog_matches`, the one filter the route and the Library grid share |
+| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those
