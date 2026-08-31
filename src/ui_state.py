@@ -76,6 +76,7 @@ from nutrition_engine import (
     propose_training_schedule,
     resolve_current_weight_kg,
 )
+from shopping import ShoppingList, aggregate_cook_events, apply_pantry
 from repository import BIOMETRIC_SECTION_SOURCES, LocalJSONRepository, catalog_matches
 from ui_theme import (
     ADHERENCE_MARK_ORDER,
@@ -118,10 +119,12 @@ from week import (
     location_rule,
     meal_types,
     next_day_slot_id,
+    parse_slot_id,
     portions_for,
     set_skip_estimate,
     slot_id,
     slot_label,
+    shopping_windows,
     span_days,
     today_in_week,
     unlink_leftover,
@@ -582,6 +585,35 @@ def pantry_rows(config: dict) -> List[Dict[str, Any]]:
 
 
 @dataclass
+class ShoppingWindowView:
+    """One shopping trip, resolved once and read by everything that draws it.
+
+    The rail's badge counted the whole week in a single
+    `aggregate_cook_events` call while the drawer aggregated per window, so an
+    ingredient bought on two trips was one line in the badge and two on
+    screen — "Shopping (43)" over a drawer that never summed to 43. That is
+    CLAUDE.md's "a number the UI displays and a number a run plans against
+    must come from one call, not two", broken quietly on the display side,
+    and one view is the whole fix: the badge sums `item_count` over exactly
+    the windows the panel renders.
+    """
+
+    label: str
+    days: List[str]
+    events: List[CookEvent]
+    shopping_list: Optional[ShoppingList]
+    # Slot labels in this window whose generation failed, so the panel can say
+    # why a short list is short. Keyed off `WeekPlan.failures`, which is per
+    # slot_id rather than per day: one bad meal-type call can fail some of a
+    # window's days without failing all of them.
+    failed: List[str] = field(default_factory=list)
+
+    @property
+    def item_count(self) -> int:
+        return len(self.shopping_list.items()) if self.shopping_list else 0
+
+
+@dataclass
 class PlannerState:
     """Everything one browser tab is looking at.
 
@@ -629,6 +661,22 @@ class PlannerState:
     # configured `shop_days` trips; the underlying cook events and quantities
     # are identical either way, only the grouping changes.
     daily_shop_mode: bool = False
+    # Which lines have been ticked off, as `(window label, item name)`.
+    #
+    # Still not persisted — `ui_shopping.py`'s docstring and
+    # `architecture.md` both argue that storing ticks would be more state
+    # able to disagree with `week_plan.json`, and that argument stands. What
+    # did not stand is where they were living: in the DOM, inside a
+    # `@ui.refreshable` registered on both `"plan"` and `"shopping_days"`, so
+    # any edit that repainted wiped them **mid-shop**. "Not persisted across
+    # sessions" and "cleared when you tick a box in another tab" are
+    # different claims and only the first was ever decided. Here they are
+    # per-client, die with the tab, and never reach `data/`.
+    #
+    # `aggregate_cook_events` combines by normalised name, so a name is
+    # unique within one window's list and the pair is a stable key across
+    # repaints. A tick for a line that no longer exists simply never renders.
+    shopping_ticks: Set[Tuple[str, str]] = field(default_factory=set)
     # Real value is always set by `.load()` via `resolve_planner_model` —
     # this placeholder only exists because dataclasses require a default.
     model: str = ""
@@ -962,6 +1010,70 @@ class PlannerState:
     @property
     def meal_types(self) -> List[str]:
         return meal_types(self.config)
+
+    def pantry_entries(self) -> List[Tuple[str, Optional[float]]]:
+        """The staged pantry as `(name, grams or None)` pairs.
+
+        `planner.inventory_entries` is the only parser of that list, per
+        CLAUDE.md, so this hands it the staged rows rather than re-reading
+        them: the drawer's editor, the generation ledger and the shopping
+        list's subtraction then cannot disagree about what the pantry says.
+        The *staged* rows and not `config["inventory_to_clear"]`, because a
+        row typed into the drawer moments ago is the honest statement of
+        what is in the house and is what the next run will be given.
+        """
+        return inventory_entries({"inventory_to_clear": self.pantry})
+
+    def shopping_view(self) -> List[ShoppingWindowView]:
+        """Every trip in this week, resolved once — the panel and the badge
+        both read this and nothing else aggregates.
+
+        The pantry comes off here rather than inside `aggregate_cook_events`
+        because aggregation is a fact about the recipes and this is a fact
+        about the house: the same list, asked two different questions. See
+        `shopping.apply_pantry` for why it is render-time and stores nothing.
+        """
+        plan = self.week_plan
+        if plan is None:
+            return []
+        window_days = self.days if self.daily_shop_mode else self.shop_days
+        pantry = self.pantry_entries()
+        views = []
+        for window in shopping_windows(self.days, window_days):
+            events = plan.events_on_days(window.days)
+            shopping_list = None
+            if events:
+                shopping_list = apply_pantry(
+                    aggregate_cook_events(events, window.days), pantry
+                )
+            views.append(
+                ShoppingWindowView(
+                    label=window.label,
+                    days=list(window.days),
+                    events=events,
+                    shopping_list=shopping_list,
+                    failed=[
+                        slot_label(key)
+                        for key in plan.failures
+                        if parse_slot_id(key)[0] in window.days
+                    ],
+                )
+            )
+        return views
+
+    def shopping_item_count(self) -> int:
+        """How many lines the drawer will show, summed over its own windows."""
+        return sum(view.item_count for view in self.shopping_view())
+
+    def shopping_tick(self, window_label: str, name: str) -> bool:
+        return (window_label, name) in self.shopping_ticks
+
+    def set_shopping_tick(self, window_label: str, name: str, ticked: bool) -> None:
+        key = (window_label, name)
+        if ticked:
+            self.shopping_ticks.add(key)
+        else:
+            self.shopping_ticks.discard(key)
 
     def today_day(self) -> Optional[str]:
         """Today's weekday name, if the loaded week's actual calendar span

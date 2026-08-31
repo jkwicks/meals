@@ -89,6 +89,51 @@ DEPARTMENT_KEYWORDS = [
 
 DEFAULT_DEPARTMENT = "Pantry"
 
+# The order a list is *walked in a shop*, and deliberately a separate constant
+# from `DEPARTMENT_KEYWORDS`' order, which looks like the same list and is not:
+# that one is match precedence, specific -> general, and reusing it would pin
+# Pantry first forever because "Beef broth" has to be claimed before "beef".
+#
+# Alphabetical was what every reader used before this existed, and it is a
+# zigzag through a supermarket: Dairy -> Fish -> Grains -> Herbs -> Meat ->
+# Nuts -> Pantry -> Produce sends you to the chilled aisle first, the back
+# counter second and the entrance last. This is the walk instead — produce at
+# the entrance, the dry middle aisles, then the chilled perimeter — which also
+# picks the perishables up last, where they belong.
+#
+# A department not named here sorts after the named ones, alphabetically, so
+# adding a keyword group without touching this list degrades to the old
+# behaviour for that group rather than silently placing it first.
+DEPARTMENT_ORDER = [
+    "Produce",
+    "Herbs & Spices",
+    "Grains & Bakery",
+    "Nuts, Seeds & Spreads",
+    "Pantry",
+    "Dairy & Eggs",
+    "Meat & Poultry",
+    "Fish & Seafood",
+]
+
+
+def department_sort_key(department: str) -> Tuple[int, str]:
+    """Sort key placing `department` on the shop walk, unknowns last by name."""
+    try:
+        return (DEPARTMENT_ORDER.index(department), "")
+    except ValueError:
+        return (len(DEPARTMENT_ORDER), department)
+
+
+def ordered_departments(shopping_list: "ShoppingList") -> List[str]:
+    """The one walk order every renderer uses.
+
+    Seven call sites read `sorted(shopping_list.categories)` before this
+    existed — the drawer, the three formatters, `ShoppingList.items()` and both
+    export paths — so the order was a decision made independently seven times
+    and only ever agreed by accident.
+    """
+    return sorted(shopping_list.categories, key=department_sort_key)
+
 # Never appears on a shopping list — you don't buy it, and a "Water: 300g"
 # line is noise that makes the rest look untrustworthy.
 NON_SHOPPING_INGREDIENTS = {"water", "ice", "cold water", "hot water", "tap water"}
@@ -145,6 +190,29 @@ class ShoppingItem(BaseModel):
         ge=0,
         description="Days between this shopping trip and the last meal that uses the item",
     )
+    # Both written by `apply_pantry`, and two fields rather than one because
+    # `inventory_to_clear`'s two entry shapes are two different statements.
+    # A quantified entry says how much is in the house, so it is *subtracted*
+    # and `total_amount_g` is what is left to buy; an unquantified one
+    # ("half a bag of spinach") says only that the food is there, so nothing
+    # can be subtracted and the line is merely flagged. Collapsing them would
+    # either invent a quantity nobody knows or discard one that is real —
+    # the same reason `inventory_entries` keeps both shapes legal.
+    pantry_deducted_g: float = Field(
+        default=0.0, ge=0, description="Grams taken off this line because the house already has them"
+    )
+    pantry_unquantified: bool = Field(
+        default=False, description="An unquantified pantry entry names this food; nothing was subtracted"
+    )
+
+    @property
+    def original_amount_g(self) -> float:
+        """What the recipes actually need, before the pantry came off it."""
+        return self.total_amount_g + self.pantry_deducted_g
+
+    @property
+    def from_pantry(self) -> bool:
+        return self.pantry_deducted_g > 0 or self.pantry_unquantified
 
     @property
     def buy_late(self) -> bool:
@@ -162,9 +230,16 @@ class ShoppingItem(BaseModel):
 
 class ShoppingList(BaseModel):
     categories: Dict[str, List[ShoppingItem]] = Field(default_factory=dict)
+    # Lines the pantry covers outright, lifted out of `categories` by
+    # `apply_pantry` so nothing downstream has to remember not to buy them.
+    # Kept rather than dropped because a stale pantry is the failure mode
+    # here, and a line that silently disappeared would be one you could not
+    # notice was wrong — the standing answer whenever the numbers do not
+    # reconcile is to show the gap, not to hide it.
+    pantry_covered: List[ShoppingItem] = Field(default_factory=list)
 
     def items(self) -> List[ShoppingItem]:
-        return [item for department in sorted(self.categories) for item in self.categories[department]]
+        return [item for department in ordered_departments(self) for item in self.categories[department]]
 
 
 # The functions below are pure name -> name/bool lookups over module-constant
@@ -504,6 +579,85 @@ def ingredient_draws_on(pantry_item: str, ingredient_name: str) -> bool:
     return categorize_department(pantry_item) == categorize_department(ingredient_name)
 
 
+def apply_pantry(
+    shopping_list: ShoppingList, entries: Sequence[Tuple[str, Optional[float]]]
+) -> ShoppingList:
+    """Take what is already in the house off the list. Returns a new list.
+
+    `entries` is `planner.inventory_entries`' own `(name, grams or None)`
+    output, passed in rather than read from config here because `planner.py`
+    imports this module and cannot be imported back.
+
+    **Render time, never a stored count.** The generation ledger
+    (`planner.seed_inventory_ledger`) deliberately dies with the run, because
+    "a count that survived the run would start disagreeing with the shelf the
+    moment you cook something without telling the app" — and a shopping list
+    is the surface where that disagreement is most expensive, since it shows
+    up as chicken you have already eaten missing from the list. This function
+    keeps that argument whole: it stores nothing, it derives from the
+    hand-edited `inventory_to_clear` on every repaint, and an item you have
+    used up leaves the list the same way it got on — by being edited out of
+    the pantry.
+
+    Three rules, and the second is the one that is not obvious:
+
+    - **One ingredient draws on at most one pantry entry**, the same rule
+      `spend_inventory` states: two entries both matching a line would each be
+      charged for it, spending the house's stock twice over on one dish.
+    - **A pantry entry is a budget across the whole list, not a per-line
+      discount.** 600 g of chicken thighs against a week with two chicken
+      dinners covers the first and part of the second, in walk order, because
+      that is what the fridge will actually do.
+    - **A remainder is a remainder, however small.** 605 g needed against 600 g
+      held leaves a 5 g line, and it stays. A threshold below which the
+      leftover was "close enough" would be a number nobody chose, which is
+      what this codebase refuses everywhere else the arithmetic fails to
+      reconcile.
+
+    Matching is `ingredient_draws_on`, so the list and the ledger cannot
+    disagree about whether "chicken thighs" covers "Chicken thigh fillets,
+    diced" — and cannot disagree about "chicken broth" either, which the
+    department guard keeps out.
+    """
+    remaining: Dict[str, float] = {}
+    unquantified: List[str] = []
+    for name, quantity in entries:
+        if quantity is None:
+            unquantified.append(name)
+        else:
+            remaining[name] = remaining.get(name, 0.0) + quantity
+
+    categories: Dict[str, List[ShoppingItem]] = {}
+    covered: List[ShoppingItem] = []
+    for department in ordered_departments(shopping_list):
+        for item in shopping_list.categories[department]:
+            drawn = next(
+                (
+                    name
+                    for name, left in remaining.items()
+                    if left > 0 and ingredient_draws_on(name, item.name)
+                ),
+                None,
+            )
+            if drawn is not None:
+                used = min(remaining[drawn], item.total_amount_g)
+                remaining[drawn] -= used
+                item = item.model_copy(
+                    update={
+                        "total_amount_g": item.total_amount_g - used,
+                        "pantry_deducted_g": item.pantry_deducted_g + used,
+                    }
+                )
+                if item.total_amount_g <= 0:
+                    covered.append(item)
+                    continue
+            elif any(ingredient_draws_on(name, item.name) for name in unquantified):
+                item = item.model_copy(update={"pantry_unquantified": True})
+            categories.setdefault(department, []).append(item)
+
+    return ShoppingList(categories=categories, pantry_covered=covered)
+
+
 def aggregate_recipes(
     recipes: Sequence["Recipe"], offsets: Optional[Sequence[int]] = None
 ) -> ShoppingList:
@@ -625,9 +779,43 @@ def cook_plan_lines(cook_events: Sequence["CookEvent"]) -> List[str]:
     return lines
 
 
+def pantry_note(item: ShoppingItem) -> str:
+    """How this line was changed by what is already in the house, in words.
+
+    Empty when the pantry says nothing about it, so every existing rendering
+    is byte-identical for a config with no `inventory_to_clear` — the same
+    convention `inventory_instruction` and every rule in
+    `build_generation_rules` follow.
+    """
+    if item.pantry_deducted_g > 0:
+        return f"{format_grams(item.pantry_deducted_g)} already in the pantry"
+    if item.pantry_unquantified:
+        return "some already in the pantry"
+    return ""
+
+
+def pantry_covered_line(shopping_list: ShoppingList) -> str:
+    """One sentence naming the lines the pantry covered outright, or "".
+
+    Named rather than silently dropped: the pantry is hand-edited and can go
+    stale, and a line that vanished with no trace is the one you cannot notice
+    is wrong. Deliberately absent from the Keep copy, which is read in the
+    shop and turns every line into a checkbox — a checkbox for something you
+    are not buying is the exact junk item that format exists to avoid.
+    """
+    if not shopping_list.pantry_covered:
+        return ""
+    names = ", ".join(
+        f"{item.name} ({format_quantity(item.name, item.original_amount_g)})"
+        for item in shopping_list.pantry_covered
+    )
+    return f"Already in the pantry, not on this list: {names}"
+
+
 def _item_line(item: ShoppingItem) -> str:
-    note = "  ← buy fresh closer to the day" if item.buy_late else ""
-    return f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
+    notes = [note for note in (pantry_note(item), "← buy fresh closer to the day" if item.buy_late else "") if note]
+    suffix = f"  ({'; '.join(notes)})" if notes else ""
+    return f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{suffix}"
 
 
 def format_shopping_list_text(
@@ -639,10 +827,13 @@ def format_shopping_list_text(
         for line in cook_plan_lines(cook_events):
             lines.append(f"  - {line}")
         lines.append("")
-    for department in sorted(shopping_list.categories):
+    for department in ordered_departments(shopping_list):
         lines.append(f"{department}:")
         for item in shopping_list.categories[department]:
             lines.append(f"  - {_item_line(item)}")
+    covered = pantry_covered_line(shopping_list)
+    if covered:
+        lines.extend(["", covered])
     return "\n".join(lines)
 
 
@@ -659,32 +850,70 @@ def format_shopping_list_markdown(
         for line in cook_plan_lines(cook_events):
             lines.append(f"- {line}")
         lines.append("")
-    for department in sorted(shopping_list.categories):
+    for department in ordered_departments(shopping_list):
         lines.append(f"## {department}")
         for item in shopping_list.categories[department]:
-            note = " _(buy fresh closer to the day)_" if item.buy_late else ""
+            notes = [
+                note
+                for note in (pantry_note(item), "buy fresh closer to the day" if item.buy_late else "")
+                if note
+            ]
+            note = f" _({'; '.join(notes)})_" if notes else ""
             lines.append(
                 f"- [ ] {item.name} — {format_quantity(item.name, item.total_amount_g)}{note}"
             )
         lines.append("")
+    covered = pantry_covered_line(shopping_list)
+    if covered:
+        lines.extend([f"_{covered}_", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
-def format_shopping_list_keep(shopping_list: ShoppingList) -> str:
+KEEP_TRIP_RULE = "═══"
+KEEP_DEPARTMENT_RULE = "──"
+
+
+def format_shopping_list_keep(shopping_list: ShoppingList, trip: str = "") -> str:
     """One item per line, no bullets/markdown/blank lines. Google Keep turns
     each line of pasted text into its own checkbox item inside a list-type
     note — bullets or blank lines would just become extra junk items.
 
-    The perishable note rides along on the item's own line rather than getting
-    a line of its own: this is the copy you read *in the shop*, which is the
-    one place the warning can still change what you put in the basket, and a
-    separate line would become a checkbox for a thing you can't buy.
+    **Every line here becomes a checkbox, including the two that are not
+    items**, and that is what the rules are for. A bare department name — the
+    only thing this emitted before — arrives in the shop looking exactly like
+    something to buy, so "Dairy & Eggs" gets ticked off next to the milk. The
+    format cannot use markdown or a blank line to separate them, so the
+    separation has to be typographic: `── DAIRY & EGGS ──` is unmistakably not
+    a purchase at a glance, and costs the one checkbox the plain name already
+    cost.
+
+    `trip` is the same window label the toast names, for the same reason:
+    the toast said which trip was copied and the payload did not, so two
+    trips pasted into Keep were indistinguishable once the toast had gone.
+    One line, one checkbox, and a heavier rule than the departments carry so
+    the two kinds of divider are not mistaken for each other.
+
+    The perishable and pantry notes ride along on the item's own line rather
+    than getting lines of their own: this is the copy you read *in the shop*,
+    which is the one place a warning can still change what you put in the
+    basket, and a separate line would become a checkbox for a thing you can't
+    buy. `pantry_covered` is left out entirely for the same reason — a line
+    you are not buying has no business being a checkbox.
     """
     lines = []
-    for department in sorted(shopping_list.categories):
-        lines.append(department)
+    if trip:
+        lines.append(f"{KEEP_TRIP_RULE} {trip} {KEEP_TRIP_RULE}")
+    for department in ordered_departments(shopping_list):
+        lines.append(
+            f"{KEEP_DEPARTMENT_RULE} {department.upper()} {KEEP_DEPARTMENT_RULE}"
+        )
         for item in shopping_list.categories[department]:
-            note = " (buy fresh closer to the day)" if item.buy_late else ""
+            notes = [
+                note
+                for note in (pantry_note(item), "buy fresh closer to the day" if item.buy_late else "")
+                if note
+            ]
+            note = f" ({'; '.join(notes)})" if notes else ""
             lines.append(
                 f"{item.name}: {format_quantity(item.name, item.total_amount_g)}{note}"
             )

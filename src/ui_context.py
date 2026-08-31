@@ -29,6 +29,7 @@ target input, see `ui_review.day_target_row`) and part of
 from dataclasses import dataclass
 from typing import Callable, Dict, List
 
+from generation_jobs import GenerationJobs
 from repository import LocalJSONRepository
 from ui_state import PlannerState
 
@@ -68,3 +69,11 @@ class UIContext:
     state: PlannerState
     repository: LocalJSONRepository
     refreshables: Refreshables
+    # The one field here that is *not* per-tab, and deliberately so: the
+    # registry is one object for the whole process, threaded through the same
+    # context only because that is how a `build_*(ctx)` factory reaches
+    # anything. `ui_generation.run_generation` claims against it so a browser
+    # tab and an API client cannot both be generating over one
+    # `week_plan.json` — `PlannerState.generating` is per-client and can see
+    # neither the other tab nor the route.
+    jobs: GenerationJobs

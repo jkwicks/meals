@@ -21,7 +21,14 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from planner import WeekPlan, hydrate_config, load_config_with_models
+from generation_jobs import SOURCE_API, GenerationJob, GenerationJobs
+from planner import (
+    WeekPlan,
+    generate_and_store_week,
+    hydrate_config,
+    load_config_with_models,
+    meal_type_order,
+)
 from repository import PlanRepository, catalog_matches
 
 
@@ -58,7 +65,50 @@ class TargetsResponse(BaseModel):
     dynamic_basis: Optional[Dict[str, Any]] = None
 
 
-def build_api_router(repository: PlanRepository) -> APIRouter:
+class GenerateWeekRequest(BaseModel):
+    """The two things `default_week_spec` accepts beyond config, and nothing
+    else. Everything that reshapes a *grid* — batch toggles, leftover links,
+    skip estimates, target overrides — is a staged session edit living on
+    `PlannerState`, which is the same line every read route here already draws
+    around it: a route may name what the CLI's flags name, because those are
+    arguments to a fresh week rather than edits to somebody's open tab."""
+
+    week_start: Optional[str] = None
+    servings: Optional[int] = None
+
+
+class GenerationJobResponse(BaseModel):
+    """A run in flight or finished, exactly as `GenerationJob` records it.
+
+    Mirrors the dataclass rather than summarising it, the same terms
+    `BiometricsResponse` mirrors its four stored lists on: a field computed
+    here would be a field free to disagree with the progress dialog reading
+    the same run.
+    """
+
+    id: str
+    week_identifier: str
+    source: str
+    status: str
+    stages: List[str]
+    stages_started: List[str]
+    notes: List[str]
+    failures: Dict[str, str]
+    error: Optional[str] = None
+    validation_errors: List[str]
+    started_at: str
+    finished_at: Optional[str] = None
+
+
+def build_api_router(repository: PlanRepository, jobs: GenerationJobs) -> APIRouter:
+    """The `/api` routes.
+
+    `jobs` is required rather than defaulted for the same reason `repository`
+    is, and one more: it carries the single-flight claim `ui_generation.py`
+    also takes, so a router handed its own fresh registry would be a guard
+    that silently guards nothing. `ui_app.py` passes the process's one
+    instance; a test passes a throwaway.
+    """
     router = APIRouter(prefix="/api")
 
     @router.get("/weeks/{week_identifier}", response_model=WeekPlan)
@@ -118,5 +168,92 @@ def build_api_router(repository: PlanRepository) -> APIRouter:
             weekly_schedule=config["weekly_schedule"],
             dynamic_basis=config.get("dynamic_basis"),
         )
+
+    # ---- generation: the one write, and it answers with a job -----------
+    #
+    # The first non-GET route here, and the reason the read-only boundary
+    # ends rather than bends: a week takes 30s-3min per meal type, so this
+    # cannot answer with the thing it makes. It starts the run, hands back a
+    # job id and returns; `GET /api/jobs/{id}` is where the answer arrives,
+    # and the finished week itself comes back through `GET /api/weeks/{id}`
+    # above, which already reads what the run stored. See `generation_jobs`
+    # for why polling rather than SSE or a WebSocket.
+
+    def _job_response(job: GenerationJob) -> GenerationJobResponse:
+        return GenerationJobResponse.model_validate(job.as_dict())
+
+    @router.post(
+        "/weeks/{week_identifier}/generate",
+        response_model=GenerationJobResponse,
+        status_code=202,
+    )
+    async def start_week_generation(
+        week_identifier: Literal["current", "next"],
+        request: Optional[GenerateWeekRequest] = None,
+    ) -> GenerationJobResponse:
+        options = request or GenerateWeekRequest()
+
+        # Claimed before anything is awaited, the same rule
+        # `ui_generation.run_generation` states for its own flag: every await
+        # below is a point where a second request gets its turn.
+        job = jobs.claim(SOURCE_API, week_identifier)
+        if job is None:
+            active = jobs.active
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A generation started by the {active.source} at "
+                    f"{active.started_at} is already running"
+                    f" (job {active.id})."
+                    if active
+                    else "A generation is already running."
+                ),
+            )
+
+        # Loaded here rather than inside the task so the 202 already names the
+        # stages a client is about to watch — `meal_type_order` is what
+        # `generate_week_plan` itself loops over, not a second opinion about
+        # which meal types this week has.
+        try:
+            config = await load_config_with_models(repository)
+            job.stages = meal_type_order(config)
+        except Exception as exc:  # noqa: BLE001 - recorded on the job, then raised
+            jobs.fail(job, f"{type(exc).__name__}: {exc}")
+            jobs.release(job, job.status)
+            raise HTTPException(status_code=500, detail=f"Could not load config: {exc}")
+
+        async def work() -> WeekPlan:
+            return await generate_and_store_week(
+                repository,
+                config,
+                week_identifier=week_identifier,
+                week_start=options.week_start,
+                servings=options.servings,
+                # `progress_callback` is (meal_type, cooks) and fires *before*
+                # each stage's call; `cooks` is already implied by the week the
+                # run stores, so only the stage name is kept.
+                progress_callback=lambda meal_type, cooks: jobs.stage_started(job, meal_type),
+                note_callback=lambda message: jobs.note(job, message),
+            )
+
+        def adopt(finished: GenerationJob, week_plan: WeekPlan) -> None:
+            # A per-meal-type failure does not fail the run, so these ride on
+            # a *succeeded* job — same contract `WeekPlan.failures` already
+            # has with the UI's own warning list.
+            finished.failures = dict(week_plan.failures)
+
+        jobs.start(job, work, adopt)
+        return _job_response(job)
+
+    @router.get("/jobs", response_model=List[GenerationJobResponse])
+    async def list_generation_jobs(limit: Optional[int] = None) -> List[GenerationJobResponse]:
+        return [_job_response(job) for job in jobs.recent(limit)]
+
+    @router.get("/jobs/{job_id}", response_model=GenerationJobResponse)
+    async def get_generation_job(job_id: str) -> GenerationJobResponse:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No job '{job_id}'.")
+        return _job_response(job)
 
     return router

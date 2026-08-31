@@ -32,7 +32,7 @@ is worth amending as the ground under it moves, not only when it is closed.
 
 **Everything here was verified against the code on 2026-08-27**, not against
 the documents' own account of themselves, and re-checked against `main` at
-**v0.40.0**. Eleven releases have now closed whatever this queue ranked first
+**v0.41.0**. Twelve releases have now closed whatever this queue ranked first
 at the time: **v0.28.0** the fridge-day origin, **v0.29.0** the discarded
 Garmin sleep/readiness, **v0.30.0** the adaptive TDEE that had never fired
 and never said why, **v0.31.0** the duplicated catalog filter *and* the sync
@@ -69,6 +69,33 @@ worth re-reading for whether the difference is in the work or in a name doing
 two jobs.** The ranked list is again unchanged and item 1 is still item 1 —
 two releases running, which is now the state to notice rather than an
 accident.
+
+**v0.41.0 closed four items and took the top three of them off a list that
+was one day old.** The shopping block was filed on the morning of 2026-08-31
+and shipped that afternoon — the shortest life any entry here has had, and by
+some distance. Three things about it are worth keeping:
+
+- **The two blocking decisions were put to the maintainer before a line was
+  built**, which makes it four of the last six releases to clear one that
+  way. Both were answered against this file's own standing recommendation on
+  one count and with it on the other: the pantry took the render-time
+  subtraction as recommended, and shopping became a destination *and* stayed
+  a drawer, which was the option this file had costed as "the most capable
+  and the most expensive" and which turned out to be about forty lines,
+  because the expense was in the surfaces and the two surfaces already
+  existed.
+- **The entry's one unverified claim was the entry's most important one**,
+  and the way it got confirmed is the lesson. It asked for five minutes with
+  devtools on the drawer; what actually settled it was `grep` against the two
+  stylesheets in `venv/`, which showed Quasar defining `.flex{flex-wrap:wrap}`
+  and Tailwind's `.flex-col` setting only `flex-direction`. **A layout claim
+  can sometimes be verified from the cascade rather than from the symptom**,
+  and that is both cheaper and stronger than a screenshot.
+- **A fourth item closed that this file never ranked.** The generation route
+  was being written in the working tree while the shopping block was being
+  filed, and both went out together. The entry it belonged to is amended
+  rather than deleted, because the write routes are still open and the
+  reasoning for the half that shipped is worth keeping beside them.
 All three of the source docs' stale claims are now settled: `ISSUES.md`
 item 9 was already fixed, `ui-redesign.md`'s phase 4 aside is filed *and*
 shipped, and `future-ideas.md`'s out-of-date 5c biometric counts stopped
@@ -113,26 +140,66 @@ report that the data is missing.** The second half is almost never blocked,
 and it is what stops the first half from having to be noticed by a human
 later.
 
-**The ranked list is still one decision and four items nothing needs.** The
-readiness check-in is the only entry with a product question in it; below it
-sit three API entries filed so that "read-only, localhost-only" stays a
-recorded decision rather than an assumption, and one unscoped XL. Nothing is
-waiting on data, and nothing above XL is waiting on engineering.
+**That paragraph read "the ranked list is still one decision and four items
+nothing needs" until 2026-08-31, and three shopping entries went in above
+all four of them.** Two releases running had ended by noting that item 1 was
+still item 1 and that this was "the state to notice rather than an
+accident" — and the thing worth noticing turned out to be that the list had
+gone quiet because nothing new was being *read against the code*, not
+because nothing was wrong. What broke the run was not a release. It was the
+maintainer using a surface and saying it felt forgotten, and an hour spent
+checking that report against `ui_shopping.py` and `shopping.py`.
 
-So the next release is a genuinely different kind of choice from the last
-eleven, and it is worth saying which options remain rather than discovering
-it item by item. **Answer the readiness question** and the morning
-readiness check-in becomes buildable. **Take the craft table on a theme** —
-v0.37.0 established that as a legitimate second way to pick, v0.40.0 emptied
-the appendix that was the other candidate for it, and the craft items are now
-unattached to any larger entry (see below), which makes a themed batch of them
-the natural shape rather than a leftover: the four motion rows are one
-afternoon and one decision about duration, and the three token/vocabulary rows
-are one sweep. **Or start an API entry early**, on the argument the OpenAPI
-entry already makes for itself: it is only worth doing if a real front end is
-ever built against `/api`, but then it is worth doing *first*. What there is
-no longer is an obvious top of the list, and that is the state to notice
-rather than to resolve by picking whatever is numbered lowest.
+**The list had no defect in it, and that was a fact about this file rather
+than about the app.** Its opening sentence promises "every unfinished item
+and known defect"; the Type column had only ever said Feature or Tech debt,
+because every defect this queue has held was found during a phase that then
+fixed it. Item 1 is the first entry filed as a fault in shipped, working,
+weekly-used code — six parts, four of them individually too small to rank,
+bundled on v0.38.0's precedent. **Nothing in the eleven-release streak came
+from anybody using the app**, which is the gap this insertion actually
+exposes, and it is worth more than the three entries.
+
+The three sat above the readiness check-in for three different reasons,
+stated separately because only one of them generalises. The first was a live
+defect and the cheapest thing in the file. The second was a want this queue
+had already recorded in words and then filed nowhere — note that it was
+hiding in the **closed table**, which no rule of this file had yet said was
+not a place a to-do can live. The third was above the readiness check-in only
+because it was a *sequencing* decision: unanswered, it made the other two
+partly rebuildable, where the readiness question gates nothing but its own
+work. **A blocking decision that other ranked items build underneath is worth
+more than one that blocks only itself**, and that is the rule worth keeping.
+
+**All three closed in v0.41.0, the day after they were filed, and the
+sequencing argument is the one that paid.** Answering "drawer or destination"
+first cost one question and made the other two land in a builder that both
+surfaces share; answering it afterwards would have meant rebuilding the
+department bands, the tick handling and the pantry annotations a second time.
+The other two rules generalised less than they looked: the defect was cheap
+because it was six small things behind one premise (v0.38.0's bundle shape,
+not v0.37.0's theme), and the want was cheap because
+`shopping.ingredient_draws_on` had already been written for the ledger. **Two
+of the three were cheap for reasons that were facts about the code, and only
+the third was cheap because of where it was ranked.**
+
+**The release also closed something the ranking never saw**, which is worth
+recording beside them: the generation-over-HTTP half of the API entry was
+built in the working tree before this session began, and it went out in the
+same release. A queue cannot rank what is already being written, but it can
+notice: the entry it belonged to was amended rather than left describing a
+design question that had been answered, which is the same repair the by-name
+rule keeps producing.
+
+With the three gone the shape is what it was before them, minus one blocker:
+the readiness check-in is again item 1 and again the only entry with a
+product question in it, the three API entries are filed so that "read-only
+except generation, localhost-only" stays a recorded decision rather than an
+assumption — and the first of those is no longer blocked on a design pass,
+because v0.41.0 did it — and one XL is unscoped. Nothing is waiting on data. **Taking the craft table on a theme** also still
+stands as an option — v0.37.0 established that as a legitimate second way to
+pick — but note that one of its rows now has a parent again for the first
+time since v0.38.0 (see below).
 
 **A third fetched-and-discarded signal turned out to be the enabling
 half.** v0.29.0 found Garmin's sleep data fetched every sync and thrown
@@ -339,18 +406,19 @@ its verdict cannot**, which is the one place this file had not yet looked.
 | # | Item | Type | Size | Blocked by |
 |---|---|---|---|---|
 | 1 | [Morning readiness check-in](#1--morning-readiness-check-in) | Feature | M | one decision |
-| 2 | [Write and generation routes on the API](#2--write-and-generation-routes-on-the-api) | Feature | L | a design pass |
+| 2 | [Write routes on the API](#2--write-routes-on-the-api) | Feature | M | — |
 | 3 | [OpenAPI schema is off, so there are no generated types](#3--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
 | 4 | [No auth on `/api`](#4--no-auth-on-api) | Feature | S | only if exposed |
 | 5 | [Food waste tracking](#5--food-waste-tracking) | Feature | XL | not scoped |
 
-Plus one remaining deferral in [the appendix](#appendix--deferrals-recorded-in-claudemd-never-filed)
-— a daily fibre target, M — and eleven
-[front-end craft items](#front-end-craft-items--small-none-urgent), each XS–S
-and none urgent. **The numbering above is unchanged by v0.39.0**, which
-closed three appendix rows and nothing this table holds; every anchor link
-here still carries a number, and that is the one thing a renumber has to be
-checked against.
+[The appendix](#appendix--deferrals-recorded-in-claudemd-never-filed) is
+empty — v0.40.0 took its last row. Eleven
+[front-end craft items](#front-end-craft-items--small-none-urgent) remain,
+each XS–S and none urgent. **The numbering above moved by three on
+2026-08-31 and then by three again**: the shopping block was inserted at the
+top that morning and closed by v0.41.0 the same day, which is the shortest
+life any entry in this file has had. Every anchor link here still carries a
+number, and that is the one thing a renumber has to be checked against.
 
 ---
 
@@ -385,25 +453,36 @@ argue about; the doc does not settle it.
 
 ---
 
-## 2 — Write and generation routes on the API
+## 2 — Write routes on the API
 
-**Type:** Feature &nbsp;·&nbsp; **Size:** L &nbsp;·&nbsp; **Source:**
-`ui-redesign.md` phase 5, deliberately out of scope
+**Type:** Feature &nbsp;·&nbsp; **Size:** M &nbsp;·&nbsp; **Blocked by:**
+nothing &nbsp;·&nbsp; **Source:** `ui-redesign.md` phase 5, deliberately out
+of scope
 
-`src/api.py` is read-only by design: five `GET` routes, each calling one
-existing repository method or pure planner function, because "a route that
-computed something would be a route free to disagree with the UI."
+**This was "write *and generation* routes" and an L blocked on a design pass
+until v0.41.0**, which shipped the generation half — `generation_jobs.py`,
+`POST /api/weeks/{id}/generate` answering `202` with a job id, `GET
+/api/jobs[/{id}]`, and the single-flight claim a browser tab and an API
+client now share. What remains is the smaller and duller half, and it is
+unblocked: the design question was entirely about generation's 30s–3min
+runtime and its progress callbacks, and it was answered by *counting the
+events* rather than by weighing poll-versus-SSE-versus-WebSocket — a dozen
+events across a quarter of an hour is not a streaming problem, and the other
+two designs both need the job registry underneath them anyway.
 
-Generation is the hard part and the reason phase 5 stopped. It runs 30s–3min
-*per meal type* and reports progress over NiceGUI's own socket
-(`progress_callback`/`note_callback`). Turning that into an HTTP-shaped
-operation is a genuine design question — poll a job id? SSE? WebSocket? —
-not a mechanical translation. `PlannerState.generating` guarding re-entry
-also becomes a cross-process concern the moment a second client can start a
-run.
+`src/api.py`'s five `GET` routes are still read-only by design, each calling
+one existing repository method or pure planner function, because "a route
+that computed something would be a route free to disagree with the UI."
+Generation is the deliberate exception: it is the one thing the CLI has
+always done from outside a browser.
 
-Nothing needs this today. It is filed so that "the API is read-only" stays a
-recorded decision with a known cost rather than an assumption.
+What is left is saving a grid edit, a mark, a favourite or a config key. Each
+has an owning surface already, and most are session concepts with no business
+being an HTTP resource — so the real work is deciding which of them are
+genuinely standing state (the two that write to `config/` are the model to
+follow) rather than writing routes. Nothing needs it today. It stays filed so
+that "everything but generation is read-only" is a recorded decision with a
+known cost rather than an assumption.
 
 ---
 
@@ -547,11 +626,25 @@ chevron grew one) stayed exactly where they are, because a sub-change filed
 against its parent item is not allowed to ride along; see the `TEXT_MICRO`
 note below, which is the same rule stated the other way round.
 
-**They no longer fold into anything, and that changes how to take them.** The
-sentence here used to read "each folds naturally into whichever larger item
-is already touching that file — today that means **The UI reads flat**"; that
-item closed in v0.38.0 and was the last front-end entry in the ranking, so
-there is nothing left for them to ride along on. Two of them were in fact
+**One of them had a parent for exactly one day, and the rule held both
+times.** *The shopping drawer has no loading state* sat under **The shopping
+list has been left behind** from the morning of 2026-08-31 until v0.41.0
+closed that entry the same day — the shortest-lived parent this file has had,
+and the row did not move in either direction. It did not ride along while the
+parent was open, on the rule stated twice below and demonstrated by v0.39.0's
+day picker; and it is not now orphaned into the ranking because the parent
+closed, which is the same rule read backwards. **A row's rank is a fact about
+the row, not about what happens to be next to it.** There is a second reason
+specific to this pairing —
+item 1(a) is a layout defect whose whole value is being shipped alone and
+looked at, and adding a skeleton to a drawer whose column behaviour is under
+repair makes it harder to tell which change fixed what.
+
+**The other ten still fold into nothing, and that changes how to take them.**
+The sentence here used to read "each folds naturally into whichever larger
+item is already touching that file — today that means **The UI reads
+flat**"; that item closed in v0.38.0 and was the last front-end entry in the
+ranking, so there was nothing left for them to ride along on. Two of them were in fact
 touched by it in passing — the elevation pass emitted CSS from `ui_app.py`'s
 single `add_css` call, which is the same call the toast restyle and the grid
 stagger would use, and it converted a handful of literals the phase-2 sweep
@@ -593,6 +686,10 @@ Checked against the running code on 2026-08-27. `ISSUES.md` predates phases
 
 | Source | Item | Closed by |
 |---|---|---|
+| maintainer report, 2026-08-31 | The shopping list had been left behind — six parts, one premise | Shipped in **v0.41.0**. (a) three `flex flex-col` containers in `ui_shopping.py` had no `flex-nowrap`, so the drawer's `overflow-y-auto` never fired and a week's list started a second column off the 420px edge. **The one claim this entry filed as inferred is now measured**, and not with devtools: Quasar ships `.flex{display:flex;flex-wrap:wrap}` and Tailwind's `.flex-col` sets only `flex-direction`, so the wrap is a fact about the two stylesheets rather than a story about a symptom. (b) `DEPARTMENT_ORDER`, one constant behind the seven `sorted(categories)` call sites. (c) a department band with a count in the drawer, `── DAIRY & EGGS ──` in the Keep copy. (d) `═══ trip ═══` heading that copy. (e) the rail badge reads `PlannerState.shopping_item_count()` — measured on the live week the day it was fixed, the badge said **86** over a drawer showing **120**. (f) ticks moved from the DOM to `PlannerState.shopping_ticks`; still never persisted, and no longer wiped mid-shop by a repaint. **A seventh part was found by generalising (a)** — `ui_cards.py`'s swap-with-favourite list is the same wrapping column over a 36-entry catalog — which is the argument for fixing a class of bug rather than an instance. |
+| the v0.37.0 pantry-ledger row in this very table | The shopping list asked you to buy what was already in the house | Shipped in **v0.41.0** — `shopping.apply_pantry`, taking the second of the three shapes this entry proposed: subtract at render time from `inventory_to_clear` itself, never from a stored count. Every one of v0.37.0's arguments for a run-scoped ledger survives intact, because the two ask different questions of one hand-edited list. A quantified entry is subtracted, an unquantified one only annotated (the two entry shapes are two statements, and collapsing them would invent a quantity or discard one); a line the pantry covers outright is lifted onto `ShoppingList.pantry_covered` and *named*, because a stale pantry is the failure mode and a line that vanished with no trace is the one you could not notice was wrong. CLAUDE.md's standing claim that this "needs the ledger to survive the run" was the thing that turned out to be false. |
+| maintainer question, 2026-08-31 | Should shopping be its own destination? | Answered **both**, shipped in **v0.41.0**. The drawer's documented reason for existing is that a list is read *against* the grid, and that is a different job from working through a trip — 420px is right for the first and wrong for the second. `build_shopping(ctx)` now returns `build_panel`, which a sixth rail destination calls at its own render position; `ShoppingPanels` is one registered section fanning out to both instances, so they cannot drift. **The sequencing worry this entry was ranked on turned out to be real and cheap**: items 1 and 2 did build inside the drawer, and none of it was built twice, because sharing one builder was a refactor of about forty lines rather than a second surface. |
+| `ui-redesign.md` phase 5, "the reason phase 5 stopped" | Generation had no HTTP shape, so the API could not start a run | Shipped in **v0.41.0** — `generation_jobs.py`, a `202`-with-a-job-id `POST`, `/api/jobs[/{id}]`, and one single-flight claim shared by the route and the page. **The design question was answered by counting the events, not by weighing the three protocols**: `progress_callback` fires once per meal type, so a dozen events across a quarter of an hour is not a streaming problem — and SSE and a WebSocket both need the job registry underneath them anyway, which makes polling the substrate rather than a third peer. What is left of that entry is the write routes, now an unblocked M. |
 | `ISSUES.md` 1 | Header space, repeated day names, header/canvas misalignment | Phase 6a (alignment + one day identity), 6b (stat block → `week_banner`) |
 | `ISSUES.md` 2 | All controls from the left panel | Phase 6b — the rail's action block |
 | `ISSUES.md` 3 | Dates on day names | Phase 6a — `format_day_label(day, day_date_iso, short=True)` |

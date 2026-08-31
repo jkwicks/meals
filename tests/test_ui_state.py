@@ -3077,3 +3077,139 @@ class TestGenerationStagesBankWhatIsActuallyDone(unittest.TestCase):
 
     def test_labels_read_as_the_dialog_prints_them(self):
         self.assertEqual([v.label for v in self.views(0)][:2], ["Dinners", "Lunches"])
+
+
+class TestShoppingView(unittest.TestCase):
+    """The one call the drawer, the destination and the rail badge all read.
+
+    The badge counted the whole week in a single `aggregate_cook_events` call
+    while the panel aggregated per window, so an ingredient bought on two
+    trips was one line in the badge and two on screen — CLAUDE.md's "a number
+    the UI displays and a number a run plans against must come from one call,
+    not two", broken quietly on the display side. Measured on the live week
+    the day this was filed: the badge said 86 and the drawer showed 120.
+    """
+
+    def two_trip_state(self):
+        """A week whose two trips both buy chicken, which is what makes a
+        week-wide count and a per-window one disagree."""
+        state = make_state()
+        spec = make_spec()
+        plan = make_plan(spec)
+        plan.cook_events.append(
+            CookEvent(
+                slot_id="Wednesday:dinner", day="Wednesday", meal_type="dinner",
+                portions=2, eaten_by=["Wednesday:dinner"], recipe=make_recipe(),
+            )
+        )
+        state.week_plan = plan
+        state.shop_days = ["Monday", "Wednesday"]
+        return state
+
+    def test_the_badge_sums_exactly_the_windows_the_panel_draws(self):
+        state = self.two_trip_state()
+        views = state.shopping_view()
+        self.assertEqual(len(views), 2)
+        self.assertEqual(state.shopping_item_count(), sum(v.item_count for v in views))
+
+    def test_an_ingredient_on_two_trips_is_two_lines_because_it_is_two_purchases(self):
+        """The old week-wide count called it one, which is what the badge and
+        the drawer disagreed about."""
+        state = self.two_trip_state()
+        self.assertEqual(state.shopping_item_count(), 2)
+        week_wide = ui_state.aggregate_cook_events(
+            state.week_plan.events_on_days(state.days), state.days
+        )
+        self.assertEqual(len(week_wide.items()), 1)
+
+    def test_no_plan_is_no_windows_rather_than_an_error(self):
+        state = make_state(with_plan=False)
+        self.assertEqual(state.shopping_view(), [])
+        self.assertEqual(state.shopping_item_count(), 0)
+
+    def test_daily_mode_repartitions_without_changing_what_is_bought(self):
+        """Only where the boundaries fall changes; the cook events and
+        quantities in each window are unaffected."""
+        state = self.two_trip_state()
+        batched = sum(
+            item.total_amount_g for v in state.shopping_view() for item in v.shopping_list.items()
+        )
+        state.daily_shop_mode = True
+        daily = sum(
+            item.total_amount_g
+            for v in state.shopping_view()
+            if v.shopping_list
+            for item in v.shopping_list.items()
+        )
+        self.assertEqual(batched, daily)
+
+    def test_a_windows_failures_are_named_by_slot_not_by_day(self):
+        """One bad meal-type call can fail some of a window's days without
+        failing all of them."""
+        state = make_state()
+        state.week_plan.failures = {"Monday:lunch": "provider fell over"}
+        self.assertEqual(state.shopping_view()[0].failed, ["Monday lunch"])
+
+    def test_the_staged_pantry_comes_off_the_list(self):
+        """The staged rows, not `config["inventory_to_clear"]` — a row typed
+        into the drawer moments ago is the honest statement of what is in the
+        house, and is what the next run will be given."""
+        state = make_state()
+        self.assertEqual(state.shopping_view()[0].item_count, 1)
+        state.pantry = [{"item": "chicken breast", "quantity_g": 60.0}]
+        item = state.shopping_view()[0].shopping_list.items()[0]
+        self.assertEqual(item.pantry_deducted_g, 60.0)
+        self.assertEqual(item.total_amount_g, item.original_amount_g - 60.0)
+
+    def test_a_pantry_that_covers_a_line_takes_it_off_the_badge_too(self):
+        state = make_state()
+        state.pantry = [{"item": "chicken breast", "quantity_g": 9000.0}]
+        self.assertEqual(state.shopping_item_count(), 0)
+        self.assertEqual(len(state.shopping_view()[0].shopping_list.pantry_covered), 1)
+
+    def test_the_pantry_is_parsed_by_the_one_parser(self):
+        """`planner.inventory_entries` reads both entry shapes; the drawer and
+        the ledger must not each grow their own."""
+        state = make_state()
+        state.pantry = [
+            {"item": "spinach", "quantity_g": None},
+            {"item": "oats", "quantity_g": 200.0},
+        ]
+        self.assertEqual(state.pantry_entries(), [("spinach", None), ("oats", 200.0)])
+
+
+class TestShoppingTicks(unittest.TestCase):
+    """Ticks are still not persisted — that reasoning stands — but they no
+    longer live in the DOM, where any repaint wiped them mid-shop.
+
+    "Not persisted across sessions" and "cleared when you tick a box in
+    another tab" are different claims, and only the first was ever decided.
+    """
+
+    def test_a_tick_survives_the_repaint_that_used_to_wipe_it(self):
+        state = make_state()
+        state.set_shopping_tick("Shop Monday", "Chicken breast", True)
+        # Whatever a repaint rebuilds, it reads the tick back off the state.
+        state.apply_spec(state.spec)
+        self.assertTrue(state.shopping_tick("Shop Monday", "Chicken breast"))
+
+    def test_unticking_forgets_it_rather_than_storing_a_false(self):
+        state = make_state()
+        state.set_shopping_tick("Shop Monday", "Chicken breast", True)
+        state.set_shopping_tick("Shop Monday", "Chicken breast", False)
+        self.assertFalse(state.shopping_tick("Shop Monday", "Chicken breast"))
+        self.assertEqual(state.shopping_ticks, set())
+
+    def test_the_same_item_on_two_trips_ticks_independently(self):
+        """The key is the window as well as the name: one purchase per trip,
+        and ticking Monday's chicken must not tick Wednesday's."""
+        state = make_state()
+        state.set_shopping_tick("Shop Monday", "Chicken breast", True)
+        self.assertFalse(state.shopping_tick("Shop Wednesday", "Chicken breast"))
+
+    def test_ticks_never_reach_the_plan(self):
+        """Per-client, dies with the tab, never reaches `data/` — which is
+        what keeps the original argument against storing them intact."""
+        state = make_state()
+        state.set_shopping_tick("Shop Monday", "Chicken breast", True)
+        self.assertNotIn("shopping", state.week_plan.model_dump_json())

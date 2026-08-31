@@ -30,10 +30,11 @@ Four regions, mirroring how the week is actually read:
   generation and offering Review / Generate week / Discard pending changes.
   See `ui_staged_bar.py`.
 - **Rail** — a slim vertical tab strip (`ui.tabs().props("vertical")`)
-  choosing one of five destinations: Plan (the week grid — `ui_plan.py`),
-  Today (`ui_today.py`), Library (the recipe catalog and import —
+  choosing one of six destinations: Plan (the week grid — `ui_plan.py`),
+  Today (`ui_today.py`), Shopping (the same `ui_shopping.py` panel the
+  right-hand drawer draws), Library (the recipe catalog and import —
   `ui_catalog_browser.py`), Insights (the trend charts — `ui_insights.py`), Settings
-  (`ui_settings.py`) — plus, between the first two tabs and the last three,
+  (`ui_settings.py`) — plus, between the first two tabs and the last four,
   the **action block** phase 6b collected out of `ui.header()` and the Plan
   panel: Generate, Shopping, Shuffle styles, PDF menu, Mobile page. The
   destinations answer "what am I looking at", these answer "what do I want
@@ -110,10 +111,10 @@ from dotenv import load_dotenv
 from nicegui import app as fastapi_app, ui
 
 from api import build_api_router
+from generation_jobs import GenerationJobs
 from export_menu import build_week_menu_html, build_week_menu_pdf
 from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
-from shopping import aggregate_cook_events
 from ui_adherence import build_adherence
 from ui_cards import build_cards
 from ui_catalog import build_rename_dialog
@@ -167,11 +168,22 @@ configure_logging()
 # (repository.py's StoragePaths), not as a module constant here.
 REPOSITORY = LocalJSONRepository()
 
-# The read-only API boundary (phase 5 of ui-redesign.md) — mounted onto
-# NiceGUI's own FastAPI app rather than a second server, since `nicegui.app`
-# already *is* the `FastAPI` instance Uvicorn serves. Registered at module
-# scope, before `ui.run()` runs, the same timing `@ui.page("/")` relies on.
-fastapi_app.include_router(build_api_router(REPOSITORY))
+# The process's generation runs, and the claim that lets only one happen at a
+# time. Module-level on purpose, which is the exception to "state lives per
+# client": `PlannerState` is per-tab because it holds one browser's staged
+# edits, where this guards `week_plan.json` — one file, shared by every tab
+# and by the API. Its own comment on `PlannerState.generating` is the reason
+# it had to exist ("two tabs generating at once would race to overwrite the
+# same week_plan.json"), and an API client is now a third racer.
+GENERATION_JOBS = GenerationJobs()
+
+# The API boundary (phase 5 of ui-redesign.md) — mounted onto NiceGUI's own
+# FastAPI app rather than a second server, since `nicegui.app` already *is*
+# the `FastAPI` instance Uvicorn serves. Registered at module scope, before
+# `ui.run()` runs, the same timing `@ui.page("/")` relies on. It gets the
+# same `GENERATION_JOBS` the page below claims against, or the single-flight
+# guard would guard each caller only from itself.
+fastapi_app.include_router(build_api_router(REPOSITORY, GENERATION_JOBS))
 
 # --------------------------------------------------------------------------
 # Page
@@ -187,7 +199,12 @@ async def planner_page() -> None:
     # on repaint, and both `build_*` factories are synchronous anyway.
     biometrics = await REPOSITORY.load_biometrics()
     refreshables = Refreshables()
-    ctx = UIContext(state=state, repository=REPOSITORY, refreshables=refreshables)
+    ctx = UIContext(
+        state=state,
+        repository=REPOSITORY,
+        refreshables=refreshables,
+        jobs=GENERATION_JOBS,
+    )
 
     ui.dark_mode(True)
     ui.add_css(
@@ -460,7 +477,7 @@ async def planner_page() -> None:
 
     # ---- the rail's action block ---------------------------------------------
     # Phase 6b of `ui-redesign.md`. Every control that starts something now
-    # lives in one strip: the five destinations answer "what am I looking
+    # lives in one strip: the six destinations answer "what am I looking
     # at", these answer "what do I want to do", and nothing else on the page
     # is clickable chrome. What moved here, and from where:
     #
@@ -469,7 +486,7 @@ async def planner_page() -> None:
     #   because the staged-changes bar hides whenever `pending_changes()` is
     #   empty — a fresh page load — and "how do I generate a week" must never
     #   have no answer on screen. A rail button satisfies that better than a
-    #   panel one did: it is visible from all five destinations, not just
+    #   panel one did: it is visible from all six destinations, not just
     #   from Plan. The bar's own "Generate week" shortcut is unaffected.
     # - **Print PDF / mobile export / shopping** from `ui.header()`. The
     #   header is `position: fixed` above the telemetry grid, so every
@@ -518,7 +535,7 @@ async def planner_page() -> None:
             ui.notify("Generate a week first — there's nothing to export yet.", type="warning")
             return
         ui.download(
-            build_week_menu_pdf(state.week_plan),
+            build_week_menu_pdf(state.week_plan, state.pantry_entries()),
             filename="weekly_menu.pdf",
             media_type="application/pdf",
         )
@@ -532,7 +549,7 @@ async def planner_page() -> None:
             ui.notify("Generate a week first — there's nothing to export yet.", type="warning")
             return
         ui.download(
-            build_week_menu_html(state.week_plan).encode("utf-8"),
+            build_week_menu_html(state.week_plan, state.pantry_entries()).encode("utf-8"),
             filename="weekly_menu.html",
             media_type="text/html",
         )
@@ -549,10 +566,19 @@ async def planner_page() -> None:
         # Short enough for a 168px rail: "Shopping list (108 items)" is the
         # header's old wording and does not fit. The drawer it opens says
         # the rest.
+        #
+        # `state.shopping_item_count()`, not a second aggregation. This
+        # counted the whole week in one `aggregate_cook_events` call while the
+        # panel aggregated per window, so an ingredient bought on two trips
+        # was one line here and two on screen and the badge could not sum to
+        # what the drawer showed. That is CLAUDE.md's "a number the UI
+        # displays and a number a run plans against must come from one call,
+        # not two", broken quietly on the display side. `plan` is still the
+        # binding's trigger; it is no longer the count's source.
         if plan is None:
             return "Shopping"
-        items = aggregate_cook_events(plan.events_on_days(state.days), state.days).items()
-        return f"Shopping ({len(items)})" if items else "Shopping"
+        count = state.shopping_item_count()
+        return f"Shopping ({count})" if count else "Shopping"
 
     def rail_actions() -> None:
         with ui.element("div").classes(
@@ -682,6 +708,7 @@ async def planner_page() -> None:
                 plan_tab = ui.tab("Plan", icon="calendar_view_week").props("no-caps")
                 today_tab = ui.tab("Daily View", icon="today").props("no-caps")
                 rail_actions()
+                shopping_tab = ui.tab("Shopping", icon="shopping_cart").props("no-caps")
                 library_tab = ui.tab("Library", icon="menu_book").props("no-caps")
                 insights_tab = ui.tab("Insights", icon="insights").props("no-caps")
                 settings_tab = ui.tab("Settings", icon="settings").props("no-caps")
@@ -704,6 +731,15 @@ async def planner_page() -> None:
                 plan.panel()
             with ui.tab_panel(today_tab).classes("p-0"):
                 today.today_view()
+            with ui.tab_panel(shopping_tab).classes("p-0"):
+                # The same `build_panel()` the drawer calls, at this render
+                # position — CHANGE-QUEUE.md's "should shopping be its own
+                # destination?", answered `both`. The drawer is for reading a
+                # trip *against* the week, which is why it survives; this is
+                # for working through one, which 420px was never the shape
+                # for. Neither can drift from the other: one builder, and one
+                # registered section fanning out to both instances.
+                shopping.build_panel()
             with ui.tab_panel(library_tab).classes("p-0"):
                 catalog_browser.panel()
             with ui.tab_panel(insights_tab).classes("p-0"):

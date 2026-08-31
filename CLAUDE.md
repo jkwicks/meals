@@ -252,8 +252,11 @@ rather than a name.
 
 `ui_app.py` (`./scripts/server.sh start`, serves on :8080) is the high-density
 desktop UI: a header of 7 per-day macro bars, a persistent staged-changes bar
-beneath it, and a slim vertical rail choosing one of five destinations — Plan
-(the week grid), Today, Library, Insights, Settings. `ui_app.py` is a ~300-line
+beneath it, and a slim vertical rail choosing one of six destinations — Plan
+(the week grid), Today, Shopping, Library, Insights, Settings. Shopping is
+the newest and is the *same* panel the right-hand drawer draws (see
+"Shopping lists"): the drawer is for reading a trip against the grid, the
+destination for working through one. `ui_app.py` is a ~300-line
 page shell; every other `ui_*.py` is one concern exposing a `build_*(ctx)`
 factory, and `ui_state.py` holds `PlannerState`, the view model and the only
 UI module with tests. No package structure — every module is a flat sibling,
@@ -312,6 +315,10 @@ types: dinner is generated before lunch so the one cross-type leftover
   raises (`resolve_planner_model`), deliberately, so the app can never
   silently plan against a stale hardcoded model.
 - `repository.py` — the storage boundary (see below).
+- `generation_jobs.py` — the runs in flight: the single-flight claim shared by
+  the API route and the NiceGUI page, and the job records a client polls. No
+  FastAPI and no NiceGUI in it, which is what lets both import it (see "The
+  API boundary").
 - `week.py` — all the deterministic, API-free planning. The entire week —
   styles, cuisines, portions, windows — is resolved here before a single token
   is generated, so the UI previews exactly what it will ask for.
@@ -1080,7 +1087,7 @@ Consequences worth knowing:
 - `--use-cached-plan` now exits with a clear message when there is no cached
   plan, instead of an `open()` traceback.
 
-### The API boundary (read-only)
+### The API boundary — five reads, and one write that answers with a job
 
 `src/api.py`'s `build_api_router(repository) -> APIRouter` is phase 5 of
 `ui-redesign.md`, collecting the bet the previous section describes:
@@ -1104,6 +1111,15 @@ relies on. No new port, no new deployment.
 | `/api/biometrics` | `repository.load_biometrics()` (all four lists, `readiness_log` and `activity_log` included) + `get_latest_biometrics()` |
 | `/api/targets` | `load_config_with_models` → `hydrate_config`, returning `weekly_schedule` + `dynamic_basis` (which carries `tdee_source`) |
 
+And three that are the generation route and its answer, added later (see
+below):
+
+| route | behind it |
+|---|---|
+| `POST /api/weeks/{"current"\|"next"}/generate` | `generation_jobs` claim → `planner.generate_and_store_week` on a background task; `202` with a job id |
+| `GET /api/jobs` | the process's recent runs, newest first |
+| `GET /api/jobs/{id}` | one run — status, stages started, notes, failures |
+
 Every route calls an existing repository method or an existing pure
 `planner.py` function and returns the answer — **a route that computed
 something would be a route free to disagree with the UI**, which is the one
@@ -1126,11 +1142,12 @@ not because they don't fit.
 
 **What it deliberately does not expose, yet:**
 
-- **Writes, and generation above all.** Generation is long-running (30s–3min
-  per meal type) and currently reports progress over NiceGUI's own socket
-  (`progress_callback`/`note_callback`, see above); turning that into an
-  HTTP-shaped operation is a real design question (poll a job? SSE? WS?), not
-  a mechanical translation, and phase 5 explicitly left it for later.
+- **Every write except generation.** Nothing here saves a grid edit, a mark,
+  a favourite or a config key. Those are session concepts or standing
+  settings with an owning surface already, and the two that write to
+  `config/` are named under "Storage goes through an async repository";
+  generation is the exception because it is the one thing the CLI has always
+  done from outside a browser, and the one a script or a phone would want.
 - **OpenAPI docs.** `nicegui`'s `App.__init__` hardcodes
   `docs_url=None, redoc_url=None, openapi_url=None` regardless of what's
   passed to `ui.run()` — so `/api/docs`/`/api/openapi.json` don't exist
@@ -1142,6 +1159,103 @@ not because they don't fit.
   (`APIRouter(dependencies=[Depends(...)])`), which *gates access*, not
   *scopes data* — nothing in this app's storage is per-user today, so auth
   here is a lock on the door, not a multi-tenancy foundation.
+
+#### Generation over HTTP: a job id, because the event rate says so
+
+Phase 5 stopped here and said why: generation runs 30s–3min *per meal type*
+and reports progress over NiceGUI's own socket, so turning it into an
+HTTP-shaped operation was "a real design question (poll a job? SSE? WS?), not
+a mechanical translation". The question is now answered, and **what answered
+it was counting the events rather than weighing the three protocols**.
+
+`progress_callback` fires once per *meal type* — at most four times a run,
+three on the shipped config since `week_defaults.snack` is `skip` — plus a
+handful of `note_callback` strings. That is on the order of a dozen events
+across a quarter of an hour, which is not a streaming problem. A client
+polling every few seconds sees every one of them, from `curl`, a shell script
+or a phone shortcut.
+
+**The deciding argument is that the other two designs need the job registry
+anyway.** SSE and a WebSocket both lose a run's history when the connection
+drops while the run keeps going, so both have to buffer events server-side
+and support resuming from an offset — which is `generation_jobs.py` with a
+stream in front of it. Polling is the substrate, not a third peer; a
+streaming route added later reads the same records. The WebSocket loses twice
+over: bidirectionality is its feature and this problem has no use for it
+(cancel is one message), and NiceGUI already runs its own socket.io channel
+in this process, so a second protocol is a second connection lifecycle to
+debug.
+
+Four things about the shape are decisions:
+
+- **The finished week is deliberately not on the job.**
+  `generate_and_store_week` saves it through the repository before the job
+  completes, so `GET /api/weeks/…` already answers for it. A copy on the job
+  would be a second answer to one question, free to disagree with the file the
+  moment anything else writes a week — the same rule the read routes follow.
+  The job carries what the *run* knew and the stored plan does not: which
+  stages started, the portion-adjustment notes, and why it stopped.
+- **The `POST` is `202` whatever happens next, including a grid that cannot be
+  generated.** `validate_week` needs the config loaded and the grid built,
+  which is the run's own first step, so a rejected week is reported on the job
+  rather than as a `400`. It gets its own field — `WeekNotValidError` exists to
+  keep `validation_errors` separate from `error`, so a client can tell "fix
+  your config" from "the provider fell over" without parsing a message. A
+  per-meal-type failure is a third thing again, and rides on a **succeeded**
+  job, because a failed meal must not fail the week.
+- **`stages_started` is stages *started*, not banked.** `progress_callback`
+  fires before each call, the same off-by-one the UI's own stage checklist
+  turns on: nothing marks the last stage complete but the run returning. So
+  `len(stages_started) == len(stages)` is not completion; `status` is.
+- **The registry is in memory, in one process, and that is its one real
+  limit.** Exactly what NiceGUI serves today — `ui.run(..., reload=False)` on
+  one Uvicorn worker, with this router mounted onto that same app — so it is
+  correct now and stated rather than left to be discovered. Two workers, or
+  the future backend `repository.py` was shaped for, and the claim below has
+  to move to where the plan lives.
+
+##### The guard, which is the half that touches the UI
+
+`PlannerState.generating` is per-client, and its own comment says why that
+stopped being enough: two tabs generating at once "would race to overwrite the
+same `week_plan.json`". It cannot see an API run and an API run cannot see it,
+so an API client was a third racer.
+
+`GenerationJobs.claim()` is the one flag both consult —
+`ui_app.GENERATION_JOBS`, threaded to the router as a constructor argument and
+to the page through `UIContext.jobs`. It is **required** on
+`build_api_router`, not defaulted, precisely because a router handed its own
+fresh registry would be a guard that silently guards nothing.
+
+Three things about it:
+
+- **It is a plain field, not an `asyncio.Lock`.** Claiming must *fail* rather
+  than queue: a second Generate is a mistake to report, not work to line up
+  behind. No lock primitive is needed for correctness either — `claim` reaches
+  its assignment with no `await` in between, and a single event loop cannot
+  interleave anywhere else.
+- **A UI run is recorded too, and reports nothing.** The registry is told who
+  holds the claim and from when, so a `409` can say "a browser tab is already
+  generating" — but `ui_generation.generate_week` reports its own outcome
+  through the progress dialog and swallows its exception, so the job is
+  released with the default rather than being stamped with an outcome nobody
+  watched.
+- **Module-level state, which is the documented exception to "state lives per
+  client".** `PlannerState` is per-tab because it holds one browser's staged
+  edits; this guards one file that every tab and the API share.
+
+**`generate_and_store_week` is why the route cannot drift from the CLI.**
+`run_cli` was doing the sequence inline; it now calls the same function, so
+the three orderings that would otherwise drift silently — training
+adjustments before the grid is built, `resolve_auto_choices` before
+`validate_week`, `save_week_plan` before `record_week_history` — have one
+home. The CLI's two peculiarities are seams on it rather than a second copy:
+`spec_transform` for `--leftover-lunches`, `on_ready` for the "Generating
+N-day plan…" line that needs the resolved spec and the model name. It is
+deliberately **not** the UI's path — `ui_generation.generate_week` starts from
+a *staged* spec and must clear the previous run's style/cuisine/pin/batch
+state off it and apply the review dialog's batch toggles first, none of which
+a grid built fresh by `default_week_spec` carries.
 
 **Two findings recorded by phase 5, both since fixed** — kept because the
 reasoning is still worth having:
@@ -1417,6 +1531,42 @@ exists to prevent when they aren't, so a canonical name carrying a state only
 claims names whose own state is absent or equivalent ("frozen sardines" stays
 its own line) and exclusion lists keep "mustard seeds" out of mustard and "oat
 milk" out of oats.
+
+#### The order a list is walked, and the two lines that are not items
+
+`DEPARTMENT_ORDER` is the walk — produce at the entrance, the dry middle
+aisles, then the chilled perimeter, which also picks the perishables up last.
+It replaces `sorted(shopping_list.categories)`, which appeared in **seven**
+independent places (the drawer, all three formatters, `ShoppingList.items()`
+and both export paths), so the order was a decision made seven times and only
+ever agreed by accident — and alphabetical is a zigzag through a shop: Dairy,
+Fish, Grains, Herbs, Meat, Nuts, Pantry, Produce. `ordered_departments` is the
+one call all seven make now.
+
+**It is deliberately a separate constant from `DEPARTMENT_KEYWORDS`' order**,
+which looks like the same list and is not: that one is match precedence,
+specific → general, and reusing it would pin Pantry first forever because
+"Beef broth" has to be claimed before "beef". A department the order does not
+name sorts after the named ones alphabetically, so adding a keyword group
+without touching the walk degrades to the old behaviour for that group rather
+than silently placing it first.
+
+**Google Keep turns every pasted line into a checkbox, which is what the
+`format_shopping_list_keep` changes are about.** A bare department name — the
+only thing it emitted before — arrives in the shop looking exactly like
+something to buy, so "Dairy & Eggs" gets ticked off next to the milk. The
+format cannot use markdown or a blank line to separate them (both become junk
+items), so the separation is typographic: `── DAIRY & EGGS ──` costs the one
+checkbox the plain name already cost and is unmistakably not a purchase. The
+`trip` argument is the second half — the toast said which window was copied
+and the payload did not, so two trips pasted into Keep were indistinguishable
+once the toast had gone. It gets a heavier rule (`═══`) than the departments
+carry, so the two kinds of divider are not mistaken for each other.
+
+`pantry_covered_line` is deliberately absent from that format and present in
+every other one: a line you are *not* buying has no business being a checkbox,
+and the text, Markdown, PDF and HTML renderings are read at home where naming
+it is what lets a stale pantry be noticed.
 
 ### Batch cooking on purpose: the two prep toggles
 
@@ -2285,11 +2435,57 @@ entry is simply named there — the same call `build_seafood_limit_rule` makes,
 and for the same reason: a single replaced meal has no week in front of it to
 count against.
 
-Consequence worth knowing, and unchanged by the ledger: these items are still
-ordinary ingredients in the recipe, so they still appear on the shopping list.
-The list describes what the recipes need, not what you have yet to buy.
-**Subtracting the pantry from the list is a separate change** and a harder
-one — it needs the ledger to survive the run, which it deliberately does not.
+These items are still ordinary ingredients in the recipe, so a recipe's own
+ingredient list still names them in full. **The shopping list no longer does**,
+and this paragraph used to say the opposite: "subtracting the pantry from the
+list is a separate change and a harder one — it needs the ledger to survive
+the run, which it deliberately does not." The second half of that sentence was
+right and the first half did not follow from it.
+
+`shopping.apply_pantry` subtracts at **render time, from
+`inventory_to_clear` itself**, and never from a stored count — so the ledger
+still dies with its run and every argument above for that is untouched. The
+two are different questions asked of one hand-edited list: the ledger says how
+much of the pantry a *generated week* reached for and is spent as the stages
+run, while the list asks what is still worth buying and is derived fresh on
+every repaint. Nothing new is stored, nothing can drift from the shelf, and an
+item you have used up leaves the list the same way it got on — by being edited
+out of the pantry. It would also have made generation a *third* writer to
+`config/`, which is the other reason a persisted count was never the answer.
+
+The two entry shapes stay two shapes here too, because they are two different
+statements. A quantified entry is **subtracted** — 600 g of chicken thighs
+against an 800 g line leaves 200 g to buy, and against a 400 g one covers it
+outright, whereupon the line is lifted onto `ShoppingList.pantry_covered` and
+named in a sentence rather than silently vanishing (a stale pantry is the
+failure mode here, and a line that disappeared with no trace is the one you
+could not notice was wrong). An unquantified one is **annotated only**: there
+is no number to subtract, and inventing one is exactly what `inventory_entries`
+keeps both shapes legal to avoid.
+
+Three rules, and the second is the one that is not obvious:
+
+- **One ingredient draws on at most one entry** — the rule `spend_inventory`
+  already states, for the same reason: two entries both matching a line would
+  each be charged for it.
+- **An entry is a budget across the whole list, not a per-line discount.**
+  600 g against a week with two chicken dinners covers the first and part of
+  the second, in walk order, which is what the fridge will actually do.
+- **A remainder is a remainder, however small.** 605 g needed against 600 g
+  held leaves a 5 g line. A threshold below which the leftover was "close
+  enough" would be a number nobody chose — the standing answer everywhere else
+  the arithmetic fails to reconcile.
+
+Matching is `ingredient_draws_on`, the same containment-plus-guards call the
+ledger makes, so the list and the ledger cannot come to disagree about whether
+"chicken thighs" covers "Chicken thigh fillets, diced" — or about "chicken
+broth", which the department guard keeps out of both. `apply_pantry` is
+applied by every caller that actually holds a pantry: `PlannerState.
+shopping_view` (from the *staged* rows, not `config`, because a row typed into
+the drawer moments ago is the honest statement of what is in the house), the
+CLI's `window_shopping_list`, and both export builders. A caller with no
+pantry passes nothing and gets the list the recipes need, byte-identically to
+before this existed.
 
 The drawer's Pantry clear section is now a row editor (item + grams + remove)
 rather than the free-text chip box it was: a chip cannot hold two fields.
@@ -3141,7 +3337,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre against its target and beside what Cronometer logged for the same date (and which of those two pairs takes a divider), the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
 | `test_history.py` | history recording and rotation seeding |
-| `test_api.py` | the read-only FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share |
+| `test_api.py` | the FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share; and the generation route with its job — the single-flight claim from both sides (a second `POST`, and a browser tab holding it), the three outcomes a client has to read separately (a rejected grid, a failed run, and per-meal-type failures riding on a *succeeded* one), and the finished week arriving through the read route rather than on the job. `GenerationJobs.run` is awaited directly rather than reached through `start`, which is what that split exists for: asserting on a spawned task means asserting on a scheduler |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those

@@ -37,7 +37,9 @@ from repository import (
     run_sync,
 )
 from shopping import (
+    ShoppingList,
     aggregate_cook_events,
+    apply_pantry,
     categorize_department,
     collect_unique_plants,
     ingredient_draws_on,
@@ -4927,9 +4929,15 @@ def spend_inventory(
     Floored at 0 rather than going negative: a recipe legitimately calls for
     more than the house holds, and the honest reading of that is "the item is
     gone", not "you owe 200 g". The overshoot is not tracked because nothing
-    would read it — the item is off the priority list either way, and it was
-    always going on the shopping list in full (the list says what a recipe
-    needs, not what you still have to buy).
+    would read it — the item is off the priority list either way.
+
+    **This ledger is not what the shopping list subtracts.** It says how much
+    of the pantry a *generated week* reached for, and it dies with the run;
+    `shopping.apply_pantry` answers the different question of what is still
+    worth buying, from the hand-edited `inventory_to_clear` itself, on every
+    repaint. Two counts derived from one config, neither stored — which is
+    what keeps the run-scoped argument for this one intact while the list
+    still stops asking you to buy chicken you already have.
 
     Matching is `shopping.ingredient_draws_on`, so the ledger cannot disagree
     with the shopping list about whether two names are the same food.
@@ -7045,7 +7053,28 @@ def print_week_summary(week_plan: WeekPlan) -> None:
                 print(f"    {item}: {note}")
 
 
-def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -> None:
+def window_shopping_list(
+    week_plan: WeekPlan, window: ShoppingWindow, config: Optional[dict] = None
+) -> ShoppingList:
+    """One trip's list, with what is already in the house taken off it.
+
+    The single call the CLI's printed list and its saved Markdown both make,
+    so the two cannot disagree about a trip. `config` is optional because a
+    caller without one wants the list the recipes need — see
+    `shopping.apply_pantry`, which is where the render-time-never-stored
+    argument lives.
+    """
+    shopping_list = aggregate_cook_events(
+        week_plan.events_on_days(window.days), window.days
+    )
+    if config is None:
+        return shopping_list
+    return apply_pantry(shopping_list, inventory_entries(config))
+
+
+def print_shopping_windows(
+    week_plan: WeekPlan, windows: List[ShoppingWindow], config: Optional[dict] = None
+) -> None:
     for window in windows:
         events = week_plan.events_on_days(window.days)
         print(f"\n{window.label}")
@@ -7053,7 +7082,7 @@ def print_shopping_windows(week_plan: WeekPlan, windows: List[ShoppingWindow]) -
         if not events:
             print("  (nothing cooked in this window)")
             continue
-        shopping_list = aggregate_cook_events(events, window.days)
+        shopping_list = window_shopping_list(week_plan, window, config)
         print(format_shopping_list_text(shopping_list, cook_events=events))
 
 
@@ -7109,6 +7138,92 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+class WeekNotValidError(ValueError):
+    """`validate_week` rejected the grid before a single API call was paid for.
+
+    Its own class rather than a bare `ValueError` because the two callers of
+    `generate_and_store_week` do genuinely different things with it: the CLI
+    prints the list and exits 1, and the API route records it on the job under
+    its own key, so a client can tell "your config is wrong" from "the provider
+    fell over" without parsing a message. `errors` is the list `validate_week`
+    returned, verbatim.
+    """
+
+    def __init__(self, errors: List[str]):
+        self.errors = list(errors)
+        super().__init__("; ".join(self.errors))
+
+
+async def generate_and_store_week(
+    repository: PlanRepository,
+    config: Optional[dict] = None,
+    *,
+    week_identifier: str = "current",
+    week_start: Optional[str] = None,
+    servings: Optional[int] = None,
+    spec_transform=None,
+    on_ready=None,
+    progress_callback=None,
+    note_callback=None,
+) -> WeekPlan:
+    """Build a fresh week from config, generate it, store it, record history.
+
+    The whole sequence a front end that holds no session state performs: the
+    CLI (`run_cli`) and the API's generation job (`api.py`) are both exactly
+    this, and they call it rather than each spelling it out, because the order
+    here carries three decisions that would drift silently if copied —
+    `apply_training_adjustments` before the grid is built (so `week_targets`
+    and `meal_overrides_for` see one adjusted config), `resolve_auto_choices`
+    before `validate_week` (so the pass checks the grid actually generated
+    from), and `save_week_plan` before `record_week_history` (so history can
+    never describe a week that isn't on disk).
+
+    **This is deliberately not the UI's path**, and the difference is what
+    `PlannerState` holds rather than an omission. `ui_generation.generate_week`
+    starts from a *staged* spec carrying the user's own structural edits, so it
+    has to clear the previous run's style/cuisine/pin/batch state off it first
+    and apply the review dialog's batch toggles; a grid built fresh by
+    `default_week_spec` has none of that on it, exactly as the CLI has always
+    assumed. Anything that belongs to *every* generation goes here, where all
+    three front ends get it; anything that is a session concept stays there.
+
+    `spec_transform` and `on_ready` are the two seams the CLI needs and are
+    both optional: `--leftover-lunches` reshapes the grid between building and
+    resolving it, and the "Generating N-day plan…" line wants the resolved
+    spec and the model name after validation but before the first call.
+    """
+    if config is None:
+        config = await load_config_with_models(repository)
+    config = apply_training_adjustments(config)
+
+    spec = default_week_spec(config, week_start, servings)
+    if spec_transform is not None:
+        spec = spec_transform(spec)
+
+    history = await repository.load_history()
+    spec = resolve_auto_choices(spec, config, history)
+
+    errors = validate_week(spec, config)
+    if errors:
+        raise WeekNotValidError(errors)
+
+    if on_ready is not None:
+        on_ready(spec, resolve_planner_model(config))
+
+    week_plan = await generate_week_plan(
+        spec,
+        config,
+        history,
+        progress_callback=progress_callback,
+        note_callback=note_callback,
+        repository=repository,
+    )
+
+    await repository.save_week_plan(week_plan.model_dump(), week_identifier)
+    await record_week_history(week_plan, repository, config)
+    return week_plan
+
+
 async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     """The CLI's actual work, async so it can await the repository.
 
@@ -7120,13 +7235,6 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
     config = await load_config_with_models(repository)
     if args.model:
         config["openrouter_model"] = args.model
-    config = apply_training_adjustments(config)
-    spec = default_week_spec(config, args.week_start, args.servings)
-
-    if args.leftover_lunches:
-        from week import autofill_leftovers
-
-        spec = autofill_leftovers(spec, "lunch", "dinner")
 
     if args.use_cached_plan:
         print(f"Loading cached week plan from {repository.paths.week_plan}...", flush=True)
@@ -7135,24 +7243,20 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
             print(f"No cached week plan found ({repository.paths.week_plan}). Generate one first.")
             raise SystemExit(1)
         week_plan = WeekPlan.model_validate(cached)
+        # The cached path skips `apply_training_adjustments`, which the
+        # generation path applies inside `generate_and_store_week`. Nothing
+        # below reads an adjusted key — `shop_days` comes from `shopping`,
+        # which no adjustment touches — and re-deriving targets for a week
+        # that was generated against its own would print a second set.
     else:
-        history = await repository.load_history()
-        spec = resolve_auto_choices(spec, config, history)
-
-        errors = validate_week(spec, config)
-        if errors:
-            print("Week plan is not valid:")
-            for error in errors:
-                print(f"  - {error}")
-            raise SystemExit(1)
-
-        model = resolve_planner_model(config)
-        cook_days = len({slot.day for slot in spec.cook_slots()})
-        print(
-            f"Generating {len(spec.days)}-day plan ({len(spec.cook_slots())} cooks "
-            f"across {cook_days} days) using {model}...",
-            flush=True,
-        )
+        def announce(spec: WeekSpec, model: str) -> None:
+            """Fired after validation, before the first call — see `on_ready`."""
+            cook_days = len({slot.day for slot in spec.cook_slots()})
+            print(
+                f"Generating {len(spec.days)}-day plan ({len(spec.cook_slots())} cooks "
+                f"across {cook_days} days) using {model}...",
+                flush=True,
+            )
 
         # Named for what generate_week_plan actually passes: a meal type, not
         # a day. It used to say `day`, which printed "breakfast: leftovers
@@ -7165,17 +7269,28 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
                 flush=True,
             )
 
-        week_plan = await generate_week_plan(
-            spec,
-            config,
-            history,
-            progress_callback=report,
-            note_callback=lambda message: print(f"    {message}", flush=True),
-            repository=repository,
-        )
+        leftover_lunches = None
+        if args.leftover_lunches:
+            from week import autofill_leftovers
 
-        await repository.save_week_plan(week_plan.model_dump())
-        await record_week_history(week_plan, repository, config)
+            leftover_lunches = lambda spec: autofill_leftovers(spec, "lunch", "dinner")  # noqa: E731
+
+        try:
+            week_plan = await generate_and_store_week(
+                repository,
+                config,
+                week_start=args.week_start,
+                servings=args.servings,
+                spec_transform=leftover_lunches,
+                on_ready=announce,
+                progress_callback=report,
+                note_callback=lambda message: print(f"    {message}", flush=True),
+            )
+        except WeekNotValidError as invalid:
+            print("Week plan is not valid:")
+            for error in invalid.errors:
+                print(f"  - {error}")
+            raise SystemExit(1)
 
     print_week_summary(week_plan)
 
@@ -7188,7 +7303,7 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
 
     print("\n\nShopping Lists")
     print("==============")
-    print_shopping_windows(week_plan, windows)
+    print_shopping_windows(week_plan, windows, config)
 
     if args.save_shopping_list:
         sections = []
@@ -7196,10 +7311,11 @@ async def run_cli(args: argparse.Namespace, repository: PlanRepository) -> None:
             events = week_plan.events_on_days(window.days)
             if not events:
                 continue
-            shopping_list = aggregate_cook_events(events, window.days)
             sections.append(
                 format_shopping_list_markdown(
-                    shopping_list, cook_events=events, title=window.label
+                    window_shopping_list(week_plan, window, config),
+                    cook_events=events,
+                    title=window.label,
                 )
             )
         await repository.save_shopping_list("\n\n".join(sections))
