@@ -21,7 +21,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import requests
@@ -1342,9 +1342,11 @@ class TestCLIDateSelection(unittest.TestCase):
         sync.main(["--sync-cronometer", "--date", "2026-08-26", "--catchup"])
         self.assertEqual(self.synced, ["catchup-ran", "2026-08-26"])
 
-    def test_no_catchup_on_a_bare_run_is_still_today_only(self):
+    def test_no_catchup_on_a_bare_run_is_still_yesterday_only(self):
+        """A bare default targets yesterday: today's logging is never complete,
+        and a same-day checkpoint would strand anything logged after it."""
         sync.main(["--sync-cronometer", "--no-catchup"])
-        self.assertEqual(self.synced, [date.today().isoformat()])
+        self.assertEqual(self.synced, [(date.today() - timedelta(days=1)).isoformat()])
 
 
 class TestCredentialGuards(unittest.TestCase):

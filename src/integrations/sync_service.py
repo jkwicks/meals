@@ -1158,7 +1158,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--date",
         default=None,
         help=(
-            "Day to sync, ISO YYYY-MM-DD. Defaults to today. Naming a day "
+            "Day to sync, ISO YYYY-MM-DD. Defaults to yesterday - the first day whose logging is complete. Naming a day "
             "explicitly means that day only — pass --catchup as well to "
             "backfill up to it."
         ),
@@ -1186,7 +1186,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("Nothing to do: pass --sync-garmin and/or --sync-cronometer.")
 
     repository = LocalJSONRepository()
-    target = _iso(args.date or date.today().isoformat())
+    # A bare run targets yesterday, not today: the day is only complete once
+    # it is over. Cronometer entries logged the evening before are in by then,
+    # and a 07:30 same-day fetch was always asking about a half-empty day -
+    # worse, its checkpoint then marked that day done, so late-logged entries
+    # were stranded forever (get_sync_date_range never re-requests a
+    # checkpointed date). Syncing yesterday means each day is fetched exactly
+    # once, complete.
+    target = _iso(args.date or (date.today() - timedelta(days=1)).isoformat())
     # Naming a date is a request for that date. Catchup stays on for a bare
     # run, which is the shape a scheduled sync takes and where a missed day
     # must not be lost — but "--date 2026-08-26" quietly fetching six other
