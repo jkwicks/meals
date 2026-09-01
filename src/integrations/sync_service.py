@@ -97,6 +97,7 @@ import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -689,6 +690,76 @@ class CronometerSyncService:
             end=datetime.strptime(end, "%Y-%m-%d").date(),
         )
 
+    def _session_cache_path(self) -> Optional[Path]:
+        """Where `cronometer_mcp` keeps the session this service would resume.
+
+        Asked of a constructed client rather than spelled out here, so the two
+        cannot drift: `CronometerClient` reads `CRONOMETER_DATA_DIR` with its
+        own default beside it, and a second copy of that rule would go stale
+        the moment upstream moved either half. Constructing a client issues no
+        requests, so asking costs nothing.
+
+        `None` when the attribute has gone, which is the same shape
+        `GarminSyncService.client()` uses across garminconnect's two lines and
+        for a sharper version of the same reason: a guessed path here would
+        not fail to persist a token, it would delete somebody's file.
+        """
+        from cronometer_mcp import CronometerClient  # type: ignore[import-not-found]
+
+        client = CronometerClient(username=self.username, password=self.password)
+        return getattr(client, "_cookie_path", None)
+
+    def _clear_session_cache(self) -> bool:
+        """Delete the cached session. True only if one was actually there.
+
+        The return value is the guard on retrying, not a courtesy. A run that
+        had no cached session already logged in fresh, so its failure is a
+        real one - wrong credentials, a lapsed subscription - and retrying
+        would double the request cost of every genuine auth failure against an
+        endpoint that throttles.
+        """
+        path = self._session_cache_path()
+        if path is None or not path.exists():
+            return False
+        path.unlink(missing_ok=True)
+        return True
+
+    def _fetch_rows(self, start: str, end: str) -> List[dict]:
+        """`_rows_in_process`, retried **once** against a cleared session.
+
+        `cronometer_mcp` resumes a saved session and validates it by minting an
+        auth token - but GWT-RPC answers an expired session with HTTP **200**
+        and a serialized exception in the body, so `raise_for_status` passes
+        and the token regex (`re.search(r'"([^"]+)"', ...)`) returns the first
+        quoted string in that payload: the exception's own class name and type
+        hash, `com.cronometer.shared.user.exceptions.NotLoggedInException/
+        844385496`. Non-empty, so the restore is judged a success, the login is
+        skipped, and that string is sent as the export nonce - which is the 403
+        seen in the wild, quoting the exception back at itself in the URL.
+
+        Nothing below this line can tell that token from a real one and nothing
+        above it can see the token at all, so the failure is only recognisable
+        once the 403 has happened. Clearing the file and letting a fresh
+        instance log in properly is the whole recovery, and it is worth doing
+        here rather than by hand because the session expires on Cronometer's
+        clock, not ours: every sync eventually meets this.
+
+        Exactly one retry, and only when there was a session to clear. A second
+        attempt is another full login - about seven requests - against an
+        endpoint that rate-limits, so a retry loop here would turn one stale
+        cookie into the account-level throttle `_is_rate_limited` exists to
+        survive.
+        """
+        try:
+            return self._rows_in_process(start, end)
+        except Exception as exc:
+            if not _is_stale_session(exc) or not self._clear_session_cache():
+                raise
+        # Outside the `except` block on purpose: a failure on the retry is
+        # about the fresh login, and chaining the stale-session 403 onto it
+        # would present the symptom this just cleared as the cause.
+        return self._rows_in_process(start, end)
+
     def fetch_daily_summary(self, target_date: str) -> dict:
         """What was actually eaten on `target_date`, as a `daily_actuals` row.
 
@@ -699,7 +770,7 @@ class CronometerSyncService:
         """
         day = _iso(target_date)
         self._require_credentials()
-        return _daily_summary_row(self._rows_in_process(day, day), day)
+        return _daily_summary_row(self._fetch_rows(day, day), day)
 
     def fetch_range_summaries(self, dates: List[str]) -> Dict[str, dict]:
         """Every day in `dates`, fetched in **one** export request.
@@ -728,7 +799,7 @@ class CronometerSyncService:
         if not days:
             return {}
         self._require_credentials()
-        rows = self._rows_in_process(days[0], days[-1])
+        rows = self._fetch_rows(days[0], days[-1])
         # `_daily_summary_row`'s undated-row fallback is only sound for a
         # one-day request — over a span it would hand the same row to every
         # day in it. See `single_day_request` there.
@@ -1094,6 +1165,59 @@ def _rate_limit_wait_hint(response: "requests.Response") -> str:
     return f"Cronometer says retry after {eta.strftime('%Y-%m-%d %H:%M UTC')}."
 
 
+# The class name Cronometer serializes into a GWT-RPC failure when the session
+# behind a request has expired. It reaches us in an export *URL* rather than an
+# error body - see `CronometerSyncService._fetch_rows` for how.
+_STALE_SESSION_MARKER = "NotLoggedInException"
+
+
+def _is_stale_session(exc: Exception) -> bool:
+    """Whether `exc` is the export endpoint refusing a dead saved session.
+
+    Two independent triggers, because the poisoned nonce can surface in two
+    shapes. The marker test catches the observed one, where the exception's own
+    name was sent as the nonce and comes back url-encoded in the 403's message.
+    The bare 403 is the backstop for the day upstream stops echoing the URL, or
+    Cronometer serializes some other session exception: `/export` has no other
+    reason to refuse a request that carried credentials this far.
+
+    Deliberately not 401, and deliberately not every 4xx. Widening it would
+    start clearing sessions and re-logging-in over failures a fresh login
+    cannot fix, which is exactly the extra round trip a throttled account
+    cannot afford. 429 in particular must never land here - that one is
+    account-level, `_is_rate_limited` owns it, and a re-login in response to it
+    would be the single worst thing to do next.
+    """
+    if _STALE_SESSION_MARKER in str(exc):
+        return True
+    return (
+        isinstance(exc, requests.exceptions.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code == 403
+    )
+
+
+def _stale_session_hint() -> str:
+    """Why a 403 quoting a Java exception is not the bad password it looks like.
+
+    The same job `_rate_limit_wait_hint` does for a 429: the raw message is
+    `403 Client Error:  for url: ...nonce=com.cronometer.shared.user.
+    exceptions.NotLoggedInException%2F844385496...`, which reads as a
+    credentials problem and sends you to re-check an `.env` that was right all
+    along - or worse, to retry, against an endpoint that throttles.
+    """
+    return (
+        "That 403 is an expired saved session, not a bad password: the client "
+        "resumes a cached session and validates it by minting an auth token, "
+        "but Cronometer answers an expired one with HTTP 200 and a serialized "
+        "NotLoggedInException - so the exception's own name gets sent as the "
+        "export nonce. Any cached session has now been cleared and the next "
+        "run will log in fresh. If it repeats on a clean login, check "
+        "CRONOMETER_USERNAME/CRONOMETER_PASSWORD and that the account's "
+        "subscription still allows web login."
+    )
+
+
 def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> List[dict]:
     """Every date in `dates`: one fetch for the span, then persisted per day.
 
@@ -1127,6 +1251,13 @@ def sync_cronometer_range(dates: List[str], repository: LocalJSONRepository) -> 
         if _is_rate_limited(exc):
             failure["rate_limited"] = True
             failure["wait_hint"] = _rate_limit_wait_hint(exc.response)
+        elif _is_stale_session(exc):
+            # Reaching here means the retry inside `_fetch_rows` failed too, or
+            # there was no cached session to clear in the first place. Either
+            # way the cache is gone now, so the next run starts clean - what
+            # this flag buys is a legible reason, not a recovery.
+            failure["stale_session"] = True
+            failure["wait_hint"] = _stale_session_hint()
         return [failure]
 
     results = []
@@ -1272,7 +1403,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         cronometer_results = sync_cronometer_range(dates, repository)
         for outcome in cronometer_results:
             day = outcome["date"]
-            if outcome.get("rate_limited"):
+            if outcome.get("rate_limited") or outcome.get("stale_session"):
                 print(f"Cronometer sync failed for {day}: {outcome['error']}", file=sys.stderr)
                 print(f"  {outcome['wait_hint']}", file=sys.stderr)
                 failed = True

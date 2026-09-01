@@ -55,13 +55,14 @@ from ui_theme import (
     pluralize,
 )
 from week import (
-    DEFAULT_INVENTORY_RULES,
     MODE_COOK,
+    STORAGE_CLASS_DEFAULT,
     WeekSpec,
     clear_batch_links,
     clear_cuisines,
     clear_recipe_pins,
     clear_styles,
+    fridge_day_gaps,
     humanize,
     slot_label,
     spread_batch,
@@ -75,8 +76,8 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
     **Each batch takes one meal type, straight across the front of the week.**
     Bulk prep claims the lunches, long cook claims the dinners, both starting
     at day 1 and running as far as the fridge window allows — so with the
-    shipped config, Monday-Wednesday lunches are all one prepped dish and
-    Monday-Wednesday dinners are all another. Nothing is searched for and
+    shipped config, Monday-Thursday lunches are all one prepped dish and
+    Monday-Thursday dinners are all another. Nothing is searched for and
     nothing competes: the two batches cannot collide because they are on
     different rows of the grid, and neither can drift late because both start
     at the earliest day there is.
@@ -109,17 +110,21 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
     generating a mislabeled meal silently.
     """
     target_servings = planning_rule(config, "batch_target_servings")
-    fridge_safe_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
-        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
-    )
+    # The DEFAULT storage window, because no recipe exists yet — the grid is
+    # built before generation runs, so nothing here knows whether the dish
+    # will turn out to be a rice tray bake. `planner.build_storage_rule` tells
+    # the model the span each slot needs and `reject_short_storage_class`
+    # rejects a class too short for it, which is what makes planning against
+    # the default safe rather than optimistic.
+    safe_day_gaps = fridge_day_gaps(STORAGE_CLASS_DEFAULT, config)
     # These batches are cooked on prep day — the day *before* `spec.days[0]`,
     # the eighth column `ui_cards.prep_day_column` draws — not on the day
     # their anchor slot happens to sit. So the bound that matters is measured
     # from there: day index i is i+1 days out of the fridge, giving indices
-    # 0..fridge_safe_days-1. `max_span_days` (anchor-relative) is deliberately
+    # 0..safe_day_gaps-1. `max_span_days` (anchor-relative) is deliberately
     # not passed as well; it can only ever be looser than this one here, since
     # every anchor is day 0.
-    max_day_index = fridge_safe_days - 1
+    max_day_index = safe_day_gaps - 1
     anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
 
     if config.get("bulk_prep_enabled"):

@@ -1399,6 +1399,76 @@ class TestAGeneratedLongCookIsRejectedToo(unittest.TestCase):
             self.check("Thursday", self.dish(long_oven_cook=True), anchored)
 
 
+class TestStorageMirrorsTheLongCookRuleAndDivergesOnOneThing(unittest.TestCase):
+    """`reject_short_storage_class` copies `reject_misplaced_long_cook`'s shape
+    almost exactly — same two-axis split, same one shared function underneath,
+    same prompt-half-then-hard-half pairing — and the one place it deliberately
+    does not is the batch anchor.
+
+    That exemption is the whole contrast, and it is why these live beside each
+    other. The long-cook rule exempts an anchor because the *day* judgement is
+    wrong for food cooked before the week started. The storage rule must not,
+    because it is about the *window*: the anchor's span is measured from prep
+    day and is therefore **longer**. Exempting it there would skip precisely
+    the dish in the week that keeps longest out of the fridge, which is the
+    one this rule exists for.
+    """
+
+    SPEC = None
+
+    def setUp(self):
+        self.spec = spec_with({
+            "Tuesday:dinner": {"mode": MODE_LEFTOVER, "source": "Monday:dinner"},
+            "Wednesday:dinner": {"mode": MODE_LEFTOVER, "source": "Monday:dinner"},
+        })
+        self.anchored = dict(BASE_CONFIG, long_cook_anchor="Monday:dinner")
+
+    def dish(self, storage_class=None):
+        return recipe("Tray bake", "dinner").model_copy(
+            update={"storage_class": storage_class}
+        )
+
+    def spans(self, config):
+        return dict(config, storage_spans=planner.storage_spans(self.spec, config))
+
+    def test_the_anchor_is_exempt_from_the_day_rule_and_not_from_the_window(self):
+        long_cook = self.dish("rice_or_pasta").model_copy(
+            update={"long_oven_cook": True, "total_time_minutes": 300}
+        )
+        # The day judgement lets it through, exactly as it does today.
+        planner.reject_misplaced_long_cook([("Monday", long_cook)], self.anchored)
+        # The window does not, and for the opposite reason: prep day makes the
+        # span longer, not the schedule more forgiving.
+        with self.assertRaises(ValueError):
+            planner.reject_short_storage_class(
+                [("Monday", long_cook)], self.spans(self.anchored)
+            )
+
+    def test_both_halves_are_stated_before_they_are_enforced(self):
+        """`WEEKEND_PREP_LIMIT_MINUTES` learned this from the other direction
+        — stated in the prompt and enforced nowhere, so a 200-minute weekend
+        recipe passed validation while violating its own brief. Here the
+        prompt names the figure the validator then uses."""
+        config = self.spans(self.anchored)
+        rule = planner.build_storage_rule(config, ["Monday:dinner"])
+        self.assertIn("Monday dinner", rule)
+        self.assertIn("still good 3 days", rule)
+        with self.assertRaises(ValueError) as caught:
+            planner.reject_short_storage_class(
+                [("Monday", self.dish("rice_or_pasta"))], config
+            )
+        self.assertIn("next 3 days", str(caught.exception))
+
+    def test_a_single_day_cook_gets_neither_sentence(self):
+        """Both rules emit nothing when they have nothing to say, so a plain
+        week's prompt is byte-identical to before either existed."""
+        config = self.spans(BASE_CONFIG)
+        self.assertEqual(planner.build_storage_rule(config, ["Thursday:dinner"]), "")
+        self.assertEqual(
+            planner.build_long_cook_day_rule(BASE_CONFIG, ["Saturday"]), ""
+        )
+
+
 class TestALongCookNeedsADayWithTheHours(unittest.TestCase):
     """A `long_oven_cook` favourite may only claim a weekend slot.
 

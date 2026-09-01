@@ -112,6 +112,7 @@ from week import (
     day_date,
     default_week_spec,
     eaten_on,
+    fridge_day_gaps,
     humanize,
     leftover_link_error,
     link_leftover,
@@ -1320,10 +1321,12 @@ class PlannerState:
                 update={
                     "portions": target,
                     "eaten_by": list(claims.get(event.slot_id, [event.slot_id])),
-                    # `self.config` threaded through so the storage note uses the
-                    # configured `inventory_rules.fridge_safe_days`. Omitting it
-                    # silently fell back to week.DEFAULT_INVENTORY_RULES, so an
-                    # edited config would disagree with the note on the card.
+                    # `self.config` threaded through so the storage note uses
+                    # the configured `inventory_rules.storage_windows`.
+                    # Omitting it silently fell back to
+                    # week.DEFAULT_STORAGE_WINDOWS, so an edited config would
+                    # disagree with the note on the card. The dish's own class
+                    # comes off the recipe itself, inside `scale_to_servings`.
                     # `is_prepped_ahead` so a batch cooked in the prep
                     # session keeps counting its fridge days from the pan —
                     # `scale_to_servings` rewrites the storage note it wrote
@@ -2458,7 +2461,17 @@ class PlannerState:
             # week started.
             prepped_ahead = is_prepped_ahead(event, self.week_plan)
             if sunday_prepped:
-                fridge_safe_days = self.config["inventory_rules"]["fridge_safe_days"]
+                # The dish's own window, not one global number — a rice tray
+                # bake reaches its freeze point two days before a stew does,
+                # so two cards in one week can now legitimately differ. The
+                # identical `fridge_day_gaps` call `planner.storage_note`
+                # makes for the same event, deliberately: that pair has had to
+                # be reconciled twice already (`cook_day_index`, then the
+                # prep-day origin) and a per-dish window is its third chance
+                # to drift.
+                safe_day_gaps = fridge_day_gaps(
+                    event.recipe.storage_class, self.config
+                )
                 # Per-slot distance from its cook day, not `span_days`'s
                 # whole-batch span to its *farthest* eater — a Tuesday
                 # portion of a batch that runs to next Sunday is still
@@ -2468,7 +2481,7 @@ class PlannerState:
                 days_since_cook = spec.day_index(slot.day) - cook_day_index(
                     spec, event.day, prepped_ahead
                 )
-                frozen = days_since_cook >= fridge_safe_days
+                frozen = days_since_cook >= safe_day_gaps
                 prep_badge = "freezer" if frozen else "fridge"
                 storage_suffix = (
                     " — frozen, thaw ahead of eating" if frozen else " — kept refrigerated"

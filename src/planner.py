@@ -49,7 +49,10 @@ from shopping import (
 )
 from week import (
     DEFAULT_INVENTORY_RULES,
+    DEFAULT_STORAGE_WINDOWS,
     MACRO_KEYS,
+    STORAGE_CLASSES,
+    STORAGE_CLASS_DEFAULT,
     DEFAULT_MEAL_TYPES,
     DEFAULT_SERVINGS_PER_MEAL,
     MODE_COOK,
@@ -62,6 +65,7 @@ from week import (
     day_date,
     default_week_spec,
     eaten_on,
+    fridge_day_gaps,
     humanize,
     location_for,
     location_rule,
@@ -73,7 +77,11 @@ from week import (
     shopping_windows,
     skip_estimate_totals,
     slot_id,
+    prep_day_batch_slot_ids,  # re-exported: see its docstring for why it moved
     slot_label,
+    span_days,
+    storage_safety_errors,
+    storage_class_label,
     styles_for,
     validate_week,
     week_date_range,
@@ -1240,6 +1248,138 @@ def reject_misplaced_long_cook(pairs, config: Optional[dict]) -> None:
                 "the limit."
             )
 
+def storage_spans(spec: WeekSpec, config: Optional[dict]) -> Dict[str, int]:
+    """Slot id -> how many day-gaps that cook's food has to survive.
+
+    Injected onto `config` as `storage_spans` by the three generation entry
+    points, in memory only — the same channel `nudge_foods`,
+    `inventory_ledger` and `target_locks` ride on, and covered by the standing
+    rule that `save_config_keys` merges *named* keys rather than writing back
+    whatever the config dict happens to hold.
+
+    It is one dict read by two places that would otherwise each derive the
+    span themselves: `build_storage_rule` (which tells the model what the slot
+    needs) and `reject_short_storage_class` (which rejects a class that
+    doesn't meet it). A model rejected against a figure different from the one
+    it was given is a retry spent on the app's own inconsistency.
+
+    **Measured from the day the food is actually cooked**, which for a batch
+    anchor is prep day rather than its own grid slot (`week.PREP_DAY_INDEX`).
+    That makes an anchor's span *longer*, not shorter, and it is the case that
+    most needs the rule: `apply_batch_selections` anchors both batches on day
+    1 while the pan was on the Sunday before the week started. CLAUDE.md
+    records this exact off-by-one being fixed twice already — once as
+    `max_day_index`, once in `storage_note` — so it is the third opportunity
+    to reintroduce it.
+    """
+    prepped_ahead = prep_day_batch_slot_ids(config)
+    return {
+        cook.id: span_days(spec, cook.id, cook.id in prepped_ahead)
+        for cook in spec.cook_slots()
+    }
+
+
+def build_storage_rule(config: Optional[dict], slot_ids: Iterable[str]) -> str:
+    """Which of this call's slots have to keep, and for how long.
+
+    The prompt half of `reject_short_storage_class`, and it exists for the
+    reason `build_long_cook_day_rule` does: a model rejected for breaking a
+    rule it was never given burns a 30s-3min retry to discover a constraint
+    one sentence would have stated.
+
+    **The ordering problem this solves.** `spread_batch` decides how far a
+    batch reaches while the grid is built, and generation happens afterwards
+    — so at the moment the span is chosen nothing knows whether the dish will
+    turn out to be a rice tray bake. Planning short always would be safe and
+    useless (no batch could reach past two days, which removes bulk cooking);
+    planning long and validating afterwards throws the run away to discover
+    something a sentence could have stated. Telling the model the span the
+    slot needs is the third way out, and it is what this codebase already does
+    twice for exactly this shape.
+
+    **Emitted only when a span exceeds the short window**, so a week whose
+    cooks are all eaten within it produces a byte-identical prompt to before
+    this feature existed — the same convention every rule in
+    `build_generation_rules` follows. The short window is the unclassified
+    one, which is the shortest row in the table: any dish at all can survive a
+    span inside it, so there is nothing to ask for.
+
+    Slots are grouped by the figure they need rather than reduced to the
+    largest, because the validator judges each slot against its own span and
+    the prompt has to name the rule it is judged against. Keyed by slot id
+    rather than by day because that is what `storage_spans` is keyed by, and
+    because one `generate_day` call covers several meal types on one day.
+    """
+    spans = (config or {}).get("storage_spans") or {}
+    short = fridge_day_gaps(None, config)
+    needed: Dict[int, List[str]] = {}
+    for value in slot_ids:
+        span = spans.get(value, 0)
+        if span > short:
+            needed.setdefault(span, []).append(slot_label(value))
+    if not needed:
+        return ""
+    clauses = "; ".join(
+        f"{', '.join(group)} (still good {span} days after cooking)"
+        for span, group in sorted(needed.items())
+    )
+    return (
+        "- These are cooked once and eaten over several days, refrigerated in "
+        f"between, so each has to still be good on the last of them: {clauses}"
+        ". Build them as dishes that genuinely keep, and set storage_class to "
+        f"the kind of dish each one is (one of: {', '.join(STORAGE_CLASSES)}). "
+        "Do NOT build them on rice, pasta, noodles, couscous or other cooked "
+        f"grains — those keep only {short} days whatever else is in the dish, "
+        "and a dish labelled as something it is not will be rejected. Serve "
+        "the grain freshly cooked alongside if you want one.\n"
+    )
+
+
+def reject_short_storage_class(pairs, config: Optional[dict]) -> None:
+    """Raise if a dish cannot keep as long as its slot needs it to.
+
+    The hard half of `build_storage_rule`, over the two-axis split
+    `reject_misplaced_long_cook` already uses — `DayRecipes` from its
+    context's single day, `MealTypeWeekRecipes` over its own day keys, this
+    one shared function underneath so the two axes cannot disagree about a
+    Tuesday.
+
+    **A dropped field is caught here, not defaulted away.** `storage_class` is
+    exactly the kind of self-report `is_sunday_prepped` was broken by: the
+    anchor came back with both its flags False despite the per-slot directive
+    telling the model to set one. So an omitted class resolves to the shortest
+    window (`week.storage_window_for`), and a slot needing longer than that
+    rejects — which is the model being told to answer the question rather than
+    the app guessing on its behalf.
+
+    **The batch anchors are emphatically not exempt**, unlike in
+    `reject_misplaced_long_cook`. That rule exempts them because the *day*
+    judgement is wrong for food cooked before the week started; this one is
+    about the *window*, and their span is measured from prep day and is
+    therefore longer. It is the case that most needs the rule.
+
+    Raising is load-bearing, not defensive: instructor catches it and hands
+    the model its own output back to retry.
+    """
+    spans = (config or {}).get("storage_spans") or {}
+    for day, recipe in pairs:
+        needed = spans.get(slot_id(day, recipe.meal_type), 0)
+        if needed <= 0:
+            continue
+        allowed = fridge_day_gaps(recipe.storage_class, config)
+        if allowed >= needed:
+            continue
+        raise ValueError(
+            f"{day}: \"{recipe.name}\" is cooked once and eaten over the "
+            f"next {needed} days, but {storage_class_label(recipe.storage_class)} "
+            f"is only good for {allowed} days refrigerated. Either replace it "
+            "with a dish that genuinely keeps that long and set storage_class "
+            f"to what it is (one of: {', '.join(STORAGE_CLASSES)}), or, if "
+            "this dish really does keep, set storage_class to the category it "
+            "actually belongs to — do not leave it unset."
+        )
+
+
 # The three rules that differ by axis: whether "respect the style", "vary the
 # ingredients" and "hit your budget" are scoped across one day's meal types or
 # across one meal type's days.
@@ -1333,6 +1473,7 @@ def build_generation_rules(
     config: dict,
     *,
     days: List[str],
+    slot_ids: Iterable[str] = (),
     style_rule: str,
     variety_rule: str,
     budget_rule: str,
@@ -1365,7 +1506,10 @@ def build_generation_rules(
     through to `build_sourcing_rule` and `build_long_cook_day_rule`, the two
     rules here that need to know which cook days are in scope — one because
     what the shops stock varies by day, the other because what the *day*
-    has room for does.
+    has room for does. `slot_ids` goes to `build_storage_rule`, which needs
+    the *slots* rather than the days: how long a dish has to keep is a fact
+    about one cook, and one `generate_day` call covers several on a day.
+    Defaulted to empty so a caller with no spans in scope emits nothing.
     """
     dietary_rules = config["dietary_rules"]
     return (
@@ -1401,6 +1545,7 @@ def build_generation_rules(
         f"{LONG_OVEN_COOK_RULE}"
         f"{ELAPSED_TIME_RULE}"
         f"{build_long_cook_day_rule(config, days)}"
+        f"{build_storage_rule(config, slot_ids)}"
         f"{response_shape_rule}"
         "- Do not show your work, explain your reasoning, or narrate your "
         "process. Respond with the structured data only."
@@ -1652,10 +1797,43 @@ class SourcingRules(BaseModel):
     max_seafood_meals_per_week: Optional[int] = None
 
 
+class StorageWindows(BaseModel):
+    """`inventory_rules.storage_windows` — how long each kind of dish keeps.
+
+    Typed loosely (`Dict[str, int]`) rather than a field per class, for the
+    same reason `location_rules` is: the *shape* is open. A new storage class
+    is a row in a food-safety reference table, and adding one should not be a
+    schema change. `week.storage_window_for` is what knows the vocabulary, and
+    it fails short on anything it does not recognise, so an unknown row here
+    can only ever shorten a window rather than silently lengthen one.
+
+    Fridge figures are **hours** and freezer figures are **months** — two
+    different units because the two guidance tables are stated that way, and
+    `week.storage_day_gaps` is the one place hours become the days every
+    surface actually prints. Deliberately no day figure beside the hour one:
+    they are different claims and a reader would take them for the same.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fridge: Dict[str, int] = Field(
+        default_factory=lambda: dict(DEFAULT_STORAGE_WINDOWS["fridge"])
+    )
+    freezer_months: Dict[str, int] = Field(
+        default_factory=lambda: dict(DEFAULT_STORAGE_WINDOWS["freezer_months"])
+    )
+
+
 class InventoryRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fridge_safe_days: int = DEFAULT_INVENTORY_RULES["fridge_safe_days"]
+    # There is deliberately no `fridge_safe_days` here any more. It was one
+    # global number read in six places and it was wrong in both directions at
+    # once — see `week.DEFAULT_STORAGE_WINDOWS`. Keeping it beside
+    # `storage_windows` would leave two places to state the same thing, free
+    # to disagree, which is the exact complaint this file makes about
+    # `weekly_schedule`'s inert calories.
+    storage_windows: StorageWindows = Field(default_factory=StorageWindows)
     perishable_day_gap: int = DEFAULT_INVENTORY_RULES["perishable_day_gap"]
 
 
@@ -1947,15 +2125,14 @@ def planning_rule(config: Optional[dict], key: str):
     return rules[key]
 
 
-def inventory_rule(config: Optional[dict], key: str):
-    """Read one `inventory_rules` value out of `config`. Same contract as
-    `planning_rule`, for the same reason: `inventory_rules` is one of the
-    five core config files merged and validated at load, so a config that has
-    actually been loaded is guaranteed to carry it."""
-    rules = DEFAULT_INVENTORY_RULES if config is None else config["inventory_rules"]
-    if key not in rules:
-        return DEFAULT_INVENTORY_RULES[key]
-    return rules[key]
+# `inventory_rule(config, key)` lived here — the `planning_rule` twin for
+# `inventory_rules` — and its only caller was `storage_note` reading
+# `fridge_safe_days`. That key is gone (see `week.DEFAULT_STORAGE_WINDOWS`),
+# and the section's one remaining key, `perishable_day_gap`, is read through
+# the module constant rather than through config; that mismatch is filed in
+# CHANGE-QUEUE.md with its own plan. Deleted rather than kept as a seam for
+# that fix, because a reader nothing reads is the exact shape this codebase
+# has now closed four times from the other direction.
 
 
 # Share of a workout's estimated_burn_kcal that flows to carbs vs. protein —
@@ -3119,6 +3296,43 @@ def favorite_fits_day(record: dict, day: str, config: Optional[dict] = None) -> 
     return day_allows_long_cook(day, config)
 
 
+def favorite_keeps_long_enough(
+    record: dict, slot_id_value: str, config: Optional[dict] = None
+) -> bool:
+    """False for a favourite that cannot keep as long as its slot needs.
+
+    The sibling of `favorite_fits_day`, and a second axis rather than a second
+    reading of the same one: that function asks whether the *day* has the
+    hours to cook the dish, this asks whether the *dish* survives to the last
+    meal that eats it. A slow-cooked stew passes one and a rice tray bake
+    fails the other, and neither implies the other.
+
+    It exists because a pinned favourite is a **third route to a long span**,
+    beside a batch spread and a hand-built leftover chain, and it is the one
+    route no prompt or response validator can see: a favourite is never
+    generated, so `build_storage_rule` never briefs it and
+    `reject_short_storage_class` never judges it. Without this the two halves
+    would disagree in the mirror image of the bug `favorite_fits_day` was
+    written for — there a saved braise was refused a Thursday that a generated
+    braise could take; here a generated rice dish would be refused a span a
+    saved one could quietly claim.
+
+    Reads the raw catalog dict for the same reason `favorite_fits_day` does:
+    selection runs before anything is validated, and an absent
+    `storage_class` reads as None — which is the shortest window, not the
+    default one. Every recipe in the shipped catalog predates this field, so
+    that is the common case and not an edge one: an unclassified favourite can
+    take a slot eaten within two days of its cook, and anything longer goes to
+    generation, where the model is asked what the dish actually is.
+    """
+    spans = (config or {}).get("storage_spans") or {}
+    needed = spans.get(slot_id_value, 0)
+    if needed <= 0:
+        return True
+    storage_class = (record.get("recipe") or {}).get("storage_class")
+    return fridge_day_gaps(storage_class, config) >= needed
+
+
 def cuisine_run_ends(slots: List[SlotSpec]) -> List[SlotSpec]:
     """The last slot of each contiguous same-cuisine run, in week order.
 
@@ -3244,7 +3458,11 @@ def select_favorite_assignments(
                 favorites, "breakfast", reuse_days.get("breakfast", 7),
                 last_scheduled, today, used,
             )
-            if all(favorite_fits_day(record, slot.day, config) for slot in claimed)
+            if all(
+                favorite_fits_day(record, slot.day, config)
+                and favorite_keeps_long_enough(record, slot.id, config)
+                for slot in claimed
+            )
         ]
         if pick:
             record = pick[0]
@@ -3259,7 +3477,12 @@ def select_favorite_assignments(
         )
         if not pick:
             break
-        fits = [record for record in pick if favorite_fits_day(record, slot.day, config)]
+        fits = [
+            record
+            for record in pick
+            if favorite_fits_day(record, slot.day, config)
+            and favorite_keeps_long_enough(record, slot.id, config)
+        ]
         # `continue`, not `break`: nothing eligible suits *this* day, but a
         # later slot may be a weekend one that it does suit. Only an empty
         # `pick` means the favourites are actually spent.
@@ -3283,7 +3506,12 @@ def select_favorite_assignments(
         )
         if not pick:
             break
-        fits = [record for record in pick if favorite_fits_day(record, slot.day, config)]
+        fits = [
+            record
+            for record in pick
+            if favorite_fits_day(record, slot.day, config)
+            and favorite_keeps_long_enough(record, slot.id, config)
+        ]
         if not fits:
             continue
         record = fits[0]
@@ -3560,6 +3788,22 @@ class Recipe(BaseModel):
             "False (older saved recipes predate this field)."
         ),
     )
+    storage_class: Optional[str] = Field(
+        default=None,
+        description=(
+            "What kind of dish this is for the purpose of how long it keeps, "
+            "which is a food-safety question and not a preference. Exactly "
+            f"one of: {', '.join(STORAGE_CLASSES)}. Use rice_or_pasta for any "
+            "dish built on cooked rice, pasta, noodles, couscous or other "
+            "cooked grains, however it is served — those keep half as long as "
+            "everything else. Use default for an ordinary cooked dish that "
+            "fits none of the other categories. Defaults to None, which means "
+            "nobody classified it and is NOT the same answer as 'default': an "
+            "unclassified dish is treated as the shortest-keeping kind, so "
+            "omitting this field costs the dish storage life rather than "
+            "quietly granting it."
+        ),
+    )
 
 
     @field_validator("prep_time_minutes")
@@ -3661,7 +3905,15 @@ class Recipe(BaseModel):
 
         prep_notes = scaled.prep_notes
         if not prep_notes or prep_notes.startswith(STORAGE_NOTE_PREFIX):
-            prep_notes = storage_note(target_servings, keeps_for_days, config) or None
+            prep_notes = (
+                storage_note(
+                    target_servings,
+                    keeps_for_days,
+                    config,
+                    storage_class=self.storage_class,
+                )
+                or None
+            )
 
         return scaled.model_copy(update={"servings": target_servings, "prep_notes": prep_notes})
 
@@ -3689,6 +3941,25 @@ class DayRecipes(BaseModel):
         day = context.get("day")
         if day:
             reject_misplaced_long_cook(
+                ((day, recipe) for recipe in self.recipes), context.get("config")
+            )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_storage_class(self, info: ValidationInfo) -> "DayRecipes":
+        """A dish must keep as long as its slot needs it to.
+
+        Same two-axis split as `enforce_long_cook_day` directly above, over
+        the same kind of context, and the same shared function
+        (`planner.reject_short_storage_class`) as the `MealTypeWeekRecipes`
+        copy — so the two axes cannot disagree about a Tuesday. The prompt
+        half is `build_storage_rule`, which reads the same `storage_spans`
+        this is judged against.
+        """
+        context = info.context or {}
+        day = context.get("day")
+        if day:
+            reject_short_storage_class(
                 ((day, recipe) for recipe in self.recipes), context.get("config")
             )
         return self
@@ -3775,6 +4046,23 @@ class MealTypeWeekRecipes(BaseModel):
         underneath, so the two axes cannot disagree about a Tuesday.
         """
         reject_misplaced_long_cook(
+            self.recipes.items(), (info.context or {}).get("config")
+        )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_storage_class(self, info: ValidationInfo) -> "MealTypeWeekRecipes":
+        """Per-day version of DayRecipes.enforce_storage_class (see that
+        docstring). Over `self.recipes`' own day keys, since a single call
+        here spans up to seven days each needing their own answer — the same
+        shape as `enforce_long_cook_day` directly above, and the same shared
+        function underneath.
+
+        This is the axis that matters most for storage: a whole meal type's
+        week is exactly where the batch anchors live, and their spans are the
+        long ones.
+        """
+        reject_short_storage_class(
             self.recipes.items(), (info.context or {}).get("config")
         )
         return self
@@ -4002,22 +4290,36 @@ def fit_recipe_to_budget(
 STORAGE_NOTE_PREFIX = "Yields "
 
 
-def storage_note(portions: int, keeps_for_days: int, config: Optional[dict] = None) -> str:
+def storage_note(
+    portions: int,
+    keeps_for_days: int,
+    config: Optional[dict] = None,
+    storage_class: Optional[str] = None,
+) -> str:
     """How to keep a batch that has to last until the meal that finishes it.
 
     Empty for a single serving eaten the day it's cooked — there is nothing to
     say, and `scale_to_servings` leaves `prep_notes` alone rather than writing one.
 
-    `config` supplies `inventory_rules.fridge_safe_days`; omitted (or missing
-    the key) falls back to week.DEFAULT_INVENTORY_RULES's value.
+    `storage_class` is the dish's own answer to how long it keeps, so two
+    cards in one week can now legitimately say different things — a rice tray
+    bake reaches its freeze point two days before a stew does. It resolves
+    through `week.fridge_day_gaps`, which is the identical call
+    `ui_state.slot_views` makes for the per-card fridge/freezer badge: that
+    pair has had to be reconciled twice already (once for `cook_day_index`,
+    once for the prep-day origin) and a per-dish window is its third
+    opportunity to drift, so they read one function rather than two copies of
+    a threshold.
+
+    Says days and never hours — see `week.storage_day_gaps`.
     """
     if portions <= 1 or keeps_for_days <= 0:
         return ""
-    fridge_safe_days = inventory_rule(config, "fridge_safe_days")
+    safe_days = fridge_day_gaps(storage_class, config)
     storage = (
         "refrigerate in airtight containers"
-        if keeps_for_days < fridge_safe_days
-        else f"refrigerate what you'll eat within {fridge_safe_days} days and freeze the rest"
+        if keeps_for_days < safe_days
+        else f"refrigerate what you'll eat within {safe_days} days and freeze the rest"
     )
     return (
         f"{STORAGE_NOTE_PREFIX}{portions} portions, eaten across {keeps_for_days} day(s). "
@@ -4059,31 +4361,6 @@ def is_sunday_prepped(event: CookEvent, week_plan: WeekPlan) -> bool:
     if session.candidate_slot_ids:
         return event.slot_id in session.candidate_slot_ids
     return bool(event.recipe.long_oven_cook or event.recipe.bulk_prep_friendly)
-
-
-def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
-    """Slot ids this run cooks on prep day rather than on their own grid day.
-
-    The generation-side answer to the question `is_prepped_ahead` answers
-    afterwards, and it has to be a different lookup for a plain ordering
-    reason: `generate_sunday_prep_session` runs *after* every cook event is
-    built, so `candidate_slot_ids` does not exist yet when `build_cook_event`
-    needs to know how old the food will be. The anchors do — they were chosen
-    by `ui_generation.apply_batch_selections` and merged into `config` before
-    the first call — and they are the same two slots the session goes on to
-    stamp.
-
-    Empty for a CLI run, whose legacy `enable_sunday_prep` path names no
-    anchor in advance (`build_batch_roast_rule` lets the model pick its own
-    day, from the ones that have the hours), so those weeks count spans
-    exactly as they always have.
-    """
-    config = config or {}
-    return {
-        value
-        for value in (config.get("long_cook_anchor"), config.get("bulk_prep_anchor"))
-        if value
-    }
 
 
 def is_prepped_ahead(event: CookEvent, week_plan: WeekPlan) -> bool:
@@ -5289,6 +5566,7 @@ def generate_day(
         + build_generation_rules(
             config,
             days=[day],
+            slot_ids=[slot.id for slot in cook_slots],
             style_rule=DAY_STYLE_RULE,
             variety_rule=DAY_VARIETY_RULE,
             budget_rule=DAY_BUDGET_RULE,
@@ -5555,6 +5833,7 @@ def generate_meal_type_week(
         + build_generation_rules(
             config,
             days=days,
+            slot_ids=[slot.id for slot in cook_slots_by_day.values()],
             style_rule=(
                 WEEK_CUISINE_BLOCK_STYLE_RULE
                 if cuisine_continuity_instruction
@@ -5782,7 +6061,6 @@ def generate_sunday_prep_session(
     )
 
     max_active = config["max_prep_active_mins"]
-    fridge_safe_days = config["inventory_rules"]["fridge_safe_days"]
     candidate_briefs = "\n".join(build_sunday_prep_brief(event, spec) for event in candidates)
     if shake_event is not None:
         candidate_briefs += "\n" + build_shake_prep_brief(shake_event, shake_morning_count)
@@ -5822,10 +6100,12 @@ def generate_sunday_prep_session(
         "bakes unattended), so their passive time overlaps with the active "
         "chopping/portioning/bagging work for the other dishes, rather than "
         "the whole session running start to end back to back.\n"
-        "- 4-Day Storage Rule: each candidate's Storage line below already "
-        "says whether it's fridge-only or fridge-plus-freezer (Python computed "
-        f"this from how many days it has to last against a {fridge_safe_days}-"
-        "day fridge-safe window) — do not recompute it. Any item marked to "
+        "- Storage: each candidate's Storage line below already says whether "
+        "it's fridge-only or fridge-plus-freezer (Python computed this from "
+        "how many days it has to last against how long that particular kind "
+        "of dish keeps — a rice or pasta dish keeps half as long as anything "
+        "else, so two candidates here can legitimately differ) — do not "
+        "recompute it. Any item marked to "
         "freeze must get its own explicit freeze step (portion, label, date, "
         "freeze) in the timeline; note the thaw lead time in that phase's "
         "description (e.g. 'move to fridge the night before eating') rather "
@@ -5957,7 +6237,7 @@ def build_cook_event(
     # anchor is prep day rather than its own slot's day (`week.PREP_DAY_INDEX`).
     # Every anchor is day 0, so measuring from the slot was short by exactly
     # one on every prep batch — and the maximum-span one then reported
-    # `fridge_safe_days - 1`, compared it against `fridge_safe_days`, and told
+    # one day short of its window, compared that against the window, and told
     # you to refrigerate the single batch in the week that is sitting at the
     # limit and is the whole reason `storage_note`'s freeze branch exists.
     cook_index = cook_day_index(spec, slot.day, slot.id in prep_day_batch_slot_ids(config))
@@ -6166,6 +6446,17 @@ async def generate_week_plan(
     # here rather than in `resolve_auto_choices` (where the style and cuisine
     # picks live) purely because it needs the repository, the same reason
     # `hydrate_config` and `select_nudge_foods` sit here.
+    # How long each cook's food has to keep, computed once off the settled
+    # grid and published in memory to everything downstream. Three readers,
+    # one dict, so the brief, the rejection and the favourite gate cannot
+    # disagree about a Thursday: `build_storage_rule` tells the model the
+    # figure, `reject_short_storage_class` judges the answer against it, and
+    # `favorite_keeps_long_enough` applies it to the route neither of those
+    # can see. Before the pins below for exactly that third reader; pinning
+    # cannot move a span anyway, since it changes what cooks a slot and never
+    # which slots eat it.
+    config = dict(config, storage_spans=storage_spans(spec, config))
+
     pinned_recipes: Dict[str, Recipe] = {}
     favorites = await (repository or LocalJSONRepository()).get_favorites()
     for pin_slot_id, record in select_favorite_assignments(
@@ -6576,6 +6867,25 @@ async def generate_week_plan(
         unique_plants=collect_unique_plants(ordered_events),
     )
 
+    # The food-safety backstop, run a second time now the dishes are real.
+    # `validate_week` already ran it over the bare grid, where every cook
+    # could only be judged against the default window because no recipe
+    # existed yet; this is where a dropped `storage_class`, a rice dish that
+    # slipped past `reject_short_storage_class`, or a pre-existing catalog
+    # favourite pinned into a long-span slot is finally visible.
+    #
+    # Reported, never corrected. It cannot raise — this runs after every stage
+    # has already succeeded, and losing a 20-minute week to a note is the
+    # worst possible outcome (the same rule "a failed meal must not fail the
+    # week" states) — and it cannot silently re-point a leftover either,
+    # because a plan quietly rewritten is one nobody checks.
+    for message in storage_safety_errors(
+        spec, config, {event.slot_id: event.recipe.storage_class for event in ordered_events}
+    ):
+        logger.warning("storage: %s", message)
+        if note_callback:
+            note_callback(f"Food safety: {message}")
+
     # The cascade above cannot reconcile a day whose every slot is pinned,
     # skipped or fed by another day's cook — there is no flexible slot left
     # to absorb the gap between what a leftover slot's weighted share
@@ -6631,6 +6941,14 @@ async def regenerate_single_day(
     rejections = await store.load_rejections()
     if rejections:
         config = dict(config, rejected_preferences=rejections)
+    # Same spans the full run computes, from the same function: a re-cooked
+    # slot still has to feed everything that claims it, and a replacement dish
+    # that keeps for less than the original would be a safety regression
+    # introduced by a fix. Unlike the seafood cap and the pantry ledger — both
+    # deliberately omitted here because a single replaced meal has no week in
+    # front of it to count against — this is a property of the slot, not of
+    # the week, so it applies unchanged.
+    config = dict(config, storage_spans=storage_spans(spec, config))
     targets = week_targets(spec, config)
     portions = portions_for(spec)
     claims = eaten_on(spec)
@@ -6759,6 +7077,14 @@ async def regenerate_single_meal(
     if rejections:
         config = dict(config, rejected_preferences=rejections)
 
+    # Same spans the full run computes, from the same function: a re-cooked
+    # slot still has to feed everything that claims it, and a replacement dish
+    # that keeps for less than the original would be a safety regression
+    # introduced by a fix. Unlike the seafood cap and the pantry ledger — both
+    # deliberately omitted here because a single replaced meal has no week in
+    # front of it to count against — this is a property of the slot, not of
+    # the week, so it applies unchanged.
+    config = dict(config, storage_spans=storage_spans(spec, config))
     targets = week_targets(spec, config)
     day_target = targets[day]
     portions = portions_for(spec)

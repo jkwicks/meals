@@ -129,6 +129,10 @@ Distilled from thirteen releases. Each was paid for at least once.
 | 3 | [OpenAPI schema is off, so there are no generated types](#3--openapi-schema-is-off-so-there-are-no-generated-types) | Tech debt | S | — |
 | 4 | [No auth on `/api`](#4--no-auth-on-api) | Feature | S | only if exposed |
 | 5 | [Food waste tracking](#5--food-waste-tracking) | Feature | XL | not scoped |
+| 6 | [`perishable_day_gap` is validated and read by nothing](#6--inventory_rulesperishable_day_gap-is-validated-and-read-by-nothing) | Defect | XS | — |
+| 7 | [Split `planning_rules` into a preset-able group and an engine group](#7--split-planning_rules-into-a-preset-able-group-and-an-engine-group) | Tech debt | S | wanted with the preset container |
+| 8 | [Three planning numbers are welded into prompt prose](#8--three-planning-numbers-are-welded-into-prompt-prose) | Tech debt | S | — |
+| 9 | [Decided against: six planning constants stay compiled in](#9--decided-against-six-planning-constants-stay-compiled-in) | Record | — | — |
 
 Eleven [front-end craft items](#front-end-craft-items--small-none-urgent)
 remain below, each XS–S and none urgent. **The numbering above moved by three
@@ -136,6 +140,20 @@ on 2026-08-31 and by three again the same day**, when the shopping block was
 inserted at the top and then closed by v0.41.0 — the shortest life any entry
 here has had. Every anchor link carries a number; that is the one thing a
 renumber has to be checked against.
+
+**6–9 were appended on 2026-09-01 rather than ranked into place**, which is a
+departure worth stating. All four come from `dev/`'s hard-coding audit
+(`design-01` §3.4a): 6 is a defect that is invisible today because the two
+values it straddles happen to agree, 7 wants doing *with* the preset container
+rather than before it, 8 is worth doing whether or not presets ever ship, and
+9 is a record rather than a task. None outranks 1–5, and appending them avoided
+a fifth renumber this file would then have had to check every anchor against —
+the cost the note above is about.
+
+**8 is the one to take if the preset arm stalls.** One number — what counts as
+a long cook — is written in four independent prose copies, one of them a
+Pydantic field description; that is the `sorted(categories)` shape
+`DEPARTMENT_ORDER` closed, and it is a defect in its own right.
 
 ---
 
@@ -265,6 +283,176 @@ before it can be estimated at all.
 
 ---
 
+## 6 — `inventory_rules.perishable_day_gap` is validated and read by nothing
+
+**Type:** Defect &nbsp;·&nbsp; **Size:** XS &nbsp;·&nbsp; **Blocked by:** —
+&nbsp;·&nbsp; **Source:** `dev/design-01` §3.4a, the hard-coding audit,
+2026-09-01
+
+`perishable_day_gap` is declared on `InventoryRules`, merged from
+`config/week.json` and validated by `AppConfig`. Nothing reads it.
+`shopping.ShoppingItem.buy_late` imports `week.PERISHABLE_DAY_GAP` — the
+module constant — because it is a computed property with no config in scope
+at evaluation time, and `week.py` carries a comment saying to keep the two in
+sync by hand.
+
+**It is invisible today because they agree at 3**, which is what makes it
+worth filing rather than leaving: editing the config key produces no change at
+all, silently, and the next person to edit it will be someone who read
+`week.json` and reasonably believed it was the value in force. Its sibling
+`fridge_safe_days` is read through config properly, so the file gives every
+appearance of being live.
+
+The fix is the one the comment already names: thread a config through
+`aggregate_cook_events` to `ShoppingItem` construction, or resolve `buy_late`
+at the call site where a config is in hand. Either ends the hand-sync.
+
+**Related, and deliberately not merged into this:** the constant's *own*
+default in `week.DEFAULT_INVENTORY_RULES` still says `fridge_safe_days: 4`
+where the shipped `week.json` says 3. That one is correct as written — it is
+the documented "what the app did before that section existed" fallback, per
+the same convention `history_styles()` follows — but the two numbers sitting
+four lines apart is why this defect survived a read.
+
+This is the declared-but-unread shape this codebase has now closed three times
+(`readiness_log`, `activity_log`, `smooth_series`), reached from the config
+side rather than the sync side.
+
+---
+
+## 7 — Split `planning_rules` into a preset-able group and an engine group
+
+**Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:**
+wanted *with* the preset container, not before it &nbsp;·&nbsp; **Source:**
+`dev/design-01` §3.4a, the hard-coding audit, 2026-09-01
+
+`planning_rules` is **one** `CONFIG_FILES` key, and `dev/design-01` §3's
+preset rule is whole-key replacement, never a deep merge. Nine of its fifteen
+sub-keys were ruled preset-able by the audit, so a preset wanting a different
+`cuisine_block_pattern` must restate all fifteen — including
+`portion_trim_limits`, which CLAUDE.md says to leave alone and swap models
+instead.
+
+At five preset-able rows (the audit's first pass) the editor could plausibly
+read-modify-write the whole object and nobody would notice. At nine — over
+half the key — a preset file becomes unreadable in exactly the way whole-key
+replacement exists to prevent: you cannot tell which value was chosen and
+which was carried along.
+
+**Two keys in `engine.json`**, split on the audit's own verdicts: the nine
+`data` rows in one, and `portion_trim_limits`, `portion_trim_deadband`,
+`max_meal_share_multiple` and `history_max_entries` in the other. Those four
+govern how much bad model output is accepted and how much history is kept —
+not what the week is — and `history_max_entries` is additionally the bound
+`favorite_reuse_days`' validator checks against, so a preset moving it would
+give that validator a moving target.
+
+A migration plus a `test_config_layout.py` snapshot regeneration, which is
+what that test exists to make safe. **Do it with `PROMPT-8`**, which already
+moves config validation to after the preset layer; discovering it during
+`PROMPT-9` is the failure this entry exists to prevent.
+
+**Four constants also need a key before the split is worth much** —
+`WEEKEND_DAYS`, `MORNING_TRAINING_CUTOFF`, `WORKOUT_BREAKFAST_TYPES`,
+`MEAL_TIME_OF_DAY` — all ruled `data` and none reachable today. `WEEKEND_DAYS`
+should derive its default from `base_schedule` the way `day_allows_long_cook`
+already does, with the preset overriding the derived answer; that is the same
+two-layer arrangement `dev/design-04` §7 uses for prep day, so it should land
+with that work rather than here.
+
+---
+
+## 8 — Three planning numbers are welded into prompt prose
+
+**Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:** —
+&nbsp;·&nbsp; **Source:** `dev/design-01` §3.4a, the hard-coding audit,
+2026-09-01
+
+Three sets of numbers that the audit ruled preset-able are **English inside
+module constants**, so they are unreachable rather than merely hard-coded. Each
+needs a builder before it can be a config key at all, and
+`build_batch_roast_rule(config, days)` is the precedent for all three — the
+same conversion, made for the neighbouring reason that a model rejected for
+breaking a rule it was never given burns a 30 s–3 min retry.
+
+| What | Where | Today |
+|---|---|---|
+| the dinner protein repeat cap, and the consecutive-night rule | `DINNER_VARIETY_RULE` | "more than two dinners", "never … two consecutive nights" |
+| per-ingredient portion caps | `PORTION_DENSITY_GUARD` | nine of them — 2–3 eggs, 150 g yoghurt, 2 slices of bread, 45 g powder, ~200 g cooked meat |
+| **what counts as a long cook** | **four separate copies** | "60+ minutes" |
+
+**The long-cook threshold is the one worth doing first.** It appears in
+`build_batch_roast_rule`, `BATCH_ROAST_ANCHOR_RULE`, `LONG_OVEN_COOK_RULE`
+and `Recipe.long_oven_cook`'s own field description — four independent
+statements of one number, one of which is a Pydantic description the model
+reads as schema. That is the `sorted(shopping_list.categories)` shape
+`DEPARTMENT_ORDER` closed at seven call sites: a decision made four times and
+agreed only by accident. **One key, four readers**, and it is worth doing
+whether or not presets ever ship.
+
+It was found by sweeping the prompt constants for embedded numbers, which the
+audit's first pass did not do — it ruled the whole class `code` on the
+correct principle that prompt *wording* is how a want is achieved, without
+checking whether any of that wording contained a want.
+
+---
+
+## 9 — Decided against: six planning constants stay compiled in
+
+**Type:** Record &nbsp;·&nbsp; **Size:** — &nbsp;·&nbsp; **Source:**
+`dev/design-01` §3.4a, the hard-coding audit, 2026-09-01
+
+**Filed under this file's own rule** — *"the closed table is not a place a
+to-do can live, nor is CLAUDE.md prose, nor a deferral note inside a shipped
+feature; anything decided against belongs in the ranked list on the day it is
+decided"* — which `dev/OUTSTANDING.md` §E raised against the whole `dev/`
+design set. Recorded as one entry rather than six, the same call the front-end
+craft section makes.
+
+The audit was **re-run with the burden of proof on `code`** after the
+requirement was restated as *"presets should be the predominant way to
+customise meal planning"*. That cut this list from eleven rows to six, and
+each survivor now fails a stated test rather than being defended by taste.
+
+| Constant | Fails which test |
+|---|---|
+| `MEAL_TYPE_PRIORITY` | **a preset setting it produces a week the app rejects.** Dinner precedes lunch so the one cross-type leftover `week.leftover_meal_type_error` permits always has its source generated; reordering fails `validate_week` |
+| `MACRO_KEYS` | **arithmetic, not preference** — the energy identity every budget is checked against |
+| `PREP_DAY_INDEX` | **arithmetic** — "the day before day 0". `dev/design-04` §7 makes prep-day *placement* movable by deriving it; that changes where the walk lands, not what this means |
+| `SEAFOOD_TERMS` | **measurement, not preference** — *how* a dish is classified. The **cap** is already `sourcing.max_seafood_meals_per_week` and is preset-able |
+| `UNDER_TARGET_NOTE_THRESHOLD` | **customises nothing about the plan** — it decides when a warning is emitted about a week already generated |
+| prompt-rule **wording** (`SHAKE_ROTATION_RULE`, `PANTRY_CONSOLIDATION_RULE`, `FIBER_TARGET_RULE`, `ELAPSED_TIME_RULE`, `LOCATION_RESTRICTION_PHRASES`, the `WEEK_*`/`DAY_*` rules, both anchor directives) | **how a want is achieved, not the want.** The *numbers* inside three sibling constants are ruled preset-able — see item 8. That is the line |
+
+**Five rows moved out of this list on the re-run**, and the reasoning is worth
+keeping because it is the same mistake twice: `WORKOUT_BREAKFAST_STYLE`,
+`TRAINING_INTENSITY_SPLIT`, `TRAINING_PRE_WORKOUT_DIGESTION_MINUTES`,
+`NUDGE_FOOD_SAMPLE_SIZE` and `SUNDAY_PREP_REHEAT_MINUTES` were each defended
+by a good argument for their **default** — a shake is the only breakfast
+drinkable ten minutes before a session; more nudge foods dilutes rather than
+strengthens — and a good argument for a default is not an argument for a lock.
+Each is now a preset key whose absent-meaning is today's value, with the
+reasoning moved to the editor's help text where it can be read.
+
+**Three rows stay in `config/` rather than becoming preset keys, and none of
+them fails the program rule** — all three are already reachable without
+editing Python. `portion_trim_limits`/`portion_trim_deadband`/
+`max_meal_share_multiple` govern how much bad model output is accepted rather
+than what the week is; and `history_max_entries` is a storage bound and the bound
+another validator checks against.
+
+**`inventory_rules.fridge_safe_days` was the third and is now neither** —
+settled 2026-09-01 as *"a per-dish measurement, not part of preset"*, which is
+`dev/design-05`'s design, and **shipped that same day** (see "Verified
+closed"). It split into `inventory_rules.storage_windows` (a food-safety
+reference table in `week.json`) and a measured `Recipe.storage_class` reported
+by the model the way `long_oven_cook` already is. The argument is not that a
+mood must not vary food safety — it is that **one global number is wrong in
+both directions at once**: a beef stew keeps 4 days, a rice tray bake keeps 2
+for a *Bacillus cereus* reason, and the app said 3 to both. A preset could
+only ever have chosen a different wrong global.
+
+---
+
 ## Front-end craft items — small, none urgent
 
 Raised by the 2026-08-30 front-end review and verified against the code, but
@@ -317,6 +505,7 @@ all, filed or unfiled.
 
 | Source | Item | Closed by |
 |---|---|---|
+| `dev/design-05`, and the one row `PROMPT-7`'s hard-coding audit took off the table | One global fridge window, wrong in both directions at once | Shipped in **v0.42.0**, and it is the only item in this file where being wrong made somebody ill rather than producing a worse plan. `inventory_rules.fridge_safe_days: 3` was read in **six** places (the design said five; `generate_sunday_prep_session`'s prompt was the sixth, and it interpolated the wrong global straight at the model). It threw away a day of good stew and — the direction that matters — let a rice tray bake batched on prep day be eaten a day past the 48-hour *Bacillus cereus* window, a shape `apply_batch_selections` built on **every** week the long-cook toggle ran. Replaced by `inventory_rules.storage_windows` plus `Recipe.storage_class`, with the grid planned against the default window, the span named in the prompt (`build_storage_rule`) and the answer judged against it (`reject_short_storage_class`, over the same two-axis split as `reject_misplaced_long_cook`). **Every default fails short**, inverting this codebase's usual convention, on the `is_sunday_prepped` precedent: a dropped self-report must cost a shorter batch, never a longer one. Two behaviour changes landed together and are pinned together in `tests/test_food_safety.py` — the default lengthening (a prep batch may now reach Thursday) and rice tightening to two day-gaps — because a permissive change riding on a safety one must be asserted rather than discovered. Two things the design missed and the build found: the sixth consumer above, and `select_favorite_assignments` as a **third route** to a long span that neither the prompt nor the response validator can see, since a favourite is never generated (`favorite_keeps_long_enough`, the sibling of `favorite_fits_day`). |
 | maintainer report, 2026-08-31 | The shopping list had been left behind — six parts, one premise | Shipped in **v0.41.0**. (a) three `flex flex-col` containers in `ui_shopping.py` had no `flex-nowrap`, so the drawer's `overflow-y-auto` never fired and a week's list started a second column off the 420px edge. **The one claim this entry filed as inferred is now measured**, and not with devtools: Quasar ships `.flex{display:flex;flex-wrap:wrap}` and Tailwind's `.flex-col` sets only `flex-direction`, so the wrap is a fact about the two stylesheets rather than a story about a symptom. (b) `DEPARTMENT_ORDER`, one constant behind the seven `sorted(categories)` call sites. (c) a department band with a count in the drawer, `── DAIRY & EGGS ──` in the Keep copy. (d) `═══ trip ═══` heading that copy. (e) the rail badge reads `PlannerState.shopping_item_count()` — measured on the live week the day it was fixed, the badge said **86** over a drawer showing **120**. (f) ticks moved from the DOM to `PlannerState.shopping_ticks`; still never persisted, and no longer wiped mid-shop by a repaint. **A seventh part was found by generalising (a)** — `ui_cards.py`'s swap-with-favourite list is the same wrapping column over a 36-entry catalog — which is the argument for fixing a class of bug rather than an instance. |
 | the v0.37.0 pantry-ledger row in this very table | The shopping list asked you to buy what was already in the house | Shipped in **v0.41.0** — `shopping.apply_pantry`, taking the second of the three shapes this entry proposed: subtract at render time from `inventory_to_clear` itself, never from a stored count. Every one of v0.37.0's arguments for a run-scoped ledger survives intact, because the two ask different questions of one hand-edited list. A quantified entry is subtracted, an unquantified one only annotated (the two entry shapes are two statements, and collapsing them would invent a quantity or discard one); a line the pantry covers outright is lifted onto `ShoppingList.pantry_covered` and *named*, because a stale pantry is the failure mode and a line that vanished with no trace is the one you could not notice was wrong. CLAUDE.md's standing claim that this "needs the ledger to survive the run" was the thing that turned out to be false. |
 | maintainer question, 2026-08-31 | Should shopping be its own destination? | Answered **both**, shipped in **v0.41.0**. The drawer's documented reason for existing is that a list is read *against* the grid, and that is a different job from working through a trip — 420px is right for the first and wrong for the second. `build_shopping(ctx)` now returns `build_panel`, which a sixth rail destination calls at its own render position; `ShoppingPanels` is one registered section fanning out to both instances, so they cannot drift. **The sequencing worry this entry was ranked on turned out to be real and cheap**: the defect fix and the pantry subtraction both did build inside the drawer, and none of it was built twice, because sharing one builder was a refactor of about forty lines rather than a second surface. |
