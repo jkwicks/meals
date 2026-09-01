@@ -331,6 +331,143 @@ class TestDietStyleCeilingCapsTheDay(unittest.TestCase):
         self.assertFalse(any("cannot fit locked protein" in note for note in notes))
 
 
+class TestADayScopedCeilingCapsOnlyItsDays(unittest.TestCase):
+    """"Fast 800 for four days" — the brief's own example, and the reason the
+    ceiling lookup takes a day.
+
+    Every property that made a ceiling admissible where an *adjustment* was
+    refused has to survive the scoping, so each is re-asserted here against a
+    window rather than against a whole week: idempotent across the two
+    hydration passes, applied after the training uplift, never over a stated
+    target. The change is to *which days* the ceiling is looked up for, not
+    to what hydration does with the number.
+    """
+
+    WINDOW = ["Monday", "Tuesday", "Wednesday", "Thursday"]
+    OUTSIDE = ["Friday", "Saturday", "Sunday"]
+
+    def config(self, active, **overrides) -> dict:
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in self.WINDOW + self.OUTSIDE
+        }
+        return config_with(
+            weekly_schedule=schedule,
+            diet_styles={
+                "fast_800": {
+                    "label": "Fast 800",
+                    "principles": "Simple, lean, low-added-fat.",
+                    "calorie_ceiling": 1600,
+                },
+            },
+            dietary_rules={"active_diet_styles": active},
+            **overrides,
+        )
+
+    def test_four_days_are_capped_and_three_are_not(self):
+        hydrated = planner.hydrate_dynamic_targets(
+            self.config([{"style": "fast_800", "days": self.WINDOW}]), WEIGH_IN
+        )["weekly_schedule"]
+        for day in self.WINDOW:
+            self.assertEqual(hydrated[day]["calories"], 1600, day)
+        for day in self.OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], DYNAMIC_KCAL, day)
+
+    def test_the_note_names_the_days_rather_than_only_counting_them(self):
+        """A day-scoped cap makes "4 day(s)" an incomplete answer: which four
+        is the whole question the window was written to settle."""
+        notes = []
+        planner.hydrate_dynamic_targets(
+            self.config([{"style": "fast_800", "days": self.WINDOW}]),
+            WEIGH_IN,
+            notes.append,
+        )
+        capped = [note for note in notes if "diet-style ceiling" in note]
+        self.assertEqual(len(capped), 1)
+        self.assertIn("1600 kcal on Monday, Tuesday, Wednesday, Thursday", capped[0])
+
+    def test_the_capped_days_stay_capped_across_two_hydration_passes(self):
+        """The UI hydrates for its own live preview and generation hydrates
+        that same config again. `min()` on an already-capped day returns the
+        same figure — and an uncapped Friday must not acquire a cap on the
+        second pass either, which is the half a per-day lookup could newly
+        get wrong."""
+        config = self.config([{"style": "fast_800", "days": self.WINDOW}])
+        once = planner.hydrate_dynamic_targets(config, WEIGH_IN)
+        twice = planner.hydrate_dynamic_targets(once, WEIGH_IN)
+        self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
+
+    def test_a_training_day_inside_the_window_is_capped_after_its_uplift(self):
+        """1910 + 350 = 2260, capped to 1600. A workout does not buy an
+        exemption from a bound its owner chose to eat inside — and a workout
+        on a day *outside* the window keeps every kcal of it."""
+        adjusted = planner.apply_training_adjustments(
+            self.config(
+                [{"style": "fast_800", "days": self.WINDOW}],
+                meal_types=["breakfast", "lunch", "dinner", "snack"],
+                meal_weights={"breakfast": 0.3, "lunch": 0.3, "dinner": 0.3, "snack": 0.1},
+                training_schedule=[
+                    {"day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+                     "estimated_burn_kcal": 350},
+                    {"day": "Friday", "time": "18:00", "type": "gym_hypertrophy",
+                     "estimated_burn_kcal": 350},
+                ],
+            )
+        )
+        hydrated = planner.hydrate_dynamic_targets(adjusted, WEIGH_IN)["weekly_schedule"]
+        self.assertEqual(hydrated["Monday"]["calories"], 1600)
+        self.assertEqual(hydrated["Friday"]["calories"], DYNAMIC_KCAL + 350)
+
+    def test_a_stated_target_inside_the_window_is_not_capped(self):
+        """A stated figure is the day's final number by definition, window or
+        no window — `target_locks` scopes to one day, which is exactly the
+        collision a day-scoped ceiling could get wrong."""
+        hydrated = planner.hydrate_dynamic_targets(
+            self.config(
+                [{"style": "fast_800", "days": self.WINDOW}],
+                target_locks={"Monday": ["calories"]},
+            ),
+            WEIGH_IN,
+        )["weekly_schedule"]
+        self.assertEqual(hydrated["Monday"]["calories"], 1500)
+        self.assertEqual(hydrated["Tuesday"]["calories"], 1600)
+
+    def test_two_windows_with_different_ceilings_report_both(self):
+        """Two styles whose windows differ put two ceilings on one week, and
+        a message stating a single figure could only ever be right about part
+        of it — which is why the caller carries (day, ceiling) pairs."""
+        config = self.config(
+            [
+                {"style": "fast_800", "days": ["Monday"]},
+                {"style": "light", "days": ["Friday"]},
+            ]
+        )
+        config["diet_styles"]["light"] = {
+            "label": "Light", "principles": "Lighter.", "calorie_ceiling": 1800,
+        }
+        notes = []
+        hydrated = planner.hydrate_dynamic_targets(config, WEIGH_IN, notes.append)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], 1600)
+        self.assertEqual(hydrated["weekly_schedule"]["Friday"]["calories"], 1800)
+        capped = next(note for note in notes if "diet-style ceiling" in note)
+        self.assertIn("1600 kcal on Monday", capped)
+        self.assertIn("1800 kcal on Friday", capped)
+
+    def test_a_flat_list_still_caps_every_day(self):
+        """The compatibility claim, on the hydration side: a bare name means
+        every day and the week is byte-identical to before day-scoping."""
+        hydrated = planner.hydrate_dynamic_targets(
+            self.config(["fast_800"]), WEIGH_IN
+        )["weekly_schedule"]
+        scoped = planner.hydrate_dynamic_targets(
+            self.config([{"style": "fast_800", "days": self.WINDOW + self.OUTSIDE}]),
+            WEIGH_IN,
+        )["weekly_schedule"]
+        self.assertEqual(hydrated, scoped)
+        for day in self.WINDOW + self.OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], 1600, day)
+
+
 def cook_slot(meal_type: str, mode: str = MODE_COOK) -> SlotSpec:
     return SlotSpec(
         id=planner.slot_id("Monday", meal_type), day="Monday", meal_type=meal_type, mode=mode

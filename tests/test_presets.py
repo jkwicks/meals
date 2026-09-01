@@ -298,6 +298,47 @@ class TestABadPathFailsAtLoad(unittest.TestCase):
         self.assertIn("schema validation", str(caught.exception))
 
 
+class TestADayScopedDietStyleArrivesFromAPreset(unittest.TestCase):
+    """A preset setting `active_diet_styles` is a *layer over* that key, not
+    a change to it (`design-01` §9.2) — so both shapes it accepts have to
+    survive arriving from `presets.json` rather than from `profile.json`.
+
+    Nothing in the layer knows about the shapes, which is the point: an
+    override replaces the leaf whole and `AppConfig` then validates the
+    result, so the one parser is reached either way and a malformed window
+    from a preset fails exactly as a malformed window in the file does.
+    """
+
+    def setUp(self) -> None:
+        self.base = shipped_base()
+
+    def test_a_window_survives_the_layer(self):
+        layered = apply_preset_layer(
+            self.base,
+            preset_file("fast", fast={
+                "dietary_rules.active_diet_styles": [
+                    "mediterranean_diet",
+                    {"style": "fast_800", "days": ["Monday", "Tuesday"]},
+                ],
+            }),
+        )
+        self.assertEqual(planner.diet_style_calorie_ceiling(layered, "Monday"), 800.0)
+        self.assertIsNone(planner.diet_style_calorie_ceiling(layered, "Friday"))
+
+    def test_a_malformed_window_from_a_preset_fails_the_layer(self):
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(
+                self.base,
+                preset_file("bad", bad={
+                    "dietary_rules.active_diet_styles": [
+                        {"style": "fast_800", "days": []}
+                    ],
+                }),
+            )
+        self.assertIn("bad", str(caught.exception), "the failing preset must be named")
+        self.assertIn("active_diet_styles", str(caught.exception))
+
+
 class TestTheResolverIsOnePureFunction(unittest.TestCase):
     """One resolver, two presentations: the loader raises on its failures and
     PROMPT-9's editor renders the same ones and declines to write. A separate
