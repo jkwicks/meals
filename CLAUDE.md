@@ -144,7 +144,7 @@ The five core files, listed in `CONFIG_FILES`:
 |---|---|
 | `profile.json` | the body and the numbers aimed at it — `user_profile`, `target_modes`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
 | `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `diet_styles`, `week_defaults` |
-| `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` |
+| `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` (including `storage_windows`, see "Storage windows belong to the dish") |
 | `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below) |
 | `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
 
@@ -1658,17 +1658,28 @@ Three consequences worth knowing:
   prep-session batch is cooked the day before the week starts: a Tuesday
   anchor reaching Friday is 3 days by that bound and **5 days out of the
   fridge**. Day index `i` is `i + 1` days after prep, so
-  `apply_batch_selections` passes `fridge_safe_days - 1`. It applies to the
-  anchor too, unlike every other bound here — an anchor outside the window is
-  already unsafe before it spreads anywhere. `inventory_rules.fridge_safe_days`
-  is therefore now **3**, not 4: 4 allowed a batch onto Thursday, which is 4
-  days out of the fridge and past what these batches should carry.
+  `apply_batch_selections` passes the **default** storage window's day-gaps
+  minus one. It applies to the anchor too, unlike every other bound here — an
+  anchor outside the window is already unsafe before it spreads anywhere.
+
+  **This paragraph used to end by pinning `fridge_safe_days` at 3 rather than
+  4**, on the grounds that 4 "allowed a batch onto Thursday, which is 4 days
+  out of the fridge and past what these batches should carry". That was the
+  right instinct answering the wrong question, and the whole of "Storage
+  windows belong to the dish" below is the answer to the right one: 4 days is
+  fine for a stew and two days too many for a rice tray bake, so one global
+  could only ever be wrong in one direction or the other. The default is now
+  4 day-gaps and Thursday is reachable again — bounded by what the dish
+  actually is rather than by a number picked to protect the worst case.
 
   Measured on `default_week_spec` with the shipped `config/`, both toggles on:
   bulk prep `Monday:lunch` → Tuesday and Wednesday lunches, long cook
   `Monday:dinner` → Tuesday and Wednesday dinners. Six meals, 6 portions each,
-  nothing landing Thursday or later, `validate_week` clean and byte-identical
-  across repeated runs.
+  `validate_week` clean and byte-identical across repeated runs. Note that
+  Wednesday is `spread_batch`'s `target_claims` cap (3 claims) doing the work
+  here, **not** the fridge bound — the lengthened window only shows when the
+  walk has to step over a day it cannot claim, which is precisely the case the
+  old bound silently shortened.
 
 **The reporting side counts from prep day too, and for a while it didn't.**
 `storage_note`'s `keeps_for_days` was measured from the anchor's own grid day,
@@ -1677,11 +1688,11 @@ side — and since every anchor is day 0, it was short by exactly one on every
 prep batch. That under-reported the span ("eaten across 2 day(s)" for food
 three days out of the fridge) and, worse, flipped the advice at exactly the
 wrong point: `storage_note` chooses between "refrigerate in airtight
-containers" and "freeze the rest" on `keeps_for_days < fridge_safe_days`, so
-the maximum-span batch reported 2, compared `2 < 3`, and told you to
-refrigerate the one batch in the week sitting at the fridge limit — the whole
-reason the freeze branch exists. `apply_batch_selections`' own
-`fridge_safe_days - 1` bound guarantees that case on every week both toggles
+containers" and "freeze the rest" on `keeps_for_days < the dish's window`, so
+the maximum-span batch reported one day short, compared it against the window,
+and told you to refrigerate the one batch in the week sitting at the fridge
+limit — the whole reason the freeze branch exists. `apply_batch_selections`'
+own window-minus-one bound guarantees that case on every week both toggles
 run, and it can't be papered over downstream because
 `generate_sunday_prep_session`'s prompt tells the model not to recompute the
 note.
@@ -1690,9 +1701,11 @@ note.
 rather than four adjustments: `week.cook_day_index(spec, day, prepped_ahead)`
 answers "which day was this actually cooked on", `span_days` takes the same
 flag, and the callers each supply it from the handle they have —
-`build_cook_event` from `planner.prep_day_batch_slot_ids(config)` (the two
-anchors, which are known before the first call), everything after generation
-from `planner.is_prepped_ahead(event, week_plan)` (the stamped
+`build_cook_event` from `week.prep_day_batch_slot_ids(config)` (the two
+anchors, which are known before the first call — the function moved from
+`planner` to `week` when `storage_safety_errors` needed it, and is still
+re-exported under its old name), everything after generation from
+`planner.is_prepped_ahead(event, week_plan)` (the stamped
 `candidate_slot_ids`). The two lookups exist because of ordering, not
 duplication: `generate_sunday_prep_session` runs *after* every cook event is
 built, so the session doesn't exist yet when the first one needs the answer.
@@ -2306,8 +2319,8 @@ Three things it deliberately does not do:
 
 ### Leftovers can't outlive the fridge
 
-`inventory_rules.fridge_safe_days` (3) was config that only ever flavoured a
-storage note. It is now enforced three times, and the split matters:
+How long a leftover may sit was config that only ever flavoured a storage
+note. It is now enforced four times, and the split matters:
 
 - **Prevention, from the anchor.** `week.spread_batch` takes `max_span_days`
   and stops its forward walk there, so neither batch toggle can plan food more
@@ -2316,13 +2329,168 @@ storage note. It is now enforced three times, and the split matters:
   batch that is *not* cooked on its anchor day — every prep-session batch, see
   "Batch cooking on purpose". `max_span_days` alone let Sunday-cooked food
   reach Friday, because from a Tuesday anchor that is only 3 days.
-- **Backstop.** `validate_week` checks `span_days` against the same number.
-  A chain built by hand out of "Link to next lunch" clicks never goes through
-  `spread_batch`, and neither does an imported or hand-edited `week_plan.json`.
+- **Prevention, at the brief.** `build_storage_rule` names the span each slot
+  needs and `reject_short_storage_class` rejects a dish that cannot meet it —
+  the pair below.
+- **Backstop.** `week.storage_safety_errors`, read by `validate_week` before
+  generation and again by `generate_week_plan` after it. A chain built by hand
+  out of "Link to next lunch" clicks never goes through `spread_batch`, and
+  neither does an imported or hand-edited `week_plan.json`.
 
 Bounding the spread rather than only rejecting the result is the difference
 between never creating the problem and refusing to generate a week the
 planner itself just built.
+
+#### Storage windows belong to the dish, not to the config
+
+`inventory_rules.fridge_safe_days` was **3**, one global number read in six
+places, and **it was wrong in both directions at once**. A beef stew keeps 4
+days, so 3 threw away a day of good food and a batch that could have covered
+Thursday. A rice or pasta dish keeps **2** — cooked rice and pasta carry
+*Bacillus cereus* spores that survive cooking and produce toxin as the dish
+sits, which is why the general 4-day rule has an exception carved out of it at
+all — so 3 permitted a rice tray bake batched on prep day to be eaten a day
+past its safe window, and `apply_batch_selections` built exactly that shape on
+every week the long-cook toggle ran.
+
+**Moving the number to 4 alone would have made the dangerous case worse**, so
+the lengthening and the dish-level exception landed in one change. That is
+also why the two are pinned together in `tests/test_food_safety.py`
+(`TestTheDefaultLengthened` and `TestRiceIsBoundShorter`): a permissive change
+riding on a safety one must be asserted, not discovered.
+
+`inventory_rules.storage_windows` holds two tables and `Recipe.storage_class`
+says which row a dish takes — reported by the model exactly as
+`long_oven_cook` and `bulk_prep_friendly` are. **It is deliberately not a
+preset key**: a preset over one global could only ever have picked a different
+wrong global, and a tightening-only lever (the `DietStyle.calorie_ceiling`
+shape) fixes the stew case never and the rice case by accident.
+
+**The tables are hours and every consumer holds a date.** A `SlotSpec` carries
+a weekday name, a `WeekPlan` carries `week_start_date`, a `CookEvent` resolves
+to a grid day; nothing anywhere stores a *time*, so no consumer can establish
+that a Sunday cook eaten Thursday was inside 96 hours. `week.storage_day_gaps`
+is the one place hours become days (`// 24`), and **no surface prints hours** —
+the app does not know them. The day figure is deliberately not written into
+config beside the hour figure: they are different claims and a reader would
+take them for one. (Adding cook and eating *times* is the alternative and is
+not taken — it would cost a clock question at every cook, every slot and every
+freeze, in an app whose grid is day-granular everywhere else.)
+
+##### Every default here fails short, which inverts the house rule
+
+Everywhere else in this codebase an absent value resolves to *the behaviour
+before the feature existed* — `long_oven_cook` defaults False,
+`total_time_minutes` defaults to None meaning unknown, an absent `sourcing`
+block emits nothing — and all of those are safe because being wrong costs a
+worse meal plan. Here it costs a food-poisoning risk, so
+`week.storage_window_for` resolves anything unrecognised to the table's
+**shortest** row.
+
+The precedent is on the record: `is_sunday_prepped` broke because a batch
+anchor came back with both flags False despite the per-slot directive telling
+the model to set one — a self-report the model simply dropped, on a field the
+prompt explicitly asked for. **If a dropped `storage_class` resolved long, the
+failure mode of a model forgetting a field would be a rice dish scheduled four
+days out.**
+
+Four details of the resolution are decisions:
+
+- **`None` and `"default"` are different answers.** `"default"` means somebody
+  looked and said "an ordinary cooked dish" (4 day-gaps); `None` means nobody
+  said (2). The same distinction `total_time_minutes` draws between None and
+  0, and an un-marked adherence row against a marked one.
+- **A recognised class the *fridge* table does not name takes the `default`
+  row**, so a stew gets 4 rather than being treated as unclassified. Only rice
+  is exceptional there; the freezer table is the one with a row per class.
+- **The shortest is `min` of the table, not the literal rice figure.** A
+  shorter class added later has to pull the unclassified case *down* with it.
+- **A configured table merges over the shipped one.** Replacing meant a config
+  naming only `fridge: {"default": 72}` had no `rice_or_pasta` row, so a rice
+  dish resolved through `default` and its window *lengthened* — §3's rule
+  broken by a config that never mentions rice.
+
+##### The ordering problem: tell the model the span, then check the answer
+
+**The grid is built before any recipe exists.** `spread_batch` decides how far
+a batch reaches during `apply_batch_selections`, and generation happens
+afterwards, so at the moment the span is chosen nothing knows whether the dish
+will be a rice tray bake. Planning short always is safe and useless (no batch
+could reach past two days, which removes bulk cooking); planning long and
+validating afterwards throws a 30s–3min call away to discover a constraint one
+sentence would have stated.
+
+So the grid is planned against the **default** window, and the dish-level
+answer is enforced at the brief — the same shape `build_batch_roast_rule` /
+`reject_misplaced_long_cook` already use, for the same reason:
+
+- `planner.storage_spans(spec, config)` computes slot id → day-gaps once, off
+  the settled grid, and rides on `config["storage_spans"]` in memory only —
+  the channel `nudge_foods`, `inventory_ledger` and `target_locks` already
+  use, covered by the rule that `save_config_keys` merges *named* keys. **One
+  dict, three readers**, so the brief, the rejection and the favourite gate
+  cannot disagree about a Thursday.
+- `build_storage_rule` emits **only** when a span exceeds the short window, so
+  a week whose cooks are all eaten inside it produces a byte-identical prompt
+  to before this existed. Slots are grouped by the figure they need rather
+  than reduced to the largest, because the validator judges each against its
+  own span.
+- `reject_short_storage_class` is the hard half, over the two-axis split
+  `reject_misplaced_long_cook` uses — `DayRecipes` from its context's single
+  day, `MealTypeWeekRecipes` over its own keys, one shared function so the
+  axes cannot disagree.
+
+**The batch anchors are emphatically *not* exempt here**, unlike in
+`reject_misplaced_long_cook`. That rule exempts them because the *day*
+judgement is wrong for food cooked before the week started; this one is about
+the *window*, and their span is measured from prep day and is therefore
+**longer**. It is the case that most needs the rule, and the third time this
+off-by-one has had to be closed (`max_day_index`, then `storage_note`) — which
+is why `storage_safety_errors` reads `prep_day_batch_slot_ids` too. That
+function moved from `planner` to `week` for it, and is re-exported under its
+old name.
+
+**A pinned favourite is a third route to a long span**, beside a batch spread
+and a hand-built chain, and the one route the pair above structurally cannot
+cover: a favourite is never generated, so nothing briefs it and nothing judges
+its response. `favorite_keeps_long_enough` is the gate, deliberately a sibling
+of `favorite_fits_day` rather than a widening of it — attention and presence
+are one axis, how long the dish keeps is another, and a stew passes both where
+a rice tray bake passes only one. Without it the two halves would disagree in
+the mirror image of the bug `favorite_fits_day` exists for. Every recipe in
+the shipped catalog predates `storage_class`, so in practice an unclassified
+favourite takes any slot eaten within two days of its cook and the long spans
+go to generation, where the model is asked what the dish actually is.
+
+##### `Recipe.storage_class` is a plain `Optional[str]`, not a `Literal`
+
+A `Literal` would turn a vocabulary typo into a hard retry, and a retry is
+30s–3min on a free route — the same argument that keeps `diet_styles` and
+`sourcing` soft while `banned_ingredients` stays hard. An unrecognised string
+is a species of unclassified and resolves short; the span validator still
+rejects anything genuinely too short for its slot, so nothing unsafe rides on
+the softness. It is also never **derived** — not from `total_time_minutes`,
+not from `long_oven_cook`, and not from the ingredient list ("contains rice"
+is a substring match away from calling a rice-vinegar dressing a rice dish,
+and it fails in the unsafe direction). Same rule as `total_time_minutes` never
+being derived from `prep_time_minutes`.
+
+##### The freezer half is about quality, and nothing is ever removed
+
+`week.freezer_months` and `week.freezer_quality_note` are the resolver
+`data/freezer.json` will import when the freezer ledger lands — written once
+here rather than twice, because writing it twice is how the two come to
+disagree about a tub. Three rules it encodes:
+
+- **Frozen food does not become unsafe, it degrades.** The fridge figures are
+  safety and the freezer figures are quality, and the wording says which:
+  "past its best", never "unsafe". Conflating them teaches a reader to ignore
+  both.
+- **An undateable lot is flagged, never assumed fresh.** A missing freeze date
+  degrades to "no idea how old this is", and the conservative reading of that
+  is not a number the function may pick.
+- **Nothing is auto-removed.** On a hand-declared list that is the app editing
+  your own statement of what you own.
 
 ### Nudging generation toward whole foods
 
@@ -2951,7 +3119,7 @@ it — see below. Neither service invents storage, and the CLI reports each
 source independently: a Garmin outage must not cost a Cronometer sync that
 would have worked, the same policy as "a failed meal must not fail the week".
 
-Eight things here are decisions, not detail:
+Nine things here are decisions, not detail:
 
 - **It is the only code in `src/` living in a subdirectory**, which breaks the
   flat-sibling import rule at the top of this file: `python
@@ -3032,6 +3200,29 @@ Eight things here are decisions, not detail:
   page rather than papered over: a date checked before `readiness_log` existed
   reads as "checked, nothing recorded" for readiness. `--date` re-syncs it,
   since Garmin keeps the history.
+
+  **That wrinkle stopped being hypothetical, and it was `activity_log` it
+  cost.** Measured on 2026-09-01: the list held **zero** rows against a
+  Garmin checkpoint of 2026-08-31, while the account had 27 recorded
+  activities in the five weeks behind it. Nothing was wrong with the
+  mapping — all 27 `typeKey`s resolved through `GARMIN_SESSION_TYPES` and
+  every row was `_storable`. Those days had simply never been asked for:
+  `save_activity_entries` shipped in v0.33.0 at 20:46 on 2026-08-28, by
+  which time the checkpoint had already marked every earlier date "asked",
+  and `get_sync_date_range` never revisits a checkpointed date. A `--date`
+  backfill across the 28 days `propose_training_schedule` reads restored 23
+  rows over 16 dates and turned its answer from "nothing recorded" into
+  four proposals.
+
+  **Diagnose this by fetching before the filter, not by reading the
+  filter.** A checkpoint that hides the history and a `_storable` that
+  rejects everything are indistinguishable from the stored file, and only
+  one of them is a code bug. The CLI already prints every activity with
+  `(not stored: unmapped type or no start time)` beside the ones it drops,
+  so one `--sync-garmin --date <a day you trained>` separates them. Guessing
+  gives the wrong answer here: an empty `activity_log` looks exactly like a
+  mapping gap and was not one, and "fixing" the mapping would have added
+  entries for modalities that were already mapped.
 - **Recorded activity is stored now, and only what can be read back.** It
   was fetched on every sync and printed for months, which is the same shape
   v0.29.0 closed for sleep; `activity_log` exists because
@@ -3108,6 +3299,47 @@ Eight things here are decisions, not detail:
   now that every interpreter this project runs on satisfies 3.11+ — there is
   no longer a version gap for it to bridge.
 
+- **The saved Cronometer session expires, and the client cannot tell** — so
+  `CronometerSyncService._fetch_rows` clears it and retries **once**. This is
+  a bug in `cronometer_mcp` that no upgrade of ours can reach, and the failure
+  is worth spelling out because it looks like exactly what it is not.
+  `_restore_session` validates a resumed session by minting an auth token, but
+  GWT-RPC answers an expired session with HTTP **200** and a *serialized
+  exception* in the body — so `raise_for_status()` passes, and the token regex
+  (`re.search(r'"([^"]+)"', ...)`) returns the first quoted string in that
+  payload, which is the exception's own class name and type hash:
+  `com.cronometer.shared.user.exceptions.NotLoggedInException/844385496`. It
+  is non-empty, so the restore is judged a success, `authenticate()`
+  short-circuits without ever logging in, and that string is sent as the
+  export nonce. The 403 that comes back quotes the exception at you in the
+  URL, which reads as a credentials problem and sends you to re-check a
+  `.env` that was right all along. Seen in the wild on 2026-09-01 against a
+  15-day-old session file.
+
+  Three things about the recovery. **It can only be recognised after the
+  fact** — nothing below `_fetch_rows` can tell that token from a real one and
+  nothing above it can see the token at all, so there is no pre-flight check
+  to add, only a 403 to interpret. **Exactly one retry, and only when there
+  was a session file to clear**: a second attempt is another full login, about
+  seven requests, and a run that had no cached session already logged in fresh
+  — so its failure is a real one (wrong credentials, a lapsed subscription)
+  and retrying would double the cost of every genuine auth failure against the
+  endpoint whose 429s `_is_rate_limited` exists to survive. That is also why
+  `_is_stale_session` is 403-and-the-marker and deliberately **not** any
+  auth-shaped 4xx: a re-login is the worst possible response to a 429.
+  And **the path is asked of the client, never spelled out here** —
+  `_session_cache_path` reads `_cookie_path` off a constructed
+  `CronometerClient` (construction issues no requests) rather than
+  re-deriving `CRONOMETER_DATA_DIR` and its default, because a second copy of
+  that rule would go stale the moment upstream moved either half, and a
+  guessed path here does not fail to persist a token — it deletes somebody's
+  file. `getattr` guarded, the same shape `GarminSyncService.client()` uses
+  across garminconnect's two lines.
+
+  `_stale_session_hint` is the `_rate_limit_wait_hint` of this failure and
+  exists for the same reason: the raw message is unreadable, and the obvious
+  reading of it is wrong.
+
 - **garminconnect's two lines disagree about token persistence**, and pip's
   choice between them follows the interpreter: 3.9 caps at **0.2.8**, which
   exposes the underlying garth client as `.garth` and leaves the token dump
@@ -3133,6 +3365,16 @@ and `./scripts/sync.sh install` writes a launchd agent that runs it daily
 logging to `logs/sync.log`. `uninstall` and `status` do what they say —
 `status` also prints each source's stored checkpoint, which is the same field
 the Settings dialog reads.
+
+**A bare run targets yesterday, not today**, and that is a correctness rule
+rather than a scheduling preference. A day is only complete once it is over:
+a 07:30 fetch asks about a half-empty day, and — the part that actually cost
+data — its checkpoint then marks that day done, so everything logged or
+recorded later that day is stranded forever, since `get_sync_date_range`
+never re-requests a checkpointed date. An afternoon walk and an evening
+Cronometer entry were both invisible to a same-day sync for exactly this
+reason; see the `activity_log` incident above, whose second half this is.
+`--date` still means the day it names.
 
 **Neither the server nor any page ever triggers a sync, and that is the
 decision rather than an omission.** The question behind it — should starting
@@ -3281,6 +3523,13 @@ bootstrap into a wall of 429s halfway through.
   `hydrate_dynamic_targets` and never reaches the prompt at all; Fast 800's
   800 is the only one declared, and nothing is active by default. See "Diet
   styles" under Architecture.
+- **How long a dish keeps is a property of the dish**, not a config global:
+  `inventory_rules.storage_windows` plus `Recipe.storage_class`. It is a hard
+  constraint in the same class as `banned_ingredients` — the model is told the
+  span each slot needs and a class too short for it is rejected and retried —
+  and every default resolves to the *shortest* window rather than the usual
+  "behaviour before the feature existed". See "Storage windows belong to the
+  dish" under Architecture.
 - **Fibre is targeted but never budgeted** — the day's figure comes from
   `nutrition_engine.calculate_fiber_target_g` (a floor of
   `user_profile.fiber_floor_g`, raised on a big day) and each meal is briefed
@@ -3322,7 +3571,8 @@ the module under seven frozen weekdays before trusting it.
 | file | covers |
 |---|---|
 | `test_week_composition.py` | style/cuisine resolution, cuisine blocks, workout breakfasts |
-| `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count |
+| `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count, and the storage note reading the dish's own window rather than one global |
+| `test_food_safety.py` | storage windows as a property of the dish — the hours-to-days resolver and that no surface prints hours, every default failing *short* (which inverts the house rule), the merge that stops a config deleting the rice exception, the two behaviour changes that had to land together (the default lengthening to Thursday, rice tightening to two day-gaps), the backstop's two modes, the prep-day anchor whose span is *longer*, the prompt rule and the byte-identical week that gets none of it, the two response axes rejecting identically, the pinned favourite that is a third route neither can see, and the freezer half's quality-not-safety wording |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
 | `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the fibre target resolving on every hydration path including the three that give up on the engine, the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein), the protein floor, logged-intake substitution, adaptive TDEE |
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the fibre target (which of its two halves binds, and that it is deliberately not assembled into `calculate_macro_targets`, where the uplift and the ceiling have not been applied yet), the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
@@ -3330,7 +3580,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_diet_styles.py` | the diet-style axis, its one numeric lever (which `calorie_ceiling` wins, and that the prompt never states the number), and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip, and the pantry ledger — both entry shapes, the containment match and the two guards on it, and what a spent item stops being told to the model |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre — both halves: the reported one that never enters a budget, and the target with its per-slot share, the calorie pin that does not pin it, and the share that deliberately does not cascade (asserted against a stubbed provider returning meals under brief, so the macro cascade visibly moves and the fibre share visibly does not) — the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
-| `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, and the credential guards |
+| `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, the expired-session recovery (cleared and retried once, never twice, never without a session to clear, and never on a 429), and the credential guards |
 | `test_keep_import.py` | Takeout note loading, colour selection, and checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
@@ -3397,6 +3647,18 @@ because something broke, record the failure in the test, not just the fix.
   "instant" would pass exactly the dishes it exists to reject. It is also
   never derived from `prep_time_minutes`: the gap between them *is* the
   measurement (see "The generated side is enforced too").
+- **`Recipe.storage_class` is `None` for unclassified, and `None` is the
+  *shortest* window rather than the default one.** This is the one place the
+  codebase's usual "absent means the behaviour before the feature existed"
+  convention is deliberately inverted, because here being wrong makes somebody
+  ill rather than producing a worse meal plan. Do not "helpfully" restore the
+  convention, do not derive the class from `total_time_minutes`,
+  `long_oven_cook` or the ingredient names, and do not put a day figure in
+  config beside the hour figure. See "Storage windows belong to the dish".
+- **Nothing prints storage hours at a user.** The tables are stated in hours
+  and the app measures in whole day-gaps, because nothing anywhere stores a
+  cook *time*. `week.storage_day_gaps` is the only conversion; every note,
+  badge, warning and log line says days.
 - **Testing a "fails before any call" guard requires a populated
   environment.** See the sync-credentials note under "Biometric sync": a guard
   test that constructs its subject with `""` and runs against an empty `.env`

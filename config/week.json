@@ -13,7 +13,21 @@
   "max_prep_active_mins": 120,
   "inventory_to_clear": [],
   "inventory_rules": {
-    "fridge_safe_days": 3,
+    "storage_windows": {
+      "fridge": {
+        "default": 96,
+        "rice_or_pasta": 48
+      },
+      "freezer_months": {
+        "soup_stew_casserole": 2,
+        "cooked_meat": 2,
+        "cooked_poultry": 2,
+        "poultry_pieces": 1,
+        "fish_seafood": 1,
+        "fried": 1,
+        "default": 1
+      }
+    },
     "perishable_day_gap": 3
   }
 }

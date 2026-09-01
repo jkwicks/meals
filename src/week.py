@@ -72,13 +72,251 @@ PERISHABLE_DEPARTMENTS = {
 # no config (or an older config.json predates this section). The canonical
 # values now live in config.json; these are what the app used before that
 # section existed.
+# How long a cooked dish keeps, by what the dish IS. There is deliberately no
+# single number here any more: `inventory_rules.fridge_safe_days` was one
+# global read in six places, and it was wrong in both directions at once — too
+# short for a beef stew (which keeps 4 days, so a day of good food was thrown
+# away and a batch that could have covered Thursday didn't) and, the direction
+# that matters, too long for a rice tray bake. Cooked rice and pasta carry
+# *Bacillus cereus* spores that survive cooking and produce toxin as the dish
+# sits; 48 hours is the accepted window and is the reason the general 4-day
+# rule has an exception carved out of it at all.
+#
+# Storage life is a property of the dish, so it is reported per recipe
+# (`Recipe.storage_class`) and resolved against these tables. It is
+# deliberately not a preset knob: a preset over one global could only ever
+# have picked a different wrong global.
+#
+# The two tables answer two different questions and their wordings must not be
+# conflated — the fridge figures are **safety**, the freezer figures are
+# **quality**. Frozen food does not become unsafe at two months, it degrades.
+DEFAULT_STORAGE_WINDOWS = {
+    # Hours. See `storage_day_gaps` for why nothing downstream ever prints
+    # them.
+    "fridge": {
+        "default": 96,
+        "rice_or_pasta": 48,
+    },
+    # Whole months, which is the granularity the guidance itself is stated at.
+    # Each figure is the LOWER end of its published range (2-3, 2-4, 1-3, 1-3,
+    # 1) — see `storage_window_for` on why every default here fails short.
+    "freezer_months": {
+        "soup_stew_casserole": 2,
+        "cooked_meat": 2,
+        "cooked_poultry": 2,
+        "poultry_pieces": 1,
+        "fish_seafood": 1,
+        "fried": 1,
+        "default": 1,
+    },
+}
+
+# The vocabulary `Recipe.storage_class` may use, and the row a hand-added
+# freezer item picks from. `"default"` is a real member and is not the same
+# answer as absence: it means "an ordinary cooked dish, none of the categories
+# below" — somebody looked and said so — where `None` means nobody said. The
+# two resolve differently on purpose (`storage_window_for`), the same
+# distinction `total_time_minutes` draws between None and 0 and the same one
+# an un-marked adherence row draws against a marked one.
+STORAGE_CLASS_DEFAULT = "default"
+STORAGE_CLASSES = (
+    STORAGE_CLASS_DEFAULT,
+    "rice_or_pasta",
+    "soup_stew_casserole",
+    "cooked_meat",
+    "cooked_poultry",
+    "poultry_pieces",
+    "fish_seafood",
+    "fried",
+)
+
 DEFAULT_INVENTORY_RULES = {
-    # Cooked food keeps ~3-4 days refrigerated, so a leftover eaten 4+ days
-    # after its cook day is at the edge — flagged in the grid and reflected
-    # in the recipe's storage note rather than silently planned.
-    "fridge_safe_days": 4,
+    "storage_windows": DEFAULT_STORAGE_WINDOWS,
     "perishable_day_gap": 3,
 }
+
+def _storage_window_table(config: Optional[dict], table: str) -> Dict[str, int]:
+    """One of `inventory_rules.storage_windows`' two tables, merged over the
+    shipped one.
+
+    Per-table rather than per-block, so a config that overrides only `fridge`
+    does not lose the freezer rows. A caller with no config in scope gets the
+    shipped tables, the same tolerance every other `inventory_rules` read here
+    extends.
+
+    **Merged rather than replaced, and that is a safety decision rather than a
+    convenience.** Replacing meant a config stating only
+    `fridge: {"default": 72}` had no `rice_or_pasta` row at all, and
+    `storage_window_for` would then resolve a rice dish through the `default`
+    row — *lengthening* its window, which is the one direction nothing here is
+    allowed to move by accident. Merging means a config can raise or lower any
+    row and add new ones, but cannot delete the exception the whole feature
+    exists for by leaving it out.
+    """
+    rules = (config or {}).get("inventory_rules") or DEFAULT_INVENTORY_RULES
+    windows = rules.get("storage_windows") or {}
+    return {**DEFAULT_STORAGE_WINDOWS[table], **(windows.get(table) or {})}
+
+
+def storage_window_for(storage_class: Optional[str], table: Dict[str, int]) -> int:
+    """Look one class up, **failing short** on anything unrecognised.
+
+    This inverts the convention every other optional field in this codebase
+    follows, and the inversion is the point. Everywhere else an absent value
+    resolves to the behaviour before the feature existed — `long_oven_cook`
+    defaults False, `total_time_minutes` defaults to None meaning unknown, an
+    absent `sourcing` block emits nothing — and all of those are safe because
+    being wrong costs a worse meal plan. Here being wrong costs a
+    food-poisoning risk, so absence resolves to the SHORTEST row instead.
+
+    That is not theoretical. `is_sunday_prepped` broke because an anchor came
+    back with both its flags False despite the per-slot directive telling the
+    model to set one: a self-report the model simply dropped, on a field the
+    prompt explicitly asked for. `storage_class` is the same kind of field
+    with the same failure mode, and if a dropped report resolved to the
+    default row, **the failure mode of a model forgetting a field would be a
+    rice dish scheduled four days out**. Failing short means a dropped report
+    costs a shorter batch, which is the right direction to be wrong in.
+
+    Three cases, and the middle one is why this is not a plain `dict.get`:
+
+    - a class the table names -> that row (`rice_or_pasta` in the fridge).
+    - a class in `STORAGE_CLASSES` the table does not name -> the `default`
+      row. `soup_stew_casserole` has no fridge row because it keeps as long as
+      an ordinary dish; only rice is exceptional there.
+    - anything else, `None` included -> `min` of the table. Not the literal
+      rice figure: if a shorter class is ever added, the unclassified case has
+      to follow it *down*, never stay put above it.
+    """
+    if storage_class in table:
+        return table[storage_class]
+    if storage_class in STORAGE_CLASSES:
+        return table[STORAGE_CLASS_DEFAULT]
+    return min(table.values())
+
+
+def storage_class_label(storage_class: Optional[str]) -> str:
+    """How a class reads in a message aimed at a person.
+
+    "an unclassified dish" rather than a blank or the word "None", because the
+    backstop's message has to say *why* a stew was judged against two days —
+    the honest answer is that nothing said what it was, not that the app
+    thinks a stew keeps two days.
+    """
+    if storage_class is None or storage_class not in STORAGE_CLASSES:
+        return "an unclassified dish"
+    if storage_class == STORAGE_CLASS_DEFAULT:
+        return "an ordinary cooked dish"
+    return humanize(storage_class).replace(" or ", "/")
+
+
+def storage_day_gaps(window_hours: int) -> int:
+    """A stated window, in the whole day-gaps every consumer can actually measure.
+
+    The tables are hours; everything that could measure against them holds a
+    **date**. A `SlotSpec` carries a weekday name, `WeekPlan` carries
+    `week_start_date`, a `CookEvent` resolves to a grid day, and a freezer lot
+    would carry `cooked_on`/`frozen_on`. Nothing anywhere stores a *time*, so
+    no consumer can establish that a Sunday cook eaten Thursday was inside 96
+    hours — Sunday 09:00 to Thursday 20:00 is 107 and Sunday 18:00 to Thursday
+    12:00 is 90, and the stored data cannot tell those apart.
+
+    So the hours are the **guidance the figures were derived from** and the
+    day-gap is what the app enforces. Adding cook and consumption times is the
+    alternative and is deliberately not taken: it would buy a genuine 96-hour
+    guarantee and cost a time on every cook event, a time on every eating slot
+    and a clock question at every freeze, in an app whose grid is day-granular
+    everywhere else.
+
+    **No surface prints hours.** The app does not know them, and a note saying
+    "96 hours" would be claiming a measurement nothing here took.
+
+    `design-05` §2a and §5 disagreed about this conversion by exactly one day
+    — §2a's prose derived 3 day-gaps from 96h by worst case ((N+1) x 24 <= 96),
+    while §5's arithmetic and §2a's own formula line took the stated day-count
+    (96h = 4 days, which is how the requirement was originally written). The
+    day-count reading governs, settled 2026-09-01: the source figures are day
+    counts and the hours are their gloss. The safety win here is the per-dish
+    exception, not a silent extra day of tightening on top of it.
+    """
+    return max(0, int(window_hours) // 24)
+
+
+def fridge_day_gaps(storage_class: Optional[str], config: Optional[dict] = None) -> int:
+    """How many day-gaps a dish of this class may sit between cooking and eating.
+
+    A day-gap of 0 is "eaten the day it was cooked". This is the number every
+    fridge consumer compares a span against — `spread_batch`'s bound,
+    `apply_batch_selections`' `max_day_index`, `validate_week`'s backstop,
+    `storage_note`'s refrigerate-versus-freeze wording and the per-card badge
+    — so they cannot come to disagree about a Thursday.
+    """
+    return storage_day_gaps(
+        storage_window_for(storage_class, _storage_window_table(config, "fridge"))
+    )
+
+
+def freezer_months(storage_class: Optional[str], config: Optional[dict] = None) -> int:
+    """How many whole months a frozen lot of this class stays worth eating.
+
+    **Quality, not safety** — the distinction `fridge_day_gaps` is the other
+    half of. Frozen food does not become unsafe at two months, it degrades,
+    and "unsafe" and "past its best" prompt different behaviour: conflating
+    them teaches a reader to ignore both. Nothing acting on this figure may
+    ever remove anything (see `freezer_quality_note`).
+    """
+    return storage_window_for(
+        storage_class, _storage_window_table(config, "freezer_months")
+    )
+
+
+# Roughly a month, for turning a date gap into the whole months the freezer
+# table is stated in. Deliberately arithmetic rather than calendar months: the
+# figure it is compared against is a one-significant-figure guideline, and a
+# calendar walk would imply a precision the guidance does not have.
+DAYS_PER_STORAGE_MONTH = 30
+
+
+def freezer_quality_note(
+    frozen_on: Optional[date],
+    today: date,
+    storage_class: Optional[str],
+    config: Optional[dict] = None,
+) -> str:
+    """A quality warning for one frozen lot, or "" while it is still good.
+
+    Pure, and storage-free on purpose: `data/freezer.json` does not exist yet
+    (PROMPT-11 / `design-04`), and this is the window logic that work will
+    import rather than write a second time — writing it twice is how the two
+    come to disagree about a tub.
+
+    Three things it will not do, each of them a decision:
+
+    - **An undateable lot is flagged, never assumed fresh.** A missing
+      `frozen_on` degrades to "no idea how old this is", and the conservative
+      reading of that is not a number this function is entitled to pick. It is
+      the one field whose absence cannot be defaulted safely.
+    - **Nothing is removed.** On a hand-declared list, deleting an expired row
+      is the app editing your own statement of what you own. It warns and the
+      item stays.
+    - **The wording says quality.** "Past its best" and never "unsafe" — see
+      `freezer_months`. The fridge half is the sentence that is allowed to say
+      unsafe.
+    """
+    if frozen_on is None:
+        return (
+            "No freeze date recorded — how old this is cannot be worked out, "
+            "so check it yourself before using it."
+        )
+    months = freezer_months(storage_class, config)
+    elapsed_days = (today - frozen_on).days
+    if elapsed_days <= months * DAYS_PER_STORAGE_MONTH:
+        return ""
+    return (
+        f"Frozen {elapsed_days} days ago, past the {months}-month mark for "
+        "this kind of dish — still safe to eat, but likely past its best."
+    )
+
 
 # `shopping.py`'s `ShoppingItem.buy_late` still reads this module constant
 # directly (it's a plain computed property with no config in scope at
@@ -822,9 +1060,16 @@ def spread_batch(
     the already-linked-grid reasoning above is written against; counting its
     own is the bug.
 
-    `max_span_days` (`inventory_rules.fridge_safe_days`, threaded in by
-    `ui_generation.apply_batch_selections`) stops the walk once it is that
-    many days past the anchor. **This is prevention, not validation**: cooked
+    `max_span_days` (the **default** storage window's day-gaps, threaded in
+    by `ui_generation.apply_batch_selections`) stops the walk once it is that
+    many days past the anchor. The default rather than a per-dish figure
+    because no recipe exists yet: the grid is built before generation runs, so
+    at the moment the span is chosen nothing knows whether the dish will turn
+    out to be a rice tray bake. `build_storage_rule` then tells the model the
+    span this slot needs and `reject_short_storage_class` enforces it, which
+    is how a per-dish window is honoured despite the ordering — the same
+    state-it-then-check-it shape `build_batch_roast_rule` and
+    `reject_misplaced_long_cook` already use. **This is prevention, not validation**: cooked
     food keeps 3-4 days refrigerated, and the alternative — letting the walk
     reach Friday from a Sunday anchor and then refusing to generate the week
     — reports a problem the planner created itself. `validate_week` still
@@ -847,9 +1092,9 @@ def spread_batch(
     cooked on prep day, the day *before* `days[0]`. So a Tuesday anchor
     reaching Friday is 3 days by `max_span_days` and 5 days out of the fridge,
     which is how food cooked on Sunday ended up planned for Friday's lunch.
-    Day index `i` is `i + 1` days after prep, so a `fridge_safe_days` of N
-    means `max_day_index = N - 1`; `ui_generation.apply_batch_selections` does
-    that arithmetic. None leaves the anchor-relative bound as the only one,
+    Day index `i` is `i + 1` days after prep, so a default window of N
+    day-gaps means `max_day_index = N - 1`;
+    `ui_generation.apply_batch_selections` does that arithmetic. None leaves the anchor-relative bound as the only one,
     which is right for any caller whose batch really is cooked on its own day.
 
     `exclude_target_days` names days that may not *receive* a link; the
@@ -1129,11 +1374,79 @@ def eaten_on(spec: WeekSpec) -> Dict[str, List[str]]:
     return claims
 
 
-def validate_week(spec: WeekSpec, config: dict) -> List[str]:
+def storage_safety_errors(
+    spec: WeekSpec,
+    config: dict,
+    storage_classes: Optional[Dict[str, Optional[str]]] = None,
+) -> List[str]:
+    """Cook slots planned to be eaten past what the dish keeps for.
+
+    Read twice, by two callers that must not come to different answers about a
+    Thursday: `validate_week` runs it as the grid gate before generation, and
+    `planner.generate_week_plan` runs it again over the *generated* week —
+    where the dishes are real and a dropped `storage_class` or a rice dish
+    that slipped past the response validator is finally visible.
+
+    **The two calls differ only in what they know, and the difference is
+    exactly `storage_classes`.**
+
+    - `None` — no plan yet. Every cook is judged against the **default**
+      window, which is also what `spread_batch` planned the grid against, so
+      the gate agrees with the planner rather than pre-emptively failing a
+      grid the app itself just built. Per-dish tightening cannot happen here:
+      the grid is built before any recipe exists.
+    - a mapping — a generated week. A slot absent from it, or mapping to
+      `None`, is genuinely unclassified and gets the shortest window. Absence
+      of a *mapping* and absence of an *entry* are different questions and
+      this is the only place both can be asked.
+
+    It reports the slot and the days and never trims. A plan quietly rewritten
+    is one nobody checks — the same reason `cap_to_weighted_share` drops its
+    surplus visibly rather than moving it, and why `apply_protein_floor` does
+    nothing and logs when the floor is unaffordable.
+    """
+    known = storage_classes is not None
+    classes = storage_classes or {}
+    # The third place this off-by-one has had to be closed — `max_day_index`
+    # and `storage_note` were the first two. A batch folded into the prep
+    # session is cooked the day *before* the week starts, so measuring its
+    # span from the anchor's grid day is short by exactly one, and short in
+    # the unsafe direction: with the shipped grid it reads a prep-day anchor
+    # as 2 day-gaps, which is exactly the rice window it ought to be failing.
+    prepped_ahead = prep_day_batch_slot_ids(config)
+    errors: List[str] = []
+    for cook in spec.cook_slots():
+        span = span_days(spec, cook.id, cook.id in prepped_ahead)
+        storage_class = classes.get(cook.id) if known else STORAGE_CLASS_DEFAULT
+        allowed = fridge_day_gaps(storage_class, config)
+        if span <= allowed:
+            continue
+        last = max(
+            (value for value in eaten_on(spec).get(cook.id, [])),
+            key=lambda value: spec.day_index(parse_slot_id(value)[0]),
+        )
+        errors.append(
+            f"{cook.day} {cook.meal_type}: cooked {span} days before "
+            f"{slot_label(last)} eats it, past the {allowed}-day fridge limit "
+            f"for {storage_class_label(storage_class)} — re-point that meal "
+            "to a later cook."
+        )
+    return errors
+
+
+def validate_week(
+    spec: WeekSpec,
+    config: dict,
+    storage_classes: Optional[Dict[str, Optional[str]]] = None,
+) -> List[str]:
     """Everything that would make generation nonsensical, as plain messages.
 
     Returned rather than raised so the UI can show all problems at once and
     keep the Generate button disabled until the grid is coherent.
+
+    `storage_classes` maps a cook slot's id to the `Recipe.storage_class` of
+    the dish actually sitting on it, and is passed straight to
+    `storage_safety_errors` — see there for what omitting it means.
     """
     errors: List[str] = []
     by_id = spec.by_id()
@@ -1223,27 +1536,7 @@ def validate_week(spec: WeekSpec, config: dict) -> List[str]:
                         f"{label}: estimate has negative {', '.join(negative)}."
                     )
 
-    # Food safety, as a backstop. `spread_batch` already refuses to plan a
-    # batch past this bound (`max_span_days`), so the toggles can't produce a
-    # breach — but a hand-built chain of "Link to next lunch" clicks never
-    # goes through `spread_batch`, and neither does an imported or hand-edited
-    # week_plan.json. Cooked food keeps 3-4 days refrigerated; a leftover
-    # planned beyond that is a meal you would have to throw away.
-    fridge_safe_days = (config.get("inventory_rules") or DEFAULT_INVENTORY_RULES).get(
-        "fridge_safe_days", DEFAULT_INVENTORY_RULES["fridge_safe_days"]
-    )
-    for cook in spec.cook_slots():
-        span = span_days(spec, cook.id)
-        if span > fridge_safe_days:
-            last = max(
-                (value for value in eaten_on(spec).get(cook.id, [])),
-                key=lambda value: spec.day_index(parse_slot_id(value)[0]),
-            )
-            errors.append(
-                f"{cook.day} {cook.meal_type}: cooked {span} days before "
-                f"{slot_label(last)} eats it, past the {fridge_safe_days}-day "
-                "fridge limit — re-point that meal to a later cook."
-            )
+    errors.extend(storage_safety_errors(spec, config, storage_classes))
 
     if not spec.cook_slots():
         errors.append("Nothing to cook: at least one slot must be set to cook.")
@@ -1268,6 +1561,39 @@ def cook_day_index(spec: WeekSpec, day: str, prepped_ahead: bool = False) -> int
     the day its slot sits on.
     """
     return PREP_DAY_INDEX if prepped_ahead else spec.day_index(day)
+
+
+def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
+    """Slot ids this run cooks on prep day rather than on their own grid day.
+
+    The generation-side answer to the question `is_prepped_ahead` answers
+    afterwards, and it has to be a different lookup for a plain ordering
+    reason: `generate_sunday_prep_session` runs *after* every cook event is
+    built, so `candidate_slot_ids` does not exist yet when `build_cook_event`
+    needs to know how old the food will be. The anchors do — they were chosen
+    by `ui_generation.apply_batch_selections` and merged into `config` before
+    the first call — and they are the same two slots the session goes on to
+    stamp.
+
+    Empty for a CLI run, whose legacy `enable_sunday_prep` path names no
+    anchor in advance (`build_batch_roast_rule` lets the model pick its own
+    day, from the ones that have the hours), so those weeks count spans
+    exactly as they always have.
+
+    It lives here rather than in `planner.py` (where it started, and from
+    which it is still re-exported so every existing caller and every mention
+    of it in CLAUDE.md still resolves) because `storage_safety_errors` needs
+    it and `week` cannot import `planner`. Beside `PREP_DAY_INDEX` and
+    `cook_day_index` is where it belonged anyway: it reads two config keys and
+    answers a question about the grid, with no model, recipe or repository in
+    sight.
+    """
+    config = config or {}
+    return {
+        value
+        for value in (config.get("long_cook_anchor"), config.get("bulk_prep_anchor"))
+        if value
+    }
 
 
 def span_days(spec: WeekSpec, cook_id: str, prepped_ahead: bool = False) -> int:

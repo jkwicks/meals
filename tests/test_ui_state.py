@@ -83,7 +83,10 @@ CONFIG = {
         "banned_ingredients": [],
         "active_diet_styles": [],
     },
-    "inventory_rules": {"fridge_safe_days": 4, "perishable_day_gap": 3},
+    "inventory_rules": {
+        "storage_windows": {"fridge": {"default": 96, "rice_or_pasta": 48}},
+        "perishable_day_gap": 3,
+    },
     "week_start_day": "Monday",
     "training_schedule": [],
     "serving_rules": {"servings_per_meal": 2},
@@ -105,10 +108,19 @@ def make_spec(servings_per_meal=2) -> WeekSpec:
     return WeekSpec(days=DAYS, slots=slots, servings_per_meal=servings_per_meal)
 
 
-def make_recipe(name="Green Chicken Curry", servings=2, grams=200.0):
+def make_recipe(
+    name="Green Chicken Curry",
+    servings=2,
+    grams=200.0,
+    storage_class="soup_stew_casserole",
+):
+    """A curry, so `soup_stew_casserole` — which matters because an
+    unclassified dish now resolves to the *shortest* fridge window and every
+    batch fixture below would tip to "freezer" on the second day."""
     return Recipe(
         name=name,
         meal_type="dinner",
+        storage_class=storage_class,
         ingredients=[
             Ingredient(
                 name="Chicken breast", quantity_g=grams, nova_group=1,
@@ -664,9 +676,12 @@ class TestPrepDayFridgeDaysSurviveAGridEdit(unittest.TestCase):
     two surfaces disagreeing about how old one batch is.
     """
 
-    def state_with_session(self, fridge_safe_days=4):
+    def state_with_session(self, fridge_window_hours=96):
         state = make_state()
-        state.config = dict(CONFIG, inventory_rules={"fridge_safe_days": fridge_safe_days})
+        state.config = dict(
+            CONFIG,
+            inventory_rules={"storage_windows": {"fridge": {"default": fridge_window_hours}}},
+        )
         state.link_to_next_lunch("Monday:dinner")
         state.week_plan = state.week_plan.model_copy(
             update={
@@ -698,9 +713,30 @@ class TestPrepDayFridgeDaysSurviveAGridEdit(unittest.TestCase):
     def test_the_badge_counts_from_prep_day_too(self):
         """Tuesday's portion of a Sunday-cooked batch is 2 days old, not 1 —
         which is what tips it past a 2-day fridge window."""
-        views = self.state_with_session(fridge_safe_days=2).slot_views()
+        views = self.state_with_session(fridge_window_hours=48).slot_views()
         self.assertEqual(views["Tuesday:lunch"].prep_badge, "freezer")
         self.assertEqual(views["Monday:dinner"].prep_badge, "fridge")
+
+    def test_the_badge_reads_the_dishs_own_window(self):
+        """Two cards in one week may now legitimately differ. Same batch,
+        same day, same config — only the class changes, and it is the class
+        that decides."""
+        state = self.state_with_session()
+        rice = [
+            event.model_copy(
+                update={"recipe": event.recipe.model_copy(
+                    update={"storage_class": "rice_or_pasta"}
+                )}
+            )
+            if event.slot_id == "Monday:dinner"
+            else event
+            for event in state.week_plan.cook_events
+        ]
+        self.assertEqual(
+            self.state_with_session().slot_views()["Tuesday:lunch"].prep_badge, "fridge"
+        )
+        state.week_plan = state.week_plan.model_copy(update={"cook_events": rice})
+        self.assertEqual(state.slot_views()["Tuesday:lunch"].prep_badge, "freezer")
 
 
 # `base_schedule`/`location_rules` shaped after the shipped `schedule.json`,

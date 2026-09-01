@@ -487,16 +487,56 @@ class TestStorageNote(unittest.TestCase):
         self.assertEqual(planner.storage_note(4, 0), "")
 
     def test_a_short_lived_batch_says_refrigerate(self):
-        note = planner.storage_note(4, 2)
+        note = planner.storage_note(4, 2, storage_class="soup_stew_casserole")
         self.assertIn("refrigerate in airtight containers", note)
         self.assertTrue(note.startswith(planner.STORAGE_NOTE_PREFIX))
 
     def test_a_long_lived_batch_says_freeze_the_rest(self):
-        self.assertIn("freeze the rest", planner.storage_note(6, 30))
+        self.assertIn(
+            "freeze the rest",
+            planner.storage_note(6, 30, storage_class="soup_stew_casserole"),
+        )
 
-    def test_the_fridge_threshold_comes_from_config(self):
-        config = {"inventory_rules": {"fridge_safe_days": 2}}
-        self.assertIn("freeze the rest", planner.storage_note(4, 3, config))
+    def test_the_threshold_is_the_dishs_own_window(self):
+        """Two cards in one week can legitimately differ now. Same portions,
+        same span; a rice dish is already at its freeze point where a stew has
+        two days left."""
+        self.assertIn(
+            "freeze the rest",
+            planner.storage_note(4, 2, storage_class="rice_or_pasta"),
+        )
+        self.assertIn(
+            "refrigerate in airtight containers",
+            planner.storage_note(4, 2, storage_class="soup_stew_casserole"),
+        )
+
+    def test_an_unclassified_dish_is_treated_as_rice(self):
+        """The inverted default. Everywhere else in this codebase an absent
+        value resolves to the behaviour before the feature existed; here it
+        resolves to the SHORTEST window, so a model that simply drops the
+        field costs the dish storage life rather than quietly granting it."""
+        self.assertEqual(
+            planner.storage_note(4, 2),
+            planner.storage_note(4, 2, storage_class="rice_or_pasta"),
+        )
+
+    def test_the_windows_come_from_config(self):
+        config = {
+            "inventory_rules": {"storage_windows": {"fridge": {"default": 48}}}
+        }
+        self.assertIn(
+            "freeze the rest",
+            planner.storage_note(4, 3, config, storage_class="default"),
+        )
+
+    def test_no_note_ever_states_hours(self):
+        """The app does not know hours — nothing stores a cook time — so the
+        tables' figures are the derivation and every surface says days."""
+        for storage_class in wk.STORAGE_CLASSES + (None,):
+            note = planner.storage_note(6, 30, storage_class=storage_class)
+            self.assertNotIn("hour", note)
+            self.assertNotIn("96", note)
+            self.assertNotIn("48", note)
 
 
 class TestPrepDayStorageSpan(unittest.TestCase):
@@ -505,22 +545,27 @@ class TestPrepDayStorageSpan(unittest.TestCase):
     parked on.
 
     Written against the shipped config, where this is not an edge case: both
-    toggles anchor on day 1 and `apply_batch_selections` bounds them at
-    `fridge_safe_days - 1`, so the maximum-span batch reported
-    `fridge_safe_days - 1` days, compared it against `fridge_safe_days`, and
-    told you to refrigerate the one batch in the week that is sitting at the
-    limit — the exact case `storage_note`'s freeze branch exists for.
+    toggles anchor on day 1 and `apply_batch_selections` bounds them one day
+    short of the default window, so the maximum-span batch reported one day
+    short, compared that against the window, and told you to refrigerate the
+    one batch in the week that is sitting at the limit — the exact case
+    `storage_note`'s freeze branch exists for.
     `generate_sunday_prep_session`'s prompt tells the model not to recompute
     the note, so the number Python passes is the number the user reads.
+
+    The dish is a `cooked_meat` braise throughout, so the spans here are
+    measured against the 4-day window rather than the unclassified 2-day one —
+    this class is about *where the clock starts*, not about how long it runs.
     """
 
-    CONFIG = {"inventory_rules": {"fridge_safe_days": 3}}
+    CONFIG = {"inventory_rules": {"storage_windows": {"fridge": {"default": 72}}}}
 
     def _recipe(self):
         return planner.Recipe(
             name="Braised beef",
             meal_type="dinner",
             servings=1,
+            storage_class="cooked_meat",
             prep_time_minutes=20,
             instructions=["Cook it."],
             ingredients=[
@@ -575,11 +620,20 @@ class TestPrepDayStorageSpan(unittest.TestCase):
         self.assertEqual(wk.span_days(spec, "Monday:dinner"), 2)
         self.assertEqual(wk.span_days(spec, "Monday:dinner", prepped_ahead=True), 3)
 
-    def test_validate_weeks_backstop_still_measures_from_the_anchor(self):
-        """`span_days` defaults to the anchor day so this check keeps passing
-        the weeks `apply_batch_selections` deliberately builds — the prep-day
-        bound is enforced there, by `max_day_index`, not here."""
-        config = dict(TestValidateWeek.CONFIG, inventory_rules={"fridge_safe_days": 2})
+    def test_validate_weeks_backstop_measures_from_the_anchor_without_one(self):
+        """A config naming no anchor is a week nobody cooked ahead — a CLI
+        run, or a hand-built chain — so its spans are the grid's own.
+
+        This is no longer the whole story: once storage windows became a
+        property of the dish, the backstop had to measure a *named* anchor
+        from prep day too, because reading a Monday-Wednesday prep batch as
+        two day-gaps is exactly the rice window it ought to be failing. That
+        half is `test_food_safety.py`'s; this one pins the case that did not
+        change."""
+        config = dict(
+            TestValidateWeek.CONFIG,
+            inventory_rules={"storage_windows": {"fridge": {"default": 48}}},
+        )
         self.assertEqual(wk.validate_week(self._batch_spec(), config), [])
 
     def test_prep_day_batch_slot_ids_reads_both_anchors(self):

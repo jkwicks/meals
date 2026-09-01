@@ -176,8 +176,22 @@
   },
   "enable_sunday_prep": true,
   "inventory_rules": {
-    "fridge_safe_days": 3,
-    "perishable_day_gap": 3
+    "perishable_day_gap": 3,
+    "storage_windows": {
+      "freezer_months": {
+        "cooked_meat": 2,
+        "cooked_poultry": 2,
+        "default": 1,
+        "fish_seafood": 1,
+        "fried": 1,
+        "poultry_pieces": 1,
+        "soup_stew_casserole": 2
+      },
+      "fridge": {
+        "default": 96,
+        "rice_or_pasta": 48
+      }
+    }
   },
   "inventory_to_clear": [],
   "location_rules": {

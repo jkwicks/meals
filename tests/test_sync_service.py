@@ -1408,5 +1408,170 @@ class TestCredentialGuards(unittest.TestCase):
         self.assertEqual(service.password, "explicit-pw")
 
 
+class TestStaleCronometerSession(unittest.TestCase):
+    """The saved session expires, and the client cannot tell.
+
+    Written because a real sync failed with `403 Client Error:  for url:
+    https://cronometer.com/export?nonce=com.cronometer.shared.user.exceptions.
+    NotLoggedInException%2F844385496&...` against a 15-day-old session file and
+    entirely correct credentials. `cronometer_mcp` validates a restored session
+    by minting an auth token; GWT-RPC answers an expired session with HTTP
+    **200** and a serialized exception, so `raise_for_status` passes and the
+    token regex returns the first quoted string in that payload - the exception
+    class name itself. Non-empty, so the restore is judged good, the login is
+    skipped, and the exception's name goes out as the export nonce.
+
+    Seamed at `_rows_in_process` and `_session_cache_path`, so nothing here
+    touches the network or the real `~/.local/share/cronometer-mcp`.
+    """
+
+    ROWS = [{"Date": "2026-08-30", "Energy (kcal)": "1900", "Protein (g)": "150"}]
+
+    STALE_URL = (
+        "403 Client Error:  for url: https://cronometer.com/export?nonce="
+        "com.cronometer.shared.user.exceptions.NotLoggedInException%2F844385496"
+        "&generate=dailySummary&start=2026-08-30&end=2026-08-30"
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.session_path = Path(self.tmp.name) / ".session_cookies"
+        self.session_path.write_bytes(b"pretend-pickle")
+        self.service = sync.CronometerSyncService(
+            username="user@example.com", password="pw"
+        )
+        self.service._session_cache_path = lambda: self.session_path
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _http_error(status, message):
+        response = requests.Response()
+        response.status_code = status
+        return requests.exceptions.HTTPError(message, response=response)
+
+    def _answers(self, *outcomes):
+        """Give `_rows_in_process` a scripted sequence, and record the calls."""
+        calls = []
+
+        def fake(start, end):
+            calls.append((start, end))
+            outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        self.service._rows_in_process = fake
+        return calls
+
+    def test_a_stale_session_is_cleared_and_the_fetch_retried_once(self):
+        calls = self._answers(self._http_error(403, self.STALE_URL), self.ROWS)
+
+        rows = self.service._fetch_rows("2026-08-30", "2026-08-30")
+
+        self.assertEqual(rows, self.ROWS)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(
+            self.session_path.exists(),
+            "the dead session must be deleted, or the retry resumes it again",
+        )
+
+    def test_the_retry_happens_exactly_once(self):
+        """No loop. A second login is another seven requests at an endpoint
+        that throttles, so one stale cookie must not become a 429."""
+        calls = self._answers(self._http_error(403, self.STALE_URL))
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            self.service._fetch_rows("2026-08-30", "2026-08-30")
+
+        self.assertEqual(len(calls), 2)
+
+    def test_without_a_cached_session_there_is_no_retry(self):
+        """The login was already fresh, so the failure is a real one - wrong
+        credentials, a lapsed subscription - and retrying only doubles its
+        cost."""
+        self.session_path.unlink()
+        calls = self._answers(self._http_error(403, self.STALE_URL))
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            self.service._fetch_rows("2026-08-30", "2026-08-30")
+
+        self.assertEqual(len(calls), 1)
+
+    def test_a_rate_limit_is_never_treated_as_a_stale_session(self):
+        """The worst possible response to a 429 is a fresh login."""
+        error = self._http_error(429, "429 Client Error:  for url: ...")
+        calls = self._answers(error)
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            self.service._fetch_rows("2026-08-30", "2026-08-30")
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(self.session_path.exists())
+        self.assertFalse(sync._is_stale_session(error))
+        self.assertTrue(sync._is_rate_limited(error))
+
+    def test_the_marker_alone_is_enough_without_an_http_response(self):
+        """The backstop for the day upstream raises on the unparseable token
+        rather than sending it - a `RuntimeError` naming what it choked on."""
+        self.assertTrue(
+            sync._is_stale_session(
+                RuntimeError(
+                    "Failed to extract auth token. Response: //EX[4,3,2,1,"
+                    '["com.cronometer.shared.user.exceptions.'
+                    'NotLoggedInException/844385496"],0,7]'
+                )
+            )
+        )
+
+    def test_both_fetch_paths_go_through_the_recovery(self):
+        """One seam, two callers: the single-day and range fetches must not
+        disagree about whether a dead session is recoverable."""
+        for label, fetch in (
+            ("fetch_daily_summary", lambda: self.service.fetch_daily_summary("2026-08-30")),
+            ("fetch_range_summaries", lambda: self.service.fetch_range_summaries(["2026-08-30"])),
+        ):
+            with self.subTest(label):
+                self.session_path.write_bytes(b"pretend-pickle")
+                calls = self._answers(self._http_error(403, self.STALE_URL), self.ROWS)
+                fetch()
+                self.assertEqual(len(calls), 2)
+
+    def test_the_failure_is_reported_as_a_session_problem_not_a_password_one(self):
+        """A bare 403 quoting a Java exception reads as bad credentials, and
+        sends someone to re-check an `.env` that was right all along."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = LocalJSONRepository(biometrics_path=str(Path(tmp.name) / "biometrics.json"))
+
+        original = sync.CronometerSyncService
+        error = self._http_error(403, self.STALE_URL)
+
+        class Patched(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(username="user@example.com", password="pw")
+
+            def _session_cache_path(self):
+                return None  # nothing to clear, so no retry
+
+            def _rows_in_process(self, start, end):
+                raise error
+
+        sync.CronometerSyncService = Patched
+        try:
+            results = sync.sync_cronometer_range(["2026-08-30"], repo)
+        finally:
+            sync.CronometerSyncService = original
+
+        self.assertTrue(results[0]["stale_session"])
+        self.assertNotIn("rate_limited", results[0])
+        self.assertIn("expired saved session", results[0]["wait_hint"])
+        # Nothing checkpointed, so the next run retries the same day.
+        self.assertEqual(
+            run_sync(repo.load_biometrics()).get("sync_checkpoints", {}), {}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
