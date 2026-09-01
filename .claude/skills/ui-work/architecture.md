@@ -1028,6 +1028,29 @@ keystroke.
 
 ## The review dialog and the staged-changes bar
 
+**The weekly preset pick sits at the top of it, above everything else**, and
+is the one control in this dialog that is *not* staged. The design reason is
+placement: a preset chosen weekly needs one obvious control near the point of
+generation rather than a Settings page nobody opens on a Monday, and this
+dialog is already where the week's shape is settled — Generate opens it rather
+than running the week. It goes above the batch toggles because it can override
+them, and above the "everything below is staged for the next generation only"
+line because that sentence is true of everything under it and false of this:
+`PlannerState.set_preset` persists to `config/presets.json` the moment the
+select changes.
+
+Two mechanics worth not re-deriving. The block is **built once and mutated in
+place** — `summary.set_text` after a pick, not a `@ui.refreshable` body — for
+the same reason `day_target_row` is: the section owns the control that fired
+the change. And the cuisine and diet-style selects' option lists are read from
+config *once* at build time, which a preset can now invalidate under them, so
+the pick's handler calls `set_options` on both through a small registry
+(`catalog_selects`) rather than a repaint — a registry rather than two direct
+references because the diet-style select is conditional, and a direct one
+would be a `NameError` on any config whose `diet_styles` is empty. The handler
+refreshes `"plan"`, `"targets"`, `"training"` and `"pantry"`, because a preset
+can move all four.
+
 `ui_review.py`'s dialog is where every input to the *next* generation lives:
 cuisine, western-style share, diet styles, bulk-prep/long-cook, people per
 meal, and — folded in from the deleted left drawer by phase 3 of

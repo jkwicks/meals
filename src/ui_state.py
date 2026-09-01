@@ -42,6 +42,7 @@ from planner import (
     inventory_entries,
     is_prepped_ahead,
     is_sunday_prepped,
+    apply_preset_layer,
     load_app_config,
     meal_overrides_for,
     resolve_planner_model,
@@ -55,6 +56,7 @@ from planner import (
 # reading that decides which meal gets the post-workout pin; a second parser
 # is a second answer to "what time is `7:3o`?".
 from planner import clock_minutes
+import presets as preset_layer
 from nutrition_engine import (
     ADAPTIVE_NO_LOGS,
     MIN_TREND_SPAN_DAYS,
@@ -585,6 +587,80 @@ def pantry_rows(config: dict) -> List[Dict[str, Any]]:
     ]
 
 
+# Which `PlannerState` field each config value seeds, and how to read it.
+#
+# One table rather than a list of kwargs in `.load()` and a second list in
+# `set_preset`, because those two must not drift: a field seeded at load and
+# forgotten on a pick change is a preset that *appears applied and is not* —
+# the failure the whole preset layer is shaped to refuse. `model` is
+# deliberately absent (it reads `models.json`, which no preset can touch) and
+# so is `weight_kg` (a fact about the body, not the config).
+PRESET_SEEDED_FIELDS = (
+    ("target_modes", lambda config: dict(config["target_modes"])),
+    ("week_start", lambda config: config["week_start_day"]),
+    ("servings", lambda config: config["serving_rules"]["servings_per_meal"]),
+    ("shop_days", lambda config: list(config["shopping"]["shop_days"])),
+    ("pantry", pantry_rows),
+    (
+        "training_schedule",
+        lambda config: [dict(session) for session in config["training_schedule"]],
+    ),
+    ("bulk_prep_enabled", lambda config: config["enable_sunday_prep"]),
+    ("long_cook_enabled", lambda config: config["enable_sunday_prep"]),
+    (
+        "baseline_cuisine_share",
+        lambda config: config["planning_rules"]["min_baseline_cuisine_share"],
+    ),
+)
+
+# The config keys `week.default_week_spec` reads that nothing in
+# `PRESET_SEEDED_FIELDS` already covers. A preset moving one of these changes
+# which slots are cooked, so the cached preview grid has to be rebuilt — the
+# same invalidation `_spec_shape` performs for the two it does cover.
+PRESET_GRID_SHAPE_KEYS = ("week_defaults", "meal_types", "base_schedule", "location_rules")
+
+
+@dataclass(frozen=True)
+class PresetView:
+    """The weekly pick, as the review dialog draws it.
+
+    A view model rather than four `state.` reads at the widget, for the
+    reason every other one here exists: the rules — that the baseline is the
+    base config, that a no-op override produces no line, that a name with no
+    label shows as its name — are worth testing, and a widget module is where
+    logic goes to be untestable.
+    """
+
+    options: Dict[str, str]
+    active: Optional[str]
+    label: Optional[str]
+    changes: List[str]
+
+    @property
+    def available(self) -> bool:
+        """Whether there is anything to pick from.
+
+        False on every checkout with no `presets.json`, which is the state
+        the whole feature degrades to and the reason the control draws
+        nothing at all rather than an empty select.
+        """
+        return bool(self.options)
+
+    @property
+    def summary(self) -> str:
+        """One line saying what the pick changed, against the base config.
+
+        "No changes from the base config" is a real answer and the one
+        `default` gives — it is what makes that preset visibly data rather
+        than a built-in wearing a costume.
+        """
+        if self.active is None:
+            return "No preset — planning against config/ as it stands."
+        if not self.changes:
+            return "No changes from the base config."
+        return " · ".join(self.changes)
+
+
 @dataclass
 class ShoppingWindowView:
     """One shopping trip, resolved once and read by everything that draws it.
@@ -624,6 +700,16 @@ class PlannerState:
     """
 
     config: dict
+    # The five merged core files *before* the preset layer, plus the presets
+    # document itself. Both kept because a pick is a **re-layer, not a second
+    # layer**: switching from one preset to another has to start from the
+    # base again, or the outgoing preset's overrides survive on every leaf the
+    # incoming one is silent about. `base_config` is also the only honest
+    # baseline for the pick's diff — `default` is an ordinary row that may be
+    # edited or deleted, where the base config cannot be, since it is the
+    # thing presets layer over.
+    base_config: dict = field(default_factory=dict)
+    presets_config: dict = field(default_factory=dict)
     # models.json, loaded alongside config — the drawer's model select offers
     # `selectable_models(models_config)` and `.load()` uses
     # `models_config["meal_generation_model"]` as `model`'s starting value
@@ -848,12 +934,19 @@ class PlannerState:
 
     @classmethod
     async def load(cls, repository: LocalJSONRepository) -> "PlannerState":
-        # `load_app_config` validates config.json against `AppConfig` here,
-        # once, at startup — the same schema check the CLI gets from
+        # `apply_preset_layer` lays the active preset over the merged files
+        # and validates the result through `AppConfig` here, once, at startup
+        # — the same call, in the same order, the CLI gets from
         # `load_config_with_models`. Every field below is then guaranteed
         # present with a real value, so this reads them directly instead of
         # each picking its own `.get(key, DEFAULT)` fallback.
-        config = load_app_config(await repository.load_config())
+        #
+        # The *base* is kept beside the layered result rather than being
+        # re-read when the pick changes: `set_preset` re-layers from it, and
+        # the pick's diff line is measured against it.
+        base_config = await repository.load_config()
+        presets_config = await repository.load_presets_config()
+        config = apply_preset_layer(base_config, presets_config)
         models_config = await repository.load_models_config()
         latest_biometrics = await repository.get_latest_biometrics()
         # The *series* as well as the latest row, for the same reason
@@ -863,20 +956,17 @@ class PlannerState:
         biometrics = await repository.load_biometrics()
         state = cls(
             config=config,
+            base_config=base_config,
+            presets_config=presets_config,
             models_config=models_config,
             latest_biometrics=latest_biometrics,
             biometrics=biometrics,
-            target_modes=dict(config["target_modes"]),
             weight_kg=resolve_current_weight_kg(config["user_profile"], latest_biometrics),
-            week_start=config["week_start_day"],
-            servings=config["serving_rules"]["servings_per_meal"],
-            shop_days=list(config["shopping"]["shop_days"]),
             model=resolve_planner_model(dict(config, models=models_config)),
-            pantry=pantry_rows(config),
-            training_schedule=[dict(session) for session in config["training_schedule"]],
-            bulk_prep_enabled=config["enable_sunday_prep"],
-            long_cook_enabled=config["enable_sunday_prep"],
-            baseline_cuisine_share=config["planning_rules"]["min_baseline_cuisine_share"],
+            # The nine config-derived fields come from `PRESET_SEEDED_FIELDS`
+            # rather than being spelled here, so `set_preset`'s re-seed reads
+            # the same table this does and the two cannot drift.
+            **{name: read(config) for name, read in PRESET_SEEDED_FIELDS},
         )
         state._original_training_schedule = [dict(session) for session in state.training_schedule]
         state.recipe_catalog = await repository.load_recipe_catalog()
@@ -1753,6 +1843,78 @@ class PlannerState:
             self.target_overrides[day] = override
         else:
             self.target_overrides.pop(day, None)
+
+    def preset_view(self) -> PresetView:
+        """The pick, its options and what it changed — one object, one read."""
+        entries = preset_layer.preset_entries(self.presets_config)
+        active = preset_layer.active_preset_name(self.presets_config)
+        return PresetView(
+            options={
+                name: preset_layer.preset_label(self.presets_config, name)
+                for name in entries
+            },
+            active=active,
+            label=preset_layer.preset_label(self.presets_config, active),
+            changes=preset_layer.preset_changes(self.base_config, self.presets_config, active),
+        )
+
+    async def set_preset(
+        self, repository: LocalJSONRepository, name: Optional[str]
+    ) -> None:
+        """Choose this week's preset: re-layer the config, and save the pick.
+
+        The **third** writer to `config/`, after `set_target_mode` and
+        `accept_training_proposal`, and it passes the same test both do — a
+        standing choice, not an input to one run. A pick that evaporated on
+        reload would reintroduce the decision this whole arm exists to
+        remove, since the default is meant to be last week's pick. It is a
+        third *writer*, not a third caller of `save_config_keys`: that method
+        raises on every key in this file, which is why `save_presets_config`
+        exists.
+
+        **Re-layered from `base_config`, never layered onto `self.config`.**
+        Laying the incoming preset over the outgoing one's result would leave
+        every leaf the new preset is silent about still carrying the old
+        preset's opinion — a config nobody chose and no file describes.
+
+        The re-seed is the subtle half. Nine `PlannerState` fields are
+        *copies* of config values taken at load, so a preset moving one of
+        them would otherwise change the config and not the control that
+        displays it. They are re-seeded **only where the config value behind
+        them actually moved**, which is what lets a pantry row or a training
+        session typed a moment ago survive a pick that says nothing about
+        either — while a preset that does have an opinion still wins.
+        """
+        presets_config = dict(self.presets_config)
+        presets_config[preset_layer.ACTIVE_KEY] = name
+        # Before anything is mutated or written: an unusable pick leaves the
+        # session exactly as it was, rather than half-applied.
+        config = apply_preset_layer(self.base_config, presets_config)
+
+        previous = self.config
+        self.presets_config = presets_config
+        self.config = config
+
+        for field_name, read in PRESET_SEEDED_FIELDS:
+            before, after = read(previous), read(config)
+            if before == after:
+                continue
+            setattr(self, field_name, after)
+            if field_name == "training_schedule":
+                # Moves with it, or the staged bar reports a phantom edit for
+                # every session the preset just seeded — the same trap
+                # `accept_training_proposal` sidesteps when it writes to disk.
+                self._original_training_schedule = [dict(session) for session in after]
+
+        if any(previous.get(key) != config.get(key) for key in PRESET_GRID_SHAPE_KEYS):
+            # Which slots are cooked has changed, so the cached preview grid
+            # is stale. Only a week with no plan is actually rebuilt from
+            # config — a generated one derives its spec from `week_plan.slots`
+            # — so this costs no structural edit that has already been made.
+            self._spec = None
+            self._spec_shape = ()
+
+        await repository.save_presets_config({preset_layer.ACTIVE_KEY: name})
 
     async def set_target_mode(
         self, repository: LocalJSONRepository, macro: str, mode: str

@@ -1,0 +1,9 @@
+{
+  "active": "default",
+  "presets": {
+    "default": {
+      "label": "Standard week",
+      "overrides": {}
+    }
+  }
+}

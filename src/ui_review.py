@@ -33,6 +33,7 @@ from ui_state import training_proposals_view
 from ui_theme import (
     RADIUS_CARD,
     RADIUS_PANEL,
+    SURFACE_INSET,
     SPACE_BASE,
     SPACE_HAIR,
     SPACE_PAGE,
@@ -545,6 +546,67 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     "dense flat size=xs"
                 ).classes("min-h-0 p-0 text-slate-400")
 
+    # ---- the weekly preset pick --------------------------------------------
+
+    # `(select, read-its-options)` for every select whose option list comes
+    # out of config — i.e. every one a preset can replace under the user.
+    # Populated as the selects are built, below.
+    catalog_selects: list = []
+
+    def preset_block() -> None:
+        """The pick, its one-line diff, and nothing else.
+
+        Built once and **mutated in place** — `summary.set_text` after a
+        pick, rather than a `@ui.refreshable` body — which is the same
+        decision `day_target_row` makes for the same reason: the section
+        owns the control that fired the change, and repainting it rebuilds
+        the widget the user just interacted with.
+        """
+        view = state.preset_view()
+        if not view.available:
+            # Nothing to pick from is the state of every checkout with no
+            # `config/presets.json`, and an empty select would be a control
+            # announcing that a feature exists rather than offering one.
+            return
+
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_HAIR} {SURFACE_INSET} {RADIUS_CARD} p-{SPACE_BASE}"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+            ):
+                ui.icon("tune").classes("text-slate-400 shrink-0")
+                ui.label("This week's preset").classes(f"{TEXT_BODY} text-slate-300")
+
+            async def on_pick(event) -> None:
+                await state.set_preset(ctx.repository, event.value or None)
+                updated = state.preset_view()
+                summary.set_text(updated.summary)
+                # The catalogs the two selects below offer are read from
+                # config once at build time, and a preset may have just
+                # replaced either — set_options rather than a repaint, for
+                # the same build-once reason this block is not refreshable.
+                # Via a registry because the diet-style select is
+                # conditional: a direct reference would be a NameError on
+                # every config whose `diet_styles` is empty.
+                for select, options in catalog_selects:
+                    select.set_options(options())
+                # A preset can move every one of these: the day targets, the
+                # training schedule, the pantry rows and the grid itself.
+                refreshables.refresh("plan", "targets", "training", "pantry")
+
+            ui.select(
+                view.options,
+                value=view.active,
+                on_change=on_pick,
+            ).props("dense outlined clearable").classes(f"w-full {TEXT_BODY}")
+
+            summary = ui.label(view.summary).classes(f"{TEXT_MICRO} text-slate-400")
+            ui.label(
+                "Saved as soon as you pick it — the preset is a standing "
+                "choice, and next week starts from this one."
+            ).classes(f"{TEXT_MICRO} text-slate-400")
+
     with ui.dialog() as dialog:
         with ui.element("div").classes(
             # Widened from 32rem to fit the target curve's 7 side-by-side
@@ -557,6 +619,16 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             with ui.element("div").classes(f"flex flex-row items-center gap-{SPACE_TIGHT}"):
                 ui.icon("fact_check").classes(f"{TEXT_HEAD} text-amber-300")
                 ui.label("Review pending changes").classes(f"{TEXT_HEAD} font-semibold")
+
+            # The weekly pick sits at the very top, above the batch toggles it
+            # can override, because this dialog is where the week's shape is
+            # settled — the Generate button opens it rather than running the
+            # week. It is deliberately *above* the "everything below is
+            # staged" line as well as above the controls: that sentence is
+            # true of everything under it and false of this, which persists
+            # the moment it changes.
+            preset_block()
+
             ui.label(
                 "Everything below is staged for the next generation only — "
                 "nothing here is saved to config.json until you generate."
@@ -572,13 +644,17 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 f"w-full {TEXT_BODY}"
             )
 
-            ui.select(
+            cuisines = ui.select(
                 cuisine_options,
                 label="Cuisines this week",
                 multiple=True,
             ).bind_value(state, "cuisine_override").props(
                 "dense outlined use-chips"
             ).classes(f"w-full {TEXT_BODY}")
+            catalog_selects.append((
+                cuisines,
+                lambda: {c: humanize(c).title() for c in state.config["cuisines"]},
+            ))
             ui.label("Leave empty to use config.json's cuisine list.").classes(
                 f"{TEXT_MICRO} text-slate-400 -mt-2"
             )
@@ -601,13 +677,20 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             if diet_style_options:
-                ui.select(
+                diet_styles = ui.select(
                     diet_style_options,
                     label="Diet styles this week",
                     multiple=True,
                 ).bind_value(state, "diet_style_override").props(
                     "dense outlined use-chips"
                 ).classes(f"w-full {TEXT_BODY}")
+                catalog_selects.append((
+                    diet_styles,
+                    lambda: {
+                        key: entry["label"]
+                        for key, entry in state.config["diet_styles"].items()
+                    },
+                ))
                 ui.label(
                     "Leave empty to use config.json's active diet styles."
                 ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
