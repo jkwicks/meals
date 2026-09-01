@@ -692,7 +692,167 @@ def build_seafood_limit_rule(
     )
 
 
-def build_diet_style_rule(config: dict) -> str:
+# The seven weekday names every day-keyed structure in config/ speaks —
+# `weekly_schedule`, `base_schedule`, `training_schedule`, `sourcing`'s two
+# availability lists, and a day-scoped `active_diet_styles` entry. Validated
+# against the calendar's seven rather than against `weekly_schedule`'s keys
+# on purpose: a day-scoped entry may legitimately name a day the planning
+# week does not reach — the week rotates by `week_start_day`, and "Fast 800
+# for four days" is a window, not a statement about which days exist — so a
+# named day outside the week is inert. A name that is not a weekday at all
+# is a typo, and typos in config/ fail at load.
+WEEKDAY_NAMES: Tuple[str, ...] = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+)
+
+
+def day_scoped_entries(
+    entries: Iterable[Any],
+    field: str,
+    *,
+    subject_key: str = "style",
+    warn: bool = False,
+) -> Dict[str, Optional[List[str]]]:
+    """Parse a list mixing bare names with `{subject_key, days}` objects into
+    `{name: days-or-None}`, where **None means every day**.
+
+    The day-scoping substrate, kept general because it has more than one
+    subject: `dietary_rules.active_diet_styles` is the first (a bare
+    `"mediterranean"` is on all week, `{"style": "fast_800", "days": [...]}`
+    names its four), and a block's typed fields are the next — a block
+    boundary can fall mid-week (`design-01` §5), so the same "which days does
+    this bind on" question has to be answered there, and answering it twice
+    is how two spellings of one idea come to disagree.
+
+    **A malformed entry raises; it is never dropped with a warning**, which
+    is the opposite of `inventory_entries` and deliberately so. Two things
+    separate the cases. The *consequences differ in kind*: a dropped pantry
+    line costs a priority and the week still plans sensibly, where a dropped
+    `fast_800` activation plans an 800 kcal day at ~1722 — silently serving
+    twice the intended energy on the one day whose whole point was the
+    restriction. And *this field already fails loudly*:
+    `AppConfig.diet_styles_are_known` raises on an unknown style name, so
+    dropping a malformed wrapper around that same name would give one field
+    two policies, with the quiet one reachable by the smaller typo.
+
+    Four of the six cases raise, and the wording names the subject and the
+    offending value so a hand-edited file says where to look:
+
+    - an unknown weekday name;
+    - `"days": []` — "active on no days" is indistinguishable from a mistake,
+      and the way to express it is to delete the entry;
+    - `days` absent from an object — the bare string is how you say every day;
+    - any other shape, including an unexpected key beside the two.
+
+    The other two are legal. **The same subject twice with different days
+    unions them**, in first-seen order, because two windows onto one style
+    are two windows. And **a subject appearing bare *and* day-scoped resolves
+    to every day**, the bare form winning outright: it is the wider claim and
+    the narrower one adds nothing. That is redundant rather than wrong, so it
+    warns rather than raising — but only when `warn` is set, which
+    `AppConfig`'s load-time validator passes and the per-day readers do not.
+    Hydration calls those on every UI repaint, and a redundant-entry warning
+    per day per repaint would bury the per-call generation timing
+    `logs/meals.log` exists for — the same reason `hydrate_dynamic_targets`
+    takes a `log` flag at all.
+    """
+    parsed: Dict[str, Optional[List[str]]] = {}
+    redundant: List[str] = []
+
+    for entry in entries or ():
+        days: Optional[List[str]]
+        if isinstance(entry, str):
+            name, days = entry, None
+        elif isinstance(entry, dict):
+            name = entry.get(subject_key)
+            if not isinstance(name, str) or not name:
+                raise ValueError(
+                    f"{field}: entry {entry!r} has no '{subject_key}' name."
+                )
+            extra = sorted(set(entry) - {subject_key, "days"})
+            if extra:
+                raise ValueError(
+                    f"{field}: entry for '{name}' has unknown key(s) {extra}. "
+                    f"An entry is a bare name, or {{'{subject_key}', 'days'}}."
+                )
+            if "days" not in entry:
+                raise ValueError(
+                    f"{field}: entry for '{name}' has no 'days'. A bare "
+                    f"\"{name}\" is how you say every day."
+                )
+            days = entry["days"]
+            if not isinstance(days, list) or not all(isinstance(day, str) for day in days):
+                raise ValueError(
+                    f"{field}: 'days' for '{name}' must be a list of weekday "
+                    f"names; got {days!r}."
+                )
+            if not days:
+                raise ValueError(
+                    f"{field}: entry for '{name}' names no days. \"Active on no "
+                    "days\" is indistinguishable from a mistake — remove the "
+                    "entry instead."
+                )
+            unknown = [day for day in days if day not in WEEKDAY_NAMES]
+            if unknown:
+                raise ValueError(
+                    f"{field}: entry for '{name}' names unknown weekday(s) "
+                    f"{unknown}. Valid: {list(WEEKDAY_NAMES)}"
+                )
+        else:
+            raise ValueError(
+                f"{field}: entries must be a name or a "
+                f"{{'{subject_key}', 'days'}} object; got {entry!r}."
+            )
+
+        if name not in parsed:
+            parsed[name] = None if days is None else list(days)
+        elif days is None or parsed[name] is None:
+            # Either form of the bare-plus-scoped collision. The bare claim
+            # is the wider one and wins whichever order they were written in.
+            if parsed[name] is not None or days is not None:
+                redundant.append(name)
+            parsed[name] = None
+        else:
+            parsed[name] = parsed[name] + [
+                day for day in days if day not in parsed[name]
+            ]
+
+    if warn and redundant:
+        logger.warning(
+            "%s: %s named both bare and with days — the bare entry means every "
+            "day, so the day-scoped one adds nothing and can be removed.",
+            field, ", ".join(sorted(set(redundant))),
+        )
+    return parsed
+
+
+def active_diet_styles(
+    config: dict, warn: bool = False
+) -> Dict[str, Optional[List[str]]]:
+    """Which diet styles this config turns on, and on which days.
+
+    The **only** reader of the raw `dietary_rules.active_diet_styles` list —
+    every other caller (the prompt rule, the calorie ceiling, the load-time
+    catalog check) goes through this, so the two shapes are interpreted once.
+    A value of None against a style means every day, which is what a bare
+    string has always meant and what an older config produces for every
+    entry.
+    """
+    return day_scoped_entries(
+        (config.get("dietary_rules") or {}).get("active_diet_styles") or [],
+        "dietary_rules.active_diet_styles",
+        warn=warn,
+    )
+
+
+def _active_on(days: Optional[List[str]], day: str) -> bool:
+    """None (every day) or an explicit membership — the one place that
+    reading is spelled out, so the ceiling and the prompt rule cannot come to
+    disagree about a Thursday."""
+    return days is None or day in days
+
+
+def build_diet_style_rule(config: dict, days: List[str]) -> str:
     """Standing dietary-approach guidance — Mediterranean, Fast 800, DASH,
     the Total Wellbeing Diet — layered on top of cuisine, not instead of it.
 
@@ -703,8 +863,20 @@ def build_diet_style_rule(config: dict) -> str:
     `cuisines` pick can't express. Selection lives in
     `dietary_rules.active_diet_styles`, catalog text in `diet_styles` (see
     config/meals.json): same active-list/catalog split as cuisines, minus the
-    block rotation, since a diet style is followed for the whole week rather
-    than picked per day.
+    block rotation, since a diet style is *followed* rather than picked — an
+    entry says when it is on, never which of several was rolled for a night.
+
+    **`days` is this call's cook days, and the two generation axes differ.**
+    `generate_meal_type_week` spans the whole week and `generate_day` covers
+    one, so a week-spanning call under a four-day Fast 800 window has to say
+    which nights each principle binds on — the same problem
+    `_sourcing_day_split` already solves for a Saturday-only fishmonger, and
+    the same function solving it here rather than a second spelling of one
+    idea. A style active every day (the bare form, and every entry an older
+    config holds) is stated unconditionally; one whose window covers every
+    day this call touches is too, since there is nothing to qualify; one
+    whose window covers none of them is left out of the prompt entirely
+    rather than briefed as a rule that does not bind.
 
     **This rule still carries no numeric lever**, and that has not changed
     now that `diet_style_calorie_ceiling` exists: the ceiling is applied
@@ -721,23 +893,36 @@ def build_diet_style_rule(config: dict) -> str:
     `build_avoid_rules`/`inventory_instruction`.
     """
     catalog = config.get("diet_styles") or {}
-    active = config["dietary_rules"].get("active_diet_styles") or []
-    lines = "".join(
-        f"  - {catalog[key]['label']}: {catalog[key]['principles']}\n"
-        for key in active
-        if key in catalog
-    )
+    lines = []
+    for key, active_days in active_diet_styles(config).items():
+        if key not in catalog:
+            continue
+        entry = catalog[key]
+        if active_days is None:
+            # Every day, whatever this call covers — so a flat list emits
+            # exactly the text it emitted before day-scoping existed, and
+            # provably so rather than incidentally.
+            lines.append(f"  - {entry['label']}: {entry['principles']}\n")
+            continue
+        inactive, active = _sourcing_day_split(days, active_days)
+        if not active:
+            # Nothing in this call's scope follows it — a Friday `generate_day`
+            # under a Monday-Thursday window. Saying so would be briefing the
+            # model against a rule that does not bind here.
+            continue
+        scope = f" (on {', '.join(active)} only)" if inactive else ""
+        lines.append(f"  - {entry['label']}{scope}: {entry['principles']}\n")
     if not lines:
         return ""
     return (
         "- This week also follows these standing dietary approaches, in "
         "addition to (not instead of) each meal's cuisine — cuisine is the "
         "flavour tradition, a dietary approach is what to prioritize within "
-        "it, and a dish should satisfy both at once:\n" + lines
+        "it, and a dish should satisfy both at once:\n" + "".join(lines)
     )
 
 
-def diet_style_calorie_ceiling(config: dict) -> Optional[float]:
+def diet_style_calorie_ceiling(config: dict, day: str) -> Optional[float]:
     """The lowest whole-day calorie ceiling any active diet style declares.
 
     Fast 800's real-world hook is a calorie ceiling, and until now it was
@@ -761,17 +946,47 @@ def diet_style_calorie_ceiling(config: dict) -> Optional[float]:
     would produce a number neither style asked for — the same reason
     `reconcile_adaptive_tdee` chooses one TDEE rather than blending two.
 
-    None — no active style, or none of the active ones declaring a ceiling —
-    is the default and every day plans exactly as it did before this existed.
+    **`day` is which weekday is being hydrated**, because an activation may
+    name its days: "Fast 800 for four days" caps Monday to Thursday and
+    leaves Friday to Sunday at the engine's own figure, inside one generated
+    week. Nothing else about the ceiling moved — it is still applied by
+    `hydrate_dynamic_targets` after the training uplift, still `min()`, still
+    skipped for a stated target — because the change is to *which days* it is
+    looked up for, not to what it does with the number.
+
+    None — no active style, none active *on this day*, or none of those
+    declaring a ceiling — is the default and every day plans exactly as it
+    did before this existed.
     """
     catalog = config.get("diet_styles") or {}
-    active = (config.get("dietary_rules") or {}).get("active_diet_styles") or []
     ceilings = [
         float(catalog[key]["calorie_ceiling"])
-        for key in active
-        if key in catalog and catalog[key].get("calorie_ceiling") is not None
+        for key, active_days in active_diet_styles(config).items()
+        if _active_on(active_days, day)
+        and key in catalog
+        and catalog[key].get("calorie_ceiling") is not None
     ]
     return min(ceilings) if ceilings else None
+
+
+def ceiling_summary(entries: List[Tuple[str, float]]) -> str:
+    """`[("Monday", 800.0), ("Friday", 1600.0)]` -> "800 kcal on Monday;
+    1600 kcal on Friday".
+
+    Grouped by figure rather than listed per day, because the common case is
+    one window and one number and seven lines saying so would bury the
+    per-call generation timing the log exists for. Two figures in one week is
+    possible — two styles with different windows — and a message stating a
+    single `ceiling` could then only be right about part of the week, which
+    is the whole reason the caller carries pairs.
+    """
+    grouped: Dict[float, List[str]] = {}
+    for day, value in entries:
+        grouped.setdefault(value, []).append(day)
+    return "; ".join(
+        f"{value:.0f} kcal on {', '.join(days)}"
+        for value, days in sorted(grouped.items())
+    )
 
 
 class RejectionEntry(BaseModel):
@@ -1528,7 +1743,7 @@ def build_generation_rules(
         f"{', '.join(dietary_rules['banned_ingredients'])}.\n"
         f"{build_sourcing_rule(config, days)}"
         f"{style_rule}"
-        f"{build_diet_style_rule(config)}"
+        f"{build_diet_style_rule(config, days)}"
         f"{build_rejection_rule(config)}"
         f"{variety_rule}"
         f"{PANTRY_CONSOLIDATION_RULE}"
@@ -1749,10 +1964,22 @@ class DietaryRules(BaseModel):
     # Keys into config.json's top-level `diet_styles` catalog (see
     # `DietStyle` below) — the standing dietary approach(es) this week
     # follows, e.g. "mediterranean_diet". Empty by default, so a config
-    # predating this feature generates exactly as before. Cross-checked
-    # against the catalog by `AppConfig.diet_styles_are_known` rather than
-    # here, because `DietaryRules` alone can't see `diet_styles`.
-    active_diet_styles: List[str] = Field(default_factory=list)
+    # predating this feature generates exactly as before.
+    #
+    # **Two shapes, both legal**, the same way `inventory_to_clear` keeps a
+    # bare string and a `{"item", "quantity_g"}` dict legal and for the same
+    # stated reason: normalising to one would make the honest answer
+    # unexpressible. A bare `"mediterranean_diet"` is on every day; a
+    # `{"style", "days"}` object names its window, which is what "Fast 800
+    # for four days" needs and what a block boundary falling mid-week will
+    # reuse. Typed loosely here because **every rule about the shape lives in
+    # `day_scoped_entries`**, the one parser — a second set of constraints
+    # expressed as a pydantic model would be a second interpretation of the
+    # same six cases, free to disagree with it. `AppConfig.diet_styles_are_
+    # known` runs that parser at load, so a malformed entry still fails
+    # loudly and still names itself, and the catalog cross-check still
+    # happens on the parent because only the parent can see `diet_styles`.
+    active_diet_styles: List[Union[str, Dict[str, Any]]] = Field(default_factory=list)
 
 
 class DietStyle(BaseModel):
@@ -2102,8 +2329,20 @@ class AppConfig(BaseModel):
         `diet_styles` catalog — the same "fail at load, name the typo" policy
         `Ingredient.reject_banned_ingredients` gives banned ingredients,
         applied here instead of `DietaryRules` because only `AppConfig` can
-        see both fields at once."""
-        unknown = sorted(set(self.dietary_rules.active_diet_styles) - set(self.diet_styles))
+        see both fields at once.
+
+        It reads the list through `day_scoped_entries`, which is what makes
+        the check hold for **both** shapes — a style named inside a
+        `{"style", "days"}` window is cross-checked exactly as a bare one is —
+        and what puts the parser's own four load-time failures here too. This
+        is also the one caller that asks it to `warn`: it runs once per load,
+        where the per-day readers run on every UI repaint."""
+        active = day_scoped_entries(
+            self.dietary_rules.active_diet_styles,
+            "dietary_rules.active_diet_styles",
+            warn=True,
+        )
+        unknown = sorted(set(active) - set(self.diet_styles))
         if unknown:
             raise ValueError(
                 f"dietary_rules.active_diet_styles names unknown diet_styles entries: "
@@ -2746,18 +2985,28 @@ def hydrate_dynamic_targets(
     pins = config.get("training_pins") or {}
     floor_g = fiber_floor_g(config)
     weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
-    # None whenever no active diet style declares one, which is the shipped
-    # state — `active_diet_styles` is empty by default, so every day below
-    # is byte-identical to before this existed.
-    ceiling = diet_style_calorie_ceiling(config)
-    capped_days: List[str] = []
+    # Looked up per day, because an activation may name its days — a four-day
+    # Fast 800 window caps Monday to Thursday and leaves the rest of the same
+    # week at the engine's own figure. None whenever no style active *on that
+    # day* declares one, which is the shipped state: `active_diet_styles` is
+    # empty by default, so every day below is byte-identical to before this
+    # existed. Resolved once before the loop rather than inside it so the
+    # lookup can't be mistaken for something the day's arithmetic feeds.
+    ceilings = {
+        day: diet_style_calorie_ceiling(config, day)
+        for day in config["weekly_schedule"]
+    }
+    # (day, the ceiling that bound it) — a pair rather than a day, because
+    # two styles with different windows can put two different ceilings on one
+    # week and a single figure could then only be right about some of it.
+    capped: List[Tuple[str, float]] = []
     # Days where the ceiling lands below what the locked protein and the
     # day's own carbs already cost. `derive_fat_g` floors at 0, so the budget
     # stops reconciling against `calories ~= 4p + 4c + 9f` — reported rather
     # than silently corrected, the same answer `split_targets` gives an
     # overspent `meal_overrides` and `cap_to_weighted_share` gives a capped
     # surplus: show the gap, do not distort a number to hide it.
-    unaffordable_days: List[str] = []
+    unaffordable: List[Tuple[str, float]] = []
 
     # Computed once for the week, not per day: it reads the whole weigh-in and
     # logged-intake series, which every day of this config shares. Returns None
@@ -2823,6 +3072,7 @@ def hydrate_dynamic_targets(
             # The `auto` branch replays the uplift onto the engine's base,
             # because there the figure it was added to has just been thrown
             # away.
+            ceiling = ceilings[day]
             if is_manual(day, "calories"):
                 calories = float(day_targets["calories"])
             else:
@@ -2831,7 +3081,7 @@ def hydrate_dynamic_targets(
                 # day may total, and a workout does not buy an exemption from
                 # a bound its owner chose to eat inside.
                 if ceiling is not None and calories > ceiling:
-                    capped_days.append(day)
+                    capped.append((day, ceiling))
                     calories = ceiling
             if is_manual(day, "protein_g"):
                 protein_g = float(day_targets["protein_g"])
@@ -2842,7 +3092,7 @@ def hydrate_dynamic_targets(
                 DEFAULT_NET_CARBS_G if day_carbs is None else day_carbs, 1
             )
             if ceiling is not None and protein_g * 4 + net_carbs_g * 4 > calories:
-                unaffordable_days.append(day)
+                unaffordable.append((day, ceiling))
             hydrated = dict(
                 day_targets,
                 calories=round(calories),
@@ -2894,21 +3144,22 @@ def hydrate_dynamic_targets(
         # not a failure, so hand back what we were given.
         return config
 
-    if capped_days:
+    if capped:
         # One line naming the days, not one line per day: the ceiling is a
-        # single standing decision and seven copies of it would bury the
-        # per-call generation timing this log exists for.
+        # standing decision and seven copies of it would bury the per-call
+        # generation timing this log exists for. It names the days rather
+        # than only counting them because the cap is now day-scoped — "4
+        # day(s)" says nothing about *which* four under a mid-week window.
         if log:
             logger.info(
-                "diet-style calorie ceiling of %.0f kcal applied to %s",
-                ceiling, ", ".join(capped_days),
+                "diet-style calorie ceiling applied — %s", ceiling_summary(capped)
             )
         if note_callback:
             note_callback(
-                f"Capped {len(capped_days)} day(s) at the {ceiling:.0f} kcal "
-                "diet-style ceiling"
+                f"Capped {len(capped)} day(s) at the diet-style ceiling — "
+                f"{ceiling_summary(capped)}"
             )
-    if unaffordable_days:
+    if unaffordable:
         # Worth a warning rather than a silent 0 g of fat: protein is locked
         # to the *target* weight and carbs come straight off
         # `weekly_schedule`, so a ceiling below their combined cost is a
@@ -2916,16 +3167,17 @@ def hydrate_dynamic_targets(
         # ceiling, or by cutting that day's `net_carbs_g`.
         if log:
             logger.warning(
-                "the %.0f kcal diet-style ceiling is below what locked protein and "
-                "carbs already cost on %s — fat floors at 0 and those days will not "
+                "the diet-style ceiling is below what locked protein and carbs "
+                "already cost (%s) — fat floors at 0 and those days will not "
                 "reconcile against 4p + 4c + 9f. Raise the ceiling or lower "
                 "weekly_schedule's net_carbs_g.",
-                ceiling, ", ".join(unaffordable_days),
+                ceiling_summary(unaffordable),
             )
         if note_callback:
             note_callback(
-                f"{len(unaffordable_days)} day(s) cannot fit locked protein and "
-                f"carbs under the {ceiling:.0f} kcal ceiling"
+                f"{len(unaffordable)} day(s) cannot fit locked protein and "
+                f"carbs under the diet-style ceiling — "
+                f"{ceiling_summary(unaffordable)}"
             )
 
     if basis is None:

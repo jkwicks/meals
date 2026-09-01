@@ -86,7 +86,7 @@ rather than after them. The findings are in "What the review changed" below.
 | ~~2~~ | ~~**7** — hard-coding audit~~ | — | **Complete** |
 | ~~3~~ | ~~**8** — preset container + weekly pick~~ | — | **Complete** |
 | ~~4~~ | ~~**9** — preset editor + validator~~ | — | **Complete** |
-| **1** | **2** — day-scoped diet styles | **Opus 5** | 8. Its schema is the substrate blocks reuse |
+| ~~5~~ | ~~**2** — day-scoped diet styles~~ | — | **Complete** |
 | **1** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
 | **2** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
 | **2** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
@@ -96,7 +96,7 @@ rather than after them. The findings are in "What the review changed" below.
 | **4** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
 | **5** | training analytics *(undesigned)* | — | Read-only first; see below |
 
-**Five prompts are complete**, struck through above rather than deleted so the
+**Six prompts are complete**, struck through above rather than deleted so the
 gate column still reads as the dependency record it is:
 
 | | Closed | Verified against |
@@ -106,6 +106,7 @@ gate column still reads as the dependency record it is:
 | `PROMPT-7` | the hard-coding audit | `design-01` §3.4a, which is the audit and the field list `PROMPT-9` consumed |
 | `PROMPT-8` | the preset container, the layer and the weekly pick, v0.43.0 | `tests/test_presets.py` plus `test_config_layout.py`'s layered snapshot |
 | `PROMPT-9` | the preset editor and its validator, v0.44.0 | `tests/test_presets.py` (editor classes), `tests/test_preset_validation.py`, and a Playwright drive of Settings → Presets |
+| `PROMPT-2` | day-scoped diet styles — the schema blocks reuse, v0.44.0 | `tests/test_diet_styles.py` (all six parser cases and the three ways a call sits against a window), `tests/test_planner_dynamic_targets.py` (the four ceiling properties re-asserted against a four-day window), `tests/test_presets.py` (both shapes arriving from a preset) |
 
 `PROMPT-1` ranked 4th here for a day after it was known to be done, which is
 the ordinary staleness this table now carries a date against.
@@ -136,6 +137,15 @@ a row when this lands" rather than blockers.
   say; compiles no logic in", and that is still true — but 3 needs the shared
   eligibility function that 8's preset filter defines, and 2's day-scoped
   schema is what a block reuses, so both are cheaper once the layer exists.
+
+  **2 is done, and the reuse it was moved for is now a real function.**
+  `planner.day_scoped_entries` is the parser — general in its subject
+  (`subject_key`), so `PROMPT-13`'s blocks answer "which days does this bind
+  on" through it rather than inventing a second spelling — and
+  `_sourcing_day_split` turned out to need no change at all to carry the
+  prompt half, which is the strongest evidence the shape was already there.
+  What shipped is an **empty affordance**, per `design-00` F3:
+  `active_diet_styles` still ships `[]`, so no generated week moved.
 - **Tier 6 is written now** and its two prompts close `OUTSTANDING.md`'s top
   two missing-prompt rows. Both are gated on 10; 12 also waits on 11.
 - **Tier 7 is genuinely independent** and can run whenever its manual probe

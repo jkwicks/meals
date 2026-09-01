@@ -671,19 +671,111 @@ the catalog at load time — same "fail loudly, name the typo" policy as every
 other section, and the reason the check lives on `AppConfig` rather than on
 `DietaryRules` itself: only the parent model can see both fields at once.
 
-`build_diet_style_rule()` turns the active entries' `principles` into one
-`Rules:` line, sent by both generation axes via `build_generation_rules` —
-same mechanism as `PANTRY_CONSOLIDATION_RULE`, and empty when nothing is
-active so the prompt is byte-identical to before this feature existed. It is
-placed right after the cuisine rule (`style_rule`) and before the variety
-rule, because cuisine and diet style are both "what approach" — variety is a
-different concern.
+#### A style may be on for part of the week, and the list takes two shapes
+
+"Fast 800 for four days" is the brief's most concrete complaint about
+rigidity, and it was inexpressible while `active_diet_styles` was
+whole-config. It is now a list that mixes two shapes, both legal:
+
+```json
+"active_diet_styles": [
+  "mediterranean_diet",
+  { "style": "fast_800", "days": ["Monday", "Tuesday", "Wednesday", "Thursday"] }
+]
+```
+
+A bare name is on **every day** — which is what every entry meant before this
+existed, so an older config and the preset editor's multi-select both keep
+planning byte-identically. An object names its window. Both stay legal for
+the reason `inventory_to_clear` keeps a bare string and a
+`{"item", "quantity_g"}` dict legal: normalising to one shape would make one
+of the two honest answers unexpressible. Weekday **names**, because every
+other day-keyed structure in `config/` speaks them and a `SlotSpec` carries
+nothing else.
+
+`planner.day_scoped_entries` is the **one parser**, and nothing else reads the
+raw list — the prompt rule, the calorie ceiling and the load-time catalog
+check all go through it, so the two shapes are interpreted once. It is
+deliberately general (`subject_key`, defaulting to `"style"`): a block
+boundary can fall mid-week (`design-01` §5), so a block asks the same
+"which days does this bind on" question, and answering it twice is how two
+spellings of one idea come to disagree. Six cases, all load-time:
+
+| Case | Answer |
+|---|---|
+| unknown weekday name | **raises**, naming the style and the day |
+| `"days": []` | **raises** — "active on no days" is indistinguishable from a mistake; delete the entry instead |
+| `days` absent from an object | **raises** — the bare string is how you say every day |
+| an unknown key beside the two | **raises** — the same `extra="forbid"` policy every config object gets |
+| the same style twice | union the days, in first-seen order; not an error |
+| bare **and** day-scoped | the bare form wins (every day) and it **warns** — redundant, not wrong |
+| a named day outside the planning week | inert, no error — the week rotates by `week_start_day`, and a window is a statement about days rather than about which days a given week reaches |
+
+**A malformed entry raises where `inventory_entries` drops one with a
+warning**, and the difference is not a change of policy but a different
+field. *The consequences differ in kind*: a dropped pantry line costs a
+priority and the week still plans sensibly, where a dropped `fast_800`
+activation plans an 800 kcal day at ~1722 — silently serving twice the
+intended energy on the one day whose whole point was the restriction. And
+*this field already fails loudly*: `diet_styles_are_known` raises on an
+unknown style name, so dropping a malformed wrapper around that same name
+would give one field two policies, with the quiet one reachable by the
+smaller typo.
+
+**The redundancy warning fires at load and nowhere else.** `warn=True` is
+passed by `AppConfig`'s validator, which runs once per load; the per-day
+readers leave it off, because hydration runs on every UI repaint and a
+warning per day per repaint would bury the per-call generation timing
+`logs/meals.log` exists for — the same reason `hydrate_dynamic_targets` takes
+a `log` flag at all.
+
+**A preset may set this key** (`design-01` §9.2), and both shapes survive
+arriving that way: an override replaces the leaf whole and `AppConfig`
+validates the result, so the one parser is reached whichever file the list
+came from and a malformed window from a preset fails exactly as one in
+`profile.json` does. The review dialog's own "Diet styles this week"
+multi-select still REPLACES the list with flat keys for that run, which is
+what it has always done.
+
+`build_diet_style_rule(config, days)` turns the active entries' `principles`
+into one `Rules:` line, sent by both generation axes via
+`build_generation_rules` — same mechanism as `PANTRY_CONSOLIDATION_RULE`, and
+empty when nothing is active so the prompt is byte-identical to before this
+feature existed. It is placed right after the cuisine rule (`style_rule`) and
+before the variety rule, because cuisine and diet style are both "what
+approach" — variety is a different concern.
+
+**It is per call, and the two axes differ.** `generate_meal_type_week` spans
+the whole week and `generate_day` covers one day, so a week-spanning call
+under a four-day window has to say which nights each principle binds on —
+the same problem `_sourcing_day_split` already solves for a Saturday-only
+fishmonger, and **the same function solving it** rather than a second
+spelling. Three outcomes: a style active every day is stated unconditionally
+(so a flat list emits the exact text it always did, provably rather than
+incidentally); one whose window covers every day the call touches is too,
+since there is nothing to qualify; one whose window covers *none* of them is
+left out of the prompt entirely, because briefing the model against a rule
+that does not bind on the night it is cooking is worse than silence. Only a
+straddling call gets the day-scoped form, `Fast 800 (on Monday, Tuesday
+only): ...`.
 
 **One numeric lever, and it is a ceiling rather than an adjustment.**
 `DietStyle.calorie_ceiling` is optional and None on eleven of the twelve;
-`fast_800` declares 800. `planner.diet_style_calorie_ceiling(config)` reads
-the lowest one any *active* style declares, and `hydrate_dynamic_targets`
-takes the day's computed calories `min()` against it.
+`fast_800` declares 800. `planner.diet_style_calorie_ceiling(config, day)`
+reads the lowest one any style *active on that day* declares, and
+`hydrate_dynamic_targets` takes the day's computed calories `min()` against
+it. **The day argument is the whole of what day-scoping changed here** — the
+lookup moved inside the loop, and every property below survived untouched
+because none of them is about which day the number came from. A four-day
+window therefore caps Monday to Thursday and leaves Friday to Sunday at the
+engine's own figure, inside one generated week.
+
+Two windows with different ceilings put two numbers on one week, which is why
+the capped and unaffordable days are carried as `(day, ceiling)` pairs and
+reported through `ceiling_summary` — a message stating a single figure could
+only ever be right about part of the week. The note names the days as well as
+counting them now: "4 day(s)" is an incomplete answer once *which* four is
+the question the window was written to settle.
 
 This section previously said there was **no** numeric lever, and the
 objection it recorded was right: `weekly_schedule`/`hydrate_dynamic_targets`
@@ -3759,8 +3851,11 @@ bootstrap into a wall of 429s halfway through.
   than rejecting a recipe. Its **one** hard effect is
   `DietStyle.calorie_ceiling`, which caps the day's computed calories inside
   `hydrate_dynamic_targets` and never reaches the prompt at all; Fast 800's
-  800 is the only one declared, and nothing is active by default. See "Diet
-  styles" under Architecture.
+  800 is the only one declared, and nothing is active by default. **A style
+  may be on for part of the week**: an entry is a bare name (every day) or a
+  `{"style", "days"}` window, parsed by the one `day_scoped_entries`, which
+  *raises* on a malformed entry rather than dropping it. See "Diet styles"
+  under Architecture.
 - **How long a dish keeps is a property of the dish**, not a config global:
   `inventory_rules.storage_windows` plus `Recipe.storage_class`. It is a hard
   constraint in the same class as `banned_ingredients` — the model is told the
@@ -3812,10 +3907,10 @@ the module under seven frozen weekdays before trusting it.
 | `test_week_mechanics.py` | the deterministic week — derived portions, `validate_week`, shopping windows, `spread_batch`, the shopping aggregation and plant count, and the storage note reading the dish's own window rather than one global |
 | `test_food_safety.py` | storage windows as a property of the dish — the hours-to-days resolver and that no surface prints hours, every default failing *short* (which inverts the house rule), the merge that stops a config deleting the rice exception, the two behaviour changes that had to land together (the default lengthening to Thursday, rice tightening to two day-gaps), the backstop's two modes, the prep-day anchor whose span is *longer*, the prompt rule and the byte-identical week that gets none of it, the two response axes rejecting identically, the pinned favourite that is a third route neither can see, and the freezer half's quality-not-safety wording |
 | `test_portion_sizing.py` | the three portion layers, and the cap on the cascade's end effect |
-| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the fibre target resolving on every hydration path including the three that give up on the engine, the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein), the protein floor, logged-intake substitution, adaptive TDEE |
+| `test_planner_dynamic_targets.py` | target hydration, who owns a macro (`target_modes`/`target_locks`), the fibre target resolving on every hydration path including the three that give up on the engine, the diet-style calorie ceiling (idempotent across the two hydration passes, applied after the uplift, never over a stated target, and reported rather than corrected when it cannot pay for locked protein) and the same four properties re-asserted against a four-day window, which caps exactly its days and reports two ceilings separately when two windows disagree, the protein floor, logged-intake substitution, adaptive TDEE |
 | `test_nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate and which precondition stopped it, the current-weight fallback, the fibre target (which of its two halves binds, and that it is deliberately not assembled into `calculate_macro_targets`, where the uplift and the ceiling have not been applied yet), the MET-based training-burn estimate, and the schedule proposal — its three states, the addition threshold, and the two guards on a proposed drop, plus the weight trend the Insights chart draws (a short span keeps its points and loses only its rate, and its sign is the raw slope's, not the estimate's negated one) |
 | `test_model_resolution.py` | which model each role runs on, and the reasoning switch |
-| `test_diet_styles.py` | the diet-style axis, its one numeric lever (which `calorie_ceiling` wins, and that the prompt never states the number), and `Ingredient`'s two hard rules |
+| `test_diet_styles.py` | the diet-style axis, its one numeric lever (which `calorie_ceiling` wins, and that the prompt never states the number), the day-scoped shape — all six parser cases including the four that raise, the flat list pinned byte-identical against a literal of the old text, and the three ways a call's days can sit against a window (straddling, wholly inside, wholly outside) — and `Ingredient`'s two hard rules |
 | `test_ingredient_sourcing.py` | the sourcing rule, the week-wide seafood cap, the nudge-sample ban filter, the rejection-capture prompt rule and its two decay windows (per-reason dish expiry, and the longer reason tally that outlives the dishes it counted), and `rejections.json`'s storage round trip, and the pantry ledger — both entry shapes, the containment match and the two guards on it, and what a spent item stops being told to the model |
 | `test_meal_selection.py` | location-shaped grids, favourite pre-assignment, skip estimates, fibre — both halves: the reported one that never enters a budget, and the target with its per-slot share, the calorie pin that does not pin it, and the share that deliberately does not cascade (asserted against a stubbed provider returning meals under brief, so the macro cascade visibly moves and the fibre share visibly does not) — the fridge cap, and which days have the hours for a long cook — the weekend fallback, a location widening a weekday *and* narrowing a weekend, the elapsed-time rejection that catches a braise the flag never declared, and the batch anchor exempt because it is cooked on prep day |
 | `test_sync_service.py` | Garmin/Cronometer unit and key mapping (including fibre's capture under the repository's key and its absence from `MACRO_KEYS`), the sleep/HRV readiness row and its two independent endpoints, the activity mapping (Garmin type -> `training_schedule` type, local-not-GMT start times) and its replace-per-date storage, the expired-session recovery (cleared and retried once, never twice, never without a session to clear, and never on a 429), and the credential guards |
@@ -3824,7 +3919,7 @@ the module under seven frozen weekdays before trusting it.
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre against its target and beside what Cronometer logged for the same date (and which of those two pairs takes a divider), the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved — reached both ways now, through the bare merge *and* through the preset layer, so the shipped `default` is asserted to change nothing rather than assumed to |
-| `test_presets.py` | the preset layer — the compatibility claim in both its forms (no file, and a file holding only an empty `default`), the sibling-destruction case that refuted whole-key replacement (asserted on 17 named ingredients, not on shape), leaf-whole replacement in both directions, an empty list as an explicit value, the four load-time failures, the write path that cannot be `save_config_keys`, a hand-added preset surviving a pick, `set_preset`'s re-layer and its conditional re-seed, and **the editor** — the all-unset preset that is the identity, the unexposed override path and hand key that survive an edit, the invalid preset refused at save with the file byte-identical, the delete guard on the active preset, and the re-layer when the active preset is the one edited |
+| `test_presets.py` | the preset layer — the compatibility claim in both its forms (no file, and a file holding only an empty `default`), the sibling-destruction case that refuted whole-key replacement (asserted on 17 named ingredients, not on shape), leaf-whole replacement in both directions, an empty list as an explicit value, the four load-time failures, the write path that cannot be `save_config_keys`, a hand-added preset surviving a pick, a day-scoped `active_diet_styles` arriving from a preset (and a malformed one failing the layer), `set_preset`'s re-layer and its conditional re-seed, and **the editor** — the all-unset preset that is the identity, the unexposed override path and hand key that survive an edit, the invalid preset refused at save with the file byte-identical, the delete guard on the active preset, and the re-layer when the active preset is the one edited |
 | `test_preset_validation.py` | `planner.resolve_preset_layer` — that it returns `resolve_config`'s structural failures *and* an `AppConfig` schema failure as `PresetFailure`s, that `apply_preset_layer` raises on exactly those, and the `favorite_reuse_days > history_max_entries` cross-field rule (shipped `{7,21,21}` passes; a preset that breaks it fails the layer) |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share; and the generation route with its job — the single-flight claim from both sides (a second `POST`, and a browser tab holding it), the three outcomes a client has to read separately (a rejected grid, a failed run, and per-meal-type failures riding on a *succeeded* one), and the finished week arriving through the read route rather than on the job. `GenerationJobs.run` is awaited directly rather than reached through `start`, which is what that split exists for: asserting on a spawned task means asserting on a scheduler |
@@ -3879,6 +3974,15 @@ because something broke, record the failure in the test, not just the fix.
   save. Adding a field means adding it there. It is bounded to preset keys with
   a config home today — the rows that need a code change first are
   CHANGE-QUEUE.md items 7-9, and the editor gains each as it lands, not before.
+- **`dietary_rules.active_diet_styles` holds two shapes and `day_scoped_entries`
+  is the only parser.** A bare name is every day; a `{"style", "days"}` object
+  names its window. Reach for that function rather than iterating the list, or
+  the prompt rule and the calorie ceiling will disagree about a Thursday. It
+  **raises** on a malformed entry — do not "helpfully" give it
+  `inventory_entries`' drop-with-warning policy, which is right for a pantry
+  line and wrong here: a dropped `fast_800` activation plans an 800 kcal day
+  at ~1722 with nothing said. It is general (`subject_key`) because a block
+  boundary can fall mid-week and needs the same scoping.
 - **A model id named in `models.json` must appear in that file's `models`
   table.** `resolve_planner_model`/`resolve_recipe_parser_model` enforce it at
   load. Without that check the two drifted apart unnoticed:

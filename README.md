@@ -424,6 +424,60 @@ the unenumerable tail. The seafood cap is genuinely counted rather than merely
 stated: no single generation call sees more than its own meal type, so each
 stage is handed the remaining allowance the previous ones didn't spend.
 
+### Diet styles, and running one for part of the week
+
+`diet_styles` in `config/meals.json` is a catalog of twelve named eating
+patterns — Mediterranean, MIND, Nordic, Blue Zones, Fast 800, Total Wellbeing,
+Anti-Inflammatory, Paleo, Pegan, DASH, Low-FODMAP, AIP — each a `label` and a
+`principles` string. `dietary_rules.active_diet_styles` in
+`config/profile.json` says which are in effect, and ships empty.
+
+Unlike a cuisine, a diet style is **not** rotated per night: a meal is meant to
+satisfy its cuisine *and* every active style at once, so a Korean dinner can
+still be Mediterranean-principled. It is soft guidance — the `principles` text
+reaches the model as one line of the `Rules:` block, and nothing rejects a
+recipe for ignoring it, which is what `banned_ingredients` is for.
+
+**A style can be on for only part of the week.** "Fast 800 for four days" is
+one entry:
+
+```json
+"active_diet_styles": [
+  "mediterranean_diet",
+  { "style": "fast_800", "days": ["Monday", "Tuesday", "Wednesday", "Thursday"] }
+]
+```
+
+A bare name is on every day, which is what a name has always meant — an
+existing config plans identically. An object names its window, in weekday
+names, and both forms may sit in the same list. The same style written twice
+unions its days; writing it both bare and scoped means every day, and says so
+in the log. A typo'd weekday, an empty `days` list, or an object with no
+`days` at all each **fail at startup** naming the style, rather than being
+quietly ignored — a dropped Fast 800 activation would serve roughly twice the
+intended energy on the one day whose whole point was the restriction.
+
+Two things follow the window rather than the week:
+
+- **The calorie ceiling.** `fast_800` is the one shipped style declaring a
+  `calorie_ceiling` (800 kcal). The day's computed calories are taken `min()`
+  against the lowest ceiling any style active *that day* declares, after any
+  training uplift and never over a target you stated yourself. So a four-day
+  window caps four days and leaves the other three at the engine's own figure,
+  in one generated week. A day the ceiling cannot pay for — locked protein
+  plus that day's carbs already cost more — is **reported, not corrected**.
+- **The prompt.** A week-spanning generation call says which nights each
+  principle binds on (`Fast 800 (on Monday, Tuesday, Wednesday, Thursday
+  only): ...`); a single-day call inside the window gets the plain wording,
+  and one outside it is not told about the style at all. The prompt never
+  states the calorie number — the budget the model is handed already reflects
+  it, and a model told the figure starts optimising for the figure instead of
+  the food.
+
+The review dialog's "Diet styles this week" multi-select still overrides the
+whole list with flat names for that run, and a preset may set the key in
+either shape.
+
 ### Cook Once, Eat Twice — Auto-Chaining
 
 Every dinner card that has a recipe shows a **"Link to next lunch"** button.
@@ -794,6 +848,14 @@ shopping. Each item names the surface to look at and what "working" means.
       allows — counting from **prep day**, the day before the week starts, not
       from the anchor's own column — and that the storage note and the card's
       fridge/freezer badge agree with each other.
+- [ ] **A part-week diet style caps only its own days.** Put
+      `{"style": "fast_800", "days": ["Monday", "Tuesday"]}` in
+      `active_diet_styles` and open the app. The header's Monday and Tuesday
+      calorie targets sit at 800 and the rest of the week does not; the
+      generation notes name those two days rather than only counting them; and
+      the day-scoped wording appears in the week's prompt (`logs/meals.log`)
+      while the calorie number never does. Revert the entry to a bare
+      `"fast_800"` and every day caps.
 - [ ] **Marks persist without staging.** Mark a meal eaten on the Today
       destination, then reload the page. The mark is still there, and the
       staged-changes bar never mentioned it — a mark is a record of a day, not
@@ -861,7 +923,7 @@ where it does.
 | `meal_weights` | `profile.json` | How a day's calories split across un-pinned meals |
 | `dietary_rules.allowed_nova_groups` | `profile.json` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | `profile.json` | Substring blocklist, enforced as schema validation |
-| `dietary_rules.active_diet_styles` | `profile.json` | Which `diet_styles` entries are in effect. Soft guidance via the prompt, not a hard constraint; an unknown name fails at startup |
+| `dietary_rules.active_diet_styles` | `profile.json` | Which `diet_styles` entries are in effect. A bare name is every day; `{"style", "days"}` names a window (see "Diet styles, and running one for part of the week"). Soft guidance via the prompt, not a hard constraint; an unknown name — or a malformed window — fails at startup |
 | `diet_styles` | `meals.json` | The catalog of named eating patterns to choose from — `label` plus `principles` |
 | `week_defaults` | `meals.json` | Default mode (`cook`/`leftover`/`skip`) per meal type |
 | `meal_styles` / `cuisines` / `cuisine_meal_types` | `meals.json` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json`. A gym/cardio session starting before 11:00 pins that day's breakfast to `custom_shake` unless you picked a style yourself |
