@@ -29,6 +29,10 @@ from nutrition_engine import (
     calculate_fiber_target_g,
     calculate_macro_targets,
 )
+from presets import (
+    ACTIVE_PRESET_CONFIG_KEY,
+    resolve_config as resolve_preset_config,
+)
 from repository import (
     PROJECT_ROOT,
     LocalJSONRepository,
@@ -2097,6 +2101,40 @@ def load_app_config(raw: dict) -> dict:
     except ValidationError as exc:
         raise ValueError(f"config.json failed schema validation:\n{exc}") from exc
     return app_config.model_dump(mode="json")
+
+
+def apply_preset_layer(raw: dict, presets_config: Optional[dict]) -> dict:
+    """`raw` with the active preset laid over it, then validated.
+
+    The one place the layer meets validation, and the ordering is the point:
+    **the preset is applied before `AppConfig` sees the dict**, because a
+    preset overriding a key after validation could introduce a state
+    `extra="forbid"` would have rejected. Today's merge validates and nothing
+    touches the dict afterwards; that is what changes here.
+
+    Raising is the *loader's* half of the contract `presets.resolve_config`
+    deliberately does not carry: the resolver computes and reports, this
+    raises, and the preset editor renders the identical failures and declines
+    to write. One check, two presentations — a second validator in the editor
+    would be free to disagree about a file this accepted.
+
+    `active_preset` is stamped on afterwards rather than before, for the same
+    reason `models` is: it is not part of the config's own schema, and
+    `model_dump` would drop it. It rides in memory only — the channel
+    `nudge_foods`, `target_locks` and `storage_spans` already use — and is
+    what lets `generate_week_plan` record which preset a week ran under
+    without threading a second argument through three entry points.
+    """
+    resolution = resolve_preset_config(raw, presets_config)
+    if resolution.failures:
+        raise ValueError(
+            "config/presets.json is not usable:\n"
+            + "\n".join(f"  - {failure.message}" for failure in resolution.failures)
+        )
+    config = load_app_config(resolution.config)
+    if resolution.active is not None:
+        config[ACTIVE_PRESET_CONFIG_KEY] = resolution.active
+    return config
 
 
 def planning_rule(config: Optional[dict], key: str):
@@ -4218,6 +4256,19 @@ class WeekPlan(BaseModel):
         description="Aggregated Sunday batch-prep plan, when enable_sunday_prep is on",
     )
     unique_plants: List[str] = Field(default_factory=list)
+    preset: Optional[str] = Field(
+        default=None,
+        description=(
+            "Name of the preset this week was generated under, or None when "
+            "no preset was active (which is every plan generated before "
+            "presets existed, and every checkout without a presets.json). "
+            "Recorded because 'did that change work?' is unanswerable "
+            "without knowing which preset each week ran under — the mirror "
+            "of the store-and-never-read trap this codebase has paid for "
+            "three times: here a reader (the feedback loop) needed something "
+            "written for it."
+        ),
+    )
 
     def by_slot(self) -> Dict[str, CookEvent]:
         return {event.slot_id: event for event in self.cook_events}
@@ -4726,9 +4777,14 @@ async def load_config_with_models(repository: PlanRepository) -> dict:
     schema, it's a separate file merged in for caller convenience, the same
     way `nudge_foods`/`training_notes` are added to a config dict later at
     generation time.
+
+    The active preset is laid over the merged files *before* validation —
+    see `apply_preset_layer` — so every caller here plans against the week's
+    pick without knowing presets exist, the same trick the config split
+    already proved: split the files, never the object.
     """
     raw = await repository.load_config()
-    config = load_app_config(raw)
+    config = apply_preset_layer(raw, await repository.load_presets_config())
     config["models"] = await repository.load_models_config()
     return config
 
@@ -6865,6 +6921,12 @@ async def generate_week_plan(
         failures=failures,
         sunday_prep_session=sunday_prep_session,
         unique_plants=collect_unique_plants(ordered_events),
+        # Read off the config rather than passed in, because the config is
+        # already the thing that carries the preset's effects: any caller
+        # holding a config that a preset shaped is holding the name too, and
+        # a second argument would be a second answer free to disagree with
+        # the numbers the week was actually planned against.
+        preset=config.get(ACTIVE_PRESET_CONFIG_KEY),
     )
 
     # The food-safety backstop, run a second time now the dishes are real.
@@ -7314,6 +7376,13 @@ async def record_week_history(
                 "targets": (
                     dict(week_plan.targets[day]) if day in week_plan.targets else None
                 ),
+                # Read off the plan, not off a config passed in beside it:
+                # the entry describes the week that was generated, and the
+                # config a later caller happens to hold may already be a
+                # different pick. None on every entry written before presets
+                # existed, the same pre-migration tolerance `history_styles`
+                # extends to an entry with no `styles` key.
+                "preset": week_plan.preset,
             }
         )
 

@@ -49,6 +49,22 @@ def merged_config() -> dict:
     return planner.load_app_config(run_sync(LocalJSONRepository().load_config()))
 
 
+def layered_config() -> dict:
+    """The same dict, reached the way the app actually reaches it — through
+    the preset layer.
+
+    `apply_preset_layer` sits between the merge and `AppConfig`, so from
+    v0.43.0 this, not `merged_config()`, is what `load_config_with_models`
+    and `PlannerState.load` hand downstream. The snapshot is asserted against
+    both: the merge must still produce it, and the shipped preset must still
+    change nothing about it.
+    """
+    return planner.apply_preset_layer(
+        run_sync(LocalJSONRepository().load_config()),
+        run_sync(LocalJSONRepository().load_presets_config()),
+    )
+
+
 class TestMergedConfigIsUnchanged(unittest.TestCase):
     def setUp(self) -> None:
         self.snapshot = json.loads(SNAPSHOT.read_text())
@@ -77,6 +93,36 @@ class TestMergedConfigIsUnchanged(unittest.TestCase):
         # after which every other test here passes vacuously.
         self.assertGreaterEqual(len(self.snapshot), 20)
         self.assertIn("weekly_schedule", self.snapshot)
+
+
+class TestThePresetLayerChangesNothingShipped(unittest.TestCase):
+    """The compatibility claim the preset arm is accepted against, asserted
+    against the fixture that already existed rather than against a second
+    snapshot of the same dict.
+
+    `config/presets.json` ships with one preset — `default`, whose
+    `overrides` are empty — and `active` pointing at it. It reproduces
+    today's behaviour *because of what it contains*, not because the loader
+    treats the name as special, and this is where that stops being a claim.
+    """
+
+    def setUp(self) -> None:
+        self.snapshot = json.loads(SNAPSHOT.read_text())
+        self.config = layered_config()
+
+    def test_the_layered_config_still_matches_the_snapshot(self):
+        for key, expected in sorted(self.snapshot.items()):
+            with self.subTest(key=key):
+                self.assertEqual(self.config.get(key), expected)
+
+    def test_the_layer_adds_only_the_name_of_the_preset_that_ran(self):
+        """The one key the layer contributes is the runtime stamp
+        `WeekPlan.preset` reads. It reaches no prompt and no target, and it is
+        deliberately not in `CONFIG_FILES`, `AppConfig` or the snapshot —
+        `save_config_keys` would raise on it, which is the point."""
+        added = sorted(set(self.config) - set(merged_config()))
+        self.assertEqual(added, ["active_preset"])
+        self.assertEqual(self.config["active_preset"], "default")
 
 
 if __name__ == "__main__":

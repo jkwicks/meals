@@ -61,10 +61,10 @@ table.
 
 **Twelve prompts.** 1 — the empty `activity_log` (**done**). 2 — day-scoped diet
 styles. 3 — pinning a recipe before generation. 4 — Hevy. 5 — exporting recipes
-to Cronometer. 6 — location from the calendar. 7 — the hard-coding audit. 8 —
-the preset container and weekly pick. 9 — the preset editor and its validator.
-10 — per-dish storage windows. 11 — the freezer ledger. 12 — declarative
-`week_shape`.
+to Cronometer. 6 — location from the calendar. 7 — the hard-coding audit
+(**done**). 8 — the preset container and weekly pick (**done**). 9 — the preset
+editor and its validator. 10 — per-dish storage windows (**done**). 11 — the
+freezer ledger. 12 — declarative `week_shape`.
 
 ## Order of delivery
 
@@ -82,35 +82,53 @@ rather than after them. The findings are in "What the review changed" below.
 
 | # | Prompt | Model | Gate — what must be true before it starts |
 |---|---|---|---|
-| **1** | **10** — per-dish storage windows | **Opus 5** | Nothing. Fixes a live defect |
-| **2** | **7** — hard-coding audit | **Opus 5** | Nothing. No code; produces 9's field list |
-| **3** | **8** — preset container + weekly pick | **Opus 5** | 7 |
-| **4** | **9** — preset editor + validator | **Sonnet 5** | 8 (imports its resolver), 7 |
-| **5** | **2** — day-scoped diet styles | **Opus 5** | 8. Its schema is the substrate blocks reuse |
-| **5** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
-| **6** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
-| **6** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
-| **7** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
-| **7** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
-| **7** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
-| **8** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
-| **9** | training analytics *(undesigned)* | — | Read-only first; see below |
+| ~~1~~ | ~~**10** — per-dish storage windows~~ | — | **Complete** |
+| ~~2~~ | ~~**7** — hard-coding audit~~ | — | **Complete** |
+| ~~3~~ | ~~**8** — preset container + weekly pick~~ | — | **Complete** |
+| **1** | **9** — preset editor + validator | **Sonnet 5** | 8 (imports its resolver), 7 |
+| **2** | **2** — day-scoped diet styles | **Opus 5** | 8. Its schema is the substrate blocks reuse |
+| **2** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
+| **3** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
+| **3** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
+| **4** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
+| **4** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
+| **4** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
+| **5** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
+| **6** | training analytics *(undesigned)* | — | Read-only first; see below |
 
-`PROMPT-1` is **complete** and off the list — verified against every line of its
-acceptance on 2026-09-01 (`design-00` §5a). It ranked 4th here for a day after
-that was known, which is the ordinary staleness this table now carries a date
-against.
+**Four prompts are complete**, struck through above rather than deleted so the
+gate column still reads as the dependency record it is:
+
+| | Closed | Verified against |
+|---|---|---|
+| `PROMPT-1` | the empty `activity_log` | every line of its acceptance, 2026-09-01 (`design-00` §5a) |
+| `PROMPT-10` | per-dish storage windows | `tests/test_food_safety.py`; CLAUDE.md's "Storage windows belong to the dish" |
+| `PROMPT-7` | the hard-coding audit | `design-01` §3.4a, which is the audit and the field list `PROMPT-9` consumes |
+| `PROMPT-8` | the preset container, the layer and the weekly pick, v0.43.0 | `tests/test_presets.py` (44 tests) plus `test_config_layout.py`'s layered snapshot |
+
+`PROMPT-1` ranked 4th here for a day after it was known to be done, which is
+the ordinary staleness this table now carries a date against.
+
+**`PROMPT-9` is next and its gate is met**: `presets.resolve_config` is the
+pure resolver it was told to import, returning structured `PresetFailure`s and
+importing neither NiceGUI nor `PlannerState` (asserted in a subprocess). The
+one thing it inherits rather than decides: `default` is an ordinary row and may
+be deleted, so the editor's delete needs only to clear `active` alongside it —
+nothing in the code treats the name as special, and no diff is computed
+against it.
 
 ### Why that order, in one line each
 
-- **10 first** because it is the only prompt fixing something already wrong
+- **10 first** (done) because it was the only prompt fixing something already wrong
   rather than enabling something new, and because everything in tier 6 makes it
   harder to land later: a freezer ledger and a `week_shape` both extend batch
   reach, and extending reach on one global number makes the rice case worse.
   It also has no dependency on anything else in the set.
-- **7 before 8** unchanged — it produces the field list, and it writes no code.
-- **8 before 9** unchanged, and now stronger: 9 *imports* 8's resolver rather
-  than writing a second validator.
+- **7 before 8** (both done) — it produced the field list, and wrote no code.
+- **8 before 9** held, and the reason proved out: 9 *imports* 8's resolver
+  rather than writing a second validator, and that resolver was built to be
+  imported — pure, storage-free, and returning displayable failures instead of
+  raising, precisely so the loader and the editor cannot disagree about a file.
 - **2 and 3 after 8**, which is a change. Both were "widens what a preset can
   say; compiles no logic in", and that is still true — but 3 needs the shared
   eligibility function that 8's preset filter defines, and 2's day-scoped

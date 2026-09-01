@@ -230,6 +230,19 @@ class StoragePaths:
     def integrations(self) -> str:
         return os.path.join(self.config_dir, "integrations.json")
 
+    @property
+    def presets(self) -> str:
+        """The preset catalog and this week's pick — see `src/presets.py`.
+
+        A third *supplemental* file, joining `models.json` and
+        `integrations.json` rather than the five core ones, and deliberately
+        absent from `CONFIG_FILES`: it does not *own* config keys, it layers
+        over them. `save_config_keys` therefore cannot write it — every key
+        in it misses `CONFIG_KEY_OWNER` and raises — which is why it has two
+        methods of its own.
+        """
+        return os.path.join(self.config_dir, "presets.json")
+
     # -- reference/ ---------------------------------------------------------
 
     @property
@@ -409,6 +422,32 @@ class PlanRepository(abc.ABC):
         Only *tuning* belongs here. Credentials stay in `.env`, and the
         payloads a sync fetches are written to `data/` — this file is the
         declared half of an integration, never the observed half.
+        """
+
+    @abc.abstractmethod
+    async def load_presets_config(self) -> dict:
+        """The preset catalog and the active pick (presets.json).
+
+        Supplemental like the two above, and absent-means-`{}` for the same
+        reason: with no file there is no active preset, the layer applies
+        nothing, and the app plans exactly as it did before presets existed.
+        """
+
+    @abc.abstractmethod
+    async def save_presets_config(self, presets: dict) -> None:
+        """Merge top-level keys into presets.json.
+
+        A **second** write path into `config/`, and it exists because
+        `save_config_keys` structurally cannot serve here: that method looks
+        every key up in `CONFIG_KEY_OWNER` and raises on a miss, and by
+        design every key in this file misses. Broadening it was the
+        alternative and is rejected — a method writing both core merged keys
+        and independent supplemental documents would have to guess which it
+        was being handed.
+
+        Read-modify-write on the whole file, the same property
+        `save_config_keys` gives per file: writing the weekly pick must not
+        drop a preset added by hand that no editor has ever parsed.
         """
 
     @abc.abstractmethod
@@ -849,6 +888,35 @@ class LocalJSONRepository(PlanRepository):
 
     async def load_integrations_config(self) -> dict:
         return await asyncio.to_thread(self._read_json, self.paths.integrations) or {}
+
+    async def load_presets_config(self) -> dict:
+        return await asyncio.to_thread(self._read_json, self.paths.presets) or {}
+
+    async def save_presets_config(self, presets: dict) -> None:
+        await asyncio.to_thread(self._save_presets_config, presets)
+
+    def _save_presets_config(self, presets: dict) -> None:
+        """Merge `presets` into presets.json, top-level key by top-level key.
+
+        Writing `{"active": name}` therefore changes the pick and leaves the
+        `presets` map exactly as the file holds it — including a preset with
+        fields this code has never heard of, which is the same tolerance
+        `_save_config_keys` extends to a hand-added config key.
+
+        An absent file is created rather than being an error: the pick is the
+        first thing anyone ever writes here, and refusing it on a checkout
+        that has never had presets would make the feature unreachable from
+        the only surface that offers it.
+        """
+        contents = self._read_json(self.paths.presets)
+        if contents is None:
+            contents = {}
+        if not isinstance(contents, dict):
+            raise ValueError(
+                f"{self.paths.presets} must contain a JSON object before it can "
+                "be updated."
+            )
+        self._write_json(self.paths.presets, {**contents, **presets})
 
     async def load_whfoods(self) -> List[str]:
         foods = await asyncio.to_thread(self._read_json, self.paths.whfoods) or []

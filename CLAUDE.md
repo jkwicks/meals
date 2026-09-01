@@ -127,10 +127,10 @@ The other three are history, and all three are kept rather than deleted:
   Read it for the original wording of a complaint, never for what is still
   open.
 
-### config/ is seven files — five merged into one dict, two loaded apart
+### config/ is eight files — five merged into one dict, three loaded apart
 
 `config.json` was one 196-line file holding twenty unrelated top-level keys.
-It is now seven files, and the split is **two-tier**: five *core* files are
+It is now eight files, and the split is **two-tier**: five *core* files are
 merged by `LocalJSONRepository.load_config()` into the same flat dict
 `AppConfig` has always validated — so **nothing downstream of the repository
 knows the config arrived in pieces**, and `planner`, `week` and `ui_app` still
@@ -148,13 +148,18 @@ The five core files, listed in `CONFIG_FILES`:
 | `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below) |
 | `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
 
-The two supplemental files, loaded by their own methods and **not** part of
+The three supplemental files, loaded by their own methods and **not** part of
 the merge:
 
 | file | holds | loader |
 |---|---|---|
 | `models.json` | model selection and LLM call params (see "Picking a model") | `load_models_config()` |
 | `integrations.json` | sync tuning (see "Biometric sync") | `load_integrations_config()` |
+| `presets.json` | the preset catalog and this week's pick (see "Presets") | `load_presets_config()` |
+
+`presets.json` is the only one of the three that is also **written** —
+`save_presets_config()`, because `save_config_keys` structurally cannot serve
+it. See "Presets: naming the profile config/ already implies".
 
 **The tiers differ in what a missing file means, which is why they are
 separate.** A missing core file is fatal: every one of them carries keys with
@@ -173,9 +178,14 @@ knows a key is unwanted but not where it should have gone.
 Adding a field to `AppConfig` therefore means adding it to `CONFIG_FILES` too.
 The merge says so if you forget. That coupling is deliberate: a new key has to
 belong to *some* file, and deciding which one at the moment it is added is the
-entire point. **It applies to the five core files only** — `models.json` and
-`integrations.json` keys are read directly by the code that needs them and
-appear in neither `AppConfig` nor `CONFIG_FILES`.
+entire point. **It applies to the five core files only** — `models.json`,
+`integrations.json` and `presets.json` keys are read directly by the code that
+needs them and appear in neither `AppConfig` nor `CONFIG_FILES`.
+
+`CONFIG_FILES` has a second reader now, and it is the one that makes a preset
+honest: the **first segment** of every preset override path must be a key the
+manifest knows, checked at load. Only the first, because only the first is a
+question about file ownership — see "Presets" under Architecture.
 
 `base_schedule` and `location_rules` were in that same "declared so the file
 loads, read by nothing" state until `week.apply_location_modes` gave them a
@@ -306,8 +316,10 @@ types: dinner is generated before lunch so the one cross-type leftover
 
 - `config/` — external configuration; five core files merged and validated
   once at load through `AppConfig` (`extra="forbid"`, so an unknown or typo'd
-  key fails at startup), plus two supplemental files loaded apart from the
-  merge. See "config/ is seven files" under Layout.
+  key fails at startup), plus three supplemental files loaded apart from the
+  merge. See "config/ is eight files" under Layout. The active preset is laid
+  over the merged dict **before** that validation runs (`apply_preset_layer`),
+  which is the one ordering where `extra="forbid"` still means anything.
   Model selection lives in `config/models.json`: `meal_generation_model` is
   the standing choice, and `config["openrouter_model"]` is a per-run
   selection injected **in memory only** by the CLI's `--model` and the
@@ -429,6 +441,148 @@ types: dinner is generated before lunch so the one cross-type leftover
     `DayRecipes` produces `$defs`/`$ref`) with a 422 `"uses $defs"` error.
     `MD_JSON` mode just asks the model to emit JSON as text, which works with
     far more free-tier providers.
+
+### Presets: naming the profile `config/` already implies
+
+`config/` holds one implicit profile smeared across five files. A **preset**
+names it, makes it switchable, and makes the choice **weekly** — a label plus
+a map of dotted leaf paths to the values that week wants instead
+(`config/presets.json`, resolved by `src/presets.py`). A week generated under
+one is stamped with its name (`WeekPlan.preset`, and the history entry), which
+is the whole reason to record anything: "did that change work?" is
+unanswerable without knowing which preset each week ran under.
+
+**It is not a diet.** A diet strategy is `diet_styles`, which already exists
+and which a preset may switch on; a preset is that *plus* everything about the
+week that is not food — what gets cooked, what gets batched, how long you are
+willing to spend. That is why it needed a word of its own, and why "meal
+strategy" was wrong in both directions at once: too narrow, and already taken.
+
+The load order, and the middle step is new:
+
+    1. merge the five core files      -> base dict   (CONFIG_FILES manifest)
+    2. resolve the active preset      -> preset layer  (presets.resolve_config)
+    3. validate                       -> AppConfig (extra="forbid")
+
+**Validation moved to after the layer, and that is the real change here.**
+Before this, the merge validated and nothing touched the dict afterwards. A
+preset overriding a key *after* validation could introduce a state `AppConfig`
+would have rejected, so validating last is the only ordering where
+`extra="forbid"` still means anything. `planner.apply_preset_layer` is where
+the two meet, and both entry points — `load_config_with_models` and
+`PlannerState.load` — go through it, so the CLI, the API and the UI cannot
+disagree about which preset a week is planned under.
+
+#### An override addresses a leaf, and the whole-key version is worth keeping
+
+An override is a dotted path — `"dietary_rules.allowed_nova_groups"` — whose
+value replaces **that leaf**, whole. Four rules, all load-time and loud:
+
+- **The first segment must be a key `CONFIG_FILES` knows**, failing with the
+  preset name *and* the path. Only the first, because only the first is a
+  question about file ownership. A preset that appears applied and is not is
+  strictly worse than one that refuses to load — the same argument
+  `CONFIG_FILES` already makes about a key in the wrong file.
+- **Every segment before the last must already exist and be an object.** A
+  path describing a branch that is not there is structurally wrong, and
+  creating it silently writes a value into a branch nothing reads. The *last*
+  segment need not exist: that is how a preset states an optional key the base
+  file leaves at its `AppConfig` default.
+- **Each leaf is replaced whole; there is no recursive merge anywhere.** A
+  merge cannot express deletion, and it makes "what does this preset actually
+  plan against" unanswerable without replaying it. An override valued `[]` or
+  `{}` is an explicit value, never an absence.
+- **No chaining or inheritance.** One layer. A preset extending another makes
+  the effective config a graph walk, and the entire value here is that you can
+  read one object and know what the week will do.
+
+**The first design said *whole-key* replacement, and the refutation is worth
+keeping because the failure was silent.** A four-line `comfort` preset —
+`"dietary_rules": {"allowed_nova_groups": [1,2,3,4]}` — reads as obviously
+correct, and under that rule that object *is* the week's `dietary_rules`.
+`DietaryRules` has no required fields (all three carry a `default_factory`),
+so it **validates cleanly** and discards the other two: 17
+`banned_ingredients` entries, several of them allergen-shaped, and
+`active_diet_styles`. A "take it easy" preset would have unbanned every
+ingredient the user had ever excluded, with no error and nothing in the pick's
+diff to show it. The root cause was a granularity borrowed from a mechanism
+answering a different question: `CONFIG_FILES` is a manifest of *top-level*
+keys because it answers "which file owns this key", and `dietary_rules`
+bundles three unrelated opinions that merely share a file.
+`tests/test_presets.py` asserts that case on values — 17 named ingredients —
+rather than on shape, because the refuted design would have passed a shape
+assertion.
+
+#### `default` is a row in the file, and the baseline is the base config
+
+Nothing in the code treats any preset name as special. `default` reproduces
+today's behaviour **because its `overrides` are empty**, not because the
+loader falls back to it — which is what keeps it editable and deletable, and
+what makes the compatibility test honest.
+
+**The baseline for every comparison is the base config — the five merged core
+files — never the preset named `default`.** The two are easy to confuse and
+the confusion is load-bearing: a diff computed against another *row* goes
+blank the moment that row is edited, and dangles the moment it is deleted,
+taking `active` with it. The base config cannot be deleted, because it is the
+thing presets layer over.
+
+#### One resolver, two presentations
+
+`presets.resolve_config` is pure: it computes, returns structured
+`PresetFailure`s, and never raises or touches disk. The **loader** raises on
+those failures (this app's fail-loudly-at-load policy for hand-edited files);
+the preset editor will render the same ones and decline to write. A resolver
+here and a separate validator there would be two interpretations of "valid",
+free to disagree about a file one accepted and the other refused. It imports
+neither NiceGUI nor `PlannerState` nor `planner`, so `api.py` and the editor
+can both reach it — asserted in a subprocess, since the test module has
+already imported `ui_state` and would answer for itself rather than for the
+module under test.
+
+**Every preset is checked, not only the active one.** A preset you might pick
+next Monday is worth knowing is broken now, and it costs the usual price of
+the loud-at-load policy: a typo in a preset nobody is using stops the app,
+exactly as a typo in `profile.json` does.
+
+#### The weekly pick, and the nine fields it has to re-seed
+
+The pick is at the **top of the review dialog**, above the batch toggles it
+can override — that dialog is where the week's shape is settled, since
+Generate opens it rather than running the week. It sits *above* the
+"everything below is staged" line as well, because that sentence is true of
+everything under it and false of this: the pick persists the moment it
+changes, through `save_presets_config`.
+
+Three things about `PlannerState.set_preset`:
+
+- **It re-layers from `base_config`; it never layers onto `self.config`.**
+  Laying the incoming preset over the outgoing one's result would leave every
+  leaf the new preset is silent about still carrying the old preset's opinion
+  — a config nobody chose and no file describes. `PlannerState` therefore
+  keeps the unlayered base beside the layered result.
+- **Nine `PlannerState` fields are copies of config values**, taken at load
+  (`PRESET_SEEDED_FIELDS` — servings, shop days, the pantry rows, the training
+  schedule, the batch toggles, and so on). A preset moving one of them would
+  otherwise change the config and not the control that displays it, which is
+  the "appears applied and is not" failure again. They are re-seeded **only
+  where the config value behind them actually moved**, so a pantry row typed a
+  moment ago survives a pick with no opinion about the pantry, while a preset
+  that does have one wins. `_original_training_schedule` moves with the
+  training schedule, or the staged bar reports a phantom edit for every
+  session the preset just seeded.
+- **The pick's diff is one line and says what changed**, generically
+  (`path → value`), never through a phrase table mapping keys to prose — that
+  would be exactly the hard-coded knowledge about presets this design rules
+  out, and it goes stale the moment a preset states a key the table never
+  heard of. A mode whose effect you cannot see is the stale-config problem
+  wearing a new hat.
+
+`config/presets.json` ships with one row — `default`, overriding nothing — so
+a fresh checkout plans byte-identically to before presets existed, and so does
+one with no file at all. Both are asserted rather than assumed
+(`test_presets.py`, and `test_config_layout.py`'s layered snapshot). The
+catalog is hand-edited JSON until the editor lands.
 
 ### Diet styles: a standing philosophy, orthogonal to cuisine
 
@@ -1029,15 +1183,17 @@ Nothing outside `repository.py` opens a file or touches `json` any more.
 `LocalJSONRepository` is the only implementation today and keeps the same
 three files in the same places.
 
-`save_config_keys` is the **one write path into `config/`**, and the only
-thing besides generation that persists anything. It exists for
+`save_config_keys` is the **one write path into the five core files**, and —
+with `save_presets_config` beside it — one of the only two things besides
+generation that persist anything. It exists for
 `target_modes` (see "Who owns a number"): a *setting* is not a per-week
 input, and a toggle that reset on every page reload would answer "where do
 my numbers come from" differently each time you looked. It has a second
 caller now — accepting a Garmin schedule proposal writes `training_schedule`
 (see "Proposing the week you actually trained"), which is a standing week on
-exactly the same reasoning. Those two are the whole list; everything else in
-the review dialog is an input to the next run and stays session-only. It merges the keys
+exactly the same reasoning. Those two are its whole caller list; everything
+else in the review dialog is an input to the next run and stays session-only.
+It merges the keys
 it is handed into the file `CONFIG_FILES` says owns each one, read-modify-
 write per file, so a hand-added key the app has never heard of survives the
 next settings change. It is deliberately not a "save the config" call — the
@@ -1046,6 +1202,21 @@ config held in memory is a *merged* dict carrying runtime-injected keys
 must never reach disk. Point the app at a backend by constructing a different subclass —
 `planner.main()` and `REPOSITORY` in `ui_app.py` are the only two places that
 name one.
+
+**`save_presets_config` is the second write path, and it exists because the
+first structurally cannot serve `presets.json`.** `_save_config_keys` looks
+every key up in `CONFIG_KEY_OWNER` — derived from `CONFIG_FILES` — and raises
+on a miss; `presets.json` is deliberately outside that manifest, so *every*
+key in it misses. Broadening `save_config_keys` was the alternative and is
+rejected: a method writing both core merged keys and independent supplemental
+documents would have to guess which it was being handed. It is read-modify-
+write on the whole file rather than per file, which is the same property from
+one document's point of view — writing `{"active": name}` changes the pick and
+leaves a hand-added preset, including fields this code has never heard of,
+exactly as the file holds it. So there are three *writers* to `config/` now
+(`set_target_mode`, `accept_training_proposal`, `set_preset`) across two
+*methods*, and all three persist a standing choice rather than an input to one
+run.
 
 **Every method is `async`, including the local file one, deliberately.** The
 interface is shaped for the future backend that receives asynchronous webhook
@@ -3585,7 +3756,8 @@ the module under seven frozen weekdays before trusting it.
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre against its target and beside what Cronometer logged for the same date (and which of those two pairs takes a divider), the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
-| `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved |
+| `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved — reached both ways now, through the bare merge *and* through the preset layer, so the shipped `default` is asserted to change nothing rather than assumed to |
+| `test_presets.py` | the preset layer — the compatibility claim in both its forms (no file, and a file holding only an empty `default`), the sibling-destruction case that refuted whole-key replacement (asserted on 17 named ingredients, not on shape), leaf-whole replacement in both directions, an empty list as an explicit value, the four load-time failures, the write path that cannot be `save_config_keys`, a hand-added preset surviving a pick, and `set_preset`'s re-layer and its conditional re-seed |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share; and the generation route with its job — the single-flight claim from both sides (a second `POST`, and a browser tab holding it), the three outcomes a client has to read separately (a rejected grid, a failed run, and per-meal-type failures riding on a *succeeded* one), and the finished week arriving through the read route rather than on the job. `GenerationJobs.run` is awaited directly rather than reached through `start`, which is what that split exists for: asserting on a spawned task means asserting on a scheduler |
 
@@ -3619,6 +3791,17 @@ because something broke, record the failure in the test, not just the fix.
 - `meal_history.json` entries written before the weekly rewrite have no
   `styles` key. `history_styles()` tolerates that (those days simply don't
   seed style rotation), so old history files don't need migrating.
+- **A preset override addresses a *leaf*, and the leaf is replaced whole.**
+  Do not "helpfully" make it a deep merge (a merge cannot express deletion),
+  and do not widen it back to top-level keys — that version silently discarded
+  17 `banned_ingredients` entries while validating cleanly. `presets.json` is
+  supplemental: never add it to `CONFIG_FILES`, never add its keys to
+  `AppConfig`, and never route the pick through `save_config_keys`, which
+  raises on every key in it. See "Presets" under Architecture.
+- **`default` is a preset like any other, and it is not the baseline.** Every
+  diff and every compatibility claim measures against the *base config* — the
+  five merged core files — because that is the thing presets layer over and
+  the one thing that cannot be edited or deleted out from under a comparison.
 - **A model id named in `models.json` must appear in that file's `models`
   table.** `resolve_planner_model`/`resolve_recipe_parser_model` enforce it at
   load. Without that check the two drifted apart unnoticed:

@@ -475,14 +475,16 @@ ever used.
   staged change, and branching on it put six days of one row on a live
   preview and the seventh on the plan.
 
-Two places write to `config/`, and only two: the Settings destination's Daily
-Targets panel (`PlannerState.set_target_mode`) and accepting a Garmin
+Three places write to `config/`, and only three: the Settings destination's
+Daily Targets panel (`PlannerState.set_target_mode`), accepting a Garmin
 schedule proposal in the review dialog's Training Schedule section
-(`PlannerState.accept_training_proposal`), both through
-`repository.save_config_keys`. Both persist a *standing* setting rather than
-an input to the next run — a toggle or an accepted session that reset on
-reload would be a control with no effect. Everything else here stays
-session-only.
+(`PlannerState.accept_training_proposal`) — both through
+`repository.save_config_keys` — and the review dialog's preset pick
+(`PlannerState.set_preset`), through `repository.save_presets_config`, which
+exists because `save_config_keys` raises on every key in `presets.json`. All
+three persist a *standing* setting rather than an input to the next run — a
+toggle, an accepted session or a pick that reset on reload would be a control
+with no effect. Everything else here stays session-only.
 
 ## State lives per client
 

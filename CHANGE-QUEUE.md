@@ -130,7 +130,7 @@ Distilled from thirteen releases. Each was paid for at least once.
 | 4 | [No auth on `/api`](#4--no-auth-on-api) | Feature | S | only if exposed |
 | 5 | [Food waste tracking](#5--food-waste-tracking) | Feature | XL | not scoped |
 | 6 | [`perishable_day_gap` is validated and read by nothing](#6--inventory_rulesperishable_day_gap-is-validated-and-read-by-nothing) | Defect | XS | — |
-| 7 | [Split `planning_rules` into a preset-able group and an engine group](#7--split-planning_rules-into-a-preset-able-group-and-an-engine-group) | Tech debt | S | wanted with the preset container |
+| 7 | [Split `planning_rules` into a preset-able group and an engine group](#7--split-planning_rules-into-a-preset-able-group-and-an-engine-group) | Tech debt | S | nothing — leaf paths removed the blocker |
 | 8 | [Three planning numbers are welded into prompt prose](#8--three-planning-numbers-are-welded-into-prompt-prose) | Tech debt | S | — |
 | 9 | [Decided against: six planning constants stay compiled in](#9--decided-against-six-planning-constants-stay-compiled-in) | Record | — | — |
 
@@ -144,8 +144,9 @@ renumber has to be checked against.
 **6–9 were appended on 2026-09-01 rather than ranked into place**, which is a
 departure worth stating. All four come from `dev/`'s hard-coding audit
 (`design-01` §3.4a): 6 is a defect that is invisible today because the two
-values it straddles happen to agree, 7 wants doing *with* the preset container
-rather than before it, 8 is worth doing whether or not presets ever ship, and
+values it straddles happen to agree, 7 was filed as wanting doing *with* the
+preset container and is now unblocked (its whole-key premise was refuted —
+see the entry), 8 is worth doing whether or not presets ever ship, and
 9 is a record rather than a task. None outranks 1–5, and appending them avoided
 a fifth renumber this file would then have had to check every anchor against —
 the cost the note above is about.
@@ -323,21 +324,27 @@ side rather than the sync side.
 ## 7 — Split `planning_rules` into a preset-able group and an engine group
 
 **Type:** Tech debt &nbsp;·&nbsp; **Size:** S &nbsp;·&nbsp; **Blocked by:**
-wanted *with* the preset container, not before it &nbsp;·&nbsp; **Source:**
-`dev/design-01` §3.4a, the hard-coding audit, 2026-09-01
+nothing &nbsp;·&nbsp; **Source:** `dev/design-01` §3.4a, the hard-coding
+audit, 2026-09-01
 
-`planning_rules` is **one** `CONFIG_FILES` key, and `dev/design-01` §3's
-preset rule is whole-key replacement, never a deep merge. Nine of its fifteen
-sub-keys were ruled preset-able by the audit, so a preset wanting a different
-`cuisine_block_pattern` must restate all fifteen — including
-`portion_trim_limits`, which CLAUDE.md says to leave alone and swap models
-instead.
+> **Its premise changed under it on 2026-09-02, and the entry is amended
+> rather than deleted.** This was filed as a *prerequisite* of the preset
+> container, on the reading that `dev/design-01` §3's preset rule was
+> whole-key replacement. That rule was refuted before `PROMPT-8` shipped (a
+> `dietary_rules` override silently discarded 17 `banned_ingredients`
+> entries) and the shipped rule is **typed leaf paths**, which reach
+> `planning_rules.cuisine_block_pattern` without disturbing
+> `planning_rules.portion_trim_limits`. So the blocker is gone and the entry
+> is ordinary work — kept because the *other* reason for it is untouched.
 
-At five preset-able rows (the audit's first pass) the editor could plausibly
-read-modify-write the whole object and nobody would notice. At nine — over
-half the key — a preset file becomes unreadable in exactly the way whole-key
-replacement exists to prevent: you cannot tell which value was chosen and
-which was carried along.
+`planning_rules` is **one** `CONFIG_FILES` key holding two unrelated kinds of
+thing. Nine of its fifteen sub-keys were ruled preset-able by the audit and
+four govern how much bad model output is accepted; a reader cannot tell which
+is which, and `portion_trim_limits` — which CLAUDE.md says to leave alone and
+swap models instead — sits in the same object as a preference anybody may
+edit. **That is the case for the split now: it separates preference from
+engine invariant.** The old case, that a preset had to restate all fifteen
+keys to change one, no longer applies.
 
 **Two keys in `engine.json`**, split on the audit's own verdicts: the nine
 `data` rows in one, and `portion_trim_limits`, `portion_trim_deadband`,
@@ -348,9 +355,9 @@ not what the week is — and `history_max_entries` is additionally the bound
 give that validator a moving target.
 
 A migration plus a `test_config_layout.py` snapshot regeneration, which is
-what that test exists to make safe. **Do it with `PROMPT-8`**, which already
-moves config validation to after the preset layer; discovering it during
-`PROMPT-9` is the failure this entry exists to prevent.
+what that test exists to make safe — and that test now asserts the merged dict
+through the preset layer as well as through the bare merge, so a key moving
+between files is checked on both paths.
 
 **Four constants also need a key before the split is worth much** —
 `WEEKEND_DAYS`, `MORNING_TRAINING_CUTOFF`, `WORKOUT_BREAKFAST_TYPES`,
