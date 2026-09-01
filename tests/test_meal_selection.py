@@ -1585,6 +1585,83 @@ class TestALongCookNeedsADayWithTheHours(unittest.TestCase):
         )
 
 
+class TestUserRecipePinPrecedence(unittest.TestCase):
+    def test_user_pinned_dinner_does_not_spend_automatic_dinner_cap(self):
+        spec = wk.pin_recipe(
+            spec_with(), "Monday:dinner", "user-steak", origin=wk.PIN_ORIGIN_USER
+        )
+        picks = planner.select_favorite_assignments(
+            spec, BASE_CONFIG, [],
+            [
+                favourite("First automatic", "dinner"),
+                favourite("Second automatic", "dinner"),
+                favourite("Third automatic", "dinner"),
+            ],
+            today=date(2026, 8, 23),
+        )
+        dinner_picks = [slot_id for slot_id in picks if slot_id.endswith(":dinner")]
+        self.assertNotIn("Monday:dinner", dinner_picks)
+        self.assertEqual(len(dinner_picks), 2)
+
+    def test_user_pinned_recipe_is_not_automatically_reused_elsewhere(self):
+        pinned = favourite("Pinned Steak", "dinner", recipe_id="steak-1")
+        spec = wk.pin_recipe(
+            spec_with(), "Wednesday:dinner", "steak-1", origin=wk.PIN_ORIGIN_USER
+        )
+        picks = planner.select_favorite_assignments(
+            spec, BASE_CONFIG, [], [pinned], today=date(2026, 8, 23)
+        )
+        self.assertEqual(picks, {})
+
+    def test_pin_survives_cuisine_and_style_resolution(self):
+        spec = wk.pin_recipe(
+            spec_with(), "Wednesday:dinner", "user-steak", origin=wk.PIN_ORIGIN_USER
+        )
+        resolved = planner.resolve_auto_choices(spec, BASE_CONFIG, [])
+        slot = resolved.by_id()["Wednesday:dinner"]
+        self.assertEqual(slot.recipe_id, "user-steak")
+        self.assertIsNone(slot.style)
+        self.assertIsNone(slot.cuisine)
+
+    def test_automatic_selector_uses_shared_banned_ingredient_gate(self):
+        banned = favourite("Seed Oil Dinner", "dinner")
+        banned["recipe"]["ingredients"][0]["name"] = "Refined seed oils blend"
+        config = dict(
+            BASE_CONFIG,
+            dietary_rules={
+                "banned_ingredients": ["seed oils"],
+                "allowed_nova_groups": [1, 2, 3],
+            },
+        )
+        picks = planner.select_favorite_assignments(
+            spec_with(), config, [], [banned], today=date(2026, 8, 23)
+        )
+        self.assertEqual(picks, {})
+        error = planner.recipe_eligibility_error(
+            banned, spec_with().by_id()["Monday:dinner"], config
+        )
+        self.assertIn("dietary_rules.banned_ingredients", error)
+
+    def test_automatic_selector_uses_shared_nova_gate(self):
+        nova_four = favourite("NOVA Four Dinner", "dinner")
+        nova_four["recipe"]["ingredients"][0]["nova_group"] = 4
+        config = dict(
+            BASE_CONFIG,
+            dietary_rules={
+                "banned_ingredients": [],
+                "allowed_nova_groups": [1, 2, 3],
+            },
+        )
+        picks = planner.select_favorite_assignments(
+            spec_with(), config, [], [nova_four], today=date(2026, 8, 23)
+        )
+        self.assertEqual(picks, {})
+        error = planner.recipe_eligibility_error(
+            nova_four, spec_with().by_id()["Monday:dinner"], config
+        )
+        self.assertIn("dietary_rules.allowed_nova_groups", error)
+
+
 class TestPinningClearsTheRolledStyle(unittest.TestCase):
     def test_a_pinned_recipe_drops_style_and_cuisine(self):
         """`resolve_auto_choices` has already rolled a style by the time a pin
@@ -1651,7 +1728,7 @@ class TestPinnedFavouritesReachGeneration(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         planner._generate_meal_type_events = self._real
 
-    async def run_week(self, favourites, spec=None):
+    async def run_week(self, favourites, spec=None, history=None):
         repository = _FakeRepository(favourites)
         config = dict(
             BASE_CONFIG,
@@ -1666,7 +1743,7 @@ class TestPinnedFavouritesReachGeneration(unittest.IsolatedAsyncioTestCase):
             },
         )
         return await planner.generate_week_plan(
-            spec or spec_with(), config, history=[], repository=repository
+            spec or spec_with(), config, history=history or [], repository=repository
         )
 
     async def test_the_model_is_not_asked_for_a_pinned_slot(self):
@@ -1679,6 +1756,37 @@ class TestPinnedFavouritesReachGeneration(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Monday", breakfast_days)
         self.assertNotIn("Tuesday", breakfast_days)
         self.assertEqual(len(breakfast_days), 5)
+
+    async def test_a_user_pinned_slot_is_not_asked_of_the_model(self):
+        record = favourite(
+            "Pinned Steak", "dinner", servings=2, calories=1200.0, recipe_id="steak-1"
+        )
+        record["is_favorite"] = False
+        spec = wk.pin_recipe(
+            spec_with(), "Wednesday:dinner", "steak-1", origin=wk.PIN_ORIGIN_USER
+        )
+        real_single_serving = planner.single_serving
+        transitions = []
+
+        def recording_single_serving(recipe):
+            normalized = real_single_serving(recipe)
+            transitions.append((recipe.servings, normalized.servings))
+            return normalized
+
+        planner.single_serving = recording_single_serving
+        try:
+            plan = await self.run_week(
+                [record],
+                spec=spec,
+                history=[{"date": "2026-08-20", "recipe_names": ["Pinned Steak"]}],
+            )
+        finally:
+            planner.single_serving = real_single_serving
+
+        dinner_days = dict(self.asked)["dinner"]
+        self.assertNotIn("Wednesday", dinner_days)
+        self.assertEqual(plan.by_slot()["Wednesday:dinner"].recipe.name, "Pinned Steak")
+        self.assertIn((2, 1), transitions)
 
     async def test_a_pinned_slot_is_cooked_without_the_model(self):
         plan = await self.run_week([favourite("Standing Scramble", "breakfast")])
@@ -1723,8 +1831,11 @@ class _FakeRepository:
     def __init__(self, favourites):
         self._favourites = favourites
 
-    async def get_favorites(self):
+    async def load_recipe_catalog(self):
         return list(self._favourites)
+
+    async def get_favorites(self):
+        return [record for record in self._favourites if record.get("is_favorite")]
 
     async def load_history(self):
         return []

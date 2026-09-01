@@ -58,9 +58,13 @@ from week import (  # noqa: E402
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
+    PIN_ORIGIN_AUTO,
+    PIN_ORIGIN_USER,
     SlotSpec,
     WeekSpec,
+    clear_recipe_pins,
     link_leftover,
+    pin_recipe,
 )
 
 DAYS = ["Monday", "Tuesday", "Wednesday"]
@@ -164,6 +168,98 @@ def make_state(with_plan=True, **kw) -> ui_state.PlannerState:
     state.apply_spec(spec)
     state.edited = False
     return state
+
+
+class TestRecipePins(unittest.TestCase):
+    def record(self, recipe_id="curry-1", **changes):
+        recipe = make_recipe(servings=2).model_dump()
+        recipe.update(changes)
+        return {"id": recipe_id, "recipe": recipe, "is_favorite": False}
+
+    def state_with_catalog(self, record=None):
+        state = make_state()
+        state.recipe_catalog = [record or self.record()]
+        styled = [
+            slot.model_copy(update={"style": "curry", "cuisine": "thai"})
+            if slot.id == "Monday:dinner"
+            else slot
+            for slot in state.spec.slots
+        ]
+        state._spec = state.spec.model_copy(update={"slots": styled})
+        state.edited = False
+        return state
+
+    def test_pinning_sets_user_origin_blanks_preferences_and_normalises(self):
+        state = self.state_with_catalog()
+        self.assertIsNone(state.pin_recipe_for_slot("Monday:dinner", "curry-1"))
+        slot = state.spec.by_id()["Monday:dinner"]
+        self.assertEqual(slot.recipe_id, "curry-1")
+        self.assertEqual(slot.recipe_pin_origin, PIN_ORIGIN_USER)
+        self.assertIsNone(slot.style)
+        self.assertIsNone(slot.cuisine)
+        # Pinning is session-only and must not rewrite even the tab's in-memory
+        # Library record; generation normalises the loaded bookmark before use.
+        self.assertEqual(state.recipe_catalog[0]["recipe"]["servings"], 2)
+        self.assertFalse(state.edited, "a next-run input is not a saved-grid edit")
+
+    def test_full_week_clear_preserves_user_pin_and_drops_automatic_pin(self):
+        state = self.state_with_catalog()
+        state.pin_recipe_for_slot("Monday:dinner", "curry-1")
+        automatic = pin_recipe(state.spec, "Tuesday:dinner", "auto-1")
+        cleared = clear_recipe_pins(automatic)
+        self.assertEqual(cleared.by_id()["Monday:dinner"].recipe_id, "curry-1")
+        self.assertIsNone(cleared.by_id()["Tuesday:dinner"].recipe_id)
+        self.assertEqual(
+            cleared.by_id()["Tuesday:dinner"].recipe_pin_origin, PIN_ORIGIN_AUTO
+        )
+
+    def test_banned_recipe_is_neither_offered_nor_accepted(self):
+        state = self.state_with_catalog()
+        state.config = dict(
+            state.config,
+            dietary_rules=dict(state.config["dietary_rules"], banned_ingredients=["chicken"]),
+        )
+        self.assertEqual(state.recipe_pin_options("Monday:dinner"), [])
+        error = state.pin_recipe_for_slot("Monday:dinner", "curry-1")
+        self.assertIn("dietary_rules.banned_ingredients", error)
+        self.assertIsNone(state.spec.by_id()["Monday:dinner"].recipe_id)
+
+    def test_disallowed_nova_recipe_is_neither_offered_nor_accepted(self):
+        state = self.state_with_catalog()
+        state.config = dict(
+            state.config,
+            dietary_rules=dict(state.config["dietary_rules"], allowed_nova_groups=[2, 3]),
+        )
+        self.assertEqual(state.recipe_pin_options("Monday:dinner"), [])
+        error = state.pin_recipe_for_slot("Monday:dinner", "curry-1")
+        self.assertIn("dietary_rules.allowed_nova_groups", error)
+
+    def test_recipe_that_cannot_keep_for_its_leftovers_is_refused(self):
+        record = self.record(storage_class="rice_or_pasta")
+        state = self.state_with_catalog(record)
+        state.config = dict(
+            state.config,
+            inventory_rules={
+                "storage_windows": {"fridge": {"default": 96, "rice_or_pasta": 24}},
+                "perishable_day_gap": 3,
+            },
+        )
+        linked = link_leftover(state.spec, "Wednesday:lunch", "Monday:dinner")
+        state._spec = linked
+        self.assertEqual(state.recipe_pin_options("Monday:dinner"), [])
+        error = state.pin_recipe_for_slot("Monday:dinner", "curry-1")
+        self.assertIn("inventory_rules.storage_windows", error)
+
+    def test_pin_is_reported_and_discarded_as_a_next_run_input(self):
+        state = self.state_with_catalog()
+        state.pin_recipe_for_slot("Monday:dinner", "curry-1")
+        self.assertEqual(
+            [change.summary for change in state.pending_changes()],
+            ["Mon dinner: Green Chicken Curry pinned"],
+        )
+        state.discard_pending_inputs()
+        self.assertIsNone(state.spec.by_id()["Monday:dinner"].recipe_id)
+        self.assertEqual(state.pending_changes(), [])
 
 
 class TestApplySpecRescalesTheBatch(unittest.TestCase):

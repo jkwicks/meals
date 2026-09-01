@@ -46,8 +46,11 @@ from planner import (
     resolve_preset_layer,
     load_app_config,
     meal_overrides_for,
+    recipe_eligibility_error,
     resolve_planner_model,
+    single_serving,
     split_targets,
+    storage_spans,
     weeknight_prep_minutes,
     workout_session_id,
 )
@@ -108,6 +111,7 @@ from week import (
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
+    PIN_ORIGIN_USER,
     WeekSpec,
     clear_cuisines,
     clear_styles,
@@ -124,6 +128,7 @@ from week import (
     meal_types,
     next_day_slot_id,
     parse_slot_id,
+    pin_recipe,
     portions_for,
     set_skip_estimate,
     slot_id,
@@ -1779,6 +1784,58 @@ class PlannerState:
         self.apply_spec(set_skip_estimate(spec, target_slot_id, estimate))
         return None
 
+    def recipe_pin_options(self, target_slot_id: str) -> List[dict]:
+        """Catalog records this slot may be pinned to under the live config."""
+        slot = self.spec.by_id().get(target_slot_id)
+        if slot is None or slot.mode != MODE_COOK:
+            return []
+        config = self.planning_config()
+        config = dict(config, storage_spans=storage_spans(self.spec, config))
+        return [
+            record
+            for record in self.recipe_catalog
+            if recipe_eligibility_error(record, slot, config) is None
+        ]
+
+    def pin_recipe_for_slot(
+        self, target_slot_id: str, recipe_id: Optional[str]
+    ) -> Optional[str]:
+        """Stage a deliberate catalog recipe for one cook slot, or explain why not."""
+        spec = self.spec
+        slot = spec.by_id().get(target_slot_id)
+        if slot is None:
+            return "That meal is not part of this week."
+        if slot.mode != MODE_COOK:
+            return f"{slot_label(target_slot_id)} is not a cook slot."
+        if not recipe_id:
+            self._spec = pin_recipe(spec, target_slot_id, None)
+            self._spec_shape = self._shape()
+            return None
+
+        record = next((item for item in self.recipe_catalog if item.get("id") == recipe_id), None)
+        if record is None:
+            return "That recipe is no longer in your catalog."
+        config = self.planning_config()
+        config = dict(config, storage_spans=storage_spans(spec, config))
+        error = recipe_eligibility_error(record, slot, config)
+        if error:
+            return error
+        try:
+            # Validate and normalise here as well as at generation: refusal is
+            # immediate, and a bookmarked batch never reaches the pin path as
+            # a two-serving recipe that the portion-trim clamp cannot halve.
+            single_serving(
+                Recipe.model_validate(record.get("recipe"), context={"config": config})
+            )
+        except ValidationError as exc:
+            return f"That catalog entry is not a usable recipe: {exc}"
+
+        self._spec = pin_recipe(
+            spec, target_slot_id, recipe_id, origin=PIN_ORIGIN_USER
+        )
+        self._spec_shape = self._shape()
+        return None
+
     def shuffle_styles(self) -> None:
         """Blank the style/cuisine on every cook slot so the next generation
         re-rolls them from scratch.
@@ -2599,6 +2656,17 @@ class PlannerState:
         if self.pantry:
             changes.append(PendingChange(f"{len(self.pantry)} pantry item(s)"))
 
+        catalog_names = {
+            record.get("id"): (record.get("recipe") or {}).get("name")
+            for record in self.recipe_catalog
+        }
+        for slot in self.spec.cook_slots():
+            if slot.recipe_id and slot.recipe_pin_origin == PIN_ORIGIN_USER:
+                name = catalog_names.get(slot.recipe_id) or "recipe"
+                changes.append(
+                    PendingChange(f"{slot_label(slot.id, short=True)}: {name} pinned")
+                )
+
         if self.edited:
             changes.append(PendingChange("grid edited"))
 
@@ -2606,8 +2674,8 @@ class PlannerState:
 
     def discard_pending_inputs(self) -> None:
         """Reset target overrides, the training schedule and the pantry list
-        back to what config.json/`.load()` gave them — the non-grid three
-        quarters of `pending_changes()`.
+        back to what config.json/`.load()` gave them — the non-grid inputs in
+        `pending_changes()` (targets, training, pantry and recipe pins).
 
         The staged-changes bar's "Discard pending changes" button pairs this
         with `reload_from_disk` (which handles the fourth quarter, grid
@@ -2622,6 +2690,12 @@ class PlannerState:
         self.clear_targets()
         self.training_schedule = [dict(session) for session in self._original_training_schedule]
         self.pantry = pantry_rows(self.config)
+        cleared = self.spec
+        for slot in list(cleared.cook_slots()):
+            if slot.recipe_id and slot.recipe_pin_origin == PIN_ORIGIN_USER:
+                cleared = pin_recipe(cleared, slot.id, None)
+        self._spec = cleared
+        self._spec_shape = self._shape()
 
     def has_training(self, day: str) -> bool:
         """Whether `day` carries a session that actually buys calories back.

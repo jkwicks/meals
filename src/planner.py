@@ -39,6 +39,7 @@ from repository import (
     LocalJSONRepository,
     PlanRepository,
     StoragePaths,
+    catalog_matches,
     run_sync,
 )
 from shopping import (
@@ -63,6 +64,7 @@ from week import (
     MODE_COOK,
     MODE_LEFTOVER,
     MODE_SKIP,
+    PIN_ORIGIN_USER,
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
@@ -3579,30 +3581,66 @@ def recipe_last_scheduled(history: List[dict]) -> Dict[str, date]:
     return latest
 
 
+def recipe_eligibility_error(record: dict, slot: SlotSpec, config: dict) -> Optional[str]:
+    """Why a catalog recipe cannot be served in `slot`, or None when it can.
+
+    This is the one hard eligibility gate shared by automatic favourites and
+    hand-picked pins. Preferences (LRU, cuisine blocks, long-cook placement,
+    dinner caps) deliberately do not live here: a user pin outranks those.
+    """
+    recipe = record.get("recipe") or {}
+    name = recipe.get("name") or "This recipe"
+    if not catalog_matches(record, meal_type=slot.meal_type):
+        return f"{name} — is not a {slot.meal_type} recipe (meal_type rule)"
+
+    rules = config.get("dietary_rules") or {}
+    banned = [str(value) for value in (rules.get("banned_ingredients") or [])]
+    allowed = rules.get("allowed_nova_groups")
+    if allowed is None:
+        allowed = DEFAULT_ALLOWED_NOVA_GROUPS
+    for ingredient in recipe.get("ingredients") or []:
+        ingredient_name = str(ingredient.get("name") or "")
+        lowered = ingredient_name.lower()
+        if any(value.lower() in lowered for value in banned):
+            return (
+                f"{name} — contains an ingredient on your banned list "
+                "(dietary_rules.banned_ingredients)"
+            )
+        if ingredient.get("nova_group") not in allowed:
+            return (
+                f"{name} — contains an ingredient outside your allowed NOVA groups "
+                "(dietary_rules.allowed_nova_groups)"
+            )
+    if not favorite_keeps_long_enough(record, slot.id, config):
+        return (
+            f"{name} — does not keep long enough for every slot eating this batch "
+            "(inventory_rules.storage_windows)"
+        )
+    return None
+
+
 def eligible_favorites(
     favorites: List[dict],
-    meal_type: str,
     reuse_days: int,
     last_scheduled: Dict[str, date],
     today: date,
     already_used: Set[str],
 ) -> List[dict]:
-    """Favourites of `meal_type` not cooked within `reuse_days`, oldest first.
+    """Favourites outside the reuse window, oldest first.
 
     Ordered by how long ago each was last scheduled, never-scheduled ones
     first — the same least-recently-used rule `next_choice` applies to styles
     and cuisines, for the same reason: "unused in the last N" starves the tail
     of a short list, and a favourites list is by nature short.
 
-    `meal_type` is read off the saved recipe itself, which every catalog
-    record carries (`Recipe.meal_type` is a required field), so a dinner can
-    never be picked for a breakfast slot.
+    Meal type and hard dietary rules are intentionally absent here: both
+    automatic and manual claimants use `recipe_eligibility_error` for those.
     """
     candidates = []
     for record in favorites:
         recipe = record.get("recipe") or {}
         name = recipe.get("name")
-        if not name or recipe.get("meal_type") != meal_type or name in already_used:
+        if not name or name in already_used:
             continue
         when = last_scheduled.get(name)
         if when is not None and (today - when).days < reuse_days:
@@ -3787,7 +3825,12 @@ def select_favorite_assignments(
     assignments: Dict[str, dict] = {}
     # Names already on the grid this week — a favourite must not be served
     # twice in one week by two different rules, and a hand-pinned slot counts.
-    used: Set[str] = set()
+    pinned_ids = {slot.recipe_id for slot in spec.cook_slots() if slot.recipe_id}
+    used: Set[str] = {
+        (record.get("recipe") or {}).get("name")
+        for record in favorites
+        if record.get("id") in pinned_ids and (record.get("recipe") or {}).get("name")
+    }
 
     def open_slots(meal_type: str) -> List[SlotSpec]:
         return [
@@ -3808,12 +3851,12 @@ def select_favorite_assignments(
         pick = [
             record
             for record in eligible_favorites(
-                favorites, "breakfast", reuse_days.get("breakfast", 7),
+                favorites, reuse_days.get("breakfast", 7),
                 last_scheduled, today, used,
             )
             if all(
-                favorite_fits_day(record, slot.day, config)
-                and favorite_keeps_long_enough(record, slot.id, config)
+                recipe_eligibility_error(record, slot, config) is None
+                and favorite_fits_day(record, slot.day, config)
                 for slot in claimed
             )
         ]
@@ -3826,15 +3869,15 @@ def select_favorite_assignments(
     lunches = sorted(open_slots("lunch"), key=lambda slot: spec.day_index(slot.day))
     for slot in lunches:
         pick = eligible_favorites(
-            favorites, "lunch", reuse_days.get("lunch", 21), last_scheduled, today, used
+            favorites, reuse_days.get("lunch", 21), last_scheduled, today, used
         )
         if not pick:
             break
         fits = [
             record
             for record in pick
-            if favorite_fits_day(record, slot.day, config)
-            and favorite_keeps_long_enough(record, slot.id, config)
+            if recipe_eligibility_error(record, slot, config) is None
+            and favorite_fits_day(record, slot.day, config)
         ]
         # `continue`, not `break`: nothing eligible suits *this* day, but a
         # later slot may be a weekend one that it does suit. Only an empty
@@ -3855,15 +3898,15 @@ def select_favorite_assignments(
         if pinned >= dinner_slots:
             break
         pick = eligible_favorites(
-            favorites, "dinner", reuse_days.get("dinner", 21), last_scheduled, today, used
+            favorites, reuse_days.get("dinner", 21), last_scheduled, today, used
         )
         if not pick:
             break
         fits = [
             record
             for record in pick
-            if favorite_fits_day(record, slot.day, config)
-            and favorite_keeps_long_enough(record, slot.id, config)
+            if recipe_eligibility_error(record, slot, config) is None
+            and favorite_fits_day(record, slot.day, config)
         ]
         if not fits:
             continue
@@ -3924,7 +3967,7 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
             (
                 slot
                 for slot in spec.cook_slots()
-                if slot.meal_type == meal_type and not slot.cuisine
+                if slot.meal_type == meal_type and not slot.cuisine and not slot.recipe_id
             ),
             key=lambda slot: spec.day_index(slot.day),
         )
@@ -3944,7 +3987,7 @@ def resolve_auto_choices(spec: WeekSpec, config: dict, history: List[dict]) -> W
 
     resolved: List[SlotSpec] = []
     for slot in spec.slots:
-        if slot.mode != MODE_COOK:
+        if slot.mode != MODE_COOK or slot.recipe_id:
             resolved.append(slot)
             continue
 
@@ -6829,17 +6872,53 @@ async def generate_week_plan(
     config = dict(config, storage_spans=storage_spans(spec, config))
 
     pinned_recipes: Dict[str, Recipe] = {}
-    favorites = await (repository or LocalJSONRepository()).get_favorites()
+    active_repository = repository or LocalJSONRepository()
+
+    # User pins already live on the spec before automatic favourites run. Load
+    # them first so the selector sees occupied slots and never spends its dinner
+    # cap on one. This also re-checks hard rules against the live preset: the
+    # config may have changed after the review dialog offered the recipe.
+    user_pin_slots = [
+        slot for slot in spec.cook_slots()
+        if slot.recipe_id and slot.recipe_pin_origin == PIN_ORIGIN_USER
+    ]
+    if user_pin_slots:
+        catalog = await active_repository.load_recipe_catalog()
+        catalog_by_id = {record.get("id"): record for record in catalog}
+        for slot in user_pin_slots:
+            record = catalog_by_id.get(slot.recipe_id)
+            error = (
+                recipe_eligibility_error(record, slot, config)
+                if record is not None
+                else f"{slot_label(slot.id)} — pinned recipe is no longer in the catalog"
+            )
+            if error:
+                logger.warning("refusing recipe pin %s: %s", slot.recipe_id, error)
+                if note_callback:
+                    note_callback(error + " — generating this slot instead")
+                spec = pin_recipe(spec, slot.id, None)
+                continue
+            try:
+                pinned_recipes[slot.id] = single_serving(
+                    Recipe.model_validate(record["recipe"], context={"config": config})
+                )
+            except ValidationError as exc:
+                logger.warning(
+                    "pinned recipe %s is not usable, generating that slot instead: %s",
+                    slot.recipe_id, short_error(exc),
+                )
+                spec = pin_recipe(spec, slot.id, None)
+
+    favorites = await active_repository.get_favorites()
     for pin_slot_id, record in select_favorite_assignments(
         spec, config, history, favorites
     ).items():
         try:
-            # No `context=` here on purpose. A favourite was validated when it
-            # was saved, and re-validating against today's `dietary_rules`
-            # would reject a dish banned since — which is a real thing to know
-            # but not something to discover mid-run, one slot at a time, with
-            # no way to act on it. It is skipped instead, with a note.
-            pinned_recipes[pin_slot_id] = Recipe.model_validate(record["recipe"])
+            # Selection already passed the shared live-config eligibility gate;
+            # validation uses that same context as a final schema backstop.
+            pinned_recipes[pin_slot_id] = single_serving(
+                Recipe.model_validate(record["recipe"], context={"config": config})
+            )
         except ValidationError as exc:
             logger.warning(
                 "favorite %s is not a usable recipe, generating that slot instead: %s",

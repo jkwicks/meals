@@ -1,5 +1,13 @@
 # PROMPT-3 — Pin a specific recipe to a slot before generation ("steak on Wednesday")
 
+**Shipped in v0.45.0.** The review dialog now stages a catalog recipe for a
+specific cook slot, with one shared hard-rule eligibility gate used by both
+user pins and automatic favourites. User pins survive full-week regeneration
+and cost no model call. Kept as the record of what was asked for and why; it is
+not work to pick up. `dev/README.md`'s order of delivery is the authority on what
+is still outstanding — this banner states a verdict, never a rank, because a
+verdict cannot go stale.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It
 touches `ui_*.py` and its acceptance is partly visual.
 

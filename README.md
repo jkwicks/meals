@@ -498,9 +498,9 @@ something else); hover it to see why.
 
 ### Slots decided before the model is called
 
-Three things claim a slot ahead of generation, in this order, and everything
-they claim is one fewer recipe the model is asked for — so a week with
-favourites in it is also a cheaper week to run.
+Four things claim a slot ahead of generation, in this order, and everything
+they claim is one fewer recipe the model is asked for — so a week with catalog
+recipes in it is also a cheaper week to run.
 
 1. **Where you are that day.** `base_schedule` and `location_rules` in
    `config/schedule.json` say an Office lunch inherits the previous day's
@@ -512,7 +512,12 @@ favourites in it is also a cheaper week to run.
    breakfast in `meal_styles` drinkable ten minutes before a session. Cardio
    and walks are deliberately excluded — forcing one on every cardio morning
    would empty the breakfast rotation for a session that doesn't need it.
-3. **A saved favourite.** One standing breakfast across two mornings (the point
+3. **A recipe you pin for this week.** In Review → Pin a recipe, choose the day,
+   meal and catalog dish before generation. Meal type, banned ingredients and
+   allowed NOVA groups and safe storage duration are hard filters; cuisine, style, reuse windows and the
+   automatic-favourite dinner cap are preferences, so your pin outranks them.
+   It stays staged for regeneration but is never written to `config/`.
+4. **A saved favourite.** One standing breakfast across two mornings (the point
    of a standing breakfast is that it's the same one), one per eligible lunch,
    and up to two *distinct* dinners. Dinner is capped rather than
    one-per-slot because it's the only meal type cuisine blocks are laid over,

@@ -229,6 +229,16 @@ class TestSpreadBatch(unittest.TestCase):
         self.assertIsNone(anchor)
         self.assertIs(out, spec)
 
+    def test_a_user_recipe_pin_is_not_taken_as_a_batch_target(self):
+        spec = wk.pin_recipe(
+            spec_with(), "Tuesday:dinner", "steak-1", origin=wk.PIN_ORIGIN_USER
+        )
+        out, anchor = wk.spread_batch(spec, "dinner", 6)
+        pinned = out.by_id()["Tuesday:dinner"]
+        self.assertEqual(anchor, "Monday:dinner")
+        self.assertEqual(pinned.mode, MODE_COOK)
+        self.assertEqual(pinned.recipe_id, "steak-1")
+
     def test_the_batch_never_exceeds_three_claims(self):
         """So a small household's arithmetic doesn't spread one dish across
         half the week."""

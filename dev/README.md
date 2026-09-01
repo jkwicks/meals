@@ -67,7 +67,7 @@ its exercise-prescription and older-trainee outcome layer lands in `design-06`.
 
 **Fourteen written prompts, with 13 reserved.** 1 — the empty `activity_log`
 (**done**). 2 — day-scoped diet styles (**done**). 3 — pinning a recipe before
-generation. 4 — Hevy. 5 — exporting recipes to Cronometer. 6 — location from
+generation (**done**). 4 — Hevy. 5 — exporting recipes to Cronometer. 6 — location from
 the calendar. 7 — the hard-coding audit (**done**). 8 — the preset container
 and weekly pick (**done**). 9 — the preset editor and its validator
 (**done**). 10 — per-dish storage windows (**done**). 11 — the freezer ledger.
@@ -75,7 +75,7 @@ and weekly pick (**done**). 9 — the preset editor and its validator
 personal exercise constraints and gym programs. 15 — constraint-aware workout
 plans and progression.
 
-**Six of the fourteen are done**, and the count is stated here as well as in
+**Seven of the fourteen are done**, and the count is stated here as well as in
 the table below because this list is the one a reader meets first. `2` and `9`
 both lost their `(**done**)` mark for a release after shipping together in
 v0.44.0 — the same drift the Status section at the foot of this file records
@@ -102,18 +102,18 @@ rather than after them. The findings are in "What the review changed" below.
 | ~~3~~ | ~~**8** — preset container + weekly pick~~ | — | **Complete** |
 | ~~4~~ | ~~**9** — preset editor + validator~~ | — | **Complete** |
 | ~~5~~ | ~~**2** — day-scoped diet styles~~ | — | **Complete** |
-| **1** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
-| **2** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
-| **2** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
-| **3** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
-| **3** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
-| **3** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
-| **4** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
-| **5** | **14** — exercise constraints + gym-program catalog | **Sonnet 5** | 8, 9. Independent of Hevy |
-| **6** | **15** — structured workout plans + first progression loop | **Opus 5** | 14. Hevy enriches it but is not a gate |
-| **7** | training analytics / full fatigue controller *(partly designed)* | — | Read-only signals first; `design-06` §8 |
+| ~~6~~ | ~~**3** — recipe pin~~ | — | **Complete** |
+| **1** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
+| **1** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
+| **2** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
+| **2** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
+| **2** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
+| **3** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
+| **4** | **14** — exercise constraints + gym-program catalog | **Sonnet 5** | 8, 9. Independent of Hevy |
+| **5** | **15** — structured workout plans + first progression loop | **Opus 5** | 14. Hevy enriches it but is not a gate |
+| **6** | training analytics / full fatigue controller *(partly designed)* | — | Read-only signals first; `design-06` §8 |
 
-**Six prompts are complete**, struck through above rather than deleted so the
+**Seven prompts are complete**, struck through above rather than deleted so the
 gate column still reads as the dependency record it is:
 
 | | Closed | Verified against |
@@ -124,13 +124,15 @@ gate column still reads as the dependency record it is:
 | `PROMPT-8` | the preset container, the layer and the weekly pick, v0.43.0 | `tests/test_presets.py` plus `test_config_layout.py`'s layered snapshot |
 | `PROMPT-9` | the preset editor and its validator, v0.44.0 | `tests/test_presets.py` (editor classes), `tests/test_preset_validation.py`, and a Playwright drive of Settings → Presets |
 | `PROMPT-2` | day-scoped diet styles — the schema blocks reuse, v0.44.0 | `tests/test_diet_styles.py` (all six parser cases and the three ways a call sits against a window), `tests/test_planner_dynamic_targets.py` (the four ceiling properties re-asserted against a four-day window), `tests/test_presets.py` (both shapes arriving from a preset) |
+| `PROMPT-3` | per-slot user recipe pins before generation, v0.45.0 | `tests/test_ui_state.py` (offered list, refusal, origin, regeneration and staged summary), `tests/test_meal_selection.py` (shared eligibility, precedence, cap and model-call exclusion), `tests/test_week_mechanics.py` (batch precedence) |
 
 `PROMPT-1` ranked 4th here for a day after it was known to be done, which is
 the ordinary staleness this table now carries a date against.
 
-**Each of those six now carries a one-line status banner under its own H1**,
-added in v0.44.1. Until then no prompt file recorded its own status anywhere,
-and this table could not close the gap: the convention throughout `dev/` is
+**Each completed prompt carries a one-line status banner under its own H1.**
+The first six gained theirs in v0.44.1; PROMPT-3 gained its on completion in
+v0.45.0. Before that convention no prompt file recorded its own status, and
+this table could not close the gap: the convention throughout `dev/` is
 that a session is handed *the prompt*, cold, and `PROMPT-2`'s header actively
 opens with "read this, its role changed" while saying nothing about having
 shipped. That is a re-implementation hazard, and it is the one the banner
@@ -166,12 +168,12 @@ a row when this lands" rather than blockers.
   rather than writing a second validator, and that resolver was built to be
   imported — pure, storage-free, and returning displayable failures instead of
   raising, precisely so the loader and the editor cannot disagree about a file.
-- **2 and 3 after 8**, which is a change. Both were "widens what a preset can
-  say; compiles no logic in", and that is still true — but 3 needs the shared
-  eligibility function that 8's preset filter defines, and 2's day-scoped
-  schema is what a block reuses, so both are cheaper once the layer exists.
+- **2 and 3 after 8**, which is a change. The sequencing held for two different
+  reasons: 3 needs the shared eligibility function anticipated by 8's preset
+  filter, while 2's day-scoped schema is what a block reuses. Both were cheaper
+  once the layer existed.
 
-  **2 is done, and the reuse it was moved for is now a real function.**
+  **Both are done.** For 2, the reuse it was moved for is now a real function.
   `planner.day_scoped_entries` is the parser — general in its subject
   (`subject_key`), so `PROMPT-13`'s blocks answer "which days does this bind
   on" through it rather than inventing a second spelling — and
@@ -179,6 +181,11 @@ a row when this lands" rather than blockers.
   prompt half, which is the strongest evidence the shape was already there.
   What shipped is an **empty affordance**, per `design-00` F3:
   `active_diet_styles` still ships `[]`, so no generated week moved.
+
+  For 3, `planner.recipe_eligibility_error` is the one hard-rule gate used by
+  automatic favourites and the review dialog's hand-picked pin. The user pin
+  wins over preferences and survives regeneration; meal type, banned
+  ingredients, NOVA groups and safe storage duration still refuse it.
 - **Tier 6 is written now** and its two prompts close `OUTSTANDING.md`'s top
   two missing-prompt rows. Both are gated on 10; 12 also waits on 11.
 - **Tier 7 is genuinely independent** and can run whenever its manual probe
@@ -265,12 +272,12 @@ unscheduled. `presets.json` appeared in no prompt in the set.
 ## Status
 
 The designs remain **drafts for approval**, but the arm is now partly built:
-`PROMPT-1`, `-10`, `-7`, `-8`, `-9` and `-2` have shipped (see "Order of
-delivery"), so Arm A's enabling half — the preset container, the layer, the
-weekly pick, the editor, and the day-scoped schema blocks reuse — is done
-through v0.44.0. `data/biometrics.json` holds 23 `activity_log` rows over 16
-dates and 28 `readiness_log` rows. What is left in the arm is **the recipe pin
-(`PROMPT-3`, next up)** and blocks (the larger, dated half, still unwritten).
+`PROMPT-1`, `-10`, `-7`, `-8`, `-9`, `-2` and `-3` have shipped (see
+"Order of delivery"), so Arm A's enabling half — the preset container, the
+layer, the weekly pick, the editor, day-scoped schema and the weekly recipe
+veto — is done through v0.45.0. `data/biometrics.json` holds 23 `activity_log`
+rows over 16 dates and 28 `readiness_log` rows. What is left in the arm is
+**blocks** (the larger, dated half, still unwritten).
 
 Arm E gained its first designed slice in the same pass: `design-06`,
 `PROMPT-14` and `PROMPT-15` are **written and unstarted**, and none of the

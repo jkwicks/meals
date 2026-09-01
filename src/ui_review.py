@@ -46,7 +46,7 @@ from ui_theme import (
     TRAINING_TYPE_LABELS,
     training_icon,
 )
-from week import humanize
+from week import PIN_ORIGIN_USER, humanize
 
 
 @dataclass
@@ -64,6 +64,9 @@ class ReviewHandles:
     # the telemetry header and the shopping panel for a row nobody has typed
     # into yet.
     pantry_editor: Callable
+    # Registered under "pins": pinning is a next-generation input, distinct
+    # from a saved grid edit and from the catalog browser's own refresh topic.
+    recipe_pin_editor: Callable
 
 
 def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles:
@@ -607,6 +610,118 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 "choice, and next week starts from this one."
             ).classes(f"{TEXT_MICRO} text-slate-400")
 
+    # ---- user recipe pins --------------------------------------------------
+
+    pin_pick = {"day": state.days[0] if state.days else "", "meal_type": ""}
+
+    @ui.refreshable
+    def recipe_pin_editor() -> None:
+        """A day / meal / recipe row plus every active weekly pin."""
+        cook_slots = state.spec.cook_slots()
+        if not cook_slots:
+            ui.label("There are no cook slots to pin.").classes(
+                f"{TEXT_MICRO} text-slate-400"
+            )
+            return
+
+        cook_days = list(dict.fromkeys(slot.day for slot in cook_slots))
+        if pin_pick["day"] not in cook_days:
+            pin_pick["day"] = cook_days[0]
+        meal_options_for = lambda day: {  # noqa: E731 - local widget projection
+            slot.meal_type: humanize(slot.meal_type).title()
+            for slot in cook_slots
+            if slot.day == day
+        }
+        meals = meal_options_for(pin_pick["day"])
+        if pin_pick["meal_type"] not in meals:
+            pin_pick["meal_type"] = next(iter(meals))
+
+        def selected_slot_id() -> str:
+            return f"{pin_pick['day']}:{pin_pick['meal_type']}"
+
+        def recipe_options() -> Dict[str, str]:
+            return {
+                record["id"]: (record.get("recipe") or {}).get("name", "Unnamed recipe")
+                for record in state.recipe_pin_options(selected_slot_id())
+            }
+
+        def sync_recipes() -> None:
+            slot = state.spec.by_id().get(selected_slot_id())
+            recipes.set_options(recipe_options())
+            recipes.set_value(slot.recipe_id if slot else None)
+
+        def choose_day(event) -> None:
+            pin_pick["day"] = event.value
+            options = meal_options_for(event.value)
+            pin_pick["meal_type"] = next(iter(options))
+            meal_select.set_options(options)
+            meal_select.set_value(pin_pick["meal_type"])
+            sync_recipes()
+
+        def choose_meal(event) -> None:
+            pin_pick["meal_type"] = event.value
+            sync_recipes()
+
+        def choose_recipe(event) -> None:
+            error = state.pin_recipe_for_slot(selected_slot_id(), event.value)
+            if error:
+                ui.notify(error, type="negative", multi_line=True, close_button=True)
+                sync_recipes()
+                return
+            refreshables.refresh("pins")
+
+        with ui.element("div").classes(f"flex flex-row gap-{SPACE_TIGHT} w-full"):
+            ui.select(
+                {day: day[:3] for day in cook_days},
+                value=pin_pick["day"],
+                label="Day",
+                on_change=choose_day,
+            ).props("dense outlined").classes(f"w-28 {TEXT_BODY}")
+            meal_select = ui.select(
+                meals,
+                value=pin_pick["meal_type"],
+                label="Meal",
+                on_change=choose_meal,
+            ).props("dense outlined").classes(f"w-32 {TEXT_BODY}")
+            current = state.spec.by_id().get(selected_slot_id())
+            recipes = ui.select(
+                recipe_options(),
+                value=current.recipe_id if current else None,
+                label="Recipe",
+                on_change=choose_recipe,
+            ).props("dense outlined clearable").classes(f"flex-1 {TEXT_BODY}")
+
+        ui.label(
+            "Only catalog recipes matching the meal and your banned-ingredient/NOVA rules "
+            "are offered. Clear Recipe to hand the slot back to generation."
+        ).classes(f"{TEXT_MICRO} text-slate-400")
+
+        user_pins = [
+            slot for slot in state.spec.cook_slots()
+            if slot.recipe_id and slot.recipe_pin_origin == PIN_ORIGIN_USER
+        ]
+        names = {
+            record.get("id"): (record.get("recipe") or {}).get("name", "Recipe")
+            for record in state.recipe_catalog
+        }
+        for slot in user_pins:
+            with ui.element("div").classes(
+                f"flex flex-row items-center gap-{SPACE_TIGHT} w-full"
+            ):
+                ui.icon("push_pin").classes("text-amber-300")
+                ui.label(
+                    f"{slot.day[:3]} {humanize(slot.meal_type)} — "
+                    f"{names.get(slot.recipe_id, 'Recipe')}"
+                ).classes(f"{TEXT_BODY} text-slate-300 flex-1")
+
+                def clear_pin(slot_id=slot.id) -> None:
+                    state.pin_recipe_for_slot(slot_id, None)
+                    refreshables.refresh("pins")
+
+                ui.button(icon="close", on_click=clear_pin).props(
+                    "dense flat round size=sm"
+                ).classes("text-slate-400")
+
     with ui.dialog() as dialog:
         with ui.element("div").classes(
             # Widened from 32rem to fit the target curve's 7 side-by-side
@@ -695,6 +810,12 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     "Leave empty to use config.json's active diet styles."
                 ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
+            with ui.expansion("Pin a recipe", icon="push_pin").classes("w-full").props(
+                f"dense header-class='{TEXT_BODY} px-0'"
+            ):
+                with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
+                    recipe_pin_editor()
+
             with ui.element("div").classes("flex flex-row items-center justify-between"):
                 ui.label("Bulk prep").classes(f"{TEXT_BODY} text-slate-300")
                 ui.switch().bind_value(state, "bulk_prep_enabled").props(
@@ -777,4 +898,5 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         targets_editor=targets_editor,
         training_editor=training_editor,
         pantry_editor=pantry_editor,
+        recipe_pin_editor=recipe_pin_editor,
     )
