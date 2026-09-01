@@ -1,5 +1,12 @@
 # PROMPT-1 — Diagnose the empty `activity_log`, then backfill it
 
+**Complete — 2026-09-01.** The diagnosis found a checkpoint that had marked
+every earlier date "asked" before `save_activity_entries` existed, and the
+backfill restored 23 rows over 16 dates. Kept as the record of what was asked
+for and why; it is not work to pick up. `dev/README.md`'s order of delivery is
+the authority on what is still outstanding — this banner states a verdict,
+never a rank, because a verdict cannot go stale.
+
 **Not queue-safe, and structurally cannot be.** `scripts/claude-queue.sh`
 globs `.prompts/prompt-*.md`; this file is in `dev/` and named `PROMPT-*`, so
 the queue cannot see it. That is deliberate — this prompt hits a live Garmin

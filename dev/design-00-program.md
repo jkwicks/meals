@@ -8,13 +8,13 @@ Findings section before acting on any of it.
 
 This is the overview. It states the reframe, the findings that change the
 shape of the work, the model, and the sequencing. The per-arm designs
-(`design-01…05`) are written only once the decisions at the end are answered
+(`design-01…06`) are written only once the decisions at the end are answered
 — writing five detailed designs against an unagreed frame is the waste this
 project's queue rules already warn about.
 
 ## 0. The document set
 
-This file is the overview. Three designs hang off it, and **where a later one
+This file is the overview. Six designs hang off it, and **where a later one
 disagrees with an earlier one, the later one wins** — each was written after a
 challenge that changed the answer.
 
@@ -26,6 +26,7 @@ challenge that changed the answer.
 | `design-03-interface-feasibility.md` | what the front end can actually build | **the build order, and the schema constraints that overrule 01 and 02** |
 | `design-04-freezer-and-prep.md` | Arm B — the declared freezer list, the surplus path, a movable prep day | how food crosses weeks, and where prep-day logic lives |
 | `design-05-food-safety.md` | storage windows as a property of the dish | **every storage number.** It moved the fridge default 3 → 4, which corrected worked examples in 02 and 04 |
+| `design-06-exercise-planning.md` | Arm E's first useful slice — personal constraints, gym programs, workout generation and progression | **the separation between persistent limitations and weekly program choice; age activates nothing** |
 
 `design-03` was written capability-first, in answer to *"the profile rules will
 be driven by what is possible — not necessarily what I want."* It corrects two
@@ -498,9 +499,15 @@ unchanged. That is the whole trick, and it is the one the config split already
 proved: splitting the *files* without splitting the *object* touched zero call
 sites.
 
-A profile may set any core key. It is a **layer**, not a copy — a profile
+A profile may set any ordinary core key. It is a **layer**, not a copy — a profile
 states the handful of values it changes and inherits the rest, so a profile
 cannot silently pin a value it was never meant to have an opinion about.
+
+**Narrow exception added by `design-06` §3:** persistent personal training
+constraints and the gym-program catalog are protected roots, not weekly
+preferences. A preset may select `active_gym_program`; it may not replace
+`training_profile` or `gym_programs`. Without that rule a weekly "fat loss"
+preset could erase a hip limitation while changing an unrelated goal.
 
 **`design-01` §3 is the mechanism, and its first draft did not deliver this
 sentence.** Whole-key replacement meant a profile touching one field of
@@ -648,9 +655,14 @@ Inventory below (§5). The unblocked slice is small and high-value: fetch the
 three missing Garmin metrics, and give `readiness_log` its first reader.
 
 ### Arm E — Training engine
-Deload triggers, concurrent-training sequencing, goal-specific programming,
-from `docs/periodization-engine.md`. **Gated on F6 and on Hevy**, and should
-not start until `activity_log` has rows.
+`design-06` now splits this arm into a useful first loop and the full controller.
+The first loop is personal constraints, selectable gym programs, structured
+workout generation, manual limitation feedback, and confirmed progression
+proposals (`PROMPT-14`/`PROMPT-15`). It is **not gated on Hevy**: Hevy enriches
+progression evidence, while the static plan and manual response remain useful
+without it. The later fatigue/deload controller still depends on Arm D's trusted
+readiness signals and Hevy performance data. F6 is closed: `activity_log` has
+rows.
 
 ---
 
@@ -779,6 +791,26 @@ build against today.
 | Proactive deload ceiling after N weeks of loading | nowhere | ❌ open |
 | Low-eccentric modality preference near lower-body days | nowhere | ❌ open |
 
+### `docs/exercise-protocols.md`
+
+Added after the first audit and traced in `design-06`. It supplies the exercise
+prescription and older-trainee outcome layer the first three documents lacked:
+
+| Specifies | Lands in | |
+|---|---|---|
+| Full-body 2–3-day architecture, exercise roles and modality dosing | `design-06` gym-program schema and initial catalog | ✅ designed |
+| RPE/RIR prescription without max testing | `design-06` exercise dose; `PROMPT-4` evidence | ✅ designed |
+| Double progression and 2-for-2 load progression | `design-06` §6, `PROMPT-15` | ✅ prompted |
+| High-velocity/power work as a distinct role | `design-06` program/exercise schemas | ✅ designed, opt-in |
+| Older-trainee recovery defaults and low-impact preferences | selectable gym-program data | ✅ designed, **never age-activated** |
+| Personal movement limitation handling | `training_profile` protected from weekly presets | ✅ designed and prompted |
+| Chair stand, TUG, grip and VO2 functional outcomes | later Arm D outcome measurement | ❌ open; does not block workout planning |
+
+The important product decision is not a clinical threshold: **birth date does
+not choose a program or manufacture a limitation.** The research expands the
+catalog of programs the user may select; `training_profile` contains only facts
+the user explicitly declares.
+
 ### The two gaps that mattered
 
 - **A block had no successor.** `ends_on` and then nothing — while
@@ -847,8 +879,10 @@ answered.
 inside one** — for Arm A that is `design-03` §8, which is ordered by build
 cost and supersedes the Tier 2 placement of the preset model above.
 
-**Tier 4 — the large ones.** Library-first selection; the periodization
-engine; aerobic decoupling; curated-site search.
+**Tier 4 — the large ones.** Library-first selection; the full periodization
+controller; aerobic decoupling; curated-site search. The smaller exercise-plan
+substrate and first progression loop are now designed separately in `design-06`
+and ordered by `dev/README.md`.
 
 The ordering claim worth defending: **Tier 1 items 2 and 3 are the ones the
 brief is most frustrated by, and they are among the cheapest things in the
@@ -989,8 +1023,10 @@ Four things follow, and three are gotchas worth having in writing:
   muscle needs a second endpoint and a local template cache. Not hard, but it
   is a second fetch nobody would predict from the workout payload.
 
-**Arm E is therefore unblocked at the API level**, and gated only on PROMPT-1
-(`activity_log` has zero rows) and the one-call account check.
+**Arm E is therefore unblocked at the API level.** PROMPT-1 has since filled
+`activity_log`; only Hevy-backed progression and the later fatigue matrix wait
+on the one-call account check. `design-06`'s static plan and manual-feedback
+path deliberately do not.
 
 ### D5 — Which arm first? — **ANSWERED: Arm A**
 And it has since grown two documents (`design-02`, `design-03`). Tier 1 stays

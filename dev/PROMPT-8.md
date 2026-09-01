@@ -1,5 +1,11 @@
 # PROMPT-8 — Presets: the container, the layer, and the weekly pick
 
+**Shipped in v0.43.0.** The container, the layer and the weekly pick. Kept as
+the record of what was asked for and why; it is not work to pick up.
+`dev/README.md`'s order of delivery is the authority on what is still
+outstanding — this banner states a verdict, never a rank, because a verdict
+cannot go stale.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It
 moves config validation, which is the load path every other feature sits on,
 and its central acceptance test is a byte-identical comparison a human should

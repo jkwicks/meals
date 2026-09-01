@@ -9,6 +9,7 @@ Approved design documents and the prompts that implement them.
 | `PROMPT-<n>.md` | a briefing for one implementation session. **The number is identity, not rank** — see "Order of delivery" below |
 | `DECISIONS-FOR-YOU.md` | **the plain-language decision list** — start here if you want the choices without the architecture |
 | | `design-04` — the freezer and a movable prep day (Arm B, chosen next). `design-05` — storage windows per dish, split out of it, and **the first thing being built** (`PROMPT-10`) |
+| | `design-06` — exercise planning: persistent personal constraints, selectable gym programs, structured workouts, and the first progression loop |
 | `OUTSTANDING.md` | everything still open, ranked — blocked-on-you, undesigned arms, unplaced research, loose decisions, and what should graduate to CHANGE-QUEUE.md |
 
 ## These prompts are not queue-safe, structurally
@@ -38,10 +39,14 @@ quickly". That is the single action this naming exists to prevent, and
    fall out of it. Where it disagrees with 01 or 02, it wins: it is the only
    one written capability-first.
 5. `design-05-food-safety.md` — **read before running anything**, because
-   `PROMPT-10` implements it and `PROMPT-10` runs first. It is the shortest
-   design in the set and the only one describing a defect rather than a
-   feature.
-6. The prompts, **in delivery order, not number order** — see below.
+   `PROMPT-10` implemented it and `PROMPT-10` ran first (v0.42.0). It is the
+   shortest design in the set and the only one describing a defect rather than
+   a feature, and it is now the record of a shipped change rather than a
+   pending one.
+6. `design-06-exercise-planning.md` — the first designed slice of Arm E:
+   personal limitations remain true across weekly presets, age activates
+   nothing, and a selected gym program supplies the workout content.
+7. The prompts, **in delivery order, not number order** — see below.
    `PROMPT-4` is the Hevy integration; its API-level question was closed from
    public type definitions, so it starts from a much smaller unknown than
    `design-00` D4 originally described.
@@ -57,14 +62,24 @@ claim in `docs/rapid-weightloss.md`, `docs/fitness-model.md` and
 block had no *successor*, and `training_intent` was stored as an unread string
 when the research already specifies its values — plus several ready-made preset
 definitions. Both gaps are fixed; the still-open items are marked ❌ in that
-table.
+table. The later `docs/exercise-protocols.md` audit is now in the same section;
+its exercise-prescription and older-trainee outcome layer lands in `design-06`.
 
-**Twelve prompts.** 1 — the empty `activity_log` (**done**). 2 — day-scoped diet
-styles. 3 — pinning a recipe before generation. 4 — Hevy. 5 — exporting recipes
-to Cronometer. 6 — location from the calendar. 7 — the hard-coding audit
-(**done**). 8 — the preset container and weekly pick (**done**). 9 — the preset
-editor and its validator. 10 — per-dish storage windows (**done**). 11 — the
-freezer ledger. 12 — declarative `week_shape`.
+**Fourteen written prompts, with 13 reserved.** 1 — the empty `activity_log`
+(**done**). 2 — day-scoped diet styles (**done**). 3 — pinning a recipe before
+generation. 4 — Hevy. 5 — exporting recipes to Cronometer. 6 — location from
+the calendar. 7 — the hard-coding audit (**done**). 8 — the preset container
+and weekly pick (**done**). 9 — the preset editor and its validator
+(**done**). 10 — per-dish storage windows (**done**). 11 — the freezer ledger.
+12 — declarative `week_shape`. 13 — blocks (**reserved, unwritten**). 14 —
+personal exercise constraints and gym programs. 15 — constraint-aware workout
+plans and progression.
+
+**Six of the fourteen are done**, and the count is stated here as well as in
+the table below because this list is the one a reader meets first. `2` and `9`
+both lost their `(**done**)` mark for a release after shipping together in
+v0.44.0 — the same drift the Status section at the foot of this file records
+against itself.
 
 ## Order of delivery
 
@@ -94,7 +109,9 @@ rather than after them. The findings are in "What the review changed" below.
 | **3** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
 | **3** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
 | **4** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
-| **5** | training analytics *(undesigned)* | — | Read-only first; see below |
+| **5** | **14** — exercise constraints + gym-program catalog | **Sonnet 5** | 8, 9. Independent of Hevy |
+| **6** | **15** — structured workout plans + first progression loop | **Opus 5** | 14. Hevy enriches it but is not a gate |
+| **7** | training analytics / full fatigue controller *(partly designed)* | — | Read-only signals first; `design-06` §8 |
 
 **Six prompts are complete**, struck through above rather than deleted so the
 gate column still reads as the dependency record it is:
@@ -110,6 +127,22 @@ gate column still reads as the dependency record it is:
 
 `PROMPT-1` ranked 4th here for a day after it was known to be done, which is
 the ordinary staleness this table now carries a date against.
+
+**Each of those six now carries a one-line status banner under its own H1**,
+added in v0.44.1. Until then no prompt file recorded its own status anywhere,
+and this table could not close the gap: the convention throughout `dev/` is
+that a session is handed *the prompt*, cold, and `PROMPT-2`'s header actively
+opens with "read this, its role changed" while saying nothing about having
+shipped. That is a re-implementation hazard, and it is the one the banner
+exists for.
+
+**A banner states a verdict and never a rank**, which is what makes it safe to
+duplicate the fact at all. CHANGE-QUEUE.md's own rule is that a closed row's
+*reasoning* can go stale even though its verdict cannot — so "shipped in
+v0.43.0" is immutable once true, where "immediately after PROMPT-7" is exactly
+the sentence that rots. `PROMPT-8` and `PROMPT-9` still carry such a priority
+line further down; it is left in place as the record of why they were ordered
+that way, now read behind a banner that says the ordering is spent.
 
 **`PROMPT-9` shipped in v0.44.0.** It imported `presets.resolve_config` rather
 than writing a second validator, and `planner.resolve_preset_layer` composes
@@ -152,6 +185,11 @@ a row when this lands" rather than blockers.
   passes. Nothing in it blocks anything.
 - **Blocks last**, because they are the largest half of Arm A and the only one
   needing 2, 8 and 9 all present.
+- **Exercise configuration before exercise generation.** `PROMPT-14` makes the
+  persistent facts and selectable program representable without calling a
+  model. `PROMPT-15` then has one validated input shape to generate against.
+  Neither infers anything from age, and Hevy is optional for the static/manual
+  first loop.
 - **Training analytics after read-only signals are trusted.** RHR/VO2max
   display, then the HRV band, then Efficiency Factor, then Hevy e1RM, and only
   then anything that *proposes* a schedule change. Nothing in that arm may move
@@ -227,12 +265,24 @@ unscheduled. `presets.json` appeared in no prompt in the set.
 ## Status
 
 The designs remain **drafts for approval**, but the arm is now partly built:
-`PROMPT-1`, `-10`, `-7`, `-8` and `-9` have shipped (see "Order of delivery"),
-so Arm A's enabling half — the preset container, the layer, the weekly pick
-and the editor — is done through v0.44.0. `data/biometrics.json` holds 23
-`activity_log` rows over 16 dates and 28 `readiness_log` rows. What is left in
-the arm is day-scoped diet styles, the recipe pin, and blocks (the larger,
-dated half).
+`PROMPT-1`, `-10`, `-7`, `-8`, `-9` and `-2` have shipped (see "Order of
+delivery"), so Arm A's enabling half — the preset container, the layer, the
+weekly pick, the editor, and the day-scoped schema blocks reuse — is done
+through v0.44.0. `data/biometrics.json` holds 23 `activity_log` rows over 16
+dates and 28 `readiness_log` rows. What is left in the arm is **the recipe pin
+(`PROMPT-3`, next up)** and blocks (the larger, dated half, still unwritten).
+
+Arm E gained its first designed slice in the same pass: `design-06`,
+`PROMPT-14` and `PROMPT-15` are **written and unstarted**, and none of the
+three gates anything in Arm A.
+
+**This paragraph was stale by one until v0.44.1**, naming five shipped prompts
+and listing day-scoped diet styles as outstanding while the delivery table 140
+lines above it already recorded that prompt against v0.44.0. That is the
+ordinary drift of a summary kept beside the thing it summarises, and it is
+worth a rule rather than a correction: **the delivery table is the authority
+and this paragraph is a reading of it**, to be checked against it on every
+release that closes a prompt.
 
 **`design-01`, `design-04`, `design-05` and `PROMPT-2`, `-3`, `-8`, `-9` were
 amended on 2026-09-01** after the review summarised above. Every amendment is

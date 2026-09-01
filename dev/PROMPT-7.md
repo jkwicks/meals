@@ -1,5 +1,12 @@
 # PROMPT-7 — The hard-coding audit: which planning decisions may a preset reach?
 
+**Complete.** It wrote no code, and its deliverable — the verdicts — is
+`design-01` §3.4a, which is also the field list `PROMPT-9` consumed. Kept as
+the record of what was asked for and why; it is not work to pick up.
+`dev/README.md`'s order of delivery is the authority on what is still
+outstanding — this banner states a verdict, never a rank, because a verdict
+cannot go stale.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It
 changes **no code at all** — the deliverable is a set of verdicts — so there is
 nothing for the queue to run and everything for a human to disagree with.

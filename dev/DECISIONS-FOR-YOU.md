@@ -300,7 +300,9 @@ this is the plain-language one.
 | **6** | **The freezer**, then **declaring the week's shape** | Both need §1 first |
 | **7** | Cronometer export · calendar location · Hevy | Independent. Each starts with a five-minute manual test |
 | **8** | **Blocks** — "Fast 800 for the next 14 days, then step back up" | The biggest piece. Needs 3, 4 and 5 present |
-| **9** | Training analytics | Read-only first: show you the numbers, earn trust, and only then let anything suggest changing a session |
+| **9** | **Your exercise constraints and gym programs** | Your hip limitation is a persistent fact; a gym program is a choice. Neither is inferred from being 55 |
+| **10** | **Detailed workouts and progression proposals** | Build from those explicit inputs; use Hevy when available, but keep the first version useful without it |
+| **11** | Training analytics and the full fatigue controller | Read-only signals first, then let trusted evidence suggest backing off or deloading |
 
 **Two things moved after a review of the whole plan on 2026-09-01.** Food
 keeping times went from the middle to the front, for the reason in §11. And
@@ -327,4 +329,22 @@ did it looked obviously correct and had been through two rounds of review.
   collected every day and read by nothing.
 - **When to back off training** — the rules for spotting accumulated fatigue
   and easing off before it becomes a problem.
+- **Functional outcome tracking** — chair stand, Timed Up and Go, grip strength
+  and VO2 trends from the older-trainee research. This is later measurement,
+  not a gate on designing useful workouts now.
 - A handful of smaller things, all listed in `OUTSTANDING.md`.
+
+## Exercise planning — settled direction
+
+Added with `design-06`. No further decision is needed for the first version:
+
+- Your hip impingement is an explicit personal constraint in `profile.json`,
+  applied to every gym program until you edit it.
+- A weekly preset may choose a named gym program but cannot remove your personal
+  constraints or redefine the program catalog.
+- Being 55 activates no restriction and selects no older-trainee program.
+- The first useful loop designs the sessions already on your schedule, records
+  a simple response on constrained exercises, and proposes rather than silently
+  applies progression.
+- Hevy improves the evidence for progression; it does not block producing or
+  using the initial plan.
