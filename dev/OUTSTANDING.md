@@ -43,11 +43,12 @@ They differ in one consequence: a preset carrying `recipe_pins` references
 catalog ids, so a deleted recipe needs an absent-meaning — degrade to
 generating that slot normally, with a warning, never a load failure.
 
-**Recommendation: build the weekly veto first (PROMPT-3, unchanged), decide the
-preset version after using it.** The preset form is a strict addition on top.
-`PROMPT-3` is **next up** in `dev/README.md`'s delivery order and its own gate
-(`PROMPT-8`, for the shared eligibility function) is satisfied, so this
-decision is now the live one rather than a hypothetical.
+**The recommended weekly veto shipped in v0.45.0 (`PROMPT-3`).** It is staged in
+the review dialog, survives full-week regeneration, and is never carried by a
+preset or written to `config/`. The remaining decision is now evidence-based:
+use the weekly version for a month, then decide whether repeating the same pins
+justifies the preset form. That form remains a strict addition on top, including
+the deleted-recipe fallback described above.
 
 ### A4 — Confirm the word "preset"
 `design-01` §1 recommends it over the brief's "profile" because

@@ -1,8 +1,8 @@
 # Decisions I need from you
 
 Plain-language companion to `OUTSTANDING.md`, which says the same things in
-technical terms. Nothing here is built yet — these are choices that change what
-gets built.
+technical terms. The answered entries are retained after implementation so the
+choice and its reasoning stay findable; the open entries say what remains.
 
 **Nine of the eleven are settled.** They are kept below with their answers
 rather than deleted, so the reasoning stays findable. Two are genuinely open,
@@ -42,9 +42,12 @@ design's position is that the system should hold the numbers and you should
 keep the vetoes — that some things stay yours, week to week, precisely so the
 whole thing does not become a set of rules to break.
 
-**My recommendation: build the weekly one first, decide the preset version
-after you have used it for a month.** The preset form is a pure addition on
-top; nothing is wasted either way.
+**The weekly version shipped in v0.45.0.** In Review → Pin a recipe, choose the
+day, meal and catalog dish; it applies to generation and regeneration without
+becoming a standing setting. Use that version for a month, then this decision
+reduces to one practical question: are you repeatedly entering the same pins?
+If so, the preset form remains a pure addition on top; nothing in the weekly
+implementation is wasted.
 
 ### B. Is "preset" the right word?
 

@@ -2203,9 +2203,9 @@ being fixed.
 
 ### Some slots are decided before the model is called
 
-Three things now claim a slot ahead of generation, and the order they run in
+Four things now claim a slot ahead of generation, and the order they run in
 is the order below. Everything they claim is one fewer recipe the model is
-asked for, so a week with favourites in it is also a cheaper week to run.
+asked for, so a week with catalog recipes in it is also a cheaper week to run.
 
 **1. Where you are that day** (`schedule.json`'s `base_schedule` +
 `location_rules`). These were config nothing read — declared on `AppConfig`
@@ -2243,7 +2243,17 @@ leftover`. The two together could only be reconciled with a per-recipe
 **2. A morning gym session's breakfast**, pinned to a shake — unchanged, see
 "Targets come from the body" above.
 
-**3. A saved favourite** (`planner.select_favorite_assignments`). Some slots
+**3. A recipe the user pinned for this week.** The review dialog offers catalog
+recipes matching the cook slot's meal type and the live hard dietary rules. A
+pin outranks style/cuisine rotation, the reuse window, automatic batch targets
+and the dinner cap, but never `banned_ingredients`, `allowed_nova_groups`, or the dish-level storage window.
+`SlotSpec.recipe_pin_origin` distinguishes it from an automatic favourite:
+`clear_recipe_pins` removes automatic pins before a full-week run and preserves
+user pins. Both claimants call `planner.recipe_eligibility_error`; neither has
+its own hard-rule filter. The pin is session-only, appears in the staged-changes
+bar, and writes to `week_plan.json` only as part of generation — never config.
+
+**4. A saved favourite** (`planner.select_favorite_assignments`). Some slots
 don't need inventing because there is already a dish you know you want.
 `SlotSpec.recipe_id` carries the catalog id; the slot is **still a cook**, so
 portions derive, shopping aggregates it and `span_days` works exactly as for

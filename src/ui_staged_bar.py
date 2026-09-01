@@ -65,7 +65,7 @@ def build_staged_bar(
 
     # ---- discard, behind a confirmation --------------------------------
     # This is the only irreversible button on the page: target overrides,
-    # training edits and pantry rows are never written to disk, so there is
+    # training edits, pantry rows and recipe pins are never written to disk, so there is
     # nothing to reload them from — "Discard" is the one action here whose
     # undo is retyping everything. It sat one unlabelled click away from a
     # bar whose whole job is to say how much is pending, immediately beside
@@ -125,12 +125,16 @@ def build_staged_bar(
         # `reload_from_disk` alone only ever discarded grid edits (it
         # re-reads week_plan.json); a button reading "Discard pending
         # changes" right beside "Mon +700 kcal" has to make that line go
-        # away too. `discard_pending_inputs` is the other three quarters —
+        # away too. `discard_pending_inputs` handles the non-grid inputs —
         # see its docstring for why this is allowed to be stronger than a
         # generation, which deliberately leaves them alone.
         discard_dialog.close()
-        state.discard_pending_inputs()
+        # Reload the persisted grid first, then clear session inputs. A generated
+        # plan legitimately records which recipe a user pinned; clearing first
+        # and reloading second would resurrect the very pin being discarded.
         await generation.reload_from_disk()
+        state.discard_pending_inputs()
+        refreshables.refresh("pins", "targets", "training", "pantry")
 
     @ui.refreshable
     def bar() -> None:
@@ -160,8 +164,9 @@ def build_staged_bar(
             ).classes("text-amber-200")
 
             # Only meaningful when there's an actual grid edit — a swap, a
-            # leftover link/unlink, a skip estimate. The other three pending
-            # categories (target overrides, training, pantry) are inputs to
+            # leftover link/unlink, a skip estimate. The other pending
+            # categories (target overrides, training, pantry and recipe pins)
+            # are inputs to
             # the *next* generation and are never written to disk on their
             # own; "Review" is still the only way to act on those. This is
             # what closes the gap "Review" alone left: a swap needed no model

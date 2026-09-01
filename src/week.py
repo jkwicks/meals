@@ -42,6 +42,27 @@ MODE_SKIP = "skip"
 LINK_ORIGIN_USER = "user"
 LINK_ORIGIN_LOCATION = "location"
 LINK_ORIGIN_BATCH = "batch"
+
+# Who pinned the recipe on a cook slot — `SlotSpec.recipe_pin_origin`, the
+# same "what may overwrite this" question `link_origin` answers for a
+# leftover. Two values, because there are two ways a `recipe_id` reaches a
+# slot:
+#
+#   auto  `planner.select_favorite_assignments` claiming a slot by strict
+#         LRU. Blanked by `clear_recipe_pins` before every full-week run, so
+#         the rotation window advances instead of re-serving week one's picks
+#         forever. This is the **default**, and deliberately the opposite of
+#         `link_origin`'s "assume the human" default: before the review
+#         dialog's hand pin existed, the automatic selector was the *only*
+#         thing that set `recipe_id`, so an un-tagged pin on a plan saved
+#         before this field is an automatic one. The default matches the only
+#         case that could have produced it.
+#   user  a hand pick in the review dialog. Survives `clear_recipe_pins` — a
+#         recipe the user chose is a veto, not a pick due for a re-roll —
+#         exactly as a user-made "Link to next lunch" survives
+#         `clear_batch_links`.
+PIN_ORIGIN_AUTO = "auto"
+PIN_ORIGIN_USER = "user"
 MODES = [MODE_COOK, MODE_LEFTOVER, MODE_SKIP]
 
 # Sentinel used in the UI dropdowns for "let the planner decide". Stored as
@@ -476,10 +497,18 @@ class SlotSpec(BaseModel):
         default=None,
         description=(
             "Catalog entry id (data/recipes_master.json) to cook here instead "
-            "of generating something new (mode=cook). Set by "
-            "planner.select_favorite_assignments before a run; the slot is "
+            "of generating something new (mode=cook). Set by either a user "
+            "pin or planner.select_favorite_assignments before a run; the slot is "
             "still a cook, so portions derive and shopping picks it up "
             "exactly as for a generated recipe."
+        ),
+    )
+    recipe_pin_origin: str = Field(
+        default=PIN_ORIGIN_AUTO,
+        description=(
+            "Who chose recipe_id — PIN_ORIGIN_AUTO or PIN_ORIGIN_USER. "
+            "Meaningless when recipe_id is None; see the constants for why "
+            "automatic pins are cleared before a run and user pins survive."
         ),
     )
     link_origin: str = Field(
@@ -998,7 +1027,10 @@ def _claimable(target: SlotSpec, anchor_id: str) -> bool:
     *previous* run's batch links get out of the way, before any of this.
     """
     if target.mode == MODE_COOK:
-        return True
+        # A concrete recipe is a deliberate claimant ahead of automatic batch
+        # spreading. It may still be an anchor, but never a target converted
+        # into somebody else's leftover.
+        return not target.recipe_id
     return (
         target.mode == MODE_LEFTOVER
         and target.link_origin == LINK_ORIGIN_LOCATION
@@ -1289,7 +1321,12 @@ def set_skip_estimate(
     return spec.model_copy(update={"slots": updated})
 
 
-def pin_recipe(spec: WeekSpec, target_id: str, recipe_id: Optional[str]) -> WeekSpec:
+def pin_recipe(
+    spec: WeekSpec,
+    target_id: str,
+    recipe_id: Optional[str],
+    origin: str = PIN_ORIGIN_AUTO,
+) -> WeekSpec:
     """A copy of `spec` with `target_id` set to cook a specific catalog recipe.
 
     The counterpart to `pin_style`: that one narrows *what kind* of meal the
@@ -1311,9 +1348,14 @@ def pin_recipe(spec: WeekSpec, target_id: str, recipe_id: Optional[str]) -> Week
     """
     updated = [
         slot.model_copy(
-            update={"recipe_id": recipe_id, "style": None, "cuisine": None}
+            update={
+                "recipe_id": recipe_id,
+                "recipe_pin_origin": origin,
+                "style": None,
+                "cuisine": None,
+            }
             if recipe_id
-            else {"recipe_id": None}
+            else {"recipe_id": None, "recipe_pin_origin": PIN_ORIGIN_AUTO}
         )
         if slot.id == target_id and slot.mode == MODE_COOK
         else slot
@@ -1323,7 +1365,7 @@ def pin_recipe(spec: WeekSpec, target_id: str, recipe_id: Optional[str]) -> Week
 
 
 def clear_recipe_pins(spec: WeekSpec) -> WeekSpec:
-    """Drop every pinned recipe, so the next run re-picks from the catalog.
+    """Drop automatic recipe pins while preserving deliberate user pins.
 
     Called unconditionally by `ui_generation.generate_week` alongside
     `clear_styles`/`clear_cuisines`, and for exactly the same reason those two
@@ -1333,7 +1375,11 @@ def clear_recipe_pins(spec: WeekSpec) -> WeekSpec:
     and the rotation window would never advance.
     """
     updated = [
-        slot.model_copy(update={"recipe_id": None}) if slot.mode == MODE_COOK else slot
+        slot.model_copy(update={"recipe_id": None, "recipe_pin_origin": PIN_ORIGIN_AUTO})
+        if slot.mode == MODE_COOK
+        and slot.recipe_id
+        and slot.recipe_pin_origin != PIN_ORIGIN_USER
+        else slot
         for slot in spec.slots
     ]
     return spec.model_copy(update={"slots": updated})

@@ -394,6 +394,7 @@ async def planner_page() -> None:
         shopping.shopping_panel,
         review.targets_editor,
         review.training_editor,
+        review.recipe_pin_editor,
         today.today_view,
         inspector.panel,
         staged_bar.bar,
@@ -470,6 +471,9 @@ async def planner_page() -> None:
     # and nothing else on the page — typing *into* a row refreshes nothing at
     # all, which is what keeps the cursor in the field being edited.
     refreshables.on("pantry", review.pantry_editor, staged_bar.bar)
+    # Recipe pins are next-run inputs, not saved-grid edits. Their narrow topic
+    # repaints the pin list and staged bar without rebuilding the 28-card canvas.
+    refreshables.on("pins", review.recipe_pin_editor, staged_bar.bar)
     refreshables.on("catalog", cards.canvas, catalog_browser.catalog_grid)
     refreshables.on("favorites", catalog_browser.catalog_grid)
     refreshables.on("catalog_browser", catalog_browser.catalog_grid)
