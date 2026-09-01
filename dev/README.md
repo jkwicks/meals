@@ -85,37 +85,40 @@ rather than after them. The findings are in "What the review changed" below.
 | ~~1~~ | ~~**10** — per-dish storage windows~~ | — | **Complete** |
 | ~~2~~ | ~~**7** — hard-coding audit~~ | — | **Complete** |
 | ~~3~~ | ~~**8** — preset container + weekly pick~~ | — | **Complete** |
-| **1** | **9** — preset editor + validator | **Sonnet 5** | 8 (imports its resolver), 7 |
-| **2** | **2** — day-scoped diet styles | **Opus 5** | 8. Its schema is the substrate blocks reuse |
-| **2** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
-| **3** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
-| **3** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
-| **4** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
-| **4** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
-| **4** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
-| **5** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
-| **6** | training analytics *(undesigned)* | — | Read-only first; see below |
+| ~~4~~ | ~~**9** — preset editor + validator~~ | — | **Complete** |
+| **1** | **2** — day-scoped diet styles | **Opus 5** | 8. Its schema is the substrate blocks reuse |
+| **1** | **3** — recipe pin | **Sonnet 5** | 8, for the shared eligibility function |
+| **2** | **11** — freezer ledger | **Opus 5** | 10. Windows before stock |
+| **2** | **12** — `week_shape` | **Opus 5** | 10, 11. Shapes before reach |
+| **3** | **5** — Cronometer export | **Sonnet 5** | A five-minute manual test. Independent |
+| **3** | **6** — calendar location | **Sonnet 5** | A manual iCal fetch. Independent |
+| **3** | **4** — Hevy | **Haiku 4.5** → **Sonnet 5** | Part 1 is a probe; part 2 waits on a key |
+| **4** | **13** — blocks *(unwritten)* | — | 2, 8, 9. The larger half of Arm A |
+| **5** | training analytics *(undesigned)* | — | Read-only first; see below |
 
-**Four prompts are complete**, struck through above rather than deleted so the
+**Five prompts are complete**, struck through above rather than deleted so the
 gate column still reads as the dependency record it is:
 
 | | Closed | Verified against |
 |---|---|---|
 | `PROMPT-1` | the empty `activity_log` | every line of its acceptance, 2026-09-01 (`design-00` §5a) |
 | `PROMPT-10` | per-dish storage windows | `tests/test_food_safety.py`; CLAUDE.md's "Storage windows belong to the dish" |
-| `PROMPT-7` | the hard-coding audit | `design-01` §3.4a, which is the audit and the field list `PROMPT-9` consumes |
-| `PROMPT-8` | the preset container, the layer and the weekly pick, v0.43.0 | `tests/test_presets.py` (44 tests) plus `test_config_layout.py`'s layered snapshot |
+| `PROMPT-7` | the hard-coding audit | `design-01` §3.4a, which is the audit and the field list `PROMPT-9` consumed |
+| `PROMPT-8` | the preset container, the layer and the weekly pick, v0.43.0 | `tests/test_presets.py` plus `test_config_layout.py`'s layered snapshot |
+| `PROMPT-9` | the preset editor and its validator, v0.44.0 | `tests/test_presets.py` (editor classes), `tests/test_preset_validation.py`, and a Playwright drive of Settings → Presets |
 
 `PROMPT-1` ranked 4th here for a day after it was known to be done, which is
 the ordinary staleness this table now carries a date against.
 
-**`PROMPT-9` is next and its gate is met**: `presets.resolve_config` is the
-pure resolver it was told to import, returning structured `PresetFailure`s and
-importing neither NiceGUI nor `PlannerState` (asserted in a subprocess). The
-one thing it inherits rather than decides: `default` is an ordinary row and may
-be deleted, so the editor's delete needs only to clear `active` alongside it —
-nothing in the code treats the name as special, and no diff is computed
-against it.
+**`PROMPT-9` shipped in v0.44.0.** It imported `presets.resolve_config` rather
+than writing a second validator, and `planner.resolve_preset_layer` composes
+that with the `AppConfig` check the loader also runs — one function, two
+presentations. Two things it decided rather than inherited: deleting the
+**active** preset is *refused* (not "clear `active`" — deletion must never
+silently change what the week plans against), and the field list is bounded to
+the audit's `data` rows that already have a config home (`PRESET_EDITOR_FIELDS`
+in `ui_state.py`), so items 7 and 8 in CHANGE-QUEUE.md became "the editor gains
+a row when this lands" rather than blockers.
 
 ### Why that order, in one line each
 
@@ -213,9 +216,13 @@ unscheduled. `presets.json` appeared in no prompt in the set.
 
 ## Status
 
-Both designs are **drafts for approval**. Nothing here is built, with one
-exception: `PROMPT-1` shipped, and `data/biometrics.json` now holds 23
-`activity_log` rows over 16 dates and 28 `readiness_log` rows.
+The designs remain **drafts for approval**, but the arm is now partly built:
+`PROMPT-1`, `-10`, `-7`, `-8` and `-9` have shipped (see "Order of delivery"),
+so Arm A's enabling half — the preset container, the layer, the weekly pick
+and the editor — is done through v0.44.0. `data/biometrics.json` holds 23
+`activity_log` rows over 16 dates and 28 `readiness_log` rows. What is left in
+the arm is day-scoped diet styles, the recipe pin, and blocks (the larger,
+dated half).
 
 **`design-01`, `design-04`, `design-05` and `PROMPT-2`, `-3`, `-8`, `-9` were
 amended on 2026-09-01** after the review summarised above. Every amendment is

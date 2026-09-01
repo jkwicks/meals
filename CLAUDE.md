@@ -532,13 +532,26 @@ thing presets layer over.
 `presets.resolve_config` is pure: it computes, returns structured
 `PresetFailure`s, and never raises or touches disk. The **loader** raises on
 those failures (this app's fail-loudly-at-load policy for hand-edited files);
-the preset editor will render the same ones and decline to write. A resolver
-here and a separate validator there would be two interpretations of "valid",
-free to disagree about a file one accepted and the other refused. It imports
-neither NiceGUI nor `PlannerState` nor `planner`, so `api.py` and the editor
-can both reach it — asserted in a subprocess, since the test module has
-already imported `ui_state` and would answer for itself rather than for the
-module under test.
+the preset editor (`ui_presets.py`, PROMPT-9) renders the same ones and
+declines to write. A resolver here and a separate validator there would be two
+interpretations of "valid", free to disagree about a file one accepted and the
+other refused. It imports neither NiceGUI nor `PlannerState` nor `planner`, so
+`api.py` and the editor can both reach it — asserted in a subprocess, since
+the test module has already imported `ui_state` and would answer for itself
+rather than for the module under test.
+
+**`planner.resolve_preset_layer` is the composed check both surfaces run.**
+`resolve_config` is only half of what the loader does — `apply_preset_layer`
+then validates the resolved dict through `AppConfig` (`extra="forbid"` and
+every field/model validator), and a preset that breaks *that* passes
+`resolve_config` cleanly. `resolve_preset_layer` runs both halves and returns
+`(config | None, [PresetFailure])`; `apply_preset_layer` is now a thin wrapper
+that raises on what it returns. It lives beside `apply_preset_layer` rather
+than in `presets.py` for one reason only — step 2 needs `AppConfig` from
+`planner.py`, and a `preset_validation` module `apply_preset_layer` imported
+back would be a cycle. It is still pure (no disk, no NiceGUI), and
+`test_preset_validation.py` asserts it raises on exactly what the returning
+form reports.
 
 **Every preset is checked, not only the active one.** A preset you might pick
 next Monday is worth knowing is broken now, and it costs the usual price of
@@ -560,7 +573,9 @@ Three things about `PlannerState.set_preset`:
   Laying the incoming preset over the outgoing one's result would leave every
   leaf the new preset is silent about still carrying the old preset's opinion
   — a config nobody chose and no file describes. `PlannerState` therefore
-  keeps the unlayered base beside the layered result.
+  keeps the unlayered base beside the layered result. The swap-and-re-seed is
+  `_relayer`, shared with the preset editor's `save_preset` (editing the
+  active preset changes what it resolves to, exactly as a new pick does).
 - **Nine `PlannerState` fields are copies of config values**, taken at load
   (`PRESET_SEEDED_FIELDS` — servings, shop days, the pantry rows, the training
   schedule, the batch toggles, and so on). A preset moving one of them would
@@ -581,8 +596,57 @@ Three things about `PlannerState.set_preset`:
 `config/presets.json` ships with one row — `default`, overriding nothing — so
 a fresh checkout plans byte-identically to before presets existed, and so does
 one with no file at all. Both are asserted rather than assumed
-(`test_presets.py`, and `test_config_layout.py`'s layered snapshot). The
-catalog is hand-edited JSON until the editor lands.
+(`test_presets.py`, and `test_config_layout.py`'s layered snapshot).
+
+#### The editor (`ui_presets.py`, Settings → Presets)
+
+A copy of `ui_review.training_editor`'s list-of-records pattern — one bordered
+row per preset with an Edit and a Delete, a "New preset" button, and a dialog
+of fields — plus the save-time check. The logic is on `PlannerState`
+(`preset_catalog_view`, `save_preset`, `delete_preset`, `preview_preset`) and
+tested there and in `test_presets.py`; the module is widget construction only.
+Six things are decisions:
+
+- **The field list is bounded to preset keys with a config home and a clean
+  widget shape.** `PRESET_EDITOR_FIELDS` in `ui_state.py` is the twelve today:
+  NOVA groups, active diet styles, `week_defaults`, `meal_weights`, per-day
+  `net_carbs_g`, and behind an *Advanced* fold `serving_rules.servings_per_meal`
+  plus five `planning_rules` keys. design-01 §9.2 lists more, but the prep
+  ceilings, the long-cook threshold (one number in four prose copies), the
+  numbers welded into `DINNER_VARIETY_RULE`/`PORTION_DENSITY_GUARD`, the
+  training constants, `meal_styles`, `meal_overrides` and `week_shape` each
+  need a code change first — CHANGE-QUEUE.md items 7-9, and each a later
+  release, as PROMPT-7's audit intended ("every ❌ row is a second release").
+  `calories`/`protein_g` are deliberately *not* offered — inert while
+  `target_modes` is `auto`, and flipping that is the block's business.
+- **Every field renders unset and may be ignored.** Absent = today's
+  behaviour (design-03 §4.1), which is what keeps the empty preset the
+  identity — creating one with everything blank produces `overrides: {}` and a
+  byte-identical week, asserted.
+- **The escape hatch is per preset.** `save_preset` starts from the preset's
+  existing `overrides`, drops every path `PRESET_EDITOR_FIELDS` manages (an
+  unset field means "not overridden"), then merges the user's choices back —
+  so a hand-added `meal_styles.breakfast`, or a hand-added non-`overrides` key,
+  survives an edit untouched. Every *other* preset in the file round-trips
+  verbatim. Same division `training_schedule` has with the review dialog.
+- **Validate before save, and it is the loader's check.** `save_preset` runs
+  `planner.resolve_preset_layer` over a candidate document and writes nothing
+  on failure, rendering the messages inline. The one cross-field rule the
+  editor is the reason for now exists: `PlanningRules._reuse_windows_fit_history`
+  rejects a `favorite_reuse_days` window past `history_max_entries` (it
+  silently stops binding otherwise) — added to the shared model, never to the
+  editor, so a hand-edited `engine.json` hits it too.
+- **Deleting the active preset is refused**, with a message to switch the
+  weekly pick first — deletion must never silently change what the week plans
+  against, and `active` on disk stays absent/null/a-preset-that-exists. A
+  preset's *name* is immutable after creation (it is what `active` and
+  `WeekPlan.preset` store); only its label and overrides are editable.
+- **Editing the *active* preset re-layers**, through `PlannerState._relayer`
+  — the re-seed-the-nine-fields half of `set_preset`, factored out so a new
+  pick and an edit to the current one cannot diverge. The preview is on a
+  button (`preview_preset`, pure), never live: a live grid preview repaints
+  the canvas per keystroke (design-03 §4.3). No new colour — the active row
+  is a filled `bookmark` glyph and the word "Active".
 
 ### Diet styles: a standing philosophy, orthogonal to cuisine
 
@@ -1184,8 +1248,8 @@ Nothing outside `repository.py` opens a file or touches `json` any more.
 three files in the same places.
 
 `save_config_keys` is the **one write path into the five core files**, and —
-with `save_presets_config` beside it — one of the only two things besides
-generation that persist anything. It exists for
+with `save_presets_config` beside it — the only way anything besides
+generation persists to `config/`. It exists for
 `target_modes` (see "Who owns a number"): a *setting* is not a per-week
 input, and a toggle that reset on every page reload would answer "where do
 my numbers come from" differently each time you looked. It has a second
@@ -1213,10 +1277,13 @@ documents would have to guess which it was being handed. It is read-modify-
 write on the whole file rather than per file, which is the same property from
 one document's point of view — writing `{"active": name}` changes the pick and
 leaves a hand-added preset, including fields this code has never heard of,
-exactly as the file holds it. So there are three *writers* to `config/` now
-(`set_target_mode`, `accept_training_proposal`, `set_preset`) across two
-*methods*, and all three persist a standing choice rather than an input to one
-run.
+exactly as the file holds it. So there are **four** *writers* to `config/` now
+(`set_target_mode`, `accept_training_proposal`, `set_preset`, and the preset
+editor's `save_preset`/`delete_preset`) across two *methods*, and all persist a
+standing choice rather than an input to one run. `save_preset` is the first
+that writes *arbitrary structure* rather than an enum or a session dict shaped
+like its neighbours — which is the whole reason `resolve_preset_layer` has to
+run before it (see "The editor").
 
 **Every method is `async`, including the local file one, deliberately.** The
 interface is shaped for the future backend that receives asynchronous webhook
@@ -3757,15 +3824,17 @@ the module under seven frozen weekdays before trusting it.
 | `test_adherence.py` | adherence's three layers — `adherence.json`'s two-part key and its delete-don't-flag clear, the per-date match of `activity_log` against the declared week, and the view models both marking surfaces read (including the two spellings of `session_id` that have to stay equal across a module boundary) |
 | `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and the baseline they are diffed against, target modes, which days read the stored plan vs. a live preview, slot views, the Today tab's day picker — including the step across into the adjacent cached week, the outer clamp that still holds, the uncached neighbour that is never offered, and the unscanned state that behaves exactly as it did before it could cross — and location/training context, the derived training-burn estimate, the day inspector's open/closed state, the adaptive-TDEE state both diagnostic surfaces report, planned fibre against its target and beside what Cronometer logged for the same date (and which of those two pairs takes a divider), the schedule proposal's session half (what a dismissal and an accept each touch, and what an accept must not persist), the Settings destination's sync-status, sync-freshness and location read views, the generation dialog's per-stage checklist and the off-by-one it turns on (`progress_callback` counts stages *started*, so nothing banks the last one but the run returning), and the Insights destination's five series — the four-state gate each is drawn behind, the planned-against-logged join and the two rules it borrows, the denominators deliberately absent from macro accuracy and the adherence tiles, and the target line that is drawn only once it is in view |
 | `test_config_layout.py` | a snapshot of the merged config, asserting nothing was lost or moved — reached both ways now, through the bare merge *and* through the preset layer, so the shipped `default` is asserted to change nothing rather than assumed to |
-| `test_presets.py` | the preset layer — the compatibility claim in both its forms (no file, and a file holding only an empty `default`), the sibling-destruction case that refuted whole-key replacement (asserted on 17 named ingredients, not on shape), leaf-whole replacement in both directions, an empty list as an explicit value, the four load-time failures, the write path that cannot be `save_config_keys`, a hand-added preset surviving a pick, and `set_preset`'s re-layer and its conditional re-seed |
+| `test_presets.py` | the preset layer — the compatibility claim in both its forms (no file, and a file holding only an empty `default`), the sibling-destruction case that refuted whole-key replacement (asserted on 17 named ingredients, not on shape), leaf-whole replacement in both directions, an empty list as an explicit value, the four load-time failures, the write path that cannot be `save_config_keys`, a hand-added preset surviving a pick, `set_preset`'s re-layer and its conditional re-seed, and **the editor** — the all-unset preset that is the identity, the unexposed override path and hand key that survive an edit, the invalid preset refused at save with the file byte-identical, the delete guard on the active preset, and the re-layer when the active preset is the one edited |
+| `test_preset_validation.py` | `planner.resolve_preset_layer` — that it returns `resolve_config`'s structural failures *and* an `AppConfig` schema failure as `PresetFailure`s, that `apply_preset_layer` raises on exactly those, and the `favorite_reuse_days > history_max_entries` cross-field rule (shipped `{7,21,21}` passes; a preset that breaks it fails the layer) |
 | `test_history.py` | history recording and rotation seeding |
 | `test_api.py` | the FastAPI routes — week plans, recipe catalog filters, history, biometrics (including the mirrored `readiness_log` and `activity_log`), and derived targets/`tdee_source` (including the fibre figure reported with or without a weigh-in); plus `repository.catalog_matches`, the one filter the route and the Library grid share; and the generation route with its job — the single-flight claim from both sides (a second `POST`, and a browser tab holding it), the three outcomes a client has to read separately (a rejected grid, a failed run, and per-meal-type failures riding on a *succeeded* one), and the finished week arriving through the read route rather than on the job. `GenerationJobs.run` is awaited directly rather than reached through `start`, which is what that split exists for: asserting on a spawned task means asserting on a scheduler |
 
 **Where the line is drawn on the UI.** `ui_state.py` is tested because it is
 the view model — grid edits, derived portions, override precedence — and those
 rules are exactly what a UI change can silently break. The other `ui_*`
-modules (including `ui_inspector.py`, the day inspector, and
-`ui_adherence.py`, whose two handlers are a `mark_*` call and a refresh) are
+modules (including `ui_inspector.py`, the day inspector; `ui_adherence.py`,
+whose two handlers are a `mark_*` call and a refresh; and `ui_presets.py`,
+whose logic all lives on `PlannerState` and `PRESET_EDITOR_FIELDS`) are
 widget construction, and testing them would mean a NiceGUI
 harness asserting on element trees, which pins the layout rather than the
 behaviour. If logic worth testing appears in one of them, the move is to pull
@@ -3802,6 +3871,14 @@ because something broke, record the failure in the test, not just the fix.
   diff and every compatibility claim measures against the *base config* — the
   five merged core files — because that is the thing presets layer over and
   the one thing that cannot be edited or deleted out from under a comparison.
+- **The preset editor's field list is `PRESET_EDITOR_FIELDS` in `ui_state.py`,
+  and it is the single authority on what "the editor manages".** `save_preset`
+  clears exactly those paths off a preset before merging the user's choices
+  back, so a widget drawing a path not in the list would leave that path
+  preserved forever, and a list entry with no widget would be dropped on every
+  save. Adding a field means adding it there. It is bounded to preset keys with
+  a config home today — the rows that need a code change first are
+  CHANGE-QUEUE.md items 7-9, and the editor gains each as it lands, not before.
 - **A model id named in `models.json` must appear in that file's `models`
   table.** `resolve_planner_model`/`resolve_recipe_parser_model` enforce it at
   load. Without that check the two drifted apart unnoticed:

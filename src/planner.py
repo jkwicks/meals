@@ -31,6 +31,7 @@ from nutrition_engine import (
 )
 from presets import (
     ACTIVE_PRESET_CONFIG_KEY,
+    PresetFailure,
     resolve_config as resolve_preset_config,
 )
 from repository import (
@@ -1710,6 +1711,32 @@ class PlanningRules(BaseModel):
     # half. So the tally outlives the names it was counted from.
     rejection_reason_window_days: int = Field(default=180, ge=1)
 
+    @model_validator(mode="after")
+    def _reuse_windows_fit_history(self) -> "PlanningRules":
+        """`favorite_reuse_days` must stay inside `history_max_entries`.
+
+        `recipe_last_scheduled` only sees `history_max_entries` days back
+        (one entry per cooked day), so a reuse window past that cannot be
+        answered — a favourite that aged off the history window is
+        indistinguishable from one never cooked, and the rule silently stops
+        binding. This is the first cross-field check the preset editor needs
+        (design-01 §3.4a): a preset setting `lunch: 40` is a mistake worth
+        naming at load, exactly as a typo in `profile.json` is. The shipped
+        `{7, 21, 21}` clears 28 comfortably.
+        """
+        over = {
+            meal: days
+            for meal, days in self.favorite_reuse_days.items()
+            if isinstance(days, int) and days > self.history_max_entries
+        }
+        if over:
+            raise ValueError(
+                f"planning_rules.favorite_reuse_days {over} exceeds "
+                f"history_max_entries ({self.history_max_entries}); a reuse "
+                f"window past the history depth silently stops binding."
+            )
+        return self
+
 
 DEFAULT_PLANNING_RULES = PlanningRules().model_dump()
 
@@ -2125,16 +2152,52 @@ def apply_preset_layer(raw: dict, presets_config: Optional[dict]) -> dict:
     what lets `generate_week_plan` record which preset a week ran under
     without threading a second argument through three entry points.
     """
-    resolution = resolve_preset_config(raw, presets_config)
-    if resolution.failures:
+    config, failures = resolve_preset_layer(raw, presets_config)
+    if failures:
         raise ValueError(
             "config/presets.json is not usable:\n"
-            + "\n".join(f"  - {failure.message}" for failure in resolution.failures)
+            + "\n".join(f"  - {failure.message}" for failure in failures)
         )
-    config = load_app_config(resolution.config)
+    return config
+
+
+def resolve_preset_layer(
+    raw: dict, presets_config: Optional[dict]
+) -> Tuple[Optional[dict], List[PresetFailure]]:
+    """`apply_preset_layer`'s work, returning failures instead of raising.
+
+    **One function, two presentations.** The loader (`apply_preset_layer`)
+    raises on whatever this returns; the preset editor renders the same
+    `PresetFailure`s and declines to write. A second validator living in the
+    editor would be free to disagree about a file this one accepted — which is
+    the exact split `presets.resolve_config`'s docstring rules out, and the
+    reason validation was deliberately moved to *after* the layer.
+
+    Two checks, in the order the loader applies them:
+
+    1. `presets.resolve_config` — the file is structurally sound and every
+       override path's first segment is a `CONFIG_FILES` key. Pure, and its
+       own module, so `api.py` reaches it too.
+    2. `load_app_config` on the resolved dict — the layered config still
+       satisfies `AppConfig` (`extra="forbid"` and every field/model
+       validator). A `ValueError` here becomes one `PresetFailure` carrying
+       the schema message, tagged with the active preset.
+
+    Pure: no disk, no NiceGUI. It is not in a module of its own only because
+    step 2 needs `AppConfig`/`load_app_config` from this file, and a
+    `preset_validation` module importing them while `apply_preset_layer`
+    imported it back would be a circular import.
+    """
+    resolution = resolve_preset_config(raw, presets_config)
+    if resolution.failures:
+        return None, list(resolution.failures)
+    try:
+        config = load_app_config(resolution.config)
+    except ValueError as exc:
+        return None, [PresetFailure(problem=str(exc), preset=resolution.active)]
     if resolution.active is not None:
         config[ACTIVE_PRESET_CONFIG_KEY] = resolution.active
-    return config
+    return config, []
 
 
 def planning_rule(config: Optional[dict], key: str):
