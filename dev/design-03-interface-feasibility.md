@@ -18,6 +18,13 @@ constraint running the other way**, and where it disagrees with them, it wins.
 Read it before finalising `design-01` §9.2 (the preset editor) and `design-02`
 §4 (the `week_shape` schema).
 
+**Addendum — exercise planning.** `design-06` deliberately stays inside this
+document's six-shape vocabulary: movement constraints and gym programs are
+editable record lists; movement/equipment fields are selects or multi-selects;
+the active program is one select; applied constraints and progression evidence
+are read views. Workout generation is button-triggered, never a live preview.
+No new interaction shape is needed for `PROMPT-14` or `PROMPT-15`.
+
 Verified 2026-09-01 against `main` at `418c223`, `nicegui` 3.16.0, and the
 `ui-work` skill.
 

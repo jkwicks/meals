@@ -1,5 +1,12 @@
 # PROMPT-9 — The preset editor, and the validator it cannot ship without
 
+**Shipped in v0.44.0.** It imported `presets.resolve_config` rather than
+writing a second validator, which is the reason it was gated behind `PROMPT-8`.
+Kept as the record of what was asked for and why; it is not work to pick up.
+`dev/README.md`'s order of delivery is the authority on what is still
+outstanding — this banner states a verdict, never a rank, because a verdict
+cannot go stale.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It
 touches `ui_*.py` and its acceptance is partly visual.
 

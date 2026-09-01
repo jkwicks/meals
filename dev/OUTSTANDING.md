@@ -1,8 +1,9 @@
 # Outstanding — everything still open, ranked
 
-Compiled 2026-09-01, after the research audit (`design-00` §5a). **Nothing in
-this program is built**, so "outstanding" here means *design or decision still
-open*, not *unwritten code*.
+Compiled 2026-09-01, after the research audit (`design-00` §5a), and extended
+when `docs/exercise-protocols.md` arrived. This is a mixed register now: several
+enabling prompts have shipped, while "outstanding" below means design,
+dependency, or implementation still open.
 
 Cite entries **by name, never by number** — the same rule CHANGE-QUEUE.md
 learned across thirteen releases, for the same reason.
@@ -44,6 +45,9 @@ generating that slot normally, with a warning, never a load failure.
 
 **Recommendation: build the weekly veto first (PROMPT-3, unchanged), decide the
 preset version after using it.** The preset form is a strict addition on top.
+`PROMPT-3` is **next up** in `dev/README.md`'s delivery order and its own gate
+(`PROMPT-8`, for the shared eligibility function) is satisfied, so this
+decision is now the live one rather than a hypothetical.
 
 ### A4 — Confirm the word "preset"
 `design-01` §1 recommends it over the brief's "profile" because
@@ -53,7 +57,7 @@ to reverse, but it should be settled before a file exists.
 
 ---
 
-## B. Designs not written — one of them is blocking
+## B. Designs and design gaps
 
 ### B1 — Arm B ✅ **designed** — `design-04` and `design-05`
 
@@ -80,9 +84,17 @@ inside it are still open — see D1 and D2 in section D below.
 `design-00` §5 is an inventory, not a design. Owns the Garmin fetch additions,
 the HRV band, and the AEE bias correction — see C1 and C2.
 
-### B4 — Arm E: training engine
-Gated on `PROMPT-1` and A2. `docs/periodization-engine.md` specifies most of
-it already (section C).
+### B4 — Arm E: training engine — **first slice designed**
+`design-06-exercise-planning.md` now owns persistent personal constraints,
+selectable gym programs, structured workouts, manual limitation feedback, and
+confirmed progression proposals. `PROMPT-14` and `PROMPT-15` make that work
+pickupable.
+
+PROMPT-1 is complete and no longer a gate. The first slice is deliberately
+usable without Hevy: A2 gates evidence-backed load progression and the later
+fatigue controller, not static constraint-aware workout planning. The full
+HRV/RHR/e1RM fatigue matrix, deload controller, and functional-assessment trend
+surface remain open in section C.
 
 ---
 
@@ -144,6 +156,13 @@ and hours, no stages. A fetch question before it is a design question.
 ### C10 — VLCD micronutrient fortification
 A safety note attached to any 800 kcal preset. Not a feature — a warning the
 `fast_800` preset should probably carry.
+
+### C11 — Functional capacity outcomes for older trainees
+`docs/exercise-protocols.md` adds chair stand, Timed Up and Go, grip strength and
+VO2 reference measures. `design-06` places these in a later Arm D outcome loop:
+record trends and optionally show reference bands, then use sustained movement
+to reconsider program emphasis. They do not block `PROMPT-14`/`15`, and age
+alone must not select a program or create a limitation.
 
 ### ⛔ Dropped
 **16:8 / time-restricted eating** (2026-09-01, not important). It was the only
@@ -350,22 +369,35 @@ change in the program where being wrong makes somebody ill was the least
 pickupable thing in it. It now runs **first**; see `dev/README.md`'s order of
 delivery.
 
-Still missing, in rough value order. The first two now have implementation
-prompts; they remain here because the code is still outstanding:
+Still missing, in rough value order. Rows with implementation prompts remain
+here because the code is still outstanding:
 
 | Work | Designed in | Rank | Gated on |
 |---|---|---|---|
 | Freezer ledger — the consumer `extra_portions` never got | `design-04`, **`PROMPT-11`** | Tier 2 item 7 | **`PROMPT-10`** |
 | `week_shape` records + applier + on-demand preview | `design-02`, `design-03` §8 step 6, **`PROMPT-12`** | Arm A's last step | **`PROMPT-10`**, **`PROMPT-11`** |
+| Personal exercise constraints + gym-program catalog | `design-06`, **`PROMPT-14`** | Arm E first slice | preset container/editor; **not Hevy** |
+| Constraint-aware workout plans + manual feedback/progression | `design-06`, **`PROMPT-15`** | Arm E first useful loop | **`PROMPT-14`**; Hevy optional |
 | `Recipe.cuisine` + `total_time_minutes`, backfill 91 records | `design-00` F4 | Tier 2 item 6 | — |
 | Fetch RHR / VO2max / Training Readiness | nowhere | Tier 1 item 4 | — |
 | `readiness_log`'s first reader — the HRV band (C2) | nowhere | Tier 1 item 5 | — |
 | The week briefing (B5) | **nowhere — no design either** | ⭐ unranked | — |
 | Garmin AEE bias correction (C1) | nowhere | ⭐ highest in C | — |
-| Blocks — `blocks.json`, dated overrides, successors | `design-01` §4–§6 | Arm A, after presets | `PROMPT-2`, `-8`, `-9` |
+| Blocks — `blocks.json`, dated overrides, successors | `design-01` §4–§6 | Arm A, after presets | ~~`PROMPT-2`, `-8`, `-9`~~ — **all three shipped; ungated** |
+| Functional assessments (chair stand/TUG/grip/VO2 trends) | `design-06` §8; research only | Arm D outcome loop | separate design/prompt |
+| Full fatigue matrix + automatic deload proposals | `periodization-engine.md`; `design-06` boundary | Arm E controller | C2, RHR, A2/e1RM |
 
-The last row is deliberate: `PROMPT-8` builds presets only, and blocks are the
-larger half.
+The blocks row is deliberate: `PROMPT-8` builds presets only, and blocks are the
+larger half. The two exercise rows are also deliberately split: configuration
+must be independently useful and testable before an LLM writes a workout.
+
+**The blocks row's three gates are now all satisfied** (`PROMPT-2` in v0.44.0,
+`-8` in v0.43.0, `-9` in v0.44.0), which changes what is true of it rather
+than merely what it is waiting for: it is no longer *blocked*, it is
+*unwritten*. `PROMPT-13` is reserved and has no briefing, so the next action
+on it is writing one — a distinction this table is exactly the wrong shape to
+show, since a satisfied gate and an absent one both render as an empty cell.
+That is why the gate is struck through here rather than cleared.
 
 **The two `PROMPT-10` gates are the review's sequencing finding and are not
 optional.** Both the freezer ledger and `week_shape` extend how far batched food

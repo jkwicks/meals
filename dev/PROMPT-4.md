@@ -140,5 +140,8 @@ genuinely needs sub-day freshness.
 - Store a field nothing reads.
 - Merge Hevy sessions into `activity_log`.
 - Expose an endpoint to accept webhooks.
-- Build the deload engine. That is Arm E proper, it needs the fatigue matrix
-  from `docs/periodization-engine.md`, and it is still gated on PROMPT-1.
+- Build the workout planner or deload engine. Those are Arm E: the first useful
+  slice is `design-06`/`PROMPT-14`–`15`, and the later controller needs the
+  fatigue matrix from `docs/periodization-engine.md`. PROMPT-1 is complete;
+  Hevy remains an enrichment/gate only for evidence-backed progression and the
+  full fatigue controller.

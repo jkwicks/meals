@@ -247,6 +247,12 @@ override a key *after* validation, a preset could introduce a state
   policy `CONFIG_FILES` already applies to a key in the wrong file, and the
   same manifest answering it: only the *first* segment is a `CONFIG_FILES`
   question, because only the first segment is a question about file ownership.
+- **Persistent personal facts and catalogs may be protected roots.** Added by
+  `design-06` §3: `training_profile` and `gym_programs` are not weekly opinions,
+  so neither their root nor a nested leaf is presettable. The shared resolver
+  refuses them with preset and path named. `active_gym_program` remains ordinary
+  preset data: the week may choose a program without rewriting the person or
+  redefining the catalog.
 - **Each leaf is replaced whole; there is no recursive merge anywhere.** The
   original objection to deep-merging stands untouched — a merge cannot express
   deletion, and "which days does this preset actually plan against" becomes
@@ -320,6 +326,7 @@ and then the *editor* has to be an IDE. The line that holds:
 | **what is batch-cooked, when, and who eats it** (`week_shape`) | how portions are derived from the slots claiming a cook |
 | which diet styles are active, and on which days | how a calorie ceiling is applied |
 | the week's carb shape and meal weights | the energy identity every budget is checked against |
+| which named gym program this week uses | personal movement constraints and the gym-program catalog (`design-06`) |
 
 **Today's batch behaviour is exactly the hard-coding being objected to**, and
 naming it makes the requirement concrete. `apply_batch_selections` contains, in
@@ -1574,7 +1581,9 @@ in 3–9.
 - **A nightly-recomputed protein floor** (§6).
 - **Auto-deleting an expired block** (§4.3).
 - **Anything reading `training_intent` or `peak_day`** beyond displaying them.
-  Arm E, and gated on `activity_log` having rows (PROMPT-1).
+  Arm E; its exercise-plan slice is now `design-06`, while the block/controller
+  coupling remains later work. `activity_log` has rows, so PROMPT-1 is no longer
+  the gate.
 - **Automatic block *suggestion*** — "you have plateaued, start a block". That
   needs the outcome-measurement half of Arm D, and it is a much larger
   product question than a stored intent.

@@ -1,5 +1,11 @@
 # PROMPT-10 — Storage windows per dish, and the one live safety defect
 
+**Shipped in v0.42.0.** The one live safety defect in the program, and the only
+prompt in the set that fixed something already wrong. Kept as the record of
+what was asked for and why; it is not work to pick up. `dev/README.md`'s order
+of delivery is the authority on what is still outstanding — this banner states
+a verdict, never a rank, because a verdict cannot go stale.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It
 changes what the app considers safe to eat, its acceptance includes a
 behaviour change in the *permissive* direction, and a human should watch the

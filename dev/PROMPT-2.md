@@ -1,5 +1,12 @@
 # PROMPT-2 — Day-scoped diet styles ("Fast 800 for four days")
 
+**Shipped in v0.44.0.** `planner.day_scoped_entries` is the one parser, general
+in its subject so `PROMPT-13`'s blocks reuse it rather than inventing a second
+spelling. Kept as the record of what was asked for and why; it is not work to
+pick up. `dev/README.md`'s order of delivery is the authority on what is still
+outstanding — this banner states a verdict, never a rank, because a verdict
+cannot go stale.
+
 **Not queue-safe** (in `dev/`, so `claude-queue.sh` cannot see it). Its
 acceptance includes a numeric check across two hydration passes, which is
 worth a human eye.
