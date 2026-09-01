@@ -603,5 +603,263 @@ class TestTheWeekRecordsItsPreset(unittest.TestCase):
         self.assertEqual([entry["preset"] for entry in history], ["lean"])
 
 
+# --------------------------------------------------------------------------
+# The preset editor — PROMPT-9
+# --------------------------------------------------------------------------
+#
+# The editor is a copy of `ui_review.training_editor`'s list-of-records
+# pattern plus a save-time check that is the *same* one the loader runs
+# (`planner.resolve_preset_layer`, tested against the loader in
+# `test_preset_validation.py`). What is tested here is the `PlannerState`
+# logic the widget module leans on — the escape hatch per preset, validate-
+# before-save, the delete guard, and the re-layer when the *active* preset is
+# the one edited.
+
+
+def editor_state(document: dict) -> ui_state.PlannerState:
+    """A `PlannerState` seeded from a preset document the way `.load()` does —
+    the nine `PRESET_SEEDED_FIELDS` read from the *layered* config, so a field
+    the active preset moved starts where the preset put it."""
+    base = shipped_base()
+    config = apply_preset_layer(base, document)
+    state = ui_state.PlannerState(
+        config=config,
+        base_config=base,
+        presets_config=document,
+        **{name: read(config) for name, read in ui_state.PRESET_SEEDED_FIELDS},
+    )
+    state._original_training_schedule = [dict(s) for s in state.training_schedule]
+    return state
+
+
+class TestTheEmptyPresetIsTheIdentity(ConfigDirCase):
+    """§4.1 made testable: a preset every field of which is left unset has
+    empty `overrides` and plans byte-identically to the base config."""
+
+    def test_creating_an_all_unset_preset_stores_empty_overrides(self):
+        self.write_presets(preset_file("default", default={}))
+        state = editor_state(self.stored_presets())
+        failures = run_sync(state.save_preset(
+            self.repo, name="plain", label="Plain", editor_overrides={}, is_new=True
+        ))
+        self.assertEqual(failures, [])
+        stored = self.stored_presets()
+        self.assertEqual(stored["presets"]["plain"], {"label": "Plain", "overrides": {}})
+
+    def test_that_preset_plans_byte_identically_to_the_base(self):
+        base = shipped_base()
+        document = preset_file("plain", default={}, plain={})
+        layered = apply_preset_layer(base, document)
+        layered.pop(presets.ACTIVE_PRESET_CONFIG_KEY, None)
+        self.assertEqual(layered, load_app_config(base))
+
+
+class TestTheEditorPreservesWhatItDoesNotExpose(ConfigDirCase):
+    """A preset naming an override path the editor does not draw survives an
+    edit untouched — the `training_schedule` escape hatch, per preset."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        document = preset_file("default", default={})
+        document["presets"]["rich"] = {
+            "label": "Rich",
+            "overrides": {
+                # exposed — the editor manages this one
+                "dietary_rules.allowed_nova_groups": [1, 2],
+                # not exposed — the editor has never heard of it
+                "meal_styles.breakfast": {"quick": "just a shake"},
+            },
+            "a_hand_added_note": {"why": "kept by hand"},
+        }
+        self.write_presets(document)
+        self.state = editor_state(self.stored_presets())
+
+    def test_the_unexposed_path_and_hand_key_survive_an_edit(self):
+        failures = run_sync(self.state.save_preset(
+            self.repo, name="rich", label="Rich",
+            # the editor re-submits only the exposed field, now changed
+            editor_overrides={"dietary_rules.allowed_nova_groups": [1, 2, 3, 4]},
+            is_new=False,
+        ))
+        self.assertEqual(failures, [])
+        entry = self.stored_presets()["presets"]["rich"]
+        self.assertEqual(
+            entry["overrides"]["dietary_rules.allowed_nova_groups"], [1, 2, 3, 4]
+        )
+        self.assertEqual(
+            entry["overrides"]["meal_styles.breakfast"], {"quick": "just a shake"}
+        )
+        self.assertEqual(entry["a_hand_added_note"], {"why": "kept by hand"})
+
+    def test_clearing_an_exposed_field_drops_only_that_path(self):
+        failures = run_sync(self.state.save_preset(
+            self.repo, name="rich", label="Rich",
+            editor_overrides={},  # user cleared the NOVA field
+            is_new=False,
+        ))
+        self.assertEqual(failures, [])
+        overrides = self.stored_presets()["presets"]["rich"]["overrides"]
+        self.assertNotIn("dietary_rules.allowed_nova_groups", overrides)
+        self.assertIn("meal_styles.breakfast", overrides)
+
+    def test_every_other_preset_round_trips_verbatim(self):
+        document = preset_file(
+            "default", default={}, other={"serving_rules.servings_per_meal": 6}
+        )
+        document["presets"]["rich"] = {"label": "Rich", "overrides": {}, "kept": 1}
+        self.write_presets(document)
+        state = editor_state(self.stored_presets())
+        run_sync(state.save_preset(
+            self.repo, name="rich", label="Rich (new label)",
+            editor_overrides={"dietary_rules.allowed_nova_groups": [1]}, is_new=False,
+        ))
+        stored = self.stored_presets()["presets"]
+        self.assertEqual(stored["other"]["overrides"],
+                         {"serving_rules.servings_per_meal": 6})
+        self.assertEqual(stored["rich"]["kept"], 1)
+        self.assertEqual(stored["rich"]["label"], "Rich (new label)")
+
+
+class TestTheEditorValidatesBeforeItSaves(ConfigDirCase):
+    """An invalid preset is refused at save, the failure is named, and the
+    file is not written."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write_presets(preset_file("default", default={}, lean={}))
+        self.before = self.config_dir.joinpath("presets.json").read_text()
+        self.state = editor_state(self.stored_presets())
+
+    def test_a_schema_violation_is_returned_and_nothing_is_written(self):
+        failures = run_sync(self.state.save_preset(
+            self.repo, name="lean", label="Lean",
+            editor_overrides={"planning_rules.min_baseline_cuisine_share": 5},
+            is_new=False,
+        ))
+        self.assertTrue(failures)
+        self.assertIn("min_baseline_cuisine_share", failures[0])
+        self.assertEqual(
+            self.config_dir.joinpath("presets.json").read_text(), self.before,
+            "a refused save must leave presets.json byte-identical",
+        )
+
+    def test_a_reuse_window_past_history_depth_is_refused(self):
+        failures = run_sync(self.state.save_preset(
+            self.repo, name="lean", label="Lean",
+            editor_overrides={"planning_rules.favorite_reuse_days":
+                              {"breakfast": 7, "lunch": 40, "dinner": 21}},
+            is_new=False,
+        ))
+        self.assertTrue(failures)
+        self.assertIn("favorite_reuse_days", failures[0])
+        self.assertEqual(
+            self.config_dir.joinpath("presets.json").read_text(), self.before
+        )
+
+    def test_a_hand_edited_invalid_file_still_fails_at_load(self):
+        """Load-time validation is unchanged — the editor's check is a second
+        presentation of it, not a replacement."""
+        self.write_presets(preset_file(
+            "bad", bad={"planning_rules.min_baseline_cuisine_share": 5}
+        ))
+        with self.assertRaises(ValueError):
+            run_sync(planner.load_config_with_models(self.repo))
+
+
+class TestDeletingAPreset(ConfigDirCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write_presets(preset_file(
+            "lean", default={}, lean={"dietary_rules.allowed_nova_groups": [1, 2]}
+        ))
+        self.state = editor_state(self.stored_presets())
+
+    def test_a_non_active_preset_is_removed(self):
+        failures = run_sync(self.state.delete_preset(self.repo, "default"))
+        self.assertEqual(failures, [])
+        self.assertNotIn("default", self.stored_presets()["presets"])
+        self.assertEqual(self.stored_presets()["active"], "lean")
+
+    def test_deleting_the_active_preset_is_refused(self):
+        before = self.config_dir.joinpath("presets.json").read_text()
+        failures = run_sync(self.state.delete_preset(self.repo, "lean"))
+        self.assertTrue(failures)
+        self.assertIn("active preset", failures[0])
+        self.assertEqual(
+            self.config_dir.joinpath("presets.json").read_text(), before
+        )
+
+    def test_deleting_default_leaves_every_other_diff_rendering(self):
+        run_sync(self.state.delete_preset(self.repo, "default"))
+        view = self.state.preset_catalog_view()
+        self.assertEqual([row.name for row in view.rows], ["lean"])
+        self.assertEqual(
+            view.rows[0].changes, ["dietary_rules.allowed_nova_groups → 1, 2"]
+        )
+
+
+class TestEditingTheActivePresetRelayers(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo = RecordingRepository()
+        self.document = preset_file(
+            "lean", default={}, lean={"serving_rules.servings_per_meal": 4}
+        )
+        self.state = editor_state(self.document)
+
+    def test_editing_the_active_preset_moves_the_session_config(self):
+        self.assertEqual(self.state.config["serving_rules"]["servings_per_meal"], 4)
+        self.assertEqual(self.state.servings, 4)
+        run_sync(self.state.save_preset(
+            self.repo, name="lean", label="Lean",
+            editor_overrides={"serving_rules.servings_per_meal": 6}, is_new=False,
+        ))
+        self.assertEqual(self.state.config["serving_rules"]["servings_per_meal"], 6)
+        # the re-seed follows the config value that moved
+        self.assertEqual(self.state.servings, 6)
+
+    def test_editing_a_non_active_preset_does_not_touch_the_config(self):
+        before = dict(self.state.config)
+        run_sync(self.state.save_preset(
+            self.repo, name="default", label="Default",
+            editor_overrides={"dietary_rules.allowed_nova_groups": [1]}, is_new=False,
+        ))
+        self.assertEqual(self.state.config, before)
+
+
+class TestThePreview(unittest.TestCase):
+    def setUp(self) -> None:
+        self.state = editor_state(preset_file("default", default={}))
+
+    def test_it_is_pure_and_reports_identical_for_an_empty_preset(self):
+        preview = self.state.preview_preset(
+            name="plain", label="Plain", editor_overrides={}, is_new=True
+        )
+        self.assertTrue(preview.ok)
+        self.assertTrue(preview.identical)
+        self.assertEqual(preview.changes, [])
+
+    def test_it_shows_the_carb_column_moving_on_one_day_only(self):
+        preview = self.state.preview_preset(
+            name="lowcarb", label="Low carb",
+            editor_overrides={"weekly_schedule.Monday.net_carbs_g": 60}, is_new=True,
+        )
+        self.assertTrue(preview.ok)
+        by_day = {d.day: d for d in preview.day_targets}
+        self.assertEqual(by_day["Monday"].preset["net_carbs_g"], 60)
+        self.assertEqual(
+            by_day["Tuesday"].preset["net_carbs_g"],
+            by_day["Tuesday"].base["net_carbs_g"],
+        )
+
+    def test_an_invalid_preview_carries_the_failure_not_a_raise(self):
+        preview = self.state.preview_preset(
+            name="oops", label="Oops",
+            editor_overrides={"planning_rules.min_baseline_cuisine_share": 9},
+            is_new=True,
+        )
+        self.assertFalse(preview.ok)
+        self.assertTrue(any("min_baseline_cuisine_share" in f for f in preview.failures))
+
+
 if __name__ == "__main__":
     unittest.main()

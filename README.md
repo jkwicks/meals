@@ -105,7 +105,7 @@ src/        planner.py, week.py, repository.py, shopping.py, nutrition_engine.py
             api.py, generation_jobs.py, export_menu.py, and ui_*.py (the NiceGUI
             front end, one module per concern)
 src/integrations/  sync_service.py — Garmin and Cronometer; keep_import.py — a once-off
-config/     everything you edit — profile, meals, week, schedule, engine, models, integrations
+config/     everything you edit — profile, meals, week, schedule, engine, models, integrations, presets
 reference/  whfoods.json (shipped corpus, sampled to nudge generation)
 data/       everything the app writes — week plans, history, biometrics, the recipe
             catalog, adherence marks and rejections
@@ -122,12 +122,33 @@ inside `repository.py`, not to the working directory, so `python
 src/planner.py` finds them from anywhere. The shell scripts `cd` to the root
 themselves for the same reason.
 
-`config/` is seven files rather than one. Five of them (profile, meals, week,
+`config/` is eight files rather than one. Five of them (profile, meals, week,
 schedule, engine) are merged back into a single object at load — see
 `CLAUDE.md` for the key-to-file map — and a key in the wrong file or a typo'd
-key name fails at startup naming the file, not silently. The other two
-(`models.json`, `integrations.json`) are loaded separately and are optional:
-every value in them has an in-code default.
+key name fails at startup naming the file, not silently. The other three
+(`models.json`, `integrations.json`, `presets.json`) are loaded separately and
+are optional: every value in them has an in-code default, so a checkout missing
+any of the three plans exactly as it would with the file present and empty.
+
+### Presets
+
+A **preset** is a named set of overrides for the week — what is cooked, the
+carb shape, how strict, how lazy — laid over the merged config before it is
+validated (`config/presets.json`). It is not a diet: a diet strategy is
+`dietary_rules.active_diet_styles`, which a preset may switch on; a preset is
+that *plus* everything about the week that is not food. The choice is
+**weekly**, made at the top of the review dialog, and the week it produced is
+stamped with the preset's name so "did that change work?" stays answerable.
+
+Presets are authored in **Settings → Presets** — a list you add to, edit and
+delete, with an on-demand preview of the week each one resolves to. The editor
+exposes the dozen dimensions a mood actually varies (NOVA groups, diet styles,
+which meals cook, meal weights, per-day carbs, cuisine-block shape, favourite
+pinning); hand-editing `config/presets.json` stays authoritative for anything
+it does not show, and a hand-added override survives an edit untouched. An
+invalid preset is refused at save with the reason named — the same check the
+loader runs, so the editor and the next start cannot disagree about a file.
+The shipped file holds one row, `default`, overriding nothing.
 
 ### Start the server
 
@@ -147,8 +168,8 @@ staged-changes bar beneath it naming anything queued for the next
 generation, and a slim rail choosing one of six destinations — **Plan**
 (the 7-column x 4-row grid of meal cards), **Today**, **Shopping**,
 **Library** (the recipe catalog and import), **Insights**, **Settings**
-(week start, shopping days, model, and the read-only sync and location
-views). Shopping is the *same* panel the right-hand drawer draws: the
+(week start, shopping days, model, the preset editor, and the read-only sync
+and location views). Shopping is the *same* panel the right-hand drawer draws: the
 drawer is for reading a trip against the grid, the destination for working
 through one. Every per-run input that used to live in a left
 drawer — daily targets, training schedule, pantry, cuisine/diet-style/
@@ -805,6 +826,8 @@ shopping. Each item names the surface to look at and what "working" means.
 | Mark a meal eaten / skipped / swapped | — | **Today** destination, or the day inspector |
 | Accept a training session Garmin recorded | Edit `config/schedule.json` | Review dialog → **Training schedule** → accept |
 | Choose who owns calories/protein (auto or manual) | `config/profile.json` `target_modes` | Settings destination → **Daily targets** |
+| Pick this week's preset | Edit `config/presets.json` `active` | Review dialog → top of the dialog |
+| Create / edit / delete a preset | Edit `config/presets.json` `presets` | Settings destination → **Presets** |
 | Read the week, catalog, history or targets as JSON | — | `GET /api/…` on the running server |
 | Generate a week from a script or a phone | `python src/planner.py` | `POST /api/weeks/current/generate`, then poll `GET /api/jobs/{id}` |
 | Print shopping lists to the terminal | Always, after generation | — (use the shopping drawer) |
@@ -834,7 +857,7 @@ where it does.
 |---|---|---|
 | `user_profile` | `profile.json` | Height, birth date, target weight, activity level, protein multiplier, `fiber_floor_g` — what the dynamic targets are computed from |
 | `weekly_schedule.<day>` | `profile.json` | Per-day `calories`, `protein_g`, `net_carbs_g`, `meal_overrides`. Calories and protein are recomputed from the body when a weigh-in exists **and that macro's `target_modes` entry is `auto`**; `net_carbs_g` and `meal_overrides` always survive |
-| `target_modes` | `profile.json` | `auto` or `manual` per macro, for the two macros with two possible sources (`calories`, `protein_g`). `manual` means the file's number is the week's number. Written by the Settings toggle — one of only two things in the UI that persist to `config/` |
+| `target_modes` | `profile.json` | `auto` or `manual` per macro, for the two macros with two possible sources (`calories`, `protein_g`). `manual` means the file's number is the week's number. Written by the Settings toggle — one of the handful of UI actions that persist to `config/` (the others: accepting a Garmin schedule proposal, the weekly preset pick, and the preset editor) |
 | `meal_weights` | `profile.json` | How a day's calories split across un-pinned meals |
 | `dietary_rules.allowed_nova_groups` | `profile.json` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | `profile.json` | Substring blocklist, enforced as schema validation |
@@ -872,6 +895,7 @@ where it does.
 | `ui_settings.title_tooltip_chars` | `engine.json` | Title length above which a card gets a full-name tooltip |
 | `meal_generation_model` / `recipe_parser_model` | `models.json` | The two model roles. Each must also appear in the same file's `models` table, which is where per-model quirks like `reasoning_required` live — a role naming a model the table doesn't describe fails at load |
 | `garmin.exercise_recovery_factor` | `integrations.json` | Fraction of an activity's gross calories counted as genuinely additional (0.50) |
+| `active` / `presets` | `presets.json` | The weekly preset pick and the preset catalog. Each preset is `{label, overrides}` where `overrides` maps a dotted config leaf path to the value that week wants instead; the leaf is replaced whole. Not part of the merged config, not in `AppConfig` — a supplemental file like `models.json`. Edit via **Settings → Presets** or by hand |
 | `--model` / Settings destination select | — | Model id for this run only, overriding `meal_generation_model`. Not a config-file key — it is never written to disk, and unlike the file's roles it is deliberately free-form. Both unset is a hard error, never a silent fallback |
 
 The five core files are validated against the `AppConfig` Pydantic model at
@@ -898,6 +922,7 @@ anywhere in the schema.
 | `src/api.py` | The JSON API mounted onto NiceGUI's own FastAPI app (see Section 3) |
 | `src/generation_jobs.py` | The single-flight claim a browser tab and an API client share, and the job records a client polls |
 | `src/ui_state.py` | `PlannerState` — the view model, and the only UI module with tests |
+| `src/ui_presets.py` | The preset editor shown in Settings — a list of records plus the save-time validator |
 | `src/integrations/sync_service.py` | Garmin and Cronometer sync (see Section 3) |
 | `src/integrations/keep_import.py` | A once-off bootstrap of the recipe catalog from a Google Keep Takeout export |
 | `config/profile.json` | Body, per-day targets, meal weights, dietary rules |
@@ -907,6 +932,7 @@ anywhere in the schema.
 | `config/engine.json` | Planner tuning and UI settings |
 | `config/models.json` | Model selection and timeout (see Section 2) |
 | `config/integrations.json` | Garmin/Cronometer sync tuning |
+| `config/presets.json` | The weekly preset pick and the preset catalog (see Presets, Section 2) |
 | `reference/whfoods.json` | Nutrient-dense whole foods; ~12 are sampled per run to nudge generation |
 | `data/recipes_master.json` | Recipe catalog — every recipe ever favorited or imported |
 | `data/week_plan.json` | The current generated week (regenerable) |

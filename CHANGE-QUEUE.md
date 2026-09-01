@@ -156,6 +156,13 @@ a long cook — is written in four independent prose copies, one of them a
 Pydantic field description; that is the `sorted(categories)` shape
 `DEPARTMENT_ORDER` closed, and it is a defect in its own right.
 
+**The preset editor shipped in v0.44.0** (`dev/PROMPT-9` — `ui_presets.py`,
+Settings → Presets), so 7 and 8 stopped being "the editor is blocked on this"
+and became "the editor gains a row when this lands". Its field list is
+`PRESET_EDITOR_FIELDS` in `ui_state.py`, bounded to the audit's `data` rows
+that already have a config home; 7's four trapped constants and 8's three
+prose-welded numbers are exactly what it cannot expose yet.
+
 ---
 
 ## 1 — Morning readiness check-in
@@ -396,6 +403,12 @@ reads as schema. That is the `sorted(shopping_list.categories)` shape
 `DEPARTMENT_ORDER` closed at seven call sites: a decision made four times and
 agreed only by accident. **One key, four readers**, and it is worth doing
 whether or not presets ever ship.
+
+Each of the three, once it has a config key, is a one-line addition to
+`PRESET_EDITOR_FIELDS` (`ui_state.py`) — a `ui.number` or an int-list field —
+and the editor picks it up with no further work. That is the ordering
+`dev/PROMPT-7` chose: the container and editor ship against the keys that
+exist, and each extraction is its own small release.
 
 It was found by sweeping the prompt constants for embedded numbers, which the
 audit's first pass did not do — it ruled the whole class `code` on the

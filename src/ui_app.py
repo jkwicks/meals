@@ -124,6 +124,7 @@ from ui_generation import build_generation
 from ui_insights import build_insights
 from ui_inspector import build_inspector
 from ui_plan import build_plan
+from ui_presets import build_presets
 from ui_review import build_review
 from ui_settings import build_settings
 from ui_shopping import build_shopping
@@ -264,6 +265,7 @@ async def planner_page() -> None:
     rename_dialog = build_rename_dialog(ctx)
     catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
     settings = build_settings(ctx, biometrics)
+    presets_editor = build_presets(ctx)
     insights = build_insights(ctx, biometrics)
     staged_bar = build_staged_bar(ctx, review, generation)
 
@@ -401,6 +403,9 @@ async def planner_page() -> None:
         # the focus-theft trap that keeps other sections off "plan" does not
         # apply to it.
         insights.panel,
+        # The review dialog's weekly pick moves which preset row is "Active".
+        # It owns no input either.
+        presets_editor.section,
     )
     refreshables.on("today", today.today_view)
     # Marking a meal or a session changes exactly three sections, and none is
@@ -448,6 +453,10 @@ async def planner_page() -> None:
     # to manual has to redraw *that section* (the per-day inputs appear) and
     # nothing else on this list needs a second pass for it.
     refreshables.on("settings", settings.targets_source)
+    # The preset editor's own list — add/edit/delete rebuilds it. `set_preset`
+    # in the review dialog also changes which row is "Active", so it rides on
+    # "plan" too (registered below).
+    refreshables.on("presets", presets_editor.section)
     refreshables.on(
         "training",
         review.training_editor,
@@ -746,6 +755,10 @@ async def planner_page() -> None:
                 insights.panel()
             with ui.tab_panel(settings_tab).classes("p-0"):
                 settings.panel()
+                # The preset editor is its own concern (ui_presets.py) shown
+                # inside Settings — the weekly *pick* lives in the review
+                # dialog, this is where the presets it picks from are authored.
+                presets_editor.section()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

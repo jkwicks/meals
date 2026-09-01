@@ -43,6 +43,7 @@ from planner import (
     is_prepped_ahead,
     is_sunday_prepped,
     apply_preset_layer,
+    resolve_preset_layer,
     load_app_config,
     meal_overrides_for,
     resolve_planner_model,
@@ -618,6 +619,218 @@ PRESET_SEEDED_FIELDS = (
 # which slots are cooked, so the cached preview grid has to be rebuilt — the
 # same invalidation `_spec_shape` performs for the two it does cover.
 PRESET_GRID_SHAPE_KEYS = ("week_defaults", "meal_types", "base_schedule", "location_rules")
+
+
+# --------------------------------------------------------------------------
+# The preset editor's field list (PROMPT-9)
+# --------------------------------------------------------------------------
+#
+# One descriptor per editor-managed override. `PRESET_EDITOR_FIELDS` is the
+# single authority the widget module, the preview and `save_preset` all read,
+# so none can disagree about what "the editor manages" — which matters,
+# because `save_preset` clears every managed path off a preset before writing
+# the user's choices back, and a path it does not know about would be dropped
+# on every save (or, if the widget drew one this list omits, silently
+# preserved forever).
+#
+# Deliberately bounded to preset keys that already have a config home and a
+# clean widget shape. design-01 §9.2 lists more — the prep-ceiling constants,
+# the long-cook threshold (one number in four prose copies), the numbers
+# welded into `DINNER_VARIETY_RULE`/`PORTION_DENSITY_GUARD`, the training
+# constants, `meal_styles`, `meal_overrides`, `week_shape` — but each of those
+# needs a code change first and is filed in CHANGE-QUEUE.md items 7-9. Every
+# ❌ row is a later release, exactly as PROMPT-7 intended.
+#
+# Every field renders **unset** and may be ignored: an absent override means
+# exactly today's behaviour (design-03 §4.1), which is what keeps the empty
+# preset the identity and a preset from being forced to have an opinion about
+# a key.
+
+PRESET_FIELD_INT = "int"
+PRESET_FIELD_FLOAT = "float"
+PRESET_FIELD_INT_LIST = "int_list"        # a text field parsed to [int]
+PRESET_FIELD_MULTI_INT = "multi_int"      # multi-select of ints
+PRESET_FIELD_MULTI_STR = "multi_str"      # multi-select of catalog keys
+PRESET_FIELD_ENUM_OBJECT = "enum_object"  # {sub-key: one of `choices`}
+PRESET_FIELD_NUMBER_OBJECT = "number_object"  # {sub-key: a number}
+PRESET_FIELD_DAY_CARBS = "day_carbs"      # one number per weekday, each its own leaf
+
+# The kinds whose override value is a single object leaf replaced whole —
+# `save_preset`/`preview` treat them as one path, and the editor shows an
+# "Override this" switch (off = not in `overrides`).
+PRESET_OBJECT_KINDS = (PRESET_FIELD_ENUM_OBJECT, PRESET_FIELD_NUMBER_OBJECT)
+
+
+@dataclass(frozen=True)
+class PresetField:
+    """One editable dimension of a preset. `path` is the override leaf; the
+    empty string marks `PRESET_FIELD_DAY_CARBS`, which expands to one
+    `weekly_schedule.<day>.net_carbs_g` leaf per day at render time."""
+
+    key: str
+    path: str
+    kind: str
+    label: str
+    help: str = ""
+    advanced: bool = False
+    minimum: Optional[float] = None
+    maximum: Optional[float] = None
+    step: Optional[float] = None
+    # `PRESET_FIELD_MULTI_INT` / `PRESET_FIELD_ENUM_OBJECT` value set.
+    choices: Tuple = ()
+    # `PRESET_FIELD_NUMBER_OBJECT` / `PRESET_FIELD_ENUM_OBJECT` sub-keys, when
+    # they are not read from config. "meal_types" means "one per meal type".
+    subkeys: Tuple[str, ...] = ()
+    subkey_source: str = "static"
+
+
+PRESET_EDITOR_FIELDS: Tuple[PresetField, ...] = (
+    PresetField(
+        "allowed_nova_groups", "dietary_rules.allowed_nova_groups",
+        PRESET_FIELD_MULTI_INT, "Processing levels allowed",
+        "NOVA groups 1-4. Group 4 (ultra-processed) is always rejected whatever "
+        "is ticked here; a comfort week might allow 4, a strict week only 1-2.",
+        choices=(1, 2, 3, 4),
+    ),
+    PresetField(
+        "active_diet_styles", "dietary_rules.active_diet_styles",
+        PRESET_FIELD_MULTI_STR, "Diet styles",
+        "Standing eating patterns (Mediterranean, Fast 800, ...) layered on top "
+        "of whatever cuisine cooks each night. Soft guidance to the model.",
+    ),
+    PresetField(
+        "week_defaults", "week_defaults", PRESET_FIELD_ENUM_OBJECT,
+        "Which meals are cooked",
+        "Per meal type: cook fresh, eat a leftover, or skip. \"Shakes and soups\" "
+        "weeks live here.",
+        choices=("cook", "leftover", "skip"), subkey_source="meal_types",
+    ),
+    PresetField(
+        "meal_weights", "meal_weights", PRESET_FIELD_NUMBER_OBJECT,
+        "Where the day's energy sits",
+        "Each meal's share of the day's calories. The split is normalised over "
+        "the meals actually cooked, so the numbers need not sum to 1.",
+        minimum=0.0, maximum=1.0, step=0.05, subkey_source="meal_types",
+    ),
+    PresetField(
+        "net_carbs_g", "", PRESET_FIELD_DAY_CARBS, "Net carbs per day",
+        "The week's carb-cycling lever — passed straight into the engine and "
+        "never recomputed, so fat absorbs the difference. Calories and protein "
+        "are the block's job, not a preset's.",
+    ),
+    PresetField(
+        "servings_per_meal", "serving_rules.servings_per_meal", PRESET_FIELD_INT,
+        "People per meal",
+        "Cooking for guests is a week, not a life change.",
+        advanced=True, minimum=1, step=1,
+    ),
+    PresetField(
+        "cuisine_block_pattern", "planning_rules.cuisine_block_pattern",
+        PRESET_FIELD_INT_LIST, "Cuisine block pattern",
+        "Contiguous days sharing one cuisine, scaled to the days actually "
+        "cooked. \"4, 3\" is the default; \"7\" is one cuisine all week; seven "
+        "1s is a different tradition every night.",
+        advanced=True,
+    ),
+    PresetField(
+        "min_baseline_cuisine_share", "planning_rules.min_baseline_cuisine_share",
+        PRESET_FIELD_FLOAT, "Min. everyday-Western share",
+        "Floor on how much of the week goes to plain roast-and-veg cuisines "
+        "before the rest rotates freely. 0 turns the floor off.",
+        advanced=True, minimum=0.0, maximum=1.0, step=0.05,
+    ),
+    PresetField(
+        "favorite_breakfast_slots", "planning_rules.favorite_breakfast_slots",
+        PRESET_FIELD_INT, "Favourite breakfasts",
+        "How many mornings one saved favourite covers. The lazy/comfort dial.",
+        advanced=True, minimum=0, step=1,
+    ),
+    PresetField(
+        "favorite_dinner_slots", "planning_rules.favorite_dinner_slots",
+        PRESET_FIELD_INT, "Favourite dinners",
+        "How many dinners saved favourites may claim. 0 = invent every dinner; "
+        "raising it past ~2 leaves no room for a cuisine block.",
+        advanced=True, minimum=0, step=1,
+    ),
+    PresetField(
+        "favorite_reuse_days", "planning_rules.favorite_reuse_days",
+        PRESET_FIELD_NUMBER_OBJECT, "Favourite reuse windows",
+        "Days before a saved favourite may be scheduled again, per meal type. "
+        "Must stay under the 28-day history depth or the rule silently stops "
+        "binding.",
+        advanced=True, minimum=0, maximum=28, step=1,
+        subkeys=("breakfast", "lunch", "dinner"),
+    ),
+)
+
+
+def preset_field_subkeys(field: PresetField, base_config: dict) -> Tuple[str, ...]:
+    """The sub-keys an object-valued field edits."""
+    if field.subkey_source == "meal_types":
+        return tuple(base_config.get("meal_types") or base_config.get("week_defaults") or ())
+    return field.subkeys
+
+
+def preset_editor_field_paths(base_config: dict) -> Tuple[str, ...]:
+    """Every override leaf the editor manages, `PRESET_FIELD_DAY_CARBS`
+    expanded. `save_preset` clears exactly these off a preset before writing
+    the user's choices back, so a hand-added override path the editor never
+    drew survives an edit untouched — the `training_schedule` escape hatch,
+    per preset."""
+    paths: List[str] = []
+    for field in PRESET_EDITOR_FIELDS:
+        if field.kind == PRESET_FIELD_DAY_CARBS:
+            paths.extend(
+                f"weekly_schedule.{day}.net_carbs_g"
+                for day in base_config.get("weekly_schedule", {})
+            )
+        else:
+            paths.append(field.path)
+    return tuple(paths)
+
+
+def _slim_targets(day_targets: dict) -> Dict[str, float]:
+    """The four numbers the preview table shows, out of `calculate_daily_targets`."""
+    return {key: day_targets[key] for key in ("calories", "protein_g", "net_carbs_g", "fiber_g")}
+
+
+@dataclass(frozen=True)
+class PresetCatalogRow:
+    """One preset as the Settings editor lists it."""
+
+    name: str
+    label: str
+    active: bool
+    changes: List[str]
+
+
+@dataclass(frozen=True)
+class PresetCatalogView:
+    rows: List[PresetCatalogRow]
+    active: Optional[str]
+
+
+@dataclass(frozen=True)
+class PresetDayTargets:
+    """One weekday's resolved macro targets, base beside preset, for the
+    on-demand preview."""
+
+    day: str
+    base: Dict[str, float]
+    preset: Dict[str, float]
+
+
+@dataclass(frozen=True)
+class PresetPreview:
+    """What "here is the week this preset produces" resolves to — computed on
+    a button, never live (design-03 §4.3: a live grid preview repaints the
+    canvas per keystroke)."""
+
+    ok: bool
+    failures: List[str]
+    changes: List[str]
+    day_targets: List[PresetDayTargets]
+    identical: bool
 
 
 @dataclass(frozen=True)
@@ -1891,8 +2104,24 @@ class PlannerState:
         # session exactly as it was, rather than half-applied.
         config = apply_preset_layer(self.base_config, presets_config)
 
-        previous = self.config
         self.presets_config = presets_config
+        self._relayer(config)
+
+        await repository.save_presets_config({preset_layer.ACTIVE_KEY: name})
+
+    def _relayer(self, config: dict) -> None:
+        """Swap in a freshly-layered config and re-seed the fields that copy
+        from it — shared by `set_preset` (a new pick) and `save_preset` (an
+        edit to the *active* preset), because both change what the active
+        preset resolves to and neither may leave a `PlannerState` field
+        displaying a value the config no longer holds.
+
+        The re-seed is keyed on the config value *actually* moving, which is
+        what lets a pantry row or training session typed a moment ago survive
+        a re-layer that says nothing about it — while a preset that does have
+        an opinion still wins.
+        """
+        previous = self.config
         self.config = config
 
         for field_name, read in PRESET_SEEDED_FIELDS:
@@ -1914,7 +2143,192 @@ class PlannerState:
             self._spec = None
             self._spec_shape = ()
 
-        await repository.save_presets_config({preset_layer.ACTIVE_KEY: name})
+    # ---- the preset editor (PROMPT-9) -------------------------------------
+
+    def preset_catalog_view(self) -> PresetCatalogView:
+        """Every preset, as the Settings editor lists it — label, the active
+        mark, and one diff line per override that differs from the **base
+        config** (never from the row named `default`, which is why deleting
+        `default` leaves every other row's diff intact)."""
+        entries = preset_layer.preset_entries(self.presets_config)
+        active = preset_layer.active_preset_name(self.presets_config)
+        rows = [
+            PresetCatalogRow(
+                name=name,
+                label=preset_layer.preset_label(self.presets_config, name),
+                active=(name == active),
+                changes=preset_layer.preset_changes(
+                    self.base_config, self.presets_config, name
+                ),
+            )
+            for name in entries
+        ]
+        return PresetCatalogView(rows=rows, active=active)
+
+    def _preset_entry(
+        self, name: str, label: str, editor_overrides: dict, is_new: bool
+    ) -> dict:
+        """The preset dict the editor is about to write.
+
+        The escape hatch, per preset: start from the existing `overrides`,
+        drop **every** path the editor manages (an unset field means "not
+        overridden"), then merge the user's choices back. A path the editor
+        never drew — a hand-added `meal_styles.breakfast`, say — is not in the
+        managed set, so it survives untouched. Any non-`label`/`overrides` key
+        on the entry (a hand-added note) is carried through as well.
+        """
+        prior = (
+            {}
+            if is_new
+            else dict(preset_layer.preset_entries(self.presets_config).get(name, {}))
+        )
+        prior_overrides = prior.get(preset_layer.OVERRIDES_KEY)
+        prior_overrides = (
+            dict(prior_overrides) if isinstance(prior_overrides, dict) else {}
+        )
+        managed = set(preset_editor_field_paths(self.base_config))
+        kept = {p: v for p, v in prior_overrides.items() if p not in managed}
+        merged = {**kept, **{p: v for p, v in editor_overrides.items() if p in managed}}
+
+        other = {
+            k: v
+            for k, v in prior.items()
+            if k not in (preset_layer.LABEL_KEY, preset_layer.OVERRIDES_KEY)
+        }
+        return {
+            preset_layer.LABEL_KEY: (label or "").strip() or name,
+            preset_layer.OVERRIDES_KEY: merged,
+            **other,
+        }
+
+    def _preset_map(self) -> dict:
+        """The `presets` map exactly as the file holds it — the raw dict, not
+        `preset_entries`' filtered view, so a save round-trips every sibling
+        verbatim (including one this code has never parsed)."""
+        raw = self.presets_config.get(preset_layer.PRESETS_KEY)
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    def _candidate_presets(self, name: str, entry: dict) -> dict:
+        """A whole `presets.json` document with `entry` in place and `name`
+        active, for `resolve_preset_layer` to check — every *other* preset
+        round-tripped verbatim so a save cannot drop one."""
+        return {
+            preset_layer.ACTIVE_KEY: name,
+            preset_layer.PRESETS_KEY: {**self._preset_map(), name: entry},
+        }
+
+    def preview_preset(
+        self, *, name: str, label: str, editor_overrides: dict, is_new: bool
+    ) -> PresetPreview:
+        """What this preset resolves to, on demand — the diff against the base
+        config and the resolved per-day macro targets beside it.
+
+        Pure: no `repository`, no disk. `resolve_preset_layer` is the same
+        check `save_preset` runs, so a preview that comes back clean is a
+        preview of a preset that will save.
+        """
+        entry = self._preset_entry(name, label, editor_overrides, is_new)
+        doc = self._candidate_presets(name, entry)
+        config, failures = resolve_preset_layer(self.base_config, doc)
+        if failures:
+            return PresetPreview(
+                ok=False,
+                failures=[failure.message for failure in failures],
+                changes=[],
+                day_targets=[],
+                identical=False,
+            )
+        changes = preset_layer.preset_changes(self.base_config, doc, name)
+        base_cfg = load_app_config(self.base_config)
+        day_targets = [
+            PresetDayTargets(
+                day=day,
+                base=_slim_targets(calculate_daily_targets(day, base_cfg)),
+                preset=_slim_targets(calculate_daily_targets(day, config)),
+            )
+            for day in base_cfg.get("weekly_schedule", {})
+        ]
+        return PresetPreview(
+            ok=True,
+            failures=[],
+            changes=changes,
+            day_targets=day_targets,
+            identical=not changes,
+        )
+
+    async def save_preset(
+        self,
+        repository: LocalJSONRepository,
+        *,
+        name: str,
+        label: str,
+        editor_overrides: dict,
+        is_new: bool,
+    ) -> List[str]:
+        """Write one preset. Returns the failure messages, or `[]` on success.
+
+        Validated through `resolve_preset_layer` — the loader's own check,
+        returning `PresetFailure`s instead of raising — and **nothing is
+        written when it fails** (design-03 §4.2: a UI that writes `config/`
+        must validate before it saves, because this app's fail-loudly policy
+        otherwise surfaces the mistake as a raise on the *next* start).
+
+        The **fourth** writer to `config/`, and the second through
+        `save_presets_config`; like the other three it persists a standing
+        choice, and unlike them it can write arbitrary structure — which is
+        the whole reason the validator exists.
+        """
+        name = (name or "").strip()
+        if not name:
+            return ["A preset needs a name."]
+        existing = preset_layer.preset_entries(self.presets_config)
+        if is_new and name in existing:
+            return [f"A preset named '{name}' already exists."]
+        if not is_new and name not in existing:
+            return [f"No preset named '{name}' to edit."]
+
+        entry = self._preset_entry(name, label, editor_overrides, is_new)
+        doc = self._candidate_presets(name, entry)
+        _config, failures = resolve_preset_layer(self.base_config, doc)
+        if failures:
+            return [failure.message for failure in failures]
+
+        new_map = doc[preset_layer.PRESETS_KEY]
+        await repository.save_presets_config({preset_layer.PRESETS_KEY: new_map})
+        self.presets_config = {
+            **self.presets_config,
+            preset_layer.PRESETS_KEY: new_map,
+        }
+        if name == preset_layer.active_preset_name(self.presets_config):
+            # Editing the active preset changes what it resolves to, so the
+            # session's config and every field seeded from it must move too —
+            # the same re-layer `set_preset` does for a new pick.
+            self._relayer(apply_preset_layer(self.base_config, self.presets_config))
+        return []
+
+    async def delete_preset(
+        self, repository: LocalJSONRepository, name: str
+    ) -> List[str]:
+        """Remove a preset. Returns failure messages, or `[]` on success.
+
+        Deleting the **active** preset is refused: deletion must never
+        silently change what the week plans against, and `active` on disk
+        must always be absent, null, or the name of a preset that exists.
+        Switch the weekly pick first.
+        """
+        active = preset_layer.active_preset_name(self.presets_config)
+        if name == active:
+            return ["Can't delete the active preset — switch the weekly pick first."]
+        existing = self._preset_map()
+        if name not in existing:
+            return [f"No preset named '{name}'."]
+        new_map = {key: value for key, value in existing.items() if key != name}
+        await repository.save_presets_config({preset_layer.PRESETS_KEY: new_map})
+        self.presets_config = {
+            **self.presets_config,
+            preset_layer.PRESETS_KEY: new_map,
+        }
+        return []
 
     async def set_target_mode(
         self, repository: LocalJSONRepository, macro: str, mode: str
