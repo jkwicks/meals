@@ -13,7 +13,7 @@ a different module, after this one.
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict
 
 from nicegui import ui
 
@@ -25,7 +25,6 @@ from planner import (
     api_key_error,
     generate_week_plan,
     meal_type_order,
-    planning_rule,
     record_week_history,
     regenerate_single_day,
     regenerate_single_meal,
@@ -56,88 +55,16 @@ from ui_theme import (
 )
 from week import (
     MODE_COOK,
-    STORAGE_CLASS_DEFAULT,
     WeekSpec,
+    apply_batch_selections,
     clear_batch_links,
     clear_cuisines,
     clear_recipe_pins,
     clear_styles,
-    fridge_day_gaps,
     humanize,
     slot_label,
-    spread_batch,
     validate_week,
 )
-
-
-def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict]:
-    """Turn the popup's bulk-prep/long-cook toggles into leftover links.
-
-    **Each batch takes one meal type, straight across the front of the week.**
-    Bulk prep claims the lunches, long cook claims the dinners, both starting
-    at day 1 and running as far as the fridge window allows — so with the
-    shipped config, Monday-Thursday lunches are all one prepped dish and
-    Monday-Thursday dinners are all another. Nothing is searched for and
-    nothing competes: the two batches cannot collide because they are on
-    different rows of the grid, and neither can drift late because both start
-    at the earliest day there is.
-
-    That pairing is not arbitrary. A soup/stew/curry (`BULK_PREP_RULE`'s own
-    candidates) is exactly the dish that reheats at a desk and travels in a
-    container, and an oven roast or braise (`BATCH_ROAST_ANCHOR_RULE`'s) is
-    dinner food. It also means Monday eats two *different* dishes rather than
-    the same one twice, which is what any arrangement filling all six slots
-    from a single row would have forced.
-
-    **The anchor is bookkeeping, not a choice.** Every recipe has to live on
-    some slot — that is what a cook slot is — and prep day has no slot of its
-    own in the grid, so the first day a batch is eaten holds the recipe and
-    the rest point back at it. Earlier versions *searched* for that day
-    (earliest dinner with room, weekends preferred, second toggle excluding
-    the first's day), and the search was the entire source of both the
-    late-week drift and the two toggles fighting over the same dinners. Day 1
-    is always a valid anchor and always the safest one, so there is nothing
-    left to search for.
-
-    Returns the (possibly updated) spec and a dict of the two anchor slot ids
-    actually chosen (None where a toggle was off, or where `spread_batch`
-    could not grow that anchor past what an ordinary meal already gets — see
-    its docstring) — merge straight into `config` so
-    `generate_meal_type_week`/`generate_sunday_prep_session` can read
-    `long_cook_anchor`/`bulk_prep_anchor` off it. A grid whose lunches or
-    dinners are already claimed by the user leaves the corresponding batch
-    with nothing to grow into; `generate_week` below warns rather than
-    generating a mislabeled meal silently.
-    """
-    target_servings = planning_rule(config, "batch_target_servings")
-    # The DEFAULT storage window, because no recipe exists yet — the grid is
-    # built before generation runs, so nothing here knows whether the dish
-    # will turn out to be a rice tray bake. `planner.build_storage_rule` tells
-    # the model the span each slot needs and `reject_short_storage_class`
-    # rejects a class too short for it, which is what makes planning against
-    # the default safe rather than optimistic.
-    safe_day_gaps = fridge_day_gaps(STORAGE_CLASS_DEFAULT, config)
-    # These batches are cooked on prep day — the day *before* `spec.days[0]`,
-    # the eighth column `ui_cards.prep_day_column` draws — not on the day
-    # their anchor slot happens to sit. So the bound that matters is measured
-    # from there: day index i is i+1 days out of the fridge, giving indices
-    # 0..safe_day_gaps-1. `max_span_days` (anchor-relative) is deliberately
-    # not passed as well; it can only ever be looser than this one here, since
-    # every anchor is day 0.
-    max_day_index = safe_day_gaps - 1
-    anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
-
-    if config.get("bulk_prep_enabled"):
-        spec, anchors["bulk_prep_anchor"] = spread_batch(
-            spec, "lunch", target_servings, max_day_index=max_day_index
-        )
-
-    if config.get("long_cook_enabled"):
-        spec, anchors["long_cook_anchor"] = spread_batch(
-            spec, "dinner", target_servings, max_day_index=max_day_index
-        )
-
-    return spec, anchors
 
 
 @dataclass

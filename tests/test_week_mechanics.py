@@ -636,6 +636,77 @@ class TestSpreadBatch(unittest.TestCase):
         self.assertEqual(portions[long_cook_anchor], 6)
 
 
+class TestApplyBatchSelections(unittest.TestCase):
+    """1.2a's pure refactor: the bulk-prep/long-cook applier used to live in
+    `ui_generation.py` and is now `week.apply_batch_selections`, called at one
+    deterministic point by CLI, API and UI alike (`planner.generate_and_store_week`
+    and `ui_generation.generate_week` respectively). Moved unchanged — these
+    pin the behaviour every caller depends on staying byte-identical, and the
+    "no UI notifications inside the shared module" contract: a stranded
+    toggle is a structured `None` in the returned dict, never a side effect.
+    """
+
+    def test_the_function_is_shared_not_duplicated(self):
+        """Every caller imports the one function in `week.py` — `ui_generation`
+        and `planner` re-export the same object rather than each defining
+        their own copy, which is what "moved into the shared planning module"
+        actually means at the object-identity level."""
+        import planner
+        import ui_generation
+
+        self.assertIs(wk.apply_batch_selections, ui_generation.apply_batch_selections)
+        self.assertIs(wk.apply_batch_selections, planner.apply_batch_selections)
+
+    def test_no_toggles_is_a_byte_identical_no_op(self):
+        """The legacy CLI/API config: `bulk_prep_enabled`/`long_cook_enabled`
+        are review-dialog-only staged fields that never reach a config built
+        by `default_week_spec`, so calling the shared applier at the new CLI/
+        API call site must change nothing until Task 1.2b/c gives it a
+        declarative shape to read instead."""
+        spec = spec_with()
+        out, anchors = wk.apply_batch_selections(spec, {})
+        self.assertEqual(out, spec)
+        self.assertEqual(anchors, {"long_cook_anchor": None, "bulk_prep_anchor": None})
+
+    def test_both_toggles_together_still_take_one_row_each(self):
+        """Byte-identical to the pre-move behaviour: bulk prep claims the
+        lunches, long cook the dinners, both anchored on Monday — the same
+        shape `TestSpreadBatch.test_two_toggles_together_take_one_row_each`
+        pins for the two `spread_batch` calls this function makes underneath."""
+        config = {"bulk_prep_enabled": True, "long_cook_enabled": True}
+        spec, anchors = wk.apply_batch_selections(spec_with(), config)
+        self.assertEqual(anchors["bulk_prep_anchor"], "Monday:lunch")
+        self.assertEqual(anchors["long_cook_anchor"], "Monday:dinner")
+        self.assertEqual(wk.eaten_on(spec)["Monday:lunch"], [
+            "Monday:lunch", "Tuesday:lunch", "Wednesday:lunch",
+        ])
+        self.assertEqual(wk.eaten_on(spec)["Monday:dinner"], [
+            "Monday:dinner", "Tuesday:dinner", "Wednesday:dinner",
+        ])
+
+    def test_batch_target_servings_honours_config_over_the_fallback(self):
+        """The one line this move had to touch: `planning_rule` cannot be
+        called from `week.py` (`planner.py` imports from here, not the other
+        way around), so the fallback is a local constant. A config that *does*
+        state `planning_rules.batch_target_servings` must still win."""
+        config = {"bulk_prep_enabled": True, "planning_rules": {"batch_target_servings": 2}}
+        spec, anchors = wk.apply_batch_selections(spec_with(), config)
+        self.assertEqual(wk.portions_for(spec)[anchors["bulk_prep_anchor"]], 4)
+
+    def test_a_stranded_toggle_returns_none_with_no_notification(self):
+        """Presentation stays with the caller: a toggle that finds no room to
+        grow reports itself as a plain `None` in the returned dict, and
+        raises and prints nothing — proven here by running with no NiceGUI
+        page or stdout capture in scope at all."""
+        blocked = spec_with({
+            wk.slot_id(day, "lunch"): {"mode": MODE_SKIP} for day in DAYS
+        })
+        config = {"bulk_prep_enabled": True}
+        out, anchors = wk.apply_batch_selections(blocked, config)
+        self.assertIsNone(anchors["bulk_prep_anchor"])
+        self.assertEqual(out, blocked)
+
+
 class TestResolvePrepDay(unittest.TestCase):
     """Where a prep session lands is derived from the location schedule, not
     assumed to be a fixed "the day before the week starts". `DAYS[0]` is
