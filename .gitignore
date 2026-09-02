@@ -45,3 +45,4 @@ test_suite.md
 # data/recipes_master.json, which is the tracked artefact. Delete the folder
 # once the import is done.
 Keep/
+.aider*
