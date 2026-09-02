@@ -468,6 +468,93 @@ class TestSpreadBatch(unittest.TestCase):
         self.assertEqual(portions[long_cook_anchor], 6)
 
 
+class TestResolvePrepDay(unittest.TestCase):
+    """Where a prep session lands is derived from the location schedule, not
+    assumed to be a fixed "the day before the week starts". `DAYS[0]` is
+    Monday throughout, so the two candidates are Sunday then Saturday."""
+
+    def test_the_nearer_candidate_wins_when_it_permits_a_session(self):
+        config = {
+            "base_schedule": {"Sunday": "Home", "Saturday": "Outing"},
+            "location_rules": {
+                "Home": {"allows_long_cook": True},
+                "Outing": {"allows_long_cook": False},
+            },
+        }
+        result = wk.resolve_prep_day(DAYS, config)
+        self.assertEqual(result.day, "Sunday")
+        self.assertIsNone(result.reason)
+
+    def test_falls_back_to_the_second_candidate(self):
+        config = {
+            "base_schedule": {"Sunday": "Outing", "Saturday": "Home"},
+            "location_rules": {
+                "Home": {"allows_long_cook": True},
+                "Outing": {"allows_long_cook": False},
+            },
+        }
+        result = wk.resolve_prep_day(DAYS, config)
+        self.assertEqual(result.day, "Saturday")
+        self.assertIsNone(result.reason)
+
+    def test_neither_candidate_working_reports_no_prep_day(self):
+        config = {
+            "base_schedule": {"Sunday": "Outing", "Saturday": "Outing"},
+            "location_rules": {"Outing": {"allows_long_cook": False}},
+        }
+        result = wk.resolve_prep_day(DAYS, config)
+        self.assertIsNone(result.day)
+        self.assertIn("Sunday", result.reason)
+        self.assertIn("Saturday", result.reason)
+
+    def test_never_widens_past_the_two_candidates(self):
+        """Friday would happily host a session, but it is two days further
+        back than the walk is allowed to go — a silent move that far earlier
+        than a hand-declared schedule expects is the worse surprise."""
+        config = {
+            "base_schedule": {
+                "Sunday": "Outing", "Saturday": "Outing", "Friday": "Home",
+            },
+            "location_rules": {
+                "Home": {"allows_long_cook": True},
+                "Outing": {"allows_long_cook": False},
+            },
+        }
+        result = wk.resolve_prep_day(DAYS, config)
+        self.assertIsNone(result.day)
+
+    def test_a_config_with_no_location_rules_defaults_to_the_nearer_day(self):
+        """No `base_schedule` at all is "no usable location rule" for every
+        candidate, which resolves as if each were Home — permitted."""
+        result = wk.resolve_prep_day(DAYS, {})
+        self.assertEqual(result.day, "Sunday")
+
+    def test_a_declared_location_with_no_allows_long_cook_key_also_defaults_true(self):
+        config = {
+            "base_schedule": {"Sunday": "Somewhere"},
+            "location_rules": {"Somewhere": {"restrictions": ["quick_cook"]}},
+        }
+        result = wk.resolve_prep_day(DAYS, config)
+        self.assertEqual(result.day, "Sunday")
+
+    def test_candidates_follow_a_rotated_week_start(self):
+        rotated = ["Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday"]
+        config = {
+            "base_schedule": {"Tuesday": "Outing", "Monday": "Home"},
+            "location_rules": {
+                "Home": {"allows_long_cook": True},
+                "Outing": {"allows_long_cook": False},
+            },
+        }
+        result = wk.resolve_prep_day(rotated, config)
+        self.assertEqual(result.day, "Monday")
+
+    def test_an_empty_week_reports_no_prep_day_rather_than_raising(self):
+        result = wk.resolve_prep_day([], {})
+        self.assertIsNone(result.day)
+        self.assertIsNotNone(result.reason)
+
+
 class TestDayMultiplicityAndCarriedMacros(unittest.TestCase):
     def test_multiplicity_counts_same_day_claims(self):
         spec = spec_with({

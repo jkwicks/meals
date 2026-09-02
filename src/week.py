@@ -17,6 +17,7 @@ generated, so the UI can preview exactly what it is about to ask for.
 """
 
 import math
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -705,6 +706,95 @@ def apply_location_modes(spec: WeekSpec, config: dict) -> WeekSpec:
             else slot
         )
     return spec.model_copy(update={"slots": updated})
+
+
+# Canonical order for weekday-name arithmetic in this module.
+# `datetime.strptime(name, "%A")` does not decode the weekday token into a
+# real date — with no year/month/day in the input it silently defaults to
+# 1900-01-01 regardless of which day was named, so `.weekday()` on the
+# result is always 0. `week.py` also cannot import `planner` (whose
+# `WEEKDAY_NAMES` states the same order) — the dependency runs the other
+# way — so `_shift_day` walks this tuple instead of either.
+_WEEKDAY_ORDER = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+)
+
+
+def _shift_day(day: str, delta: int) -> str:
+    """`day`'s name shifted by `delta` weekdays — negative walks backward."""
+    return _WEEKDAY_ORDER[(_WEEKDAY_ORDER.index(day) + delta) % 7]
+
+
+def _location_permits_prep_session(config: dict, day: str) -> bool:
+    """Whether `day`'s location has the hours for a batch-prep session.
+
+    There is no separate "permits a prep session" flag on a location rule,
+    deliberately: a prep session *is* the long, mostly-unattended cook
+    `allows_long_cook` already describes, and a second key asking the same
+    question of the same day would be a second answer free to disagree with
+    `planner.day_allows_long_cook` about a Tuesday. `week` cannot import
+    `planner` (the dependency runs the other way), so this reads
+    `location_rule` directly rather than calling that function — same key,
+    same fallback shape, independently arrived at because both need it.
+
+    A day whose location declares nothing at all — no `base_schedule` entry,
+    an unknown location, or a `location_rules` entry with no
+    `allows_long_cook` key — resolves True, the same answer the shipped
+    `Home` rule gives: with no information to the contrary, the day is
+    treated as one spent at home, free to host a session.
+    """
+    declared = location_rule(config, day).get("allows_long_cook")
+    return True if declared is None else bool(declared)
+
+
+@dataclass(frozen=True)
+class PrepDayResolution:
+    """Which real weekday a batch-prep session lands on, or why none does.
+
+    `day` is None exactly when `reason` is set (prose a UI can show
+    verbatim) — every consumer should read one or the other rather than
+    assuming a day exists. Replaces treating "the day before the week
+    starts" as a given: `PREP_DAY_INDEX` is still the right *position* for a
+    prepped-ahead cook once a day has been chosen, but which literal weekday
+    that position falls on is what this answers.
+    """
+
+    day: Optional[str]
+    reason: Optional[str] = None
+
+
+def resolve_prep_day(days: List[str], config: dict) -> PrepDayResolution:
+    """Where a batch-prep session lands, derived from the location schedule.
+
+    Whether a week *includes* prep at all stays a preference this function
+    does not read (`enable_sunday_prep`, or an anchor being chosen) — this
+    only answers *where*, given prep is wanted. It walks backward from the
+    day before `days[0]` starts, over exactly the two days that precede it,
+    and takes the first one whose location permits a prep session
+    (`_location_permits_prep_session`). Never widens the search past those
+    two candidates and never falls forward past a failing one — a prep day
+    that silently drifted a week earlier than a hand-declared schedule
+    expects would be a worse surprise than no prep day at all.
+
+    `days` is the week's cooked order (`WeekSpec.days`, or `week_days`'
+    output before a `WeekSpec` exists) — only `days[0]` matters, since that
+    is the one fixed point "the day before" is measured from.
+    """
+    if not days:
+        return PrepDayResolution(day=None, reason="No week to resolve a prep day against.")
+
+    first, second = _shift_day(days[0], -1), _shift_day(days[0], -2)
+    for candidate in (first, second):
+        if _location_permits_prep_session(config, candidate):
+            return PrepDayResolution(day=candidate)
+
+    return PrepDayResolution(
+        day=None,
+        reason=(
+            f"No prep day: neither {first} nor {second} has the hours for a "
+            "batch-prep session."
+        ),
+    )
 
 
 def autofill_leftovers(spec: WeekSpec, meal_type: str, source_meal_type: str) -> WeekSpec:
