@@ -1319,7 +1319,7 @@ def spread_batch(
     own is the bug.
 
     `max_span_days` (the **default** storage window's day-gaps, threaded in
-    by `ui_generation.apply_batch_selections`) stops the walk once it is that
+    by `apply_batch_selections`) stops the walk once it is that
     many days past the anchor. The default rather than a per-dish figure
     because no recipe exists yet: the grid is built before generation runs, so
     at the moment the span is chosen nothing knows whether the dish will turn
@@ -1352,11 +1352,11 @@ def spread_batch(
     which is how food cooked on Sunday ended up planned for Friday's lunch.
     Day index `i` is `i + 1` days after prep, so a default window of N
     day-gaps means `max_day_index = N - 1`;
-    `ui_generation.apply_batch_selections` does that arithmetic. None leaves the anchor-relative bound as the only one,
+    `apply_batch_selections` does that arithmetic. None leaves the anchor-relative bound as the only one,
     which is right for any caller whose batch really is cooked on its own day.
 
     `exclude_target_days` names days that may not *receive* a link; the
-    anchor itself may still fall on one. `ui_generation.apply_batch_selections`
+    anchor itself may still fall on one. `apply_batch_selections`
     passes the week's last day, because the batch-prep session happens the
     day *before* `spec.days[0]` (see `ui_cards.prep_day_column`, the eighth
     column left of day 0) — which makes `spec.days[-1]` a full **7 days**
@@ -1495,6 +1495,88 @@ def spread_batch(
         return spec, None
 
     return spec, anchor.id
+
+
+# planner.planning_rule's own fallback, restated: planner.py imports from
+# week.py, never the reverse, so apply_batch_selections below cannot call that
+# helper without a cycle. This mirrors PlanningRules.batch_target_servings and
+# only matters for a config that never went through load_app_config — any
+# config that has is guaranteed to carry the real value.
+DEFAULT_BATCH_TARGET_SERVINGS = 6
+
+
+def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict]:
+    """Turn the popup's bulk-prep/long-cook toggles into leftover links.
+
+    **Each batch takes one meal type, straight across the front of the week.**
+    Bulk prep claims the lunches, long cook claims the dinners, both starting
+    at day 1 and running as far as the fridge window allows — so with the
+    shipped config, Monday-Thursday lunches are all one prepped dish and
+    Monday-Thursday dinners are all another. Nothing is searched for and
+    nothing competes: the two batches cannot collide because they are on
+    different rows of the grid, and neither can drift late because both start
+    at the earliest day there is.
+
+    That pairing is not arbitrary. A soup/stew/curry (`BULK_PREP_RULE`'s own
+    candidates) is exactly the dish that reheats at a desk and travels in a
+    container, and an oven roast or braise (`BATCH_ROAST_ANCHOR_RULE`'s) is
+    dinner food. It also means Monday eats two *different* dishes rather than
+    the same one twice, which is what any arrangement filling all six slots
+    from a single row would have forced.
+
+    **The anchor is bookkeeping, not a choice.** Every recipe has to live on
+    some slot — that is what a cook slot is — and prep day has no slot of its
+    own in the grid, so the first day a batch is eaten holds the recipe and
+    the rest point back at it. Earlier versions *searched* for that day
+    (earliest dinner with room, weekends preferred, second toggle excluding
+    the first's day), and the search was the entire source of both the
+    late-week drift and the two toggles fighting over the same dinners. Day 1
+    is always a valid anchor and always the safest one, so there is nothing
+    left to search for.
+
+    Returns the (possibly updated) spec and a dict of the two anchor slot ids
+    actually chosen (None where a toggle was off, or where `spread_batch`
+    could not grow that anchor past what an ordinary meal already gets — see
+    its docstring) — merge straight into `config` so
+    `generate_meal_type_week`/`generate_sunday_prep_session` can read
+    `long_cook_anchor`/`bulk_prep_anchor` off it. A grid whose lunches or
+    dinners are already claimed by the user leaves the corresponding batch
+    with nothing to grow into; `ui_generation.generate_week` warns rather
+    than generating a mislabeled meal silently — this function returns only
+    the structured anchors, never a notification, so every caller (CLI, API,
+    UI) decides for itself what a stranded toggle is worth saying.
+    """
+    target_servings = (config.get("planning_rules") or {}).get(
+        "batch_target_servings", DEFAULT_BATCH_TARGET_SERVINGS
+    )
+    # The DEFAULT storage window, because no recipe exists yet — the grid is
+    # built before generation runs, so nothing here knows whether the dish
+    # will turn out to be a rice tray bake. `planner.build_storage_rule` tells
+    # the model the span each slot needs and `reject_short_storage_class`
+    # rejects a class too short for it, which is what makes planning against
+    # the default safe rather than optimistic.
+    safe_day_gaps = fridge_day_gaps(STORAGE_CLASS_DEFAULT, config)
+    # These batches are cooked on prep day — the day *before* `spec.days[0]`,
+    # the eighth column `ui_cards.prep_day_column` draws — not on the day
+    # their anchor slot happens to sit. So the bound that matters is measured
+    # from there: day index i is i+1 days out of the fridge, giving indices
+    # 0..safe_day_gaps-1. `max_span_days` (anchor-relative) is deliberately
+    # not passed as well; it can only ever be looser than this one here, since
+    # every anchor is day 0.
+    max_day_index = safe_day_gaps - 1
+    anchors: Dict[str, Optional[str]] = {"long_cook_anchor": None, "bulk_prep_anchor": None}
+
+    if config.get("bulk_prep_enabled"):
+        spec, anchors["bulk_prep_anchor"] = spread_batch(
+            spec, "lunch", target_servings, max_day_index=max_day_index
+        )
+
+    if config.get("long_cook_enabled"):
+        spec, anchors["long_cook_anchor"] = spread_batch(
+            spec, "dinner", target_servings, max_day_index=max_day_index
+        )
+
+    return spec, anchors
 
 
 def skip_estimate_totals(slots: Iterable[SlotSpec], day: str) -> Dict[str, float]:
@@ -1831,7 +1913,7 @@ def validate_week(
 # a day out of the fridge by the time day 0 eats it. Day index -1 is that day.
 # It exists so "how old is this food" is counted from the pan rather than from
 # the grid slot the recipe happens to be parked on: an anchor is always day 0
-# (see `ui_generation.apply_batch_selections`), so measuring from its own slot
+# (see `apply_batch_selections`), so measuring from its own slot
 # is short by exactly one on every prep-session batch.
 PREP_DAY_INDEX = -1
 
@@ -1853,7 +1935,7 @@ def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
     reason: `generate_sunday_prep_session` runs *after* every cook event is
     built, so `candidate_slot_ids` does not exist yet when `build_cook_event`
     needs to know how old the food will be. The anchors do — they were chosen
-    by `ui_generation.apply_batch_selections` and merged into `config` before
+    by `apply_batch_selections` and merged into `config` before
     the first call — and they are the same two slots the session goes on to
     stamp.
 

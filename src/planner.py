@@ -68,6 +68,7 @@ from week import (
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
+    apply_batch_selections,
     cook_day_index,
     day_date,
     default_week_spec,
@@ -7988,6 +7989,17 @@ async def generate_and_store_week(
     spec = default_week_spec(config, week_start, servings)
     if spec_transform is not None:
         spec = spec_transform(spec)
+
+    # One deterministic point, shared with `ui_generation.generate_week`:
+    # after location modes (already applied inside `default_week_spec`),
+    # before `resolve_auto_choices` and `validate_week` below, and before the
+    # first model call. `bulk_prep_enabled`/`long_cook_enabled` are review-
+    # dialog-only staged toggles that never reach a CLI/API config, so this is
+    # a no-op here today — the point of this call is that CLI, API and UI now
+    # run the identical function at the identical point, not that CLI/API
+    # gain batching behaviour yet.
+    spec, batch_anchors = apply_batch_selections(spec, config)
+    config = dict(config, **batch_anchors)
 
     history = await repository.load_history()
     spec = resolve_auto_choices(spec, config, history)
