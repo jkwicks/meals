@@ -3345,3 +3345,509 @@ class TestShoppingTicks(unittest.TestCase):
         state = make_state()
         state.set_shopping_tick("Shop Monday", "Chicken breast", True)
         self.assertNotIn("shopping", state.week_plan.model_dump_json())
+
+
+class FakeFreezerRepository:
+    """Just enough of the repository for the freezer capture methods —
+    `load_freezer`/`save_freezer_item`/`delete_freezer_item`, the three
+    `PlanRepository` operations 1.1b added."""
+
+    def __init__(self, items=None):
+        self.items = list(items or [])
+        self.saved = []
+        self.deleted = []
+
+    async def load_freezer(self):
+        return list(self.items)
+
+    async def save_freezer_item(self, item):
+        self.saved.append(dict(item))
+        self.items = [row for row in self.items if row.get("id") != item.get("id")] + [item]
+
+    async def delete_freezer_item(self, item_id):
+        self.deleted.append(item_id)
+        self.items = [row for row in self.items if row.get("id") != item_id]
+
+
+def make_spec_with_surplus(extra_portions=4) -> WeekSpec:
+    spec = make_spec()
+    slots = [
+        slot.model_copy(update={"extra_portions": extra_portions})
+        if slot.id == "Monday:dinner"
+        else slot
+        for slot in spec.slots
+    ]
+    return spec.model_copy(update={"slots": slots})
+
+
+def make_plan_with_surplus(spec: WeekSpec, generated_at="2026-08-18T09:00:00") -> WeekPlan:
+    """A one-cook-event plan whose sole cook slot declares spare portions to
+    freeze — `SlotSpec.extra_portions`, the "already bought and already
+    cooked" surplus `design-04` §1 describes. `spec` must already carry the
+    declared surplus (`make_spec_with_surplus`) — `PlannerState.apply_spec`
+    replaces `WeekPlan.slots` with whatever spec it is given, so the plan and
+    the spec have to agree on it from the start."""
+    slot = spec.by_id()["Monday:dinner"]
+    event = CookEvent(
+        slot_id="Monday:dinner", day="Monday", meal_type="dinner",
+        portions=spec.servings_per_meal + slot.extra_portions,
+        eaten_by=["Monday:dinner"], recipe=make_recipe(),
+    )
+    return WeekPlan(
+        days=DAYS,
+        servings_per_meal=spec.servings_per_meal,
+        generated_at=generated_at,
+        week_start_date="2026-08-17",
+        cook_events=[event],
+        slots=list(spec.slots),
+        targets={day: dict(CONFIG["weekly_schedule"][day]) for day in DAYS},
+        failures={},
+    )
+
+
+def make_state_with_surplus(extra_portions=4) -> ui_state.PlannerState:
+    spec = make_spec_with_surplus(extra_portions)
+    state = ui_state.PlannerState(
+        config=dict(CONFIG),
+        week_plan=make_plan_with_surplus(spec),
+        week_start="Monday",
+        servings=2,
+        shop_days=["Monday"],
+    )
+    state.apply_spec(spec)
+    state.edited = False
+    return state
+
+
+class TestFreezerCookedOn(unittest.TestCase):
+    """`freezer_cooked_on` — the one date computation both capture routes
+    read, so a card button and a "Record" click cannot disagree about it.
+
+    An ordinary cook dates off its own grid day; a batch anchor cooked ahead
+    of the week dates off the *resolved* prep day (`week.resolve_prep_day`,
+    which may land one or two days back) — never the anchor's own grid day,
+    the off-by-one CLAUDE.md already records for `storage_note`.
+    """
+
+    def test_an_ordinary_cook_dates_off_its_own_grid_day(self):
+        plan = make_plan(make_spec())
+        event = plan.cook_events[0]
+        self.assertEqual(event.day, "Monday")
+        self.assertEqual(ui_state.freezer_cooked_on(plan, event, CONFIG), "2026-08-17")
+
+    def test_no_week_start_date_means_no_date(self):
+        plan = make_plan(make_spec()).model_copy(update={"week_start_date": None})
+        event = plan.cook_events[0]
+        self.assertIsNone(ui_state.freezer_cooked_on(plan, event, CONFIG))
+
+    def test_a_prepped_ahead_anchor_dates_from_the_default_one_day_back(self):
+        """No `base_schedule` in CONFIG, so every location is "no rule
+        declared" and `resolve_prep_day` takes its first candidate: the
+        Sunday before the Monday week starts, 2026-08-16."""
+        plan = make_plan(make_spec()).model_copy(
+            update={
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=60, candidate_slot_ids=["Monday:dinner"]
+                )
+            }
+        )
+        event = plan.cook_events[0]
+        self.assertEqual(ui_state.freezer_cooked_on(plan, event, CONFIG), "2026-08-16")
+
+    def test_a_second_candidate_day_dates_two_days_back(self):
+        """Sunday is ruled out by its own location; Saturday, undeclared,
+        still permits — `resolve_prep_day`'s second candidate."""
+        config = dict(
+            CONFIG,
+            base_schedule={"Sunday": "Away"},
+            location_rules={"Away": {"allows_long_cook": False}},
+        )
+        plan = make_plan(make_spec()).model_copy(
+            update={
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=60, candidate_slot_ids=["Monday:dinner"]
+                )
+            }
+        )
+        event = plan.cook_events[0]
+        self.assertEqual(ui_state.freezer_cooked_on(plan, event, config), "2026-08-15")
+
+    def test_no_candidate_day_permits_a_session_means_no_date(self):
+        config = dict(
+            CONFIG,
+            base_schedule={"Sunday": "Away", "Saturday": "Away"},
+            location_rules={"Away": {"allows_long_cook": False}},
+        )
+        plan = make_plan(make_spec()).model_copy(
+            update={
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=60, candidate_slot_ids=["Monday:dinner"]
+                )
+            }
+        )
+        event = plan.cook_events[0]
+        self.assertIsNone(ui_state.freezer_cooked_on(plan, event, config))
+
+
+class TestFreezerSurplusId(unittest.TestCase):
+    def test_deterministic_for_the_same_inputs(self):
+        self.assertEqual(
+            ui_state.freezer_surplus_id("Monday:dinner", "2026-08-17"),
+            ui_state.freezer_surplus_id("Monday:dinner", "2026-08-17"),
+        )
+
+    def test_differs_by_slot_or_by_date(self):
+        base = ui_state.freezer_surplus_id("Monday:dinner", "2026-08-17")
+        self.assertNotEqual(base, ui_state.freezer_surplus_id("Tuesday:dinner", "2026-08-17"))
+        self.assertNotEqual(base, ui_state.freezer_surplus_id("Monday:dinner", "2026-08-18"))
+
+
+class TestFreezerCaptureDefaults(unittest.TestCase):
+    def test_defaults_come_off_the_cook_event(self):
+        defaults = make_state().freezer_capture_defaults_for("Monday:dinner")
+        self.assertIsNotNone(defaults)
+        self.assertEqual(defaults.label, "Green Chicken Curry")
+        self.assertEqual(defaults.cooked_on, "2026-08-17")
+        self.assertIsNone(defaults.recipe_id)
+
+    def test_a_pinned_slots_recipe_id_is_carried(self):
+        state = make_state()
+        state.week_plan = state.week_plan.model_copy(
+            update={
+                "slots": [
+                    slot.model_copy(update={"recipe_id": "catalog-42"})
+                    if slot.id == "Monday:dinner"
+                    else slot
+                    for slot in state.week_plan.slots
+                ]
+            }
+        )
+        defaults = state.freezer_capture_defaults_for("Monday:dinner")
+        self.assertEqual(defaults.recipe_id, "catalog-42")
+
+    def test_no_plan_returns_none(self):
+        self.assertIsNone(make_state(with_plan=False).freezer_capture_defaults_for("Monday:dinner"))
+
+    def test_an_unknown_slot_returns_none(self):
+        self.assertIsNone(make_state().freezer_capture_defaults_for("Nonesuch:dinner"))
+
+
+class TestCaptureFreezerItem(unittest.TestCase):
+    """`capture_freezer_item` — the one write both capture routes and the
+    row editor's manual add all funnel through."""
+
+    def test_a_successful_capture_persists_and_updates_state(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        error = run_sync(
+            state.capture_freezer_item(
+                repo, label="Beef massaman", portions=6,
+                cooked_on="2026-08-16", frozen_on="2026-08-16",
+            )
+        )
+        self.assertIsNone(error)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertEqual(len(state.freezer), 1)
+        self.assertEqual(state.freezer[0]["label"], "Beef massaman")
+        self.assertEqual(state.freezer[0]["portions"], 6)
+
+    def test_a_recipe_snapshots_storage_class_and_macro_keys_only(self):
+        """`Recipe.per_serving_macros` also carries fibre — `FreezerItem`
+        accepts only `MACRO_KEYS`, so the extra key must be filtered before
+        it ever reaches the model."""
+        state = make_state()
+        repo = FakeFreezerRepository()
+        recipe = make_recipe()
+        run_sync(
+            state.capture_freezer_item(
+                repo, label="X", portions=1, cooked_on="2026-08-16",
+                frozen_on="2026-08-16", recipe=recipe,
+            )
+        )
+        stored = state.freezer[0]
+        self.assertEqual(stored["storage_class"], recipe.storage_class)
+        self.assertEqual(
+            set(stored["per_serving"]), {"calories", "protein_g", "net_carbs_g", "fat_g"}
+        )
+
+    def test_no_recipe_means_no_snapshot(self):
+        """`design-04` §2.2's "neither" case: a hand-declared item with no
+        recipe behind it contributes 0, visibly, never a guessed average."""
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(
+            state.capture_freezer_item(
+                repo, label="Shop-bought lasagne", portions=2,
+                cooked_on="2026-08-16", frozen_on="2026-08-16",
+            )
+        )
+        stored = state.freezer[0]
+        self.assertIsNone(stored["storage_class"])
+        self.assertIsNone(stored["per_serving"])
+
+    def test_an_invalid_capture_is_refused_and_nothing_is_written(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        error = run_sync(
+            state.capture_freezer_item(
+                repo, label="X", portions=0, cooked_on="2026-08-16", frozen_on="2026-08-16",
+            )
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(state.freezer, [])
+
+    def test_frozen_before_cooked_is_refused(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        error = run_sync(
+            state.capture_freezer_item(
+                repo, label="X", portions=1, cooked_on="2026-08-16", frozen_on="2026-08-10",
+            )
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved, [])
+
+    def test_an_explicit_id_upserts_rather_than_appending(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(
+            state.capture_freezer_item(
+                repo, id="fixed-id", label="First", portions=1,
+                cooked_on="2026-08-16", frozen_on="2026-08-16",
+            )
+        )
+        run_sync(
+            state.capture_freezer_item(
+                repo, id="fixed-id", label="Corrected", portions=3,
+                cooked_on="2026-08-16", frozen_on="2026-08-16",
+            )
+        )
+        self.assertEqual(len(state.freezer), 1)
+        self.assertEqual(state.freezer[0]["label"], "Corrected")
+        self.assertEqual(state.freezer[0]["portions"], 3)
+
+
+class TestSendToFreezer(unittest.TestCase):
+    """The recipe-card "send to freezer" capture route."""
+
+    def test_no_plan_is_refused(self):
+        state = make_state(with_plan=False)
+        error = run_sync(
+            state.send_to_freezer(
+                FakeFreezerRepository(), "Monday:dinner", portions=2, frozen_on="2026-08-18"
+            )
+        )
+        self.assertIsNotNone(error)
+
+    def test_an_unknown_slot_is_refused(self):
+        state = make_state()
+        error = run_sync(
+            state.send_to_freezer(
+                FakeFreezerRepository(), "Nonesuch:dinner", portions=2, frozen_on="2026-08-18"
+            )
+        )
+        self.assertIsNotNone(error)
+
+    def test_it_snapshots_the_cook_events_own_recipe_and_date(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        error = run_sync(
+            state.send_to_freezer(repo, "Monday:dinner", portions=2, frozen_on="2026-08-19")
+        )
+        self.assertIsNone(error)
+        stored = state.freezer[0]
+        self.assertEqual(stored["label"], "Green Chicken Curry")
+        self.assertEqual(stored["cooked_on"], "2026-08-17")
+        self.assertEqual(stored["frozen_on"], "2026-08-19")
+        self.assertEqual(stored["portions"], 2)
+
+    def test_a_label_override_is_honoured(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(
+            state.send_to_freezer(
+                repo, "Monday:dinner", portions=1, frozen_on="2026-08-19",
+                label="Leftover curry",
+            )
+        )
+        self.assertEqual(state.freezer[0]["label"], "Leftover curry")
+
+    def test_two_calls_create_two_distinct_lots(self):
+        """Unlike the surplus route's "Record", a manual send is never
+        deduplicated — the same dish may genuinely be frozen twice."""
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(state.send_to_freezer(repo, "Monday:dinner", portions=1, frozen_on="2026-08-19"))
+        run_sync(state.send_to_freezer(repo, "Monday:dinner", portions=1, frozen_on="2026-08-20"))
+        self.assertEqual(len(state.freezer), 2)
+        self.assertNotEqual(state.freezer[0]["id"], state.freezer[1]["id"])
+
+
+class TestPendingFreezerSurplus(unittest.TestCase):
+    """`pending_freezer_surplus`/`freezer_surplus_for` — the second capture
+    route's own view, surfaced from `SlotSpec.extra_portions` rather than
+    from anything written to `data/freezer.json`."""
+
+    def test_no_plan_is_empty(self):
+        self.assertEqual(make_state(with_plan=False).pending_freezer_surplus(), [])
+
+    def test_a_slot_with_no_surplus_is_not_pending(self):
+        self.assertEqual(make_state().pending_freezer_surplus(), [])
+
+    def test_a_declared_surplus_is_pending_with_its_derived_total(self):
+        pending = make_state_with_surplus(extra_portions=4).pending_freezer_surplus()
+        self.assertEqual(len(pending), 1)
+        view = pending[0]
+        self.assertEqual(view.slot_id, "Monday:dinner")
+        self.assertEqual(view.extra_portions, 4)
+        self.assertEqual(view.claim_count, 1)
+        self.assertEqual(view.servings_per_meal, 2)
+        self.assertEqual(view.total_portions, 6)
+        self.assertIn("6 portions", view.total_expression)
+
+    def test_freezer_surplus_for_matches_by_slot(self):
+        state = make_state_with_surplus()
+        self.assertIsNotNone(state.freezer_surplus_for("Monday:dinner"))
+        self.assertIsNone(state.freezer_surplus_for("Tuesday:dinner"))
+
+    def test_a_recorded_lot_drops_off_the_pending_list(self):
+        state = make_state_with_surplus()
+        run_sync(state.record_freezer_surplus(FakeFreezerRepository(), "Monday:dinner"))
+        self.assertEqual(state.pending_freezer_surplus(), [])
+
+    def test_slot_view_carries_extra_portions(self):
+        views = make_state_with_surplus(extra_portions=4).slot_views()
+        self.assertEqual(views["Monday:dinner"].extra_portions, 4)
+        self.assertEqual(views["Tuesday:dinner"].extra_portions, 0)
+
+
+class TestRecordFreezerSurplus(unittest.TestCase):
+    """The pending-surplus card's "Record" action — the route both a
+    successful-but-unconfirmed generation and a repeated click must not be
+    able to duplicate."""
+
+    def test_no_surplus_is_refused(self):
+        error = run_sync(
+            make_state().record_freezer_surplus(FakeFreezerRepository(), "Monday:dinner")
+        )
+        self.assertIsNotNone(error)
+
+    def test_it_records_the_declared_spare_count_dated_from_the_cook_event(self):
+        state = make_state_with_surplus(extra_portions=4)
+        repo = FakeFreezerRepository()
+        error = run_sync(state.record_freezer_surplus(repo, "Monday:dinner"))
+        self.assertIsNone(error)
+        self.assertEqual(len(state.freezer), 1)
+        stored = state.freezer[0]
+        self.assertEqual(stored["portions"], 4)
+        self.assertEqual(stored["cooked_on"], "2026-08-17")
+        self.assertEqual(stored["frozen_on"], date.today().isoformat())
+
+    def test_a_repeated_click_does_not_duplicate(self):
+        """The whole point of the deterministic id: a second click upserts
+        the same row instead of writing a second one."""
+        state = make_state_with_surplus(extra_portions=4)
+        repo = FakeFreezerRepository()
+        run_sync(state.record_freezer_surplus(repo, "Monday:dinner"))
+        run_sync(state.record_freezer_surplus(repo, "Monday:dinner"))
+        self.assertEqual(len(state.freezer), 1)
+        self.assertEqual(len(repo.saved), 2)
+
+    def test_a_successful_generation_alone_writes_nothing(self):
+        """A plan with a declared surplus that nobody has confirmed yet must
+        leave the freezer store untouched — `design-04` §2.2's "not
+        confirming is a legitimate end state"."""
+        self.assertEqual(make_state_with_surplus(extra_portions=4).freezer, [])
+
+    def test_prepped_ahead_surplus_dates_from_prep_day_not_the_anchor(self):
+        state = make_state_with_surplus(extra_portions=4)
+        state.week_plan = state.week_plan.model_copy(
+            update={
+                "sunday_prep_session": SundayPrepSession(
+                    total_active_minutes=60, candidate_slot_ids=["Monday:dinner"]
+                )
+            }
+        )
+        repo = FakeFreezerRepository()
+        run_sync(state.record_freezer_surplus(repo, "Monday:dinner"))
+        self.assertEqual(state.freezer[0]["cooked_on"], "2026-08-16")
+
+
+class TestFreezerRowEditor(unittest.TestCase):
+    """The review dialog's editable stock list — add/update/remove, the
+    third population route `design-04` §2.2 names ("food this app never
+    cooked")."""
+
+    def test_add_creates_an_unlinked_item(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        error = run_sync(state.add_freezer_item(repo))
+        self.assertIsNone(error)
+        self.assertEqual(len(state.freezer), 1)
+        self.assertIsNone(state.freezer[0]["per_serving"])
+        self.assertIsNone(state.freezer[0]["recipe_id"])
+
+    def test_update_edits_a_field_in_place(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(state.add_freezer_item(repo))
+        item_id = state.freezer[0]["id"]
+        error = run_sync(state.update_freezer_item(repo, item_id, portions=9))
+        self.assertIsNone(error)
+        self.assertEqual(state.freezer[0]["portions"], 9)
+
+    def test_update_preserves_a_snapshot_it_does_not_touch(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        recipe = make_recipe()
+        run_sync(
+            state.capture_freezer_item(
+                repo, label="Beef massaman", portions=4, cooked_on="2026-08-16",
+                frozen_on="2026-08-16", recipe=recipe,
+            )
+        )
+        item_id = state.freezer[0]["id"]
+        run_sync(state.update_freezer_item(repo, item_id, label="Beef massaman (corrected)"))
+        self.assertIsNotNone(state.freezer[0]["per_serving"])
+        self.assertEqual(state.freezer[0]["storage_class"], recipe.storage_class)
+
+    def test_an_invalid_edit_is_refused_and_the_row_is_unchanged(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(state.add_freezer_item(repo))
+        item_id = state.freezer[0]["id"]
+        before = dict(state.freezer[0])
+        error = run_sync(state.update_freezer_item(repo, item_id, cooked_on="not-a-date"))
+        self.assertIsNotNone(error)
+        self.assertEqual(state.freezer[0], before)
+
+    def test_editing_an_unknown_item_is_refused(self):
+        error = run_sync(
+            make_state().update_freezer_item(FakeFreezerRepository(), "nonesuch", portions=1)
+        )
+        self.assertIsNotNone(error)
+
+    def test_remove_deletes_the_row_and_calls_the_repository(self):
+        state = make_state()
+        repo = FakeFreezerRepository()
+        run_sync(state.add_freezer_item(repo))
+        item_id = state.freezer[0]["id"]
+        run_sync(state.remove_freezer_item(repo, item_id))
+        self.assertEqual(state.freezer, [])
+        self.assertEqual(repo.deleted, [item_id])
+
+
+class TestFreezerColdStart(unittest.TestCase):
+    """`design-04` §8's acceptance line: no `freezer.json` is byte-identical
+    to today — `PlannerState.freezer` defaults empty and nothing else on the
+    grid, the targets or the shopping list changes because of it."""
+
+    def test_an_empty_freezer_list_is_the_default(self):
+        self.assertEqual(make_state().freezer, [])
+
+    def test_a_plan_with_no_surplus_and_no_freezer_offers_nothing_pending(self):
+        state = make_state()
+        self.assertEqual(state.pending_freezer_surplus(), [])
+        views = state.slot_views()
+        self.assertTrue(all(view.extra_portions == 0 for view in views.values()))

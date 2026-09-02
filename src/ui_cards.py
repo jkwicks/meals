@@ -7,6 +7,7 @@ both trigger it, and because both live in `meal_card`/`canvas` here.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Callable, Dict, Optional
 
 from nicegui import ui
@@ -387,6 +388,91 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
         with ui.card().classes("bg-slate-900 border border-slate-800 min-w-[340px]"):
             skip_estimate_body()
 
+    # ---- "send to freezer" modal --------------------------------------------
+    # `design-04` §2.2's first capture route: label, recipe id and cook date
+    # come straight off the cook card already on screen, leaving only the
+    # count and the freeze date to state — same "prefilled from what's
+    # already on screen" shape as the "Eaten out?" modal above, and the same
+    # shared write path (`state.capture_freezer_item`, via `send_to_freezer`)
+    # the pending-surplus "Record" pill below also goes through.
+    freezer_target: dict = {
+        "slot_id": "", "label": "", "cooked_on": "", "portions": 1, "frozen_on": "",
+    }
+
+    def open_send_to_freezer(view: SlotView) -> None:
+        defaults = state.freezer_capture_defaults_for(view.id)
+        if defaults is None:
+            ui.notify(f"{slot_label(view.id)} hasn't been generated yet.", type="warning")
+            return
+        freezer_target["slot_id"] = view.id
+        freezer_target["label"] = defaults.label
+        freezer_target["cooked_on"] = defaults.cooked_on or ""
+        freezer_target["portions"] = 1
+        freezer_target["frozen_on"] = date.today().isoformat()
+        freezer_body.refresh()
+        freezer_dialog.open()
+
+    async def save_send_to_freezer() -> None:
+        error = await state.send_to_freezer(
+            ctx.repository,
+            freezer_target["slot_id"],
+            portions=int(freezer_target["portions"] or 0),
+            frozen_on=str(freezer_target["frozen_on"] or "").strip(),
+            label=str(freezer_target["label"] or "").strip() or None,
+        )
+        if error:
+            ui.notify(error, type="warning")
+            return
+        freezer_dialog.close()
+        ui.notify("Sent to freezer.", type="positive")
+        refreshables.refresh("plan")
+
+    @ui.refreshable
+    def freezer_body() -> None:
+        ui.label("Send to freezer").classes(f"{TEXT_DISPLAY} font-semibold text-slate-100")
+        ui.label(
+            slot_label(freezer_target["slot_id"]) if freezer_target["slot_id"] else ""
+        ).classes(f"{TEXT_BODY} font-mono uppercase tracking-widest text-slate-400")
+
+        ui.input(label="Label").props("dense outlined").classes(
+            f"w-full mt-2 {TEXT_BODY}"
+        ).bind_value(freezer_target, "label")
+
+        with ui.element("div").classes(f"flex flex-row gap-{SPACE_BASE} mt-1"):
+            ui.number(label="Portions", min=1, step=1, precision=0).props(
+                "dense outlined"
+            ).classes(f"w-24 {TEXT_BODY}").bind_value(freezer_target, "portions")
+            ui.input(label="Frozen on", placeholder="YYYY-MM-DD").props(
+                "dense outlined"
+            ).classes(f"w-32 {TEXT_BODY}").bind_value(freezer_target, "frozen_on")
+
+        ui.label(f"Cooked {freezer_target['cooked_on']}").classes(
+            f"{TEXT_MICRO} text-slate-400 mt-1"
+        )
+
+        with ui.element("div").classes(f"flex flex-row justify-end gap-{SPACE_BASE} mt-4"):
+            ui.button("Cancel", on_click=lambda: freezer_dialog.close()).props(
+                "flat dense no-caps size=sm"
+            ).classes("text-slate-400")
+            ui.button("Send to freezer", on_click=save_send_to_freezer).props(
+                "unelevated dense no-caps size=sm"
+            ).classes("bg-sky-400/20 text-sky-200")
+
+    with ui.dialog() as freezer_dialog:
+        with ui.card().classes("bg-slate-900 border border-slate-800 min-w-[340px]"):
+            freezer_body()
+
+    async def record_surplus(view: SlotView) -> None:
+        """The pending-surplus card's "Record" pill — a direct action, no
+        form: the count and the date are already settled
+        (`design-04` §6a.2), so this is one click rather than a dialog."""
+        error = await state.record_freezer_surplus(ctx.repository, view.id)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        ui.notify("Recorded to the freezer.", type="positive")
+        refreshables.refresh("plan")
+
     # ---- swap-in modal -----------------------------------------------------
 
     def swap_filter_matches(favorite: dict, meal_type: Optional[str], query: str) -> bool:
@@ -678,6 +764,21 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                                 ui.tooltip(
                                     "Remove from favorites" if favorited else "Save to favorites"
                                 )
+                            # `ac_unit` — the same glyph `PREP_BADGE_STYLES`
+                            # already uses for "From Freezer", so the icon
+                            # means one thing everywhere it appears rather
+                            # than introducing a second symbol for the same
+                            # idea. Plain slate: nothing here is a new hue,
+                            # per the palette contract.
+                            freezer_button = ui.button(
+                                icon="ac_unit",
+                                on_click=lambda v=view: open_send_to_freezer(v),
+                            )
+                            freezer_button.props("dense flat round size=xs").classes(
+                                f"min-h-0 p-{SPACE_HAIR} text-slate-400 hover:text-slate-200"
+                            )
+                            with freezer_button:
+                                ui.tooltip("Send to freezer")
                         swap_button = ui.button(
                             icon="swap_horiz",
                             on_click=lambda v=view: open_swap_modal(v),
@@ -831,6 +932,28 @@ def build_cards(ctx: UIContext, generation: GenerationHandles) -> CardHandles:
                         "Record roughly what this meal cost, so the rest of "
                         "the day is planned around it"
                     )
+
+            if view.mode == MODE_COOK and view.extra_portions:
+                # `design-04` §6a: the batch already cooked more than this
+                # week eats — `SlotSpec.extra_portions` — and nothing has
+                # written it to the freezer yet. `freezer_surplus_for`
+                # returns None the moment `record_freezer_surplus` succeeds,
+                # which is what makes this pill disappear on its own rather
+                # than needing a second flag to track "already recorded".
+                surplus = state.freezer_surplus_for(view.id)
+                if surplus is not None:
+                    record_button = ui.button(
+                        f"Record {surplus.extra_portions} to freezer",
+                        icon="ac_unit",
+                        on_click=lambda v=view: record_surplus(v),
+                    )
+                    record_button.props("unelevated dense no-caps size=sm").classes(
+                        f"self-start min-h-0 px-{SPACE_TIGHT} py-{SPACE_HAIR} {RADIUS_PILL} {TEXT_MICRO} "
+                        "transition-all duration-150 bg-slate-800/60 text-slate-400 "
+                        "hover:bg-slate-700/60 hover:text-slate-200"
+                    )
+                    with record_button:
+                        ui.tooltip(surplus.total_expression)
 
             if view.mode == MODE_COOK and view.meal_type == LINK_SOURCE_MEAL:
                 # Left enabled even when it can't be applied: a disabled Quasar
