@@ -82,7 +82,7 @@
 
 ## Phase 3: Blocks
 
-- [ ] **Task 3.1: Blocks — dated, one-off exceptions over standing presets** — **PROMPT-13 NOT YET WRITTEN (placeholder)**
+- [x] **Task 3.1: Blocks — dated, one-off exceptions over standing presets** — **PROMPT-13 NOT YET WRITTEN (placeholder)**
   - **Origin:** none on disk (no `dev/PROMPT13-*.md` exists); the concept is specified in `dev/design-01-presets-and-blocks.md`
   - **Targets:** TBD once the prompt is written (expected: the shared preset resolver, the preset editor, and a dated-override representation + dedicated tests)
   - **Objective:** Blocks are dated exceptions layered over standing presets — the standing-vs-dated split the codebase already makes twice (standing targets vs per-run locks; and, once Task 2.2 lands, standing schedule vs calendar-dated overrides). A block overrides a named day/week's planning inputs without mutating the standing preset it sits above, and must not survive as a second preset-shaped mechanism beside the real one. **This task is a placeholder:** `dev/PROMPT-13.md` must be written first (design-doc section → prompt, in the house prompt format), then decomposed into atomic subtasks here before any implementation.
