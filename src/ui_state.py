@@ -13,10 +13,11 @@ the monolith; this file just draws the module boundary where it already was.
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from pydantic import ValidationError
 
+from freezer import FreezerItem
 from planner import (
     LOCATION_RESTRICTION_PHRASES,
     MACRO_KEYS,
@@ -112,6 +113,7 @@ from week import (
     MODE_LEFTOVER,
     MODE_SKIP,
     PIN_ORIGIN_USER,
+    SlotSpec,
     WeekSpec,
     clear_cuisines,
     clear_styles,
@@ -130,6 +132,7 @@ from week import (
     parse_slot_id,
     pin_recipe,
     portions_for,
+    resolve_prep_day,
     set_skip_estimate,
     slot_id,
     slot_label,
@@ -170,6 +173,10 @@ class SlotView:
     prep_badge: str = ""  # "fridge" | "freezer" | "" — see PREP_BADGE_STYLES
     prep_origin: str = ""  # tooltip: where in the Sunday prep timeline this came from
     recipe: object = None  # planner.Recipe, kept loose to avoid a hard import cycle
+    # `SlotSpec.extra_portions` verbatim — 0 for every slot but a batch anchor
+    # with spare portions declared. Carried here so a card can offer "Record
+    # N to freezer" without re-deriving the spec; see `pending_freezer_surplus`.
+    extra_portions: int = 0
 
     # --- leftover chain wiring ---
     # `chain` is the shared index of the cook-plus-its-leftovers group this
@@ -908,6 +915,109 @@ class ShoppingWindowView:
         return len(self.shopping_list.items()) if self.shopping_list else 0
 
 
+@dataclass(frozen=True)
+class FreezerCaptureDefaults:
+    """What "send to freezer" should pre-fill for one cook event.
+
+    The one computation both capture routes read (`PlannerState.
+    freezer_capture_defaults_for`, `record_freezer_surplus`), so a card
+    button and a pending-surplus "Record" click cannot disagree about the
+    label, the provenance or — the one that has bitten before, see
+    `freezer_cooked_on` — the date.
+    """
+
+    label: str
+    recipe_id: Optional[str]
+    cooked_on: Optional[str]
+
+
+def freezer_cooked_on(week_plan: WeekPlan, event: CookEvent, config: dict) -> Optional[str]:
+    """The real calendar date `event` was cooked on, for a freezer capture.
+
+    A prep-day batch anchors its *eating* slot on day 0 but was actually
+    cooked the day before the week started — `design-04` §6a.2, the same
+    off-by-one `storage_note`'s `keeps_for_days` paid for once already. This
+    resolves the real weekday (`week.resolve_prep_day`, which may land on
+    either of the two candidate days, not always exactly one day back) and
+    turns it into an ISO date; every other cook event just dates off its own
+    grid day (`week.day_date`).
+
+    None when there is no real calendar to date against — a plan with no
+    `week_start_date` (from before that field existed), or a prep-ahead event
+    when neither candidate day has the hours for a session. Callers hand
+    that back as "nothing to freeze against" rather than guessing a date.
+    """
+    if not week_plan.week_start_date:
+        return None
+    if not is_prepped_ahead(event, week_plan):
+        return day_date(week_plan.week_start_date, week_plan.days, event.day)
+
+    resolution = resolve_prep_day(week_plan.days, config)
+    if resolution.day is None:
+        return None
+    start = datetime.fromisoformat(week_plan.week_start_date).date()
+    # Exactly the two candidates `resolve_prep_day` itself considers — see
+    # its own docstring: "walks backward ... over exactly the two days that
+    # precede it". Matched by real date rather than by re-deriving the
+    # weekday-name arithmetic `week._shift_day` already owns.
+    for offset in (1, 2):
+        candidate = start - timedelta(days=offset)
+        if candidate.strftime("%A") == resolution.day:
+            return candidate.isoformat()
+    return None  # unreachable given resolve_prep_day's own contract
+
+
+def freezer_capture_defaults(
+    week_plan: WeekPlan, event: CookEvent, slot: SlotSpec, config: dict
+) -> FreezerCaptureDefaults:
+    return FreezerCaptureDefaults(
+        label=event.recipe.name,
+        recipe_id=slot.recipe_id,
+        cooked_on=freezer_cooked_on(week_plan, event, config),
+    )
+
+
+def freezer_surplus_id(target_slot_id: str, cooked_on: str) -> str:
+    """Deterministic id for a pending surplus lot's eventual freezer row.
+
+    Keyed on the slot and its real cook date rather than a fresh uuid, so a
+    second "Record" click on a still-pending card upserts the same row
+    instead of writing a second one (`save_freezer_item` is a plain
+    upsert-by-id — idempotency has to come from the id). The manual "send to
+    freezer" card action does not use this: a person may genuinely freeze
+    more of the same dish on a later occasion, and each of those really is a
+    new lot, so it always mints a fresh one.
+    """
+    return f"surplus:{target_slot_id}:{cooked_on}"
+
+
+@dataclass(frozen=True)
+class FreezerSurplusView:
+    """One cook event's declared spare portions, not yet in the freezer.
+
+    `total_portions` is the whole batch — already `claim_count x
+    servings_per_meal + extra_portions` (`week.portions_for`, carried
+    verbatim as `CookEvent.portions`) — shown alongside `extra_portions` so
+    the card reads as "3 meal(s) x 2 + 6 spare = 12 portions" rather than a
+    bare 6 with nothing to place it against (`design-04` §6a.1).
+    """
+
+    slot_id: str
+    label: str
+    claim_count: int
+    servings_per_meal: int
+    extra_portions: int
+    total_portions: int
+    cooked_on: str
+
+    @property
+    def total_expression(self) -> str:
+        return (
+            f"{self.claim_count} meal(s) × {self.servings_per_meal} + "
+            f"{self.extra_portions} spare = {self.total_portions} portions"
+        )
+
+
 @dataclass
 class PlannerState:
     """Everything one browser tab is looking at.
@@ -1096,6 +1206,14 @@ class PlannerState:
     # show it. Re-reading the file per repaint would be a disk read per
     # keystroke elsewhere on the page for a list only two surfaces consult.
     adherence: Dict[str, List[dict]] = field(default_factory=dict)
+    # `freezer.json`'s declared lots, as plain dicts — `data/`, app-written,
+    # like `adherence` above and kept in step by hand the same way:
+    # `capture_freezer_item` and its callers (`send_to_freezer`,
+    # `record_freezer_surplus`, `update_freezer_item`, `remove_freezer_item`)
+    # update this alongside every write, because there is no reload between
+    # a capture and the repaint that has to show it disappear from the
+    # pending-surplus list or appear in the review dialog's row editor.
+    freezer: List[Dict[str, Any]] = field(default_factory=list)
     catalog_search: str = ""
     # The full-screen catalog browser's own filters — separate from
     # catalog_search above so typing in one surface doesn't silently refilter
@@ -1190,6 +1308,7 @@ class PlannerState:
         state.recipe_catalog = await repository.load_recipe_catalog()
         state.history = await repository.load_history()
         state.adherence = await repository.load_adherence()
+        state.freezer = await repository.load_freezer()
         await state.reload_plan(repository)
         await state.scan_cached_weeks(repository)
         return state
@@ -3000,6 +3119,250 @@ class PlannerState:
         self.adherence = dict(self.adherence or {}, workouts=rows + [entry])
         await repository.save_workout_completion(entry)
 
+    # ---- the declared freezer ledger ---------------------------------------
+    # `design-04` §2: a confirmed list, not an inferred count. Every write
+    # below persists immediately — like `mark_meal`/`mark_workout` above, a
+    # capture that vanished on reload would be a control with no effect —
+    # and every one of them funnels through `capture_freezer_item`, the one
+    # place `freezer.FreezerItem` gets constructed and saved.
+
+    async def capture_freezer_item(
+        self,
+        repository: LocalJSONRepository,
+        *,
+        label: str,
+        portions: int,
+        cooked_on: str,
+        frozen_on: str,
+        recipe: Optional[Recipe] = None,
+        recipe_id: Optional[str] = None,
+        id: Optional[str] = None,  # noqa: A002 - matches FreezerItem's own field name
+    ) -> Optional[str]:
+        """Snapshot one lot and persist it — the one write both capture
+        routes share (`send_to_freezer`, `record_freezer_surplus`), plus the
+        row editor's manual add, so none of them can disagree about dating,
+        snapshots or ids. Returns why not, or None on success — the same
+        convention `set_skip_estimate` and its siblings use.
+
+        `recipe`, when given, supplies the freeze-time snapshot: `per_serving`
+        is filtered to `MACRO_KEYS` because a recipe's own `per_serving_macros`
+        also carries fibre, which `FreezerItem` does not accept. Omitted for
+        a hand-declared item with nothing cooked behind it (`design-04`
+        §2.2's third route) — the lot then has no macro snapshot, exactly the
+        "neither" case that design section names.
+
+        `id` omitted mints a fresh one (`FreezerItem`'s own default) — the
+        manual card capture always wants a new lot. `record_freezer_surplus`
+        passes a deterministic one instead, so a repeated click upserts
+        rather than duplicating.
+        """
+        try:
+            item = FreezerItem(
+                **({"id": id} if id else {}),
+                label=label.strip() or "Frozen portions",
+                portions=int(portions),
+                cooked_on=cooked_on,
+                frozen_on=frozen_on,
+                storage_class=recipe.storage_class if recipe is not None else None,
+                per_serving=(
+                    {
+                        key: round(float(recipe.per_serving_macros[key]), 1)
+                        for key in MACRO_KEYS
+                    }
+                    if recipe is not None
+                    else None
+                ),
+                recipe_id=recipe_id,
+            )
+        except ValidationError as exc:
+            return f"That isn't a usable freezer entry: {exc}"
+
+        data = item.model_dump()
+        await repository.save_freezer_item(data)
+        self.freezer = [row for row in self.freezer if row.get("id") != data["id"]] + [data]
+        return None
+
+    def freezer_capture_defaults_for(
+        self, target_slot_id: str
+    ) -> Optional[FreezerCaptureDefaults]:
+        """Pre-fill for the recipe-card "send to freezer" dialog, or None
+        when there is nothing generated at that slot to capture."""
+        plan = self.week_plan
+        if plan is None:
+            return None
+        event = plan.by_slot().get(target_slot_id)
+        slot = next((s for s in plan.slots if s.id == target_slot_id), None)
+        if event is None or slot is None:
+            return None
+        return freezer_capture_defaults(plan, event, slot, self.config)
+
+    async def send_to_freezer(
+        self,
+        repository: LocalJSONRepository,
+        target_slot_id: str,
+        *,
+        portions: int,
+        frozen_on: str,
+        label: Optional[str] = None,
+    ) -> Optional[str]:
+        """The recipe-card "send to freezer" action.
+
+        Label, recipe id and cook date come off the cook event itself — a
+        capture of something already on screen, not a blank form — leaving
+        only the count and the freeze date to state. Always mints a fresh
+        id: unlike the surplus route's "Record", the same dish may
+        genuinely be sent to the freezer more than once across different
+        sessions, and each of those really is a new lot.
+        """
+        plan = self.week_plan
+        if plan is None:
+            return "Generate a week before sending anything to the freezer."
+        event = plan.by_slot().get(target_slot_id)
+        slot = next((s for s in plan.slots if s.id == target_slot_id), None)
+        if event is None or slot is None:
+            return f"{slot_label(target_slot_id)} hasn't been generated yet."
+        cooked_on = freezer_cooked_on(plan, event, self.config)
+        if cooked_on is None:
+            return "This plan has no real calendar date to freeze against."
+        return await self.capture_freezer_item(
+            repository,
+            label=label or event.recipe.name,
+            portions=portions,
+            cooked_on=cooked_on,
+            frozen_on=frozen_on,
+            recipe=event.recipe,
+            recipe_id=slot.recipe_id,
+        )
+
+    def pending_freezer_surplus(self) -> List[FreezerSurplusView]:
+        """Every cook event with declared spare portions not yet recorded.
+
+        Reads `week_plan.slots` — the plan's own record of what actually
+        generated — never the live, possibly-staged `self.spec`: a pending
+        lot is a fact about a cook that happened, not about an edit in
+        progress. Filters out anything already written to `data/freezer.json`
+        (matched by `freezer_surplus_id`), which is what makes a recorded lot
+        drop off this list the moment `record_freezer_surplus` succeeds
+        rather than staying to invite a second write — a successful
+        generation on its own writes zero rows here, per `design-04` §2.2's
+        "not confirming is a legitimate end state".
+        """
+        plan = self.week_plan
+        if plan is None:
+            return []
+        recorded_ids = {row.get("id") for row in self.freezer}
+        slots_by_id = {slot.id: slot for slot in plan.slots}
+        views: List[FreezerSurplusView] = []
+        for event in plan.cook_events:
+            slot = slots_by_id.get(event.slot_id)
+            if slot is None or slot.extra_portions <= 0:
+                continue
+            cooked_on = freezer_cooked_on(plan, event, self.config)
+            if cooked_on is None:
+                continue
+            if freezer_surplus_id(event.slot_id, cooked_on) in recorded_ids:
+                continue
+            views.append(
+                FreezerSurplusView(
+                    slot_id=event.slot_id,
+                    label=event.recipe.name,
+                    claim_count=len(event.eaten_by),
+                    servings_per_meal=plan.servings_per_meal,
+                    extra_portions=slot.extra_portions,
+                    total_portions=event.portions,
+                    cooked_on=cooked_on,
+                )
+            )
+        return views
+
+    def freezer_surplus_for(self, target_slot_id: str) -> Optional[FreezerSurplusView]:
+        """One card's pending surplus, if it still has one — the gate for
+        its "Record" pill."""
+        return next(
+            (view for view in self.pending_freezer_surplus() if view.slot_id == target_slot_id),
+            None,
+        )
+
+    async def record_freezer_surplus(
+        self, repository: LocalJSONRepository, target_slot_id: str
+    ) -> Optional[str]:
+        """The pending-surplus card's "Record" action.
+
+        Snapshots the recipe now, at click time — never at generation, so a
+        week that plans a surplus but is never confirmed here writes
+        nothing. The portion count is the slot's declared spare amount;
+        correcting a batch that came out smaller is a later edit through
+        the freezer row editor (`update_freezer_item`), not a parameter
+        here.
+
+        The id is deterministic (`freezer_surplus_id`), not a fresh uuid, so
+        a second click on the same still-pending card upserts the same row
+        instead of writing a second lot — `capture_freezer_item`/
+        `save_freezer_item` are both plain upserts, so the no-duplicate
+        guarantee has to come from the id, not from a click guard here.
+        """
+        plan = self.week_plan
+        if plan is None:
+            return "Generate a week before recording a surplus."
+        event = plan.by_slot().get(target_slot_id)
+        slot = next((s for s in plan.slots if s.id == target_slot_id), None)
+        if event is None or slot is None or slot.extra_portions <= 0:
+            return f"{slot_label(target_slot_id)} has no declared surplus to freeze."
+        cooked_on = freezer_cooked_on(plan, event, self.config)
+        if cooked_on is None:
+            return "This plan has no real calendar date to freeze against."
+        return await self.capture_freezer_item(
+            repository,
+            id=freezer_surplus_id(target_slot_id, cooked_on),
+            label=event.recipe.name,
+            portions=slot.extra_portions,
+            cooked_on=cooked_on,
+            frozen_on=date.today().isoformat(),
+            recipe=event.recipe,
+            recipe_id=slot.recipe_id,
+        )
+
+    async def add_freezer_item(self, repository: LocalJSONRepository) -> Optional[str]:
+        """Manual add, in the review dialog's row editor — food this app
+        never cooked. No recipe behind it, so the row starts with no macro
+        snapshot (`design-04` §2.2's "neither" case: whatever eventually
+        draws on it contributes 0 and shows a visible shortfall, never a
+        guess)."""
+        today = date.today().isoformat()
+        return await self.capture_freezer_item(
+            repository, label="New item", portions=1, cooked_on=today, frozen_on=today
+        )
+
+    async def update_freezer_item(
+        self, repository: LocalJSONRepository, item_id: str, **fields
+    ) -> Optional[str]:
+        """Edit one declared lot in place — the row editor's own field
+        writes.
+
+        Merges into the stored row rather than reconstructing from a recipe,
+        so correcting a label or a count never touches a snapshot only a
+        "send to freezer"/"Record" click may set — `FreezerItem`'s
+        `storage_class`/`per_serving` are freeze-time snapshots, not
+        re-derivable from a field edit.
+        """
+        existing = next((row for row in self.freezer if row.get("id") == item_id), None)
+        if existing is None:
+            return "That freezer item no longer exists."
+        try:
+            item = FreezerItem.model_validate(dict(existing, **fields))
+        except ValidationError as exc:
+            return f"That isn't a usable freezer entry: {exc}"
+        data = item.model_dump()
+        await repository.save_freezer_item(data)
+        self.freezer = [data if row.get("id") == item_id else row for row in self.freezer]
+        return None
+
+    async def remove_freezer_item(self, repository: LocalJSONRepository, item_id: str) -> None:
+        """Delete one declared lot outright — the same tolerance
+        `delete_freezer_item` extends to an id already gone."""
+        self.freezer = [row for row in self.freezer if row.get("id") != item_id]
+        await repository.delete_freezer_item(item_id)
+
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""
         spec = self.spec
@@ -3058,6 +3421,7 @@ class PlannerState:
                 style=humanize(slot.style),
                 cuisine=humanize(slot.cuisine),
                 portions=portions.get(source_id or "", 0),
+                extra_portions=slot.extra_portions,
                 source_label=source_label if slot.mode == MODE_LEFTOVER else "",
                 source_id=(slot.source or "") if slot.mode == MODE_LEFTOVER else "",
                 chain=chains.get(source_id or ""),

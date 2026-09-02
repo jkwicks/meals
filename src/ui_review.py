@@ -549,6 +549,106 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     "dense flat size=xs"
                 ).classes("min-h-0 p-0 text-slate-400")
 
+    # ---- the declared freezer ledger -----------------------------------------
+    # `design-04` §2/§3: a confirmed list, not an inferred count — "load and
+    # confirm one editable stock snapshot per run before generation".
+    # Unlike everything below the "staged" line, an edit here persists on
+    # change (`state.update_freezer_item`/`remove_freezer_item`, the same
+    # "persists immediately" contract the adherence marks and the preset pick
+    # follow) — reviewing this list *is* the confirmation, not a second step
+    # after it.
+
+    def freezer_field_handler(item_id: str, key: str):
+        """One `on_change` per (row, field) — same index/key-baked-in-via-
+        closure-argument shape as `pantry_field_handler`, and the same
+        reason: a row deleted between render and edit must not write into
+        whichever row has since taken its place. Unlike the pantry's
+        handler, this one awaits a real write — `PlannerState.freezer` is
+        `data/`, persisted immediately, not staged until generation.
+        """
+
+        async def handler(event) -> None:
+            value = event.value
+            if key == "portions":
+                try:
+                    portions = int(round(float(value)))
+                except (TypeError, ValueError):
+                    return
+                error = await state.update_freezer_item(
+                    ctx.repository, item_id, portions=portions
+                )
+            else:
+                error = await state.update_freezer_item(
+                    ctx.repository, item_id, **{key: str(value or "").strip()}
+                )
+            if error:
+                ui.notify(error, type="warning")
+
+        return handler
+
+    async def on_freezer_add() -> None:
+        error = await state.add_freezer_item(ctx.repository)
+        if error:
+            ui.notify(error, type="warning")
+            return
+        freezer_editor.refresh()
+
+    @ui.refreshable
+    def freezer_editor() -> None:
+        if not state.freezer:
+            ui.label("Nothing declared.").classes(f"{TEXT_MICRO} text-slate-400 italic")
+        for item in state.freezer:
+            item_id = item.get("id", "")
+
+            async def on_remove(i: str = item_id) -> None:
+                await state.remove_freezer_item(ctx.repository, i)
+                freezer_editor.refresh()
+
+            with ui.element("div").classes(
+                f"flex flex-col gap-{SPACE_HAIR} w-full pb-{SPACE_TIGHT} "
+                "border-b border-slate-800/60 last:border-b-0"
+            ):
+                with ui.row().classes(
+                    f"w-full items-center flex-nowrap gap-{SPACE_BASE}"
+                ):
+                    ui.input(
+                        label="Label",
+                        value=item.get("label", ""),
+                        on_change=freezer_field_handler(item_id, "label"),
+                    ).props("dense outlined debounce=500").classes(
+                        f"flex-1 min-w-0 {TEXT_BODY}"
+                    )
+                    ui.number(
+                        label="Portions",
+                        value=item.get("portions", 1),
+                        min=1,
+                        step=1,
+                        precision=0,
+                        on_change=freezer_field_handler(item_id, "portions"),
+                    ).props("dense outlined debounce=500").classes(f"w-20 {TEXT_BODY}")
+                    ui.input(
+                        label="Cooked",
+                        value=item.get("cooked_on", ""),
+                        on_change=freezer_field_handler(item_id, "cooked_on"),
+                    ).props(
+                        'dense outlined debounce=500 placeholder="YYYY-MM-DD"'
+                    ).classes(f"w-28 {TEXT_BODY}")
+                    ui.input(
+                        label="Frozen",
+                        value=item.get("frozen_on", ""),
+                        on_change=freezer_field_handler(item_id, "frozen_on"),
+                    ).props(
+                        'dense outlined debounce=500 placeholder="YYYY-MM-DD"'
+                    ).classes(f"w-28 {TEXT_BODY}")
+                    ui.button(icon="delete", on_click=on_remove).props(
+                        "dense flat size=xs"
+                    ).classes("min-h-0 p-0 text-slate-400")
+                if item.get("per_serving") is None:
+                    ui.label(
+                        "No recipe attached — a meal drawing on this contributes "
+                        "0 macros until one is linked."
+                    ).classes(f"{TEXT_MICRO} text-slate-400")
+
     # ---- the weekly preset pick --------------------------------------------
 
     # `(select, read-its-options)` for every select whose option list comes
@@ -744,6 +844,30 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             # the moment it changes.
             preset_block()
 
+            # Also above the "staged" line, and for the same reason: a
+            # freezer edit persists the moment it's made, so this is where
+            # the week's *shape* is confirmed rather than an input queued
+            # for the next run.
+            with ui.element("div").classes(
+                f"flex flex-col gap-{SPACE_HAIR} {SURFACE_INSET} {RADIUS_CARD} p-{SPACE_BASE}"
+            ):
+                with ui.element("div").classes(
+                    f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+                ):
+                    ui.icon("ac_unit").classes("text-slate-400 shrink-0")
+                    ui.label("Freezer stock").classes(f"{TEXT_BODY} text-slate-300")
+                ui.label(
+                    "What's actually in the freezer, declared by hand — never "
+                    "tracked automatically. Reviewing and correcting counts "
+                    "here before generating is the confirmation; nothing is "
+                    "decremented on its own."
+                ).classes(f"{TEXT_MICRO} text-slate-400")
+                with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} w-full mt-1"):
+                    freezer_editor()
+                ui.button("Add item", icon="add", on_click=on_freezer_add).props(
+                    "dense flat no-caps size=sm"
+                ).classes("text-slate-400 mt-1 self-start")
+
             ui.label(
                 "Everything below is staged for the next generation only — "
                 "nothing here is saved to config.json until you generate."
@@ -893,8 +1017,18 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     "Generate", icon="bolt", on_click=on_generate
                 ).props("dense no-caps")
 
+    def open_dialog() -> None:
+        # The dialog's own body is built once, at page-load time — reopening
+        # it does not re-run this function. `freezer_editor` has no
+        # centrally-registered refresh topic of its own (nothing else on the
+        # page changes freezer stock while this dialog is closed but a card's
+        # "Send to freezer"/"Record" action does — see `ui_cards.py`), so the
+        # one guaranteed-fresh moment is right before it becomes visible.
+        freezer_editor.refresh()
+        dialog.open()
+
     return ReviewHandles(
-        open=dialog.open,
+        open=open_dialog,
         targets_editor=targets_editor,
         training_editor=training_editor,
         pantry_editor=pantry_editor,
