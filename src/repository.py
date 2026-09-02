@@ -286,6 +286,16 @@ class StoragePaths:
         return os.path.join(self.data_dir, "adherence.json")
 
     @property
+    def freezer(self) -> str:
+        """Declared, confirmed observed stock — see `src/freezer.py`'s
+        `FreezerItem`. App-written state like `adherence`, never `config/`:
+        the freezer holds what is actually in the house, confirmed before
+        each generation, and neither a preset nor `save_config_keys` may
+        ever reach it — see `CONFIG_FILES`, which deliberately does not
+        name it."""
+        return os.path.join(self.data_dir, "freezer.json")
+
+    @property
     def shopping_list(self) -> str:
         """Not JSON state like the rest — an export the CLI's
         --save-shopping-list writes for a human to read. It lives here anyway
@@ -542,6 +552,48 @@ class PlanRepository(abc.ABC):
     async def clear_workout_completion(self, date: str, session_id: str) -> None:
         """Un-mark one session, removing its row. Same delete-don't-flag
         reasoning as `clear_meal_adherence`."""
+
+    @abc.abstractmethod
+    async def load_freezer(self) -> List[dict]:
+        """Every declared `freezer.FreezerItem`, as plain dicts.
+
+        Empty when nothing has been declared yet — the normal state until a
+        lot is confirmed by hand, the same cold-start tolerance
+        `load_history`/`load_adherence` extend for the same reason: an
+        absent file must read exactly as it did before this feature
+        existed, not raise.
+
+        This is the whole list, not a per-run reservation — see
+        `save_freezer_item`'s docstring for why nothing here is ever
+        decremented by planning.
+        """
+
+    @abc.abstractmethod
+    async def save_freezer_item(self, item: dict) -> None:
+        """Upsert one lot by its stable `id`, preserving every other row.
+
+        The only writer of `data/freezer.json`, and the reconciliation the
+        review dialog's "still right?" confirmation and the "Send to
+        freezer"/"Record frozen portions" capture routes both go through —
+        see CLAUDE.md's "confirmation is the feature" precedent, extended
+        one shelf over from the pantry.
+
+        **Planning a draw never calls this.** A freezer lot is observed
+        state, and generation only ever *reads* the list to resolve a draw
+        against an in-memory reservation — the stored `portions` figure
+        changes only when a person says it changed, exactly as
+        `inventory_to_clear`'s pantry ledger never reaches disk from the
+        planning side. `item` must carry an `id`; without one it could
+        never be corrected or superseded, so it is rejected rather than
+        stored unaddressable — same rule `save_biometric_entry` states for
+        `date`.
+        """
+
+    @abc.abstractmethod
+    async def delete_freezer_item(self, item_id: str) -> None:
+        """Remove one lot outright. A no-op if `item_id` is already gone —
+        the same tolerance `delete_catalog_recipe` extends to a favourite
+        deleted in another tab."""
 
     @abc.abstractmethod
     async def load_biometrics(self) -> dict:
@@ -949,6 +1001,15 @@ class LocalJSONRepository(PlanRepository):
     async def clear_workout_completion(self, date: str, session_id: str) -> None:
         await asyncio.to_thread(self._clear_adherence, "workouts", date, session_id)
 
+    async def load_freezer(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.paths.freezer) or []
+
+    async def save_freezer_item(self, item: dict) -> None:
+        await asyncio.to_thread(self._upsert_freezer_item, item)
+
+    async def delete_freezer_item(self, item_id: str) -> None:
+        await asyncio.to_thread(self._delete_freezer_item, item_id)
+
     async def load_biometrics(self) -> dict:
         return await asyncio.to_thread(self._read_biometrics)
 
@@ -1277,6 +1338,32 @@ class LocalJSONRepository(PlanRepository):
         remaining = [record for record in catalog if record.get("id") != recipe_id]
         if len(remaining) != len(catalog):
             self._write_json(self.paths.recipe_catalog, remaining)
+
+    def _upsert_freezer_item(self, item: dict) -> None:
+        """Merge `item` into `freezer.json` by `id`, then rewrite the file.
+
+        Read-modify-write in one worker-thread call, same reasoning as
+        `_upsert_dated_entry` — the read and the write must not be separated
+        by an `await`, or a concurrent save could be silently dropped by
+        whichever write landed second.
+        """
+        item_id = item.get("id")
+        if not item_id:
+            raise ValueError(f"A freezer item needs an 'id': got {item!r}")
+
+        items = self._read_json(self.paths.freezer) or []
+        existing = next((row for row in items if row.get("id") == item_id), None)
+        if existing is not None:
+            existing.update(item)
+        else:
+            items.append(dict(item))
+        self._write_json(self.paths.freezer, items)
+
+    def _delete_freezer_item(self, item_id: str) -> None:
+        items = self._read_json(self.paths.freezer) or []
+        remaining = [row for row in items if row.get("id") != item_id]
+        if len(remaining) != len(items):
+            self._write_json(self.paths.freezer, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:
