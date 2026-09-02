@@ -27,7 +27,7 @@ MODE_COOK = "cook"
 MODE_LEFTOVER = "leftover"
 MODE_SKIP = "skip"
 
-# Who made a leftover link — `SlotSpec.link_origin`. The three differ in what
+# Who made a leftover link — `SlotSpec.link_origin`. The four differ in what
 # is allowed to overwrite them, which is the whole reason the distinction is
 # stored rather than inferred:
 #
@@ -40,9 +40,18 @@ MODE_SKIP = "skip"
 #             `spread_batch` may re-point one at a batch instead.
 #   batch     `spread_batch`'s own. Dropped by `clear_batch_links` before
 #             every run, so the toggles re-spread instead of freezing.
+#   freezer   `resolve_freezer_draws`' own — design-04 §4. The one origin
+#             whose `source` is not a slot in this week at all: it names a
+#             `data/freezer.json` lot, food that predates the week by
+#             definition. `validate_week`'s "source must be a slot in this
+#             week" rule, and every other leftover rule that assumes grid
+#             membership (meal-type compatibility, forward-only ordering),
+#             is exempted for this origin alone — user/location/batch
+#             leftovers still have to resolve to a real earlier cook slot.
 LINK_ORIGIN_USER = "user"
 LINK_ORIGIN_LOCATION = "location"
 LINK_ORIGIN_BATCH = "batch"
+LINK_ORIGIN_FREEZER = "freezer"
 
 # Who pinned the recipe on a cook slot — `SlotSpec.recipe_pin_origin`, the
 # same "what may overwrite this" question `link_origin` answers for a
@@ -480,7 +489,11 @@ class SlotSpec(BaseModel):
     cuisine: Optional[str] = None
     source: Optional[str] = Field(
         default=None,
-        description="slot_id of the cook slot this eats leftovers of (mode=leftover)",
+        description=(
+            "slot_id of the cook slot this eats leftovers of (mode=leftover) — "
+            "or, when link_origin is LINK_ORIGIN_FREEZER, a data/freezer.json "
+            "lot id instead of a slot in this week."
+        ),
     )
     extra_portions: int = Field(
         default=0,
@@ -516,8 +529,8 @@ class SlotSpec(BaseModel):
         default=LINK_ORIGIN_USER,
         description=(
             "Who made this leftover link — one of LINK_ORIGIN_USER / "
-            "_LOCATION / _BATCH (see their definitions for what each permits). "
-            "Meaningless on a slot that isn't MODE_LEFTOVER. Defaults to "
+            "_LOCATION / _BATCH / _FREEZER (see their definitions for what "
+            "each permits). Meaningless on a slot that isn't MODE_LEFTOVER. Defaults to "
             "'user' so a plan saved before this field existed keeps every "
             "link it has: that is the conservative direction, preserving "
             "links rather than discarding or re-pointing ones whose origin "
@@ -1031,6 +1044,129 @@ def unlink_leftover(spec: WeekSpec, target_id: str) -> WeekSpec:
         for slot in spec.slots
     ]
     return spec.model_copy(update={"slots": updated})
+
+
+def _parse_freezer_date(value: Optional[str]) -> Optional[date]:
+    """`date.fromisoformat`, tolerant of a malformed or hand-edited row.
+
+    `freezer.FreezerItem` requires a valid `frozen_on`, but `load_freezer`
+    hands back plain dicts with no schema check behind them (`design-04` §2 —
+    a hand-edited file has to stay trustworthy). A resolver that crashed the
+    whole plan over one bad row would be a worse failure than treating that
+    one lot as unusable and warning about the slot it would have fed.
+    """
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class FreezerDraw:
+    """One resolved freezer-origin leftover — `design-04` §4/§6.
+
+    `item` is the drawn lot exactly as `resolve_freezer_draws` found it in
+    the list it was given — already a freeze-time snapshot
+    (`freezer.FreezerItem.storage_class` / `.per_serving`), so a caller that
+    stores this record alongside the slot it fed needs nothing further from
+    `data/freezer.json` to render that slot's macros and label later. That is
+    what lets a cached plan survive the lot being edited or deleted
+    afterwards — a historical plan's truth never depends on the current
+    mutable ledger.
+    """
+
+    slot_id: str
+    item: dict
+    portions: int
+
+
+def resolve_freezer_draws(
+    spec: WeekSpec,
+    slot_ids: Iterable[str],
+    freezer_items: Iterable[dict],
+    today: Optional[date] = None,
+    config: Optional[dict] = None,
+) -> Tuple[WeekSpec, List[FreezerDraw], List[str]]:
+    """Turn each named slot into a freezer-origin leftover, oldest lot first.
+
+    `slot_ids` names the slots to satisfy from the freezer — which slots
+    those are is a `week_shape.freezer_draws` question this function does not
+    ask; it only resolves declarations it is handed (`design-04` §6: "a draw
+    does not name an item… which item is resolved at generation"). Each names
+    exactly one meal's worth: `spec.servings_per_meal` portions, the same
+    figure any other cook slot claims for one meal.
+
+    **Resolution is oldest-suitable-first by `frozen_on`, stable `id` as the
+    tie-break** — a plain ascending sort on `(frozen_on, id)` over every lot
+    with at least `spec.servings_per_meal` portions left unreserved. A lot
+    with an unparsable or missing `frozen_on` is skipped as unusable rather
+    than guessed at (`_parse_freezer_date`).
+
+    **Portions are reserved only in an in-memory dict scoped to this call.**
+    Two draws in the same call cannot claim more of one lot than it has —
+    the second sees the first's reservation and moves on to the next-oldest
+    suitable lot, or fails — but nothing here writes back to
+    `data/freezer.json`; the stored `portions` figure changes only when a
+    person confirms it changed, exactly as `inventory_ledger`'s pantry
+    spending never reaches disk from the planning side.
+
+    **A missing or insufficient lot warns and changes nothing for that
+    slot** — `spec` comes back with that slot exactly as it was handed in,
+    so the caller's fallback (an ordinary cook, or whatever it already was)
+    stands. Design-04 §8: "a plan should not fail to open because the
+    freezer is empty."
+
+    Returns the updated spec, one `FreezerDraw` per slot actually resolved
+    (in call order, not necessarily `slot_ids` order for ties), and every
+    warning — missing/insufficient lots and a lot past its freezer quality
+    window (`freezer_quality_note`, "past its best" wording; still drawn and
+    still present, never refused).
+    """
+    today = today or date.today()
+    items = list(freezer_items)
+    reserved: Dict[str, int] = {}
+    draws: List[FreezerDraw] = []
+    warnings: List[str] = []
+    by_id = spec.by_id()
+    needed = spec.servings_per_meal
+
+    for target_id in slot_ids:
+        if target_id not in by_id:
+            warnings.append(f"{target_id}: not a slot in this week — freezer draw skipped.")
+            continue
+
+        candidates = []
+        for item in items:
+            item_id = item.get("id")
+            frozen_on = _parse_freezer_date(item.get("frozen_on"))
+            if not item_id or frozen_on is None:
+                continue
+            remaining = int(item.get("portions") or 0) - reserved.get(item_id, 0)
+            if remaining < needed:
+                continue
+            candidates.append((frozen_on, item_id, item))
+        candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
+
+        if not candidates:
+            reason = "no lot has enough portions left" if items else "nothing is declared"
+            warnings.append(
+                f"{slot_label(target_id)}: {reason} for a freezer draw — left as planned."
+            )
+            continue
+
+        frozen_on, item_id, item = candidates[0]
+        reserved[item_id] = reserved.get(item_id, 0) + needed
+        spec = link_leftover(spec, target_id, item_id, origin=LINK_ORIGIN_FREEZER)
+        draws.append(FreezerDraw(slot_id=target_id, item=item, portions=needed))
+
+        note = freezer_quality_note(frozen_on, today, item.get("storage_class"), config)
+        if note:
+            label = item.get("label") or "a freezer lot"
+            warnings.append(f"{slot_label(target_id)}: drawing {label} — {note}")
+
+    return spec, draws, warnings
 
 
 def clear_batch_links(spec: WeekSpec) -> WeekSpec:
@@ -1599,6 +1735,16 @@ def validate_week(
         if slot.mode == MODE_LEFTOVER:
             if not slot.source:
                 errors.append(f"{label}: set to leftover but no source meal chosen.")
+            elif slot.link_origin == LINK_ORIGIN_FREEZER:
+                # design-04 §4's one narrow exemption: a freezer draw's source
+                # names a data/freezer.json lot, which predates this week by
+                # definition and is never one of its slot ids. Every check
+                # below — grid membership, same-meal-type-or-dinner, forward-
+                # only ordering — assumes an ordinary leftover and would
+                # reject a genuine freezer draw as malformed. Whether the
+                # named lot actually exists and has enough left is
+                # `resolve_freezer_draws`' question, not the grid's.
+                pass
             else:
                 source = by_id.get(slot.source)
                 if source is None:

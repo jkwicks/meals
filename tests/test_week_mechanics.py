@@ -19,6 +19,7 @@ docstring for why.
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +56,7 @@ def spec_with(modes=None, servings_per_meal=2, days=None, **kw) -> WeekSpec:
                     style=override.get("style"),
                     cuisine=override.get("cuisine"),
                     extra_portions=override.get("extra_portions", 0),
+                    link_origin=override.get("link_origin", wk.LINK_ORIGIN_USER),
                 )
             )
     return WeekSpec(days=days, slots=slots, servings_per_meal=servings_per_meal, **kw)
@@ -177,6 +179,172 @@ class TestValidateWeek(unittest.TestCase):
             "Monday:dinner": {"mode": MODE_COOK, "cuisine": "martian"},
         })
         self.assertGreaterEqual(len(errors), 2)
+
+    def test_a_freezer_leftover_may_point_outside_the_week(self):
+        """design-04 §4's one narrow exemption — a freezer draw's source is a
+        data/freezer.json lot id, never a slot in this grid."""
+        errors = self.errors_for({
+            "Tuesday:lunch": {
+                "mode": MODE_LEFTOVER,
+                "source": "freezer-lot-abc123",
+                "link_origin": wk.LINK_ORIGIN_FREEZER,
+            },
+        })
+        self.assertEqual(errors, [])
+
+    def test_only_the_freezer_origin_gets_the_exemption(self):
+        """A typo'd ordinary leftover must still fail exactly as before —
+        the exemption is keyed on link_origin, not on the shape of source."""
+        errors = self.errors_for({
+            "Tuesday:lunch": {
+                "mode": MODE_LEFTOVER,
+                "source": "freezer-lot-abc123",
+                "link_origin": wk.LINK_ORIGIN_USER,
+            },
+        })
+        self.assertTrue(any("not a slot in this week" in e for e in errors))
+
+    def test_a_freezer_leftover_still_needs_a_source(self):
+        errors = self.errors_for({
+            "Tuesday:lunch": {"mode": MODE_LEFTOVER, "link_origin": wk.LINK_ORIGIN_FREEZER},
+        })
+        self.assertTrue(any("no source meal chosen" in e for e in errors))
+
+
+class TestResolveFreezerDraws(unittest.TestCase):
+    """`resolve_freezer_draws` — design-04 §4/§6/§8's freezer-origin draw
+    resolution: oldest-suitable-first by frozen date, a run-local reservation
+    that can never over-allocate one lot, and an honest warning rather than a
+    failure when the freezer can't cover a draw."""
+
+    def item(self, **overrides):
+        fields = dict(
+            id="lot-a",
+            label="beef massaman",
+            portions=4,
+            cooked_on="2026-08-01",
+            frozen_on="2026-08-01",
+            storage_class="soup_stew_casserole",
+            per_serving={"calories": 450.0, "protein_g": 30.0, "net_carbs_g": 20.0, "fat_g": 15.0},
+            recipe_id="recipe-123",
+        )
+        fields.update(overrides)
+        return fields
+
+    def test_a_suitable_lot_turns_the_slot_into_a_freezer_leftover(self):
+        spec = spec_with()
+        lot = self.item()
+        out, draws, warnings = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [lot])
+
+        slot = out.by_id()["Thursday:lunch"]
+        self.assertEqual(slot.mode, MODE_LEFTOVER)
+        self.assertEqual(slot.source, "lot-a")
+        self.assertEqual(slot.link_origin, wk.LINK_ORIGIN_FREEZER)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(draws), 1)
+        self.assertEqual(draws[0].slot_id, "Thursday:lunch")
+        self.assertEqual(draws[0].item, lot)
+        self.assertEqual(draws[0].portions, spec.servings_per_meal)
+
+    def test_untouched_slots_are_unaffected(self):
+        spec = spec_with()
+        out, _, _ = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [self.item()])
+        self.assertEqual(out.by_id()["Friday:dinner"].mode, MODE_COOK)
+
+    def test_the_older_lot_is_drawn_first(self):
+        older = self.item(id="lot-old", frozen_on="2026-07-01")
+        newer = self.item(id="lot-new", frozen_on="2026-08-15")
+        spec = spec_with()
+        # Order in the input list must not matter — the newer lot is listed
+        # first here on purpose.
+        out, draws, _ = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [newer, older])
+        self.assertEqual(draws[0].item["id"], "lot-old")
+
+    def test_a_tied_freeze_date_breaks_on_the_lower_id(self):
+        first = self.item(id="lot-aaa", frozen_on="2026-08-01")
+        second = self.item(id="lot-bbb", frozen_on="2026-08-01")
+        spec = spec_with()
+        out, draws, _ = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [second, first])
+        self.assertEqual(draws[0].item["id"], "lot-aaa")
+
+    def test_two_draws_cannot_over_allocate_one_lot(self):
+        """Exactly enough for one draw (servings_per_meal=2); a second slot
+        asking for the same lot in the same call is refused, not double-fed."""
+        spec = spec_with()
+        lot = self.item(portions=2)
+        out, draws, warnings = wk.resolve_freezer_draws(
+            spec, ["Thursday:lunch", "Friday:lunch"], [lot]
+        )
+        self.assertEqual(len(draws), 1)
+        self.assertEqual(draws[0].slot_id, "Thursday:lunch")
+        self.assertEqual(out.by_id()["Friday:lunch"].mode, MODE_COOK)
+        self.assertTrue(any("no lot has enough portions left" in w for w in warnings))
+        # The reservation is entirely in-memory — the caller's own dict is
+        # never written to.
+        self.assertEqual(lot["portions"], 2)
+
+    def test_a_second_call_does_not_remember_the_first_ones_reservation(self):
+        """The reservation is scoped to one call, not the lot itself — a
+        caller resolving two separate weeks against the same stock must pass
+        its own accounting, this function keeps none between calls."""
+        lot = self.item(portions=2)
+        spec = spec_with()
+        out1, draws1, _ = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [lot])
+        out2, draws2, _ = wk.resolve_freezer_draws(spec, ["Friday:lunch"], [lot])
+        self.assertEqual(draws1[0].item["id"], draws2[0].item["id"])
+
+    def test_no_stock_at_all_warns_and_leaves_the_slot_alone(self):
+        spec = spec_with()
+        out, draws, warnings = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [])
+        self.assertEqual(draws, [])
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertTrue(any("nothing is declared" in w for w in warnings))
+
+    def test_insufficient_portions_warns_and_leaves_the_slot_alone(self):
+        spec = spec_with()
+        lot = self.item(portions=1)  # servings_per_meal defaults to 2
+        out, draws, warnings = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [lot])
+        self.assertEqual(draws, [])
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertTrue(any("no lot has enough portions left" in w for w in warnings))
+
+    def test_an_unparsable_freeze_date_is_treated_as_unusable_not_a_crash(self):
+        bad = self.item(frozen_on="not-a-date")
+        spec = spec_with()
+        out, draws, warnings = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [bad])
+        self.assertEqual(draws, [])
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertTrue(any("no lot has enough portions left" in w for w in warnings))
+
+    def test_an_unknown_slot_id_warns_and_does_not_crash(self):
+        spec = spec_with()
+        out, draws, warnings = wk.resolve_freezer_draws(
+            spec, ["Someday:brunch"], [self.item()]
+        )
+        self.assertEqual(draws, [])
+        self.assertTrue(any("not a slot in this week" in w for w in warnings))
+
+    def test_a_lot_past_its_freezer_window_still_draws_and_warns(self):
+        """design-04 §8: 'past its best', still selectable/present — never
+        refused, never called unsafe."""
+        old = self.item(frozen_on="2020-01-01")
+        spec = spec_with()
+        out, draws, warnings = wk.resolve_freezer_draws(
+            spec, ["Thursday:lunch"], [old], today=date(2026, 9, 1)
+        )
+        self.assertEqual(len(draws), 1)
+        self.assertEqual(out.by_id()["Thursday:lunch"].mode, MODE_LEFTOVER)
+        self.assertTrue(any("past its best" in w for w in warnings))
+
+    def test_a_freezer_draw_claims_nothing_from_this_weeks_cook_slots(self):
+        """No fourth mode, and no phantom claim on a real cook slot either —
+        claim_counts only ever keys on slot ids that exist in this grid."""
+        spec = spec_with()
+        out, _, _ = wk.resolve_freezer_draws(spec, ["Thursday:lunch"], [self.item()])
+        counts = wk.claim_counts(out)
+        self.assertNotIn("Thursday:lunch", counts)
+        # Every other cook slot still claims exactly itself.
+        self.assertEqual(counts["Friday:dinner"], 1)
 
 
 class TestShoppingWindows(unittest.TestCase):
