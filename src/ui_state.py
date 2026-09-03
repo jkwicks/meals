@@ -52,6 +52,7 @@ from planner import (
     single_serving,
     split_targets,
     storage_spans,
+    week_shape_errors,
     weeknight_prep_minutes,
     workout_session_id,
 )
@@ -115,6 +116,7 @@ from week import (
     PIN_ORIGIN_USER,
     SlotSpec,
     WeekSpec,
+    apply_week_shape,
     clear_cuisines,
     clear_styles,
     cook_day_index,
@@ -618,8 +620,6 @@ PRESET_SEEDED_FIELDS = (
         "training_schedule",
         lambda config: [dict(session) for session in config["training_schedule"]],
     ),
-    ("bulk_prep_enabled", lambda config: config["enable_sunday_prep"]),
-    ("long_cook_enabled", lambda config: config["enable_sunday_prep"]),
     (
         "baseline_cuisine_share",
         lambda config: config["planning_rules"]["min_baseline_cuisine_share"],
@@ -666,11 +666,18 @@ PRESET_FIELD_MULTI_STR = "multi_str"      # multi-select of catalog keys
 PRESET_FIELD_ENUM_OBJECT = "enum_object"  # {sub-key: one of `choices`}
 PRESET_FIELD_NUMBER_OBJECT = "number_object"  # {sub-key: a number}
 PRESET_FIELD_DAY_CARBS = "day_carbs"      # one number per weekday, each its own leaf
+# `{"batches": [...], "freezer_draws": [...]}`, replaced whole — Task 1.2d.
+# Not an `enum_object`/`number_object`: each list holds independently
+# addable/removable records, not a fixed set of sub-keys, so it draws through
+# its own `ui_presets.render_week_shape` rather than `render_object`.
+PRESET_FIELD_WEEK_SHAPE = "week_shape"
 
 # The kinds whose override value is a single object leaf replaced whole —
 # `save_preset`/`preview` treat them as one path, and the editor shows an
-# "Override this" switch (off = not in `overrides`).
-PRESET_OBJECT_KINDS = (PRESET_FIELD_ENUM_OBJECT, PRESET_FIELD_NUMBER_OBJECT)
+# "Override this" switch (off = not in `overrides`). `PRESET_FIELD_WEEK_SHAPE`
+# shares the save/seed machinery (whole-leaf, switch-gated) but not the
+# generic sub-key rendering — see `render_field`'s dispatch in `ui_presets.py`.
+PRESET_OBJECT_KINDS = (PRESET_FIELD_ENUM_OBJECT, PRESET_FIELD_NUMBER_OBJECT, PRESET_FIELD_WEEK_SHAPE)
 
 
 @dataclass(frozen=True)
@@ -773,6 +780,14 @@ PRESET_EDITOR_FIELDS: Tuple[PresetField, ...] = (
         advanced=True, minimum=0, maximum=28, step=1,
         subkeys=("breakfast", "lunch", "dinner"),
     ),
+    PresetField(
+        "week_shape", "week_shape",
+        PRESET_FIELD_WEEK_SHAPE, "Week shape",
+        "Which dishes are batched ahead — a cook day plus the days that eat "
+        "it — and which meals draw from the freezer. Off leaves the base "
+        "config's own declaration; on replaces it whole, including an empty "
+        "list (no automatic batching at all).",
+    ),
 )
 
 
@@ -843,6 +858,22 @@ class PresetPreview:
     changes: List[str]
     day_targets: List[PresetDayTargets]
     identical: bool
+
+
+@dataclass(frozen=True)
+class WeekShapePreview:
+    """What a draft `week_shape` resolves to — Task 1.2d's own on-demand
+    preview, a sibling of `PresetPreview` but over the batch/freezer-draw
+    machinery (`planner.week_shape_errors` then `week.apply_week_shape`)
+    rather than the whole config diff. Computed on a button, never live, and
+    the applier half never runs at all when the shape isn't even coherent —
+    `errors` names why, the same messages `AppConfig`/`save_preset` would
+    raise/refuse on."""
+
+    ok: bool
+    errors: List[str]
+    batch_anchors: Dict[str, Optional[str]]
+    warnings: List[str]
 
 
 @dataclass(frozen=True)
@@ -1132,19 +1163,20 @@ class PlannerState:
     # The popup's picks for the *next* generation only — same "transient,
     # diff-based, never persisted" contract as target_overrides. An empty
     # list means "use config.json's list unchanged"; a non-empty pick
-    # REPLACES the file's list. Booleans default from
-    # config["enable_sunday_prep"] at load() time, so a config that already
-    # had the old feature on opens the popup with both boxes pre-checked.
+    # REPLACES the file's list.
+    #
+    # `bulk_prep_enabled`/`long_cook_enabled` lived here until Task 1.2d
+    # retired them — batches are now `config["week_shape"]`'s own
+    # declaration, edited in the preset editor (`ui_presets.py`) rather than
+    # toggled per run, so there is no longer a staged field for them at all.
     cuisine_override: List[str] = field(default_factory=list)
     diet_style_override: List[str] = field(default_factory=list)
-    bulk_prep_enabled: bool = False
-    long_cook_enabled: bool = False
     # The popup's slider on `planning_rules.min_baseline_cuisine_share` — a
     # scalar, not a list, so unlike cuisine_override/diet_style_override there
     # is no "empty means use the file" state: it always feeds
-    # `planning_config()`, the same way bulk_prep_enabled/long_cook_enabled
-    # do, and is seeded from the file's own value at load() so opening the
-    # popup previews the standing config rather than some other default.
+    # `planning_config()` and is seeded from the file's own value at load() so
+    # opening the popup previews the standing config rather than some other
+    # default.
     baseline_cuisine_share: float = 0.5
     # Workout sessions ({day, time, type, duration_minutes, estimated_burn_kcal}).
     # Seeded from config's `training_schedule` and edited in the drawer; like
@@ -2152,8 +2184,6 @@ class PlannerState:
                                     or self.config["dietary_rules"]["active_diet_styles"]
                                 ),
                             ),
-                            bulk_prep_enabled=self.bulk_prep_enabled,
-                            long_cook_enabled=self.long_cook_enabled,
                             # Same REPLACE-in-place approach as dietary_rules above: only
                             # this one key of planning_rules changes, so it's spread back
                             # in rather than rebuilt, and pick_cuisine_blocks reads it via
@@ -2430,6 +2460,39 @@ class PlannerState:
             changes=changes,
             day_targets=day_targets,
             identical=not changes,
+        )
+
+    def preview_week_shape(self, week_shape_draft: dict) -> WeekShapePreview:
+        """Run the one shared validator/applier against `week_shape_draft` —
+        Task 1.2d's "Preview" button, over the `week_shape` field's own
+        draft (`{"batches": [...], "freezer_draws": [...]}`), never the
+        whole preset.
+
+        Same two functions the loader and `generate_and_store_week` use,
+        in the same order: `planner.week_shape_errors` first — an
+        incoherent draft (unknown meal type, a gap in `serves`, two records
+        claiming one slot) never reaches the applier, exactly as it never
+        reaches generation — then `week.apply_week_shape` over a throwaway
+        spec built the same way `default_week_spec` always is.
+
+        Pure and read-only: no `repository`, no disk, no model. It never
+        touches `self.spec`/`self._spec` (no live-spec mutation — the week
+        canvas has nothing to do with a preset edit), and any freezer
+        reservation `apply_week_shape` makes is local to its own discarded
+        return value, never written back to `self.freezer`.
+        """
+        config = dict(self.base_config, week_shape=week_shape_draft)
+        spec = default_week_spec(config, self.week_start, self.servings)
+        prep_day = resolve_prep_day(spec.days, config)
+        errors = week_shape_errors(config, prep_day)
+        if errors:
+            return WeekShapePreview(ok=False, errors=errors, batch_anchors={}, warnings=[])
+        application = apply_week_shape(spec, week_shape_draft, config, prep_day, self.freezer)
+        return WeekShapePreview(
+            ok=True,
+            errors=[],
+            batch_anchors=application.batch_anchors,
+            warnings=application.warnings,
         )
 
     async def save_preset(

@@ -70,11 +70,13 @@ from week import (
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
-    apply_batch_selections,
+    apply_batch_selections,  # re-export only — test_week_mechanics.py pins its identity; superseded below by apply_week_shape
+    apply_week_shape,
     cook_day_index,
     day_date,
     default_week_spec,
     eaten_on,
+    effective_week_shape,
     fridge_day_gaps,
     humanize,
     location_for,
@@ -8317,13 +8319,39 @@ async def generate_and_store_week(
     # One deterministic point, shared with `ui_generation.generate_week`:
     # after location modes (already applied inside `default_week_spec`),
     # before `resolve_auto_choices` and `validate_week` below, and before the
-    # first model call. `bulk_prep_enabled`/`long_cook_enabled` are review-
-    # dialog-only staged toggles that never reach a CLI/API config, so this is
-    # a no-op here today — the point of this call is that CLI, API and UI now
-    # run the identical function at the identical point, not that CLI/API
-    # gain batching behaviour yet.
-    spec, batch_anchors = apply_batch_selections(spec, config)
-    config = dict(config, **batch_anchors)
+    # first model call. Task 1.2d retired the toggle-driven
+    # `apply_batch_selections` here in favour of the declarative
+    # `week_shape` — unlike the toggles (review-dialog-only staged fields
+    # that never reached a CLI/API config), `week_shape` is a real config key
+    # every entry point loads, so this is the point CLI, API and UI actually
+    # converge on a batching decision rather than merely calling the same
+    # (otherwise inert) function.
+    #
+    # `AppConfig` always fills `config["week_shape"]` in, even when the raw
+    # file never mentioned it, so a fresh, unvalidated read is what tells
+    # `effective_week_shape` a genuine gap apart from an explicit empty
+    # declaration (see its docstring). One extra JSON read is nothing next to
+    # the model calls this run is about to make.
+    raw = await repository.load_config()
+    shape = effective_week_shape(config, "week_shape" in raw)
+    prep_day = resolve_prep_day(spec.days, config)
+    application = apply_week_shape(spec, shape, config, prep_day, await repository.load_freezer())
+    spec = application.spec
+    if note_callback is not None:
+        for warning in application.warnings:
+            note_callback(warning)
+    # `long_cook_anchor`/`bulk_prep_anchor` are still the flat keys
+    # `generate_meal_type_week`'s prompt-building reads (batch_directive_for,
+    # BULK_PREP_RULE/BATCH_ROAST_ANCHOR_RULE) — bridged from the two batches'
+    # own declared names so the shipped shape's prompt guidance stays exactly
+    # what it was under the toggles. A preset naming its batches differently
+    # simply gets neither extra prompt rule; the slot linking above still
+    # applies regardless of name.
+    config = dict(
+        config,
+        long_cook_anchor=application.batch_anchors.get("long-cook"),
+        bulk_prep_anchor=application.batch_anchors.get("bulk-prep"),
+    )
 
     history = await repository.load_history()
     spec = resolve_auto_choices(spec, config, history)

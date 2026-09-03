@@ -182,8 +182,22 @@ class TestALeafIsReplacedWhole(unittest.TestCase):
             day: dict(self.base["weekly_schedule"][day])
             for day in list(self.base["weekly_schedule"])[:3]
         }
+        # The shipped `week_shape` batches (Task 1.2d) serve Monday-Wednesday
+        # from prep day — coherent over a real 7-day week, but a prep-day
+        # batch may never serve the *final* grid day, and shrinking the week
+        # to these same three days makes Wednesday exactly that. Not what
+        # this test is about (whole-key replacement of `weekly_schedule`), so
+        # it neutralises the collision the same way — an explicit whole-key
+        # override — rather than picking days that happen not to collide.
         layered = apply_preset_layer(
-            self.base, preset_file("short", short={"weekly_schedule": three_days})
+            self.base,
+            preset_file(
+                "short",
+                short={
+                    "weekly_schedule": three_days,
+                    "week_shape": {"batches": [], "freezer_draws": []},
+                },
+            ),
         )
         self.assertEqual(len(layered["weekly_schedule"]), 3)
 

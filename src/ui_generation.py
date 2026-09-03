@@ -56,12 +56,15 @@ from ui_theme import (
 from week import (
     MODE_COOK,
     WeekSpec,
-    apply_batch_selections,
+    apply_batch_selections,  # re-export only — test_food_safety.py/test_week_mechanics.py pin its identity; superseded below by apply_week_shape
+    apply_week_shape,
     clear_batch_links,
     clear_cuisines,
     clear_recipe_pins,
     clear_styles,
+    effective_week_shape,
     humanize,
+    resolve_prep_day,
     slot_label,
     validate_week,
 )
@@ -303,34 +306,39 @@ def build_generation(ctx: UIContext) -> GenerationHandles:
         # day permanently. `SlotSpec.link_origin` is what tells the kinds
         # of link apart.
         spec = clear_batch_links(clear_recipe_pins(clear_cuisines(clear_styles(spec))))
-        # Bulk-prep/long-cook are fully-automatic leftover links, applied
-        # before validate_week (so that single pass checks the grid actually
-        # being generated from) and before resolve_auto_choices below (so it
-        # never wastes a style/cuisine pick on a slot about to become a
-        # leftover). Anchors ride on config rather than a new
-        # generate_week_plan parameter — see apply_batch_selections.
-        spec, batch_anchors = apply_batch_selections(spec, config)
-        config = dict(config, **batch_anchors)
+        # Batches and freezer draws are now `config["week_shape"]`'s own
+        # declaration — Task 1.2d retired the two review-dialog toggles this
+        # used to read. Applied before validate_week (so that single pass
+        # checks the grid actually being generated from) and before
+        # resolve_auto_choices below (so it never wastes a style/cuisine pick
+        # on a slot about to become a leftover) — the same insertion point
+        # `planner.generate_and_store_week` uses, so CLI/API and the UI can no
+        # longer disagree about it. `state.base_config` is the raw,
+        # pre-`AppConfig` dict `effective_week_shape` needs to tell an
+        # unmigrated `week.json` (no `week_shape` key at all) apart from one
+        # that explicitly declares no automatic batching.
+        declared = "week_shape" in state.base_config
+        shape = effective_week_shape(config, declared)
+        prep_day = resolve_prep_day(spec.days, config)
+        application = apply_week_shape(spec, shape, config, prep_day, state.freezer)
+        spec = application.spec
+        # `long_cook_anchor`/`bulk_prep_anchor` are still the flat keys
+        # `generate_meal_type_week`'s prompt-building reads — bridged from the
+        # two batches' own declared names so the shipped shape's prompt
+        # guidance stays exactly what it was under the toggles.
+        config = dict(
+            config,
+            long_cook_anchor=application.batch_anchors.get("long-cook"),
+            bulk_prep_anchor=application.batch_anchors.get("bulk-prep"),
+        )
 
-        # apply_batch_selections returns None for a toggle that requested a
-        # batch but never found room to grow one — most often because every
-        # dinner on the grid already feeds the next day's lunch, leaving
-        # nothing for a second batch to claim once the first has run. Surface
-        # that now, not as a dinner card that quietly never says "bulk prep"
-        # on it three weeks from now.
-        stranded = [
-            label
-            for enabled_key, anchor_key, label in (
-                ("long_cook_enabled", "long_cook_anchor", "Long cook"),
-                ("bulk_prep_enabled", "bulk_prep_anchor", "Bulk prep"),
-            )
-            if config.get(enabled_key) and not batch_anchors.get(anchor_key)
-        ]
-        if stranded:
+        # A declared batch or freezer draw that couldn't be honoured this run
+        # — a slot a hand edit has since claimed, stock the freezer doesn't
+        # have — surfaces here rather than as a dinner card that quietly never
+        # got its batch, three weeks from now.
+        if application.warnings:
             ui.notify(
-                f"{' and '.join(stranded)} couldn't find a day with room to grow this run "
-                "— every dinner may already be linked to the next day's lunch. "
-                "Unlink one, or turn off one of the two toggles, to give it room.",
+                "\n".join(application.warnings),
                 type="warning",
                 multi_line=True,
                 close_button=True,

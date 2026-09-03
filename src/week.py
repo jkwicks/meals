@@ -1782,6 +1782,69 @@ def apply_week_shape(
     )
 
 
+# What `apply_batch_selections` has always produced against the shipped
+# config once both toggles were on (design-02 §9's worked example, pinned by
+# `test_the_shipped_migration_shape_is_clean`) — literal, not derived, since
+# the whole point of a declaration is that nothing here searches for it.
+# `config/week.json` now states this explicitly, so `effective_week_shape`
+# below only reaches for it when a raw config predates `week_shape` entirely.
+#
+# Documented removal point: once no `week.json` missing the key is expected
+# to exist any more (the next time this file's schema changes is a natural
+# trigger), delete this constant, `effective_week_shape`, and the "declared"
+# branch in `generate_and_store_week`/`ui_generation.generate_week` that
+# calls it — a raw config will then always carry `week_shape`, even if empty.
+LEGACY_WEEK_SHAPE: Dict[str, list] = {
+    "batches": [
+        {
+            "name": "bulk-prep",
+            "meal_type": "lunch",
+            "cook_on": "prep_day",
+            "serves": ["Monday", "Tuesday", "Wednesday"],
+            "freeze_portions": 0,
+        },
+        {
+            "name": "long-cook",
+            "meal_type": "dinner",
+            "cook_on": "prep_day",
+            "serves": ["Monday", "Tuesday", "Wednesday"],
+            "freeze_portions": 0,
+        },
+    ],
+    "freezer_draws": [],
+}
+
+
+def effective_week_shape(config: dict, week_shape_declared: bool) -> dict:
+    """`config["week_shape"]` to actually apply — Task 1.2d.
+
+    `AppConfig` always fills `week_shape` in, even when the raw `week.json`
+    never mentioned the key at all (`WeekShape`'s own docstring: "every
+    load... produces this same empty value") — so by the time a caller holds
+    a *validated* `config`, absence and an explicit empty declaration already
+    read alike. `week_shape_declared` restores the distinction a caller has
+    to make **before** validation, off the raw dict `repository.load_config()`
+    returns (`"week_shape" in raw`) — this function itself stays pure and
+    takes the answer rather than re-deriving it.
+
+    **Declared** (`week_shape_declared=True`), even as
+    `{"batches": [], "freezer_draws": []}`, is a real, chosen answer and is
+    applied exactly as given — that is what "explicitly empty" means: no
+    automatic batching, on purpose.
+
+    **Absent** is the migration fallback: a `week.json` that predates this
+    key gets `LEGACY_WEEK_SHAPE` above, gated on `enable_sunday_prep` exactly
+    as the retired `bulk_prep_enabled`/`long_cook_enabled` toggles always
+    were (both seeded from it — see the deleted `PRESET_SEEDED_FIELDS`
+    entries) — the shape a fresh, unmigrated checkout has always produced.
+    """
+    if week_shape_declared:
+        return config.get("week_shape") or {"batches": [], "freezer_draws": []}
+    if config.get("enable_sunday_prep"):
+        return LEGACY_WEEK_SHAPE
+    return {"batches": [], "freezer_draws": []}
+
+
 def skip_estimate_totals(slots: Iterable[SlotSpec], day: str) -> Dict[str, float]:
     """`day`'s skipped-but-eaten macros, summed — zeros when there are none.
 

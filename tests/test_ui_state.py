@@ -3851,3 +3851,110 @@ class TestFreezerColdStart(unittest.TestCase):
         self.assertEqual(state.pending_freezer_surplus(), [])
         views = state.slot_views()
         self.assertTrue(all(view.extra_portions == 0 for view in views.values()))
+
+
+# `default_week_spec` (which `preview_week_shape` builds its throwaway spec
+# through) needs `week_defaults` beyond what module-level CONFIG carries —
+# every other test above builds its own spec by hand via `make_spec()` and
+# never reaches it. `DAYS` here is still the module's three-day fixture, so
+# a batch below serves Monday/Tuesday only — Wednesday is this fixture's
+# *final* day, and a prep-day batch may never serve that one (design-02 §7).
+WEEK_SHAPE_BASE_CONFIG = dict(CONFIG, week_defaults={mt: MODE_COOK for mt in MEAL_TYPES})
+
+
+def batch(**fields):
+    declared = {
+        "name": "bulk-prep",
+        "meal_type": "lunch",
+        "cook_on": "prep_day",
+        "serves": ["Monday", "Tuesday"],
+        "freeze_portions": 0,
+    }
+    declared.update(fields)
+    return declared
+
+
+class TestWeekShapeEditorRetiresTheToggles(unittest.TestCase):
+    """Task 1.2d: `bulk_prep_enabled`/`long_cook_enabled` are gone —
+    batching is `config["week_shape"]`'s own declaration now, edited in the
+    preset editor rather than toggled per run."""
+
+    def test_the_retired_fields_are_gone_from_planner_state(self):
+        self.assertFalse(hasattr(ui_state.PlannerState, "bulk_prep_enabled"))
+        self.assertFalse(hasattr(ui_state.PlannerState, "long_cook_enabled"))
+
+    def test_the_retired_fields_are_gone_from_preset_seeded_fields(self):
+        seeded = [name for name, _ in ui_state.PRESET_SEEDED_FIELDS]
+        self.assertNotIn("bulk_prep_enabled", seeded)
+        self.assertNotIn("long_cook_enabled", seeded)
+
+    def test_planning_config_no_longer_carries_the_retired_toggles(self):
+        config = make_state().planning_config()
+        self.assertNotIn("bulk_prep_enabled", config)
+        self.assertNotIn("long_cook_enabled", config)
+
+    def test_week_shape_is_a_managed_preset_editor_field(self):
+        self.assertIn(ui_state.PRESET_FIELD_WEEK_SHAPE, ui_state.PRESET_OBJECT_KINDS)
+        self.assertIn(
+            "week_shape", ui_state.preset_editor_field_paths(WEEK_SHAPE_BASE_CONFIG)
+        )
+
+
+class TestPreviewWeekShape(unittest.TestCase):
+    """`PlannerState.preview_week_shape` — Task 1.2d's on-demand "Preview"
+    button. Runs the same two functions the loader and generation use
+    (`planner.week_shape_errors` then `week.apply_week_shape`) against a
+    draft, and touches nothing else: no repository, no model, no mutation of
+    `state.spec`/`state.freezer`."""
+
+    def make(self, base_config=None, **kw) -> ui_state.PlannerState:
+        return make_state(base_config=base_config or dict(WEEK_SHAPE_BASE_CONFIG), **kw)
+
+    def test_a_coherent_draft_reports_its_batch_anchor(self):
+        state = self.make()
+        shape = {"batches": [batch()], "freezer_draws": []}
+        preview = state.preview_week_shape(shape)
+        self.assertTrue(preview.ok)
+        self.assertEqual(preview.errors, [])
+        self.assertEqual(preview.batch_anchors, {"bulk-prep": "Monday:lunch"})
+        self.assertEqual(preview.warnings, [])
+
+    def test_an_incoherent_draft_reports_errors_never_raises(self):
+        state = self.make()
+        shape = {"batches": [batch(meal_type="brunch")], "freezer_draws": []}
+        preview = state.preview_week_shape(shape)
+        self.assertFalse(preview.ok)
+        self.assertTrue(any("meal_type" in error for error in preview.errors), preview.errors)
+        self.assertEqual(preview.batch_anchors, {})
+        self.assertEqual(preview.warnings, [])
+
+    def test_an_explicitly_empty_draft_previews_as_no_automatic_batching(self):
+        state = self.make()
+        preview = state.preview_week_shape({"batches": [], "freezer_draws": []})
+        self.assertTrue(preview.ok)
+        self.assertEqual(preview.batch_anchors, {})
+        self.assertEqual(preview.warnings, [])
+
+    def test_a_stranded_anchor_is_a_warning_not_a_failure(self):
+        # Every lunch is skipped by the baseline, so the anchor `serves[0]`
+        # names is never a cook slot to link from — `apply_week_shape` skips
+        # the whole batch and says why, the same as it would at generation.
+        state = self.make(
+            base_config=dict(
+                WEEK_SHAPE_BASE_CONFIG,
+                week_defaults={**WEEK_SHAPE_BASE_CONFIG["week_defaults"], "lunch": MODE_SKIP},
+            )
+        )
+        shape = {"batches": [batch()], "freezer_draws": []}
+        preview = state.preview_week_shape(shape)
+        self.assertTrue(preview.ok)
+        self.assertIsNone(preview.batch_anchors["bulk-prep"])
+        self.assertTrue(any("skipped" in warning for warning in preview.warnings), preview.warnings)
+
+    def test_never_mutates_the_live_spec_or_the_freezer_list(self):
+        state = self.make()
+        spec_before = state.spec
+        freezer_before = list(state.freezer)
+        state.preview_week_shape({"batches": [batch()], "freezer_draws": []})
+        self.assertEqual(state.spec, spec_before)
+        self.assertEqual(state.freezer, freezer_before)

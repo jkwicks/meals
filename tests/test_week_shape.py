@@ -40,6 +40,7 @@ import week as wk  # noqa: E402
 from planner import week_shape_errors  # noqa: E402
 from repository import CONFIG_KEY_OWNER, LocalJSONRepository, run_sync  # noqa: E402
 from week import (  # noqa: E402
+    LEGACY_WEEK_SHAPE,
     LINK_ORIGIN_BATCH,
     LINK_ORIGIN_FREEZER,
     LINK_ORIGIN_LOCATION,
@@ -51,6 +52,7 @@ from week import (  # noqa: E402
     SlotSpec,
     WeekSpec,
     apply_week_shape,
+    effective_week_shape,
     prep_day_batch_slot_ids,
     resolve_prep_day,
     slot_id,
@@ -661,6 +663,43 @@ class PrepDayBatchSlotIdsFromWeekShapeTests(unittest.TestCase):
     def test_no_week_shape_at_all_is_unaffected(self):
         self.assertEqual(prep_day_batch_slot_ids({}), set())
         self.assertEqual(prep_day_batch_slot_ids(None), set())
+
+
+class EffectiveWeekShapeTests(unittest.TestCase):
+    """`effective_week_shape` — Task 1.2d's answer to "absent vs explicitly
+    empty", the distinction `WeekShape`'s own docstring says a raw dict has
+    to make *before* `AppConfig` collapses the two together. Both
+    `planner.generate_and_store_week` and `ui_generation.generate_week` call
+    this with the same `"week_shape" in raw` boolean; these pin the pure
+    function they share."""
+
+    def test_declared_and_empty_means_no_automatic_batching(self):
+        empty = {"batches": [], "freezer_draws": []}
+        self.assertEqual(
+            effective_week_shape({"week_shape": empty, "enable_sunday_prep": True}, True),
+            empty,
+        )
+
+    def test_declared_wins_over_enable_sunday_prep_either_way(self):
+        shape = {"batches": [batch()], "freezer_draws": []}
+        config = {"week_shape": shape, "enable_sunday_prep": False}
+        self.assertEqual(effective_week_shape(config, True), shape)
+
+    def test_absent_falls_back_to_the_legacy_shape_when_sunday_prep_is_on(self):
+        config = {"enable_sunday_prep": True}
+        self.assertEqual(effective_week_shape(config, False), LEGACY_WEEK_SHAPE)
+        # And the fallback is itself a coherent shape — the whole point of
+        # naming it after the worked example `WeekShapeErrorsTests` already
+        # pins clean.
+        self.assertEqual(
+            week_shape_errors(config_for(LEGACY_WEEK_SHAPE), OPEN_PREP_DAY), []
+        )
+
+    def test_absent_and_sunday_prep_off_means_no_automatic_batching(self):
+        config = {"enable_sunday_prep": False}
+        self.assertEqual(
+            effective_week_shape(config, False), {"batches": [], "freezer_draws": []}
+        )
 
 
 if __name__ == "__main__":
