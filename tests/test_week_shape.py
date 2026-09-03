@@ -4,7 +4,7 @@ bulk-prep/long-cook toggles: the schema (`WeekShape`/`BatchDeclaration`/
 shared validator, `planner.week_shape_errors`, that both the loader and the
 (later) preset editor run.
 
-Three layers, each covered separately:
+Four layers, each covered separately:
 
 - `WeekShapeErrorsTests` calls the pure function directly with hand-built
   config dicts — one test per rule in design-02 §7, named after the rule.
@@ -15,6 +15,16 @@ Three layers, each covered separately:
   needs no one-off exception for this key — the same claim
   `TestADayScopedDietStyleArrivesFromAPreset` makes for
   `active_diet_styles` in `test_presets.py`.
+- `ApplyWeekShapeTests` (Task 1.2c) covers the literal applier —
+  `week.apply_week_shape` — that turns an already-*coherent* shape (the
+  layer above never re-runs `week_shape_errors`) into grid edits: literal
+  anchoring on `serves[0]`, `spread_batch`'s own linking half for the rest,
+  `resolve_freezer_draws` for the freezer half, and a warning rather than a
+  search whenever a real `WeekSpec` disagrees with an abstractly-coherent
+  declaration. `PrepDayBatchSlotIdsFromWeekShapeTests` covers the one other
+  change this task makes, generalising `prep_day_batch_slot_ids` so a
+  declarative batch's prep-day anchor is discoverable the same way the
+  legacy two-toggle ones always were, with no new config key to merge in.
 
 `unittest` and the `sys.path` insert match `test_week_composition.py`.
 """
@@ -26,9 +36,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import planner  # noqa: E402
+import week as wk  # noqa: E402
 from planner import week_shape_errors  # noqa: E402
 from repository import CONFIG_KEY_OWNER, LocalJSONRepository, run_sync  # noqa: E402
-from week import PrepDayResolution, resolve_prep_day  # noqa: E402
+from week import (  # noqa: E402
+    LINK_ORIGIN_BATCH,
+    LINK_ORIGIN_FREEZER,
+    LINK_ORIGIN_LOCATION,
+    LINK_ORIGIN_USER,
+    MODE_COOK,
+    MODE_LEFTOVER,
+    MODE_SKIP,
+    PrepDayResolution,
+    SlotSpec,
+    WeekSpec,
+    apply_week_shape,
+    prep_day_batch_slot_ids,
+    resolve_prep_day,
+    slot_id,
+)
 
 WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -381,6 +407,260 @@ class WeekShapeArrivesFromAPresetTests(unittest.TestCase):
             )
         self.assertIn("broken", str(caught.exception))
         self.assertIn("meal_type", str(caught.exception))
+
+
+MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack"]
+
+
+def spec_with(modes=None, servings_per_meal=2) -> WeekSpec:
+    """A full 7x4 grid of plain cook slots, `modes` overriding named slot ids
+    — the `test_week_mechanics.spec_with` shape, kept local so this module
+    doesn't reach across a test-to-test import for it."""
+    modes = modes or {}
+    slots = []
+    for day in WEEK:
+        for meal_type in MEAL_TYPES:
+            sid = slot_id(day, meal_type)
+            override = modes.get(sid, {})
+            slots.append(
+                SlotSpec(
+                    day=day,
+                    meal_type=meal_type,
+                    mode=override.get("mode", MODE_COOK),
+                    source=override.get("source"),
+                    recipe_id=override.get("recipe_id"),
+                    extra_portions=override.get("extra_portions", 0),
+                    link_origin=override.get("link_origin", LINK_ORIGIN_USER),
+                )
+            )
+    return WeekSpec(days=WEEK, slots=slots, servings_per_meal=servings_per_meal)
+
+
+def draw(meal_type="lunch", day="Thursday"):
+    return {"meal_type": meal_type, "day": day}
+
+
+def freezer_item(**overrides):
+    fields = dict(
+        id="lot-a",
+        label="beef massaman",
+        portions=4,
+        cooked_on="2026-08-01",
+        frozen_on="2026-08-01",
+        storage_class="soup_stew_casserole",
+        per_serving={"calories": 450.0, "protein_g": 30.0, "net_carbs_g": 20.0, "fat_g": 15.0},
+        recipe_id="recipe-123",
+    )
+    fields.update(overrides)
+    return fields
+
+
+class ApplyWeekShapeTests(unittest.TestCase):
+    """`apply_week_shape` — Task 1.2c. Every case here hands it a shape that
+    `WeekShapeErrorsTests` above would call clean; what's under test is the
+    *application*, not a second pass at coherence."""
+
+    def test_a_batch_anchors_on_its_first_served_day(self):
+        shape = {"batches": [batch(serves=["Monday", "Tuesday", "Wednesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertEqual(result.batch_anchors, {"bulk-prep": "Monday:lunch"})
+        self.assertEqual(result.spec.by_id()["Monday:lunch"].mode, MODE_COOK)
+
+    def test_the_remaining_served_days_are_linked_with_batch_provenance(self):
+        shape = {"batches": [batch(serves=["Monday", "Tuesday", "Wednesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        for day in ("Tuesday", "Wednesday"):
+            slot = result.spec.by_id()[f"{day}:lunch"]
+            self.assertEqual(slot.mode, MODE_LEFTOVER)
+            self.assertEqual(slot.source, "Monday:lunch")
+            self.assertEqual(slot.link_origin, LINK_ORIGIN_BATCH)
+
+    def test_a_day_the_batch_does_not_serve_is_untouched(self):
+        shape = {"batches": [batch(serves=["Monday", "Tuesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertEqual(result.spec.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertEqual(result.warnings, [])
+
+    def test_freeze_portions_lands_on_the_anchors_extra_portions_only(self):
+        shape = {
+            "batches": [batch(serves=["Monday", "Tuesday"], freeze_portions=6)],
+            "freezer_draws": [],
+        }
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertEqual(result.spec.by_id()["Monday:lunch"].extra_portions, 6)
+        self.assertEqual(result.spec.by_id()["Tuesday:lunch"].extra_portions, 0)
+
+    def test_the_shipped_migration_shape_applies_with_no_warnings(self):
+        shape = {
+            "batches": [
+                batch(name="bulk-prep", meal_type="lunch",
+                      serves=["Monday", "Tuesday", "Wednesday"]),
+                batch(name="long-cook", meal_type="dinner",
+                      serves=["Monday", "Tuesday", "Wednesday"]),
+            ],
+            "freezer_draws": [],
+        }
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertEqual(result.warnings, [])
+        self.assertEqual(
+            result.batch_anchors, {"bulk-prep": "Monday:lunch", "long-cook": "Monday:dinner"}
+        )
+        # Three slots claim each anchor (itself plus the two it feeds) —
+        # portions_for is untouched by where the links came from.
+        self.assertEqual(wk.portions_for(result.spec)["Monday:lunch"], 6)
+        self.assertEqual(wk.portions_for(result.spec)["Monday:dinner"], 6)
+
+    def test_an_anchor_thats_not_a_cook_slot_strands_the_whole_batch(self):
+        """No re-anchoring: a batch whose first served day isn't cooking on
+        this grid is skipped outright, never moved to a day that would work."""
+        spec = spec_with({"Monday:lunch": {"mode": MODE_SKIP}})
+        shape = {"batches": [batch(serves=["Monday", "Tuesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec, shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertIsNone(result.batch_anchors["bulk-prep"])
+        self.assertTrue(any("skipped" in w for w in result.warnings), result.warnings)
+        self.assertEqual(result.spec.by_id()["Tuesday:lunch"].mode, MODE_COOK)
+
+    def test_a_location_forced_leftover_on_the_anchor_day_also_strands_it(self):
+        """design-02 §8: location wins on facts — extended to the anchor
+        itself, not only to a target `_claimable` might re-point."""
+        spec = spec_with({
+            "Monday:lunch": {
+                "mode": MODE_LEFTOVER, "source": "placeholder", "link_origin": LINK_ORIGIN_LOCATION,
+            },
+        })
+        shape = {"batches": [batch(serves=["Monday", "Tuesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec, shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertIsNone(result.batch_anchors["bulk-prep"])
+        self.assertEqual(result.spec.by_id()["Monday:lunch"].source, "placeholder")
+
+    def test_a_user_made_link_on_a_served_day_is_left_alone(self):
+        spec = spec_with({
+            "Tuesday:lunch": {
+                "mode": MODE_LEFTOVER, "source": "Monday:dinner", "link_origin": LINK_ORIGIN_USER,
+            },
+        })
+        shape = {"batches": [batch(serves=["Monday", "Tuesday"])], "freezer_draws": []}
+        result = apply_week_shape(spec, shape, config_for(shape), OPEN_PREP_DAY, [])
+        tuesday = result.spec.by_id()["Tuesday:lunch"]
+        self.assertEqual(tuesday.source, "Monday:dinner")
+        self.assertEqual(tuesday.link_origin, LINK_ORIGIN_USER)
+        self.assertTrue(any("already claimed" in w for w in result.warnings), result.warnings)
+
+    def test_a_prep_day_batch_is_skipped_when_this_week_resolved_none(self):
+        shape = {
+            "batches": [batch(cook_on="prep_day", serves=["Monday", "Tuesday"])],
+            "freezer_draws": [],
+        }
+        result = apply_week_shape(spec_with(), shape, config_for(shape), NO_PREP_DAY, [])
+        self.assertIsNone(result.batch_anchors["bulk-prep"])
+        self.assertTrue(any(NO_PREP_DAY.reason in w for w in result.warnings), result.warnings)
+        self.assertEqual(result.spec.by_id()["Tuesday:lunch"].mode, MODE_COOK)
+
+    def test_a_same_week_cook_on_batch_needs_no_prep_day_at_all(self):
+        shape = {
+            "batches": [batch(cook_on="Wednesday", serves=["Wednesday", "Thursday"])],
+            "freezer_draws": [],
+        }
+        result = apply_week_shape(spec_with(), shape, config_for(shape), NO_PREP_DAY, [])
+        self.assertEqual(result.batch_anchors["bulk-prep"], "Wednesday:lunch")
+        self.assertEqual(result.warnings, [])
+
+    def test_a_freezer_draw_is_resolved_through_the_shared_resolver(self):
+        shape = {"batches": [], "freezer_draws": [draw(meal_type="lunch", day="Thursday")]}
+        lot = freezer_item()
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [lot])
+        self.assertEqual(len(result.selected_lots), 1)
+        self.assertEqual(result.selected_lots[0].item, lot)
+        self.assertEqual(result.selected_lots[0].slot_id, "Thursday:lunch")
+        thursday = result.spec.by_id()["Thursday:lunch"]
+        self.assertEqual(thursday.mode, MODE_LEFTOVER)
+        self.assertEqual(thursday.source, "lot-a")
+        self.assertEqual(thursday.link_origin, LINK_ORIGIN_FREEZER)
+        self.assertEqual(result.warnings, [])
+
+    def test_an_unsatisfiable_freezer_draw_warns_and_leaves_the_slot_cooking(self):
+        shape = {"batches": [], "freezer_draws": [draw()]}
+        result = apply_week_shape(spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [])
+        self.assertEqual(result.selected_lots, [])
+        self.assertEqual(result.spec.by_id()["Thursday:lunch"].mode, MODE_COOK)
+        self.assertTrue(any("nothing is declared" in w for w in result.warnings), result.warnings)
+
+    def test_a_batch_and_a_draw_do_not_interfere(self):
+        shape = {
+            "batches": [batch(serves=["Monday", "Tuesday"])],
+            "freezer_draws": [draw(meal_type="lunch", day="Thursday")],
+        }
+        result = apply_week_shape(
+            spec_with(), shape, config_for(shape), OPEN_PREP_DAY, [freezer_item()]
+        )
+        self.assertEqual(result.batch_anchors["bulk-prep"], "Monday:lunch")
+        self.assertEqual(len(result.selected_lots), 1)
+        self.assertEqual(result.warnings, [])
+
+    def test_the_same_shape_applied_twice_to_a_fresh_spec_is_byte_identical(self):
+        shape = {
+            "batches": [
+                batch(name="bulk-prep", meal_type="lunch",
+                      serves=["Monday", "Tuesday", "Wednesday"]),
+                batch(name="long-cook", meal_type="dinner",
+                      serves=["Monday", "Tuesday", "Wednesday"], freeze_portions=4),
+            ],
+            "freezer_draws": [draw(meal_type="lunch", day="Thursday")],
+        }
+        config = config_for(shape)
+        first = apply_week_shape(spec_with(), shape, config, OPEN_PREP_DAY, [freezer_item()])
+        second = apply_week_shape(spec_with(), shape, config, OPEN_PREP_DAY, [freezer_item()])
+        self.assertEqual(first.spec, second.spec)
+        self.assertEqual(first.batch_anchors, second.batch_anchors)
+        self.assertEqual(first.warnings, second.warnings)
+
+    def test_a_previous_runs_anchor_cannot_freeze_the_next_run(self):
+        """Unlike `spread_batch`, this applier never counts what a slot
+        already claims — the anchor is always `serves[0]`, so a stale grid
+        fed back in (a caller that forgot to reset it) still names the same
+        anchor rather than drifting to whatever `spread_batch`'s own
+        claim-counting would have frozen in place."""
+        shape = {"batches": [batch(serves=["Monday", "Tuesday", "Wednesday"])], "freezer_draws": []}
+        config = config_for(shape)
+        first = apply_week_shape(spec_with(), shape, config, OPEN_PREP_DAY, [])
+        second = apply_week_shape(first.spec, shape, config, OPEN_PREP_DAY, [])
+        self.assertEqual(first.batch_anchors, second.batch_anchors)
+        self.assertEqual(second.batch_anchors["bulk-prep"], "Monday:lunch")
+
+
+class PrepDayBatchSlotIdsFromWeekShapeTests(unittest.TestCase):
+    """`prep_day_batch_slot_ids` generalised (Task 1.2c) to read a
+    declarative batch's own `cook_on`/`serves` — the "same anchor data" the
+    legacy `long_cook_anchor`/`bulk_prep_anchor` config keys already fed it —
+    so a declarative prep-day batch needs no third config key merged in."""
+
+    def test_a_prep_day_batch_is_discoverable_straight_off_week_shape(self):
+        shape = {
+            "batches": [batch(cook_on="prep_day", meal_type="dinner", serves=["Monday", "Tuesday"])],
+            "freezer_draws": [],
+        }
+        self.assertEqual(prep_day_batch_slot_ids({"week_shape": shape}), {"Monday:dinner"})
+
+    def test_a_same_week_cook_on_batch_does_not_count_as_prepped_ahead(self):
+        shape = {
+            "batches": [batch(cook_on="Wednesday", serves=["Wednesday", "Thursday"])],
+            "freezer_draws": [],
+        }
+        self.assertEqual(prep_day_batch_slot_ids({"week_shape": shape}), set())
+
+    def test_legacy_and_declarative_anchors_combine(self):
+        shape = {
+            "batches": [batch(cook_on="prep_day", meal_type="dinner", serves=["Tuesday"])],
+            "freezer_draws": [],
+        }
+        self.assertEqual(
+            prep_day_batch_slot_ids({"long_cook_anchor": "Monday:dinner", "week_shape": shape}),
+            {"Monday:dinner", "Tuesday:dinner"},
+        )
+
+    def test_no_week_shape_at_all_is_unaffected(self):
+        self.assertEqual(prep_day_batch_slot_ids({}), set())
+        self.assertEqual(prep_day_batch_slot_ids(None), set())
 
 
 if __name__ == "__main__":

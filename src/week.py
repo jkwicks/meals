@@ -1579,6 +1579,209 @@ def apply_batch_selections(spec: WeekSpec, config: dict) -> Tuple[WeekSpec, dict
     return spec, anchors
 
 
+@dataclass(frozen=True)
+class WeekShapeApplication:
+    """What came of turning `config["week_shape"]` into grid edits —
+    design-02 §4/§8, the return of `apply_week_shape` (Task 1.2c).
+
+    `batch_anchors` maps each batch's own declared `name` to the slot id it
+    anchored on — `None` for a batch that named an anchor this grid could not
+    honour this run. Same "declared, but stranded" shape
+    `apply_batch_selections` already returns for its two fixed names,
+    generalised to however many `week_shape.batches` names.
+
+    `selected_lots` is exactly `resolve_freezer_draws`' own `draws` return:
+    every freezer item this run actually drew from, oldest-suitable-first,
+    reserved only for the life of this call — design-04 §4/§6's "selected
+    lots".
+
+    `warnings` is every reason a declared batch link or freezer draw could
+    not be honoured, in prose. Never raised: `week_shape_errors` is what
+    refuses an *incoherent* shape, at load time, before this ever runs. What
+    reaches here is a shape that is coherent in the abstract but has met a
+    real grid it cannot quite have — a slot a hand edit has since claimed, a
+    lot the freezer no longer holds enough of.
+    """
+
+    spec: WeekSpec
+    batch_anchors: Dict[str, Optional[str]]
+    selected_lots: List[FreezerDraw]
+    warnings: List[str]
+
+
+def apply_week_shape(
+    spec: WeekSpec,
+    week_shape: dict,
+    config: dict,
+    prep_day: PrepDayResolution,
+    freezer_items: Iterable[dict],
+    today: Optional[date] = None,
+) -> WeekShapeApplication:
+    """Turn a validated `config["week_shape"]` into grid edits — design-02's
+    replacement for `apply_batch_selections`'s two hard-coded toggles.
+
+    **Applied, never searched** (design-02 §2). Every fact this needs — which
+    day a batch anchors on, which days it serves, which lot a draw prefers —
+    is already named in `week_shape` or resolved by `resolve_freezer_draws`'s
+    own oldest-first rule. There is no day preference, no candidate
+    filtering and no re-anchoring: a batch that cannot be applied exactly as
+    declared is skipped and warned about, never quietly moved to a day that
+    would work instead.
+
+    `week_shape` is trusted to already be **coherent in the abstract** —
+    `week_shape_errors` (run at config load, and from Task 1.2d before every
+    preset save) is what rejects an unknown meal type, a non-contiguous
+    `serves`, a fridge window it can't reach, or two records claiming one
+    slot, and this function does not repeat those checks. What it does still
+    guard against is a *real* `WeekSpec` disagreeing with an abstractly
+    coherent shape — a slot a hand edit has since claimed, or a `cook_on:
+    "prep_day"` batch meeting a week whose `prep_day` argument (unlike the one
+    `week_shape_errors` checked at load) has since resolved to none. Passed
+    in rather than re-derived, exactly as `week_shape_errors` takes it,
+    since every caller already has it.
+
+    **The anchor is `serves[0]`, literally** — `slot_id(serves[0],
+    meal_type)` — never chosen. It must already be an ordinary `MODE_COOK`
+    slot (a pinned favourite is fine — `_claimable`'s docstring is why a pin
+    only ever blocks a *target*, never an anchor) or the whole batch is
+    skipped: reusing an already-cooking slot is applying the declaration,
+    forcing a skipped or location-leftover slot into one is the
+    re-anchoring design-02 §2 rules out — the same "location still wins on
+    facts" precedence §8 there describes for a *target*, extended to the
+    anchor itself.
+
+    **Linking `serves[1:]` reuses `spread_batch`'s own linking half
+    unchanged** (`_claimable`, `_releasable_dependants`, `leftover_link_error`,
+    `link_leftover`, tagged `LINK_ORIGIN_BATCH`) — design-03 §6: "`spread_batch`
+    supplies the linking." A day that can't be claimed (a user's own link, a
+    pin, a dependant only a hand edit could free) is skipped with a warning
+    and the walk moves to the next declared day — not the "candidate search"
+    design-02 rules out, because no *other* day is ever substituted for the
+    one that failed; the batch just ends up serving fewer of the days it
+    named.
+
+    **Surplus is stamped onto `extra_portions`, nothing more.**
+    `freeze_portions` lands on the anchor slot exactly where a
+    `spread_batch`-built batch already carries it, so `week.portions_for`,
+    recipe scaling and shopping need nothing new to read it. Turning that
+    surplus into an actual `data/freezer.json` row is a decision made *after
+    the cook*, not here (design-04 §6a: "declared before the run and
+    confirmed after" — Task 1.1d's `record_freezer_surplus`, dated via
+    `is_prepped_ahead`/`freezer_cooked_on`). This function never touches the
+    repository and never writes a lot.
+
+    **A `cook_on: "prep_day"` batch needs no new bookkeeping to be found
+    later.** `prep_day_batch_slot_ids` (below) reads `week_shape` directly, so
+    a batch's anchor is discoverable from the same dict this function was
+    handed the moment it is part of `config` — nothing here has to merge an
+    anchor back into `config` for `storage_safety_errors`,
+    `is_sunday_prepped` or `freezer_cooked_on` to find it.
+
+    Freezer draws are one call to `resolve_freezer_draws` — oldest-suitable
+    stock, reserved only for this call, a `LINK_ORIGIN_FREEZER` leftover per
+    slot, an honest warning (never a raised error) for a slot the freezer
+    can't cover. `selected_lots` on the result is exactly its `draws` return.
+
+    **Idempotent on a fresh spec.** Every edit here is driven by what
+    `week_shape` and `freezer_items` say, never by what the grid already has
+    claimed — unlike `spread_batch`, there is no `existing_claims` count that
+    would make a previous run's own output look partially satisfied, so
+    nothing here needs `clear_batch_links` run first to stay honest: applying
+    the same shape to the same fresh spec twice produces the same grid both
+    times, and no run's chosen anchor can freeze the next one's.
+    """
+    batches = week_shape.get("batches") or []
+    draw_declarations = week_shape.get("freezer_draws") or []
+
+    batch_anchors: Dict[str, Optional[str]] = {
+        raw_batch.get("name"): None for raw_batch in batches
+    }
+    warnings: List[str] = []
+
+    for raw_batch in batches:
+        name = raw_batch.get("name")
+        meal_type = raw_batch.get("meal_type")
+        serves = raw_batch.get("serves") or []
+        cook_on = raw_batch.get("cook_on")
+        freeze_portions = raw_batch.get("freeze_portions") or 0
+        label = f"batch '{name}'"
+
+        if cook_on == "prep_day" and prep_day.day is None:
+            warnings.append(
+                f"{label}: cook_on is 'prep_day', but this week has none — "
+                f"{prep_day.reason or 'no prep day was resolved'} — skipped."
+            )
+            continue
+
+        anchor_id = slot_id(serves[0], meal_type)
+        anchor = spec.by_id().get(anchor_id)
+        if anchor is None:
+            warnings.append(f"{label}: {slot_label(anchor_id)} isn't a slot in this week — skipped.")
+            continue
+        if anchor.mode != MODE_COOK:
+            warnings.append(
+                f"{label}: {slot_label(anchor_id)} isn't a cook slot to anchor on "
+                f"(it's {anchor.mode}) — no re-anchoring, so this batch is skipped."
+            )
+            continue
+
+        batch_anchors[name] = anchor_id
+        if freeze_portions:
+            spec = spec.model_copy(
+                update={
+                    "slots": [
+                        slot.model_copy(update={"extra_portions": freeze_portions})
+                        if slot.id == anchor_id
+                        else slot
+                        for slot in spec.slots
+                    ]
+                }
+            )
+
+        for day in serves[1:]:
+            target_id = slot_id(day, meal_type)
+            target = spec.by_id().get(target_id)
+            if target is None:
+                warnings.append(f"{label}: {slot_label(target_id)} isn't a slot in this week — left as planned.")
+                continue
+            if not _claimable(target, anchor_id):
+                reason = "a pinned recipe" if target.mode == MODE_COOK else f"a {target.link_origin}-made link"
+                warnings.append(
+                    f"{label}: {slot_label(target_id)} is already claimed ({reason}) — left as planned."
+                )
+                continue
+            releasing = _releasable_dependants(spec, target_id)
+            if releasing is None:
+                warnings.append(
+                    f"{label}: {slot_label(target_id)} feeds a link only a hand edit can free — "
+                    "left as planned."
+                )
+                continue
+            trial = spec
+            for dependant_id in releasing:
+                trial = unlink_leftover(trial, dependant_id)
+            error = leftover_link_error(trial, target_id, anchor_id)
+            if error:
+                warnings.append(f"{label}: {error}")
+                continue
+            spec = link_leftover(trial, target_id, anchor_id, origin=LINK_ORIGIN_BATCH)
+
+    draw_slot_ids = [
+        slot_id(draw["day"], draw["meal_type"]) for draw in draw_declarations
+    ]
+    spec, selected_lots, draw_warnings = resolve_freezer_draws(
+        spec, draw_slot_ids, freezer_items, today=today, config=config
+    )
+    warnings.extend(draw_warnings)
+
+    return WeekShapeApplication(
+        spec=spec,
+        batch_anchors=batch_anchors,
+        selected_lots=selected_lots,
+        warnings=warnings,
+    )
+
+
 def skip_estimate_totals(slots: Iterable[SlotSpec], day: str) -> Dict[str, float]:
     """`day`'s skipped-but-eaten macros, summed — zeros when there are none.
 
@@ -1951,13 +2154,32 @@ def prep_day_batch_slot_ids(config: Optional[dict]) -> Set[str]:
     `cook_day_index` is where it belonged anyway: it reads two config keys and
     answers a question about the grid, with no model, recipe or repository in
     sight.
+
+    **A declarative `week_shape` batch (Task 1.2c) needs no third config key
+    beside the legacy two.** `apply_week_shape` never merges its anchors back
+    into `config` — a `cook_on: "prep_day"` batch is already answerable
+    straight from `week_shape` itself: its anchor is `serves[0]`'s slot,
+    exactly as `apply_week_shape` computes it. So this folds `config["week_shape"]`'s
+    own `batches` in too, the same "anchor data" `week_shape_errors` already
+    reads at load time to check the very same `cook_on` field — one config
+    dict, one place that says what "prepped ahead" means, however many
+    batches a shape declares (`long_cook_anchor`/`bulk_prep_anchor` cap the
+    legacy toggle path at exactly two).
     """
     config = config or {}
-    return {
+    ids = {
         value
         for value in (config.get("long_cook_anchor"), config.get("bulk_prep_anchor"))
         if value
     }
+    for raw_batch in (config.get("week_shape") or {}).get("batches") or []:
+        if raw_batch.get("cook_on") != "prep_day":
+            continue
+        serves = raw_batch.get("serves") or []
+        meal_type = raw_batch.get("meal_type")
+        if serves and meal_type:
+            ids.add(slot_id(serves[0], meal_type))
+    return ids
 
 
 def span_days(spec: WeekSpec, cook_id: str, prepped_ahead: bool = False) -> int:
