@@ -29,5 +29,9 @@
       }
     },
     "perishable_day_gap": 3
+  },
+  "week_shape": {
+    "batches": [],
+    "freezer_draws": []
   }
 }

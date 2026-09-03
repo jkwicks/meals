@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import planner  # noqa: E402
-from repository import LocalJSONRepository, run_sync  # noqa: E402
+from repository import CONFIG_KEY_OWNER, LocalJSONRepository, run_sync  # noqa: E402
 
 SNAPSHOT = Path(__file__).resolve().parent / "fixtures" / "config_snapshot.json"
 
@@ -93,6 +93,15 @@ class TestMergedConfigIsUnchanged(unittest.TestCase):
         # after which every other test here passes vacuously.
         self.assertGreaterEqual(len(self.snapshot), 20)
         self.assertIn("weekly_schedule", self.snapshot)
+
+    def test_week_shape_is_a_new_key_not_in_the_frozen_snapshot(self):
+        # design-02: added after the snapshot was captured, so it is asserted
+        # here directly rather than by regenerating the fixture — "additions
+        # are allowed" per this module's own docstring. Owned by week.json,
+        # the same file as `enable_sunday_prep`/`inventory_rules` beside it.
+        self.assertNotIn("week_shape", self.snapshot)
+        self.assertEqual(self.config["week_shape"], {"batches": [], "freezer_draws": []})
+        self.assertEqual(CONFIG_KEY_OWNER["week_shape"], "week.json")
 
 
 class TestThePresetLayerChangesNothingShipped(unittest.TestCase):

@@ -65,6 +65,8 @@ from week import (
     MODE_LEFTOVER,
     MODE_SKIP,
     PIN_ORIGIN_USER,
+    PREP_DAY_INDEX,
+    PrepDayResolution,
     ShoppingWindow,
     SlotSpec,
     WeekSpec,
@@ -76,12 +78,14 @@ from week import (
     fridge_day_gaps,
     humanize,
     location_for,
+    location_mode,
     location_rule,
     meal_types,
     parse_slot_id,
     pin_recipe,
     pin_style,
     portions_for,
+    resolve_prep_day,
     shopping_windows,
     skip_estimate_totals,
     slot_id,
@@ -93,6 +97,7 @@ from week import (
     styles_for,
     validate_week,
     week_date_range,
+    week_days,
 )
 
 # Explicit path rather than a bare `load_dotenv()`. The no-arg form searches
@@ -846,6 +851,219 @@ def active_diet_styles(
         "dietary_rules.active_diet_styles",
         warn=warn,
     )
+
+
+def week_shape_errors(config: dict, prep_day: PrepDayResolution) -> List[str]:
+    """Every reason `config["week_shape"]` does not name a coherent grid —
+    design-02 §7's load-time checks, as one function rather than seven.
+
+    **The one shared validator.** `AppConfig.week_shape_is_coherent` calls
+    this at load, and the preset editor design-03 §4.2 asks for (Task 1.2d)
+    will call it again before a save through the same `resolve_preset_layer`
+    path `save_preset` already uses for every other cross-field rule — one
+    function, so the two can never accept a shape the other refuses. Pure:
+    no disk, no `WeekSpec`, nothing but `config` and `week.py`'s own
+    deterministic readers over the **fresh, location-resolved** grid
+    `apply_batch_selections` has always assumed (design-02 §8) — never a
+    generated or hand-edited one.
+
+    `prep_day` is `week.resolve_prep_day`'s answer for this config's week —
+    passed in rather than recomputed here, since every caller already has it
+    (an `AppConfig` model_validator sees `base_schedule`/`location_rules`
+    directly; nothing here needs to re-derive it).
+
+    Deliberately typed loosely on `BatchDeclaration`/`FreezerDrawDeclaration`
+    (plain `str`, not `Literal` weekday names) for the same reason
+    `DietaryRules.active_diet_styles` is: every rule about what makes one of
+    these coherent lives here, once, rather than half in a Pydantic
+    constraint and half in a model_validator — the same "no one-off
+    exception" the leaf-path resolver already gives a preset override.
+
+    Ten checks, most named directly in design-02 §7:
+
+    - a batch name is non-empty and unique;
+    - `meal_type` is one this config actually generates;
+    - `serves` names only weekdays this week plans, at least one, no
+      duplicate, in week order;
+    - `serves` is **contiguous** — a gap is not a shortened batch, it is an
+      undeclared freezer draw (design-02 §5), and is reported as one rather
+      than silently trimmed;
+    - `cook_on` is `"prep_day"` or `serves`' own first day — a batch anchors
+      on the first slot it serves (design-02 §4a), so naming any other real
+      day is a contradiction, not a second, independent fact;
+    - a `"prep_day"` `cook_on` needs an actual resolved prep day this week —
+      `prep_day.reason` says why there is none, when there isn't;
+    - the last served day sits inside Prompt 10's conservative (worst-case,
+      pre-recipe) fridge window, measured from prep day (`PREP_DAY_INDEX`) or
+      from `cook_on` itself — past it needs a freezer draw, never a silently
+      shortened batch;
+    - a prep-day batch never serves the week's final day — `spread_batch`'s
+      own `exclude_target_days` rule, restated here so the declaration fails
+      before generation rather than during it;
+    - location rules don't skip this meal type on any served day — a batch
+      can't anchor on, or hand a leftover to, a day the week itself skips;
+    - no two batches, or a batch and a freezer draw, claim one (day,
+      meal_type) slot.
+
+    **Not checked, on purpose:** whether a `freezer_draws` entry can actually
+    be satisfied. Stock is observed, mutable state (`data/freezer.json`) —
+    design-04 §4/design-02 §7 are explicit that an empty freezer is a
+    `resolve_freezer_draws` *warning* at generation, never a load failure, so
+    this function has no business asking. And "no user-origin link
+    overwritten": `apply_location_modes` only ever tags a leftover it makes
+    `LINK_ORIGIN_LOCATION` (never `LINK_ORIGIN_USER`), so a fresh grid has
+    nothing of the user's for a declared batch to overwrite in the first
+    place — the applier (Task 1.2c) still carries the real guard for a spec a
+    later run has since hand-edited.
+    """
+    shape = config.get("week_shape") or {}
+    batches = shape.get("batches") or []
+    draws = shape.get("freezer_draws") or []
+    errors: List[str] = []
+
+    days = week_days(config)
+    known_meal_types = meal_types(config)
+    allowed_gap = fridge_day_gaps(STORAGE_CLASS_DEFAULT, config)
+    claimed: Dict[Tuple[str, str], str] = {}
+
+    def claim(day: str, claim_meal_type: str, label: str) -> None:
+        key = (day, claim_meal_type)
+        holder = claimed.get(key)
+        if holder is not None:
+            errors.append(
+                f"{label}: {day} {claim_meal_type} is already claimed by {holder}."
+            )
+            return
+        claimed[key] = label
+
+    seen_names: Set[str] = set()
+    for index, raw_batch in enumerate(batches):
+        name = raw_batch.get("name")
+        label = f"batch '{name}'" if name else f"batch #{index + 1}"
+
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{label}: a batch must have a non-empty name.")
+            continue
+        if name in seen_names:
+            errors.append(f"{label}: batch names must be unique.")
+            continue
+        seen_names.add(name)
+
+        meal_type = raw_batch.get("meal_type")
+        if meal_type not in known_meal_types:
+            errors.append(
+                f"{label}: meal_type '{meal_type}' is not one of {known_meal_types}."
+            )
+            continue
+
+        serves = raw_batch.get("serves") or []
+        unknown = [day for day in serves if day not in WEEKDAY_NAMES]
+        if unknown:
+            errors.append(f"{label}: serves names unknown weekday(s) {unknown}.")
+            continue
+        if not serves:
+            errors.append(f"{label}: serves must name at least one day.")
+            continue
+        if len(set(serves)) != len(serves):
+            errors.append(f"{label}: serves names a day more than once.")
+            continue
+        not_this_week = [day for day in serves if day not in days]
+        if not_this_week:
+            errors.append(
+                f"{label}: serves names {not_this_week}, which this week doesn't plan."
+            )
+            continue
+        indices = [days.index(day) for day in serves]
+        if indices != sorted(indices):
+            errors.append(
+                f"{label}: serves must be in week order — {', '.join(serves)} isn't."
+            )
+            continue
+        if any(later - earlier != 1 for earlier, later in zip(indices, indices[1:])):
+            errors.append(
+                f"{label}: serves has a gap between {serves[0]} and {serves[-1]} — "
+                "a day this batch doesn't reach needs its own freezer draw, not a "
+                "shortened batch."
+            )
+            continue
+
+        anchor = serves[0]
+        cook_on = raw_batch.get("cook_on")
+        if cook_on == "prep_day":
+            if prep_day.day is None:
+                errors.append(
+                    f"{label}: cook_on is 'prep_day', but this week has none — "
+                    f"{prep_day.reason or 'no prep day was resolved'}."
+                )
+                continue
+            if days[-1] in serves:
+                errors.append(
+                    f"{label}: a prep-day batch may not serve {days[-1]}, the week's "
+                    "final day."
+                )
+                continue
+            origin_index = PREP_DAY_INDEX
+        elif cook_on == anchor:
+            origin_index = indices[0]
+        elif cook_on in days:
+            errors.append(
+                f"{label}: cook_on '{cook_on}' must be 'prep_day' or serves' first day "
+                f"'{anchor}' — a batch anchors on the first slot it serves."
+            )
+            continue
+        else:
+            errors.append(
+                f"{label}: cook_on '{cook_on}' is neither 'prep_day' nor a day this "
+                "week plans."
+            )
+            continue
+
+        last_gap = indices[-1] - origin_index
+        if last_gap > allowed_gap:
+            errors.append(
+                f"{label}: {serves[-1]} is {last_gap} day(s) after it's cooked, past "
+                f"the {allowed_gap}-day fridge window — draw the rest from the "
+                "freezer instead of extending the batch."
+            )
+            continue
+
+        blocked = [day for day in serves if location_mode(config, day, meal_type) == MODE_SKIP]
+        if blocked:
+            errors.append(
+                f"{label}: location rules skip {meal_type} on {blocked} — a batch "
+                "can neither anchor on nor serve a day the week itself skips."
+            )
+            continue
+
+        for day in serves:
+            claim(day, meal_type, label)
+
+    for index, raw_draw in enumerate(draws):
+        meal_type = raw_draw.get("meal_type")
+        day = raw_draw.get("day")
+        label = (
+            f"freezer draw ({day} {meal_type})"
+            if isinstance(day, str) and isinstance(meal_type, str)
+            else f"freezer draw #{index + 1}"
+        )
+
+        if meal_type not in known_meal_types:
+            errors.append(f"{label}: meal_type '{meal_type}' is not one of {known_meal_types}.")
+            continue
+        if day not in WEEKDAY_NAMES:
+            errors.append(f"{label}: day '{day}' is not a weekday name.")
+            continue
+        if day not in days:
+            errors.append(f"{label}: day '{day}' is not a day this week plans.")
+            continue
+
+        # `claim` also catches two identical draws declared twice — the
+        # second sees the first's entry in `claimed` exactly as it would a
+        # colliding batch, so there is nothing this loop needs to track
+        # separately.
+        claim(day, meal_type, label)
+
+    return errors
 
 
 def _active_on(days: Optional[List[str]], day: str) -> bool:
@@ -2117,6 +2335,73 @@ class UISettings(BaseModel):
     title_tooltip_chars: int = 38
 
 
+class BatchDeclaration(BaseModel):
+    """One `week_shape.batches` record — design-02 §4: a bulk-prep or
+    long-cook dish, declared rather than searched for.
+
+    Typed loosely (plain `str`, no `Literal` weekday/meal-type vocabulary,
+    no `min_length` on `name`) for the same reason
+    `DietaryRules.active_diet_styles` stays a loose `List[Union[str, dict]]`:
+    every rule about what makes one of these coherent — a known weekday, a
+    known meal type, a name that's actually unique, an anchor that's actually
+    reachable — lives in `week_shape_errors`, the one function both the
+    loader and the preset editor (Task 1.2d) call. A Pydantic-level copy of
+    any of those same checks would be a second interpretation, free to
+    disagree with it — exactly the "no one-off exception" the leaf-path
+    resolver already holds a preset override to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    meal_type: str
+    # `"prep_day"` or the same weekday `serves[0]` names — see
+    # `week_shape_errors` for why those are the only two legal values.
+    cook_on: str
+    serves: List[str] = Field(default_factory=list)
+    # `extra_portions` under a name that says where the spare goes —
+    # design-02 §6a.1: "serves is the input; the portion count is the
+    # output," so this adds *on top of* what `serves` already claims rather
+    # than replacing it. Never a separate declared total (`week.portions_for`
+    # already derives one from `serves` alone; see design-02 §6).
+    freeze_portions: int = Field(default=0, ge=0)
+
+
+class FreezerDrawDeclaration(BaseModel):
+    """One `week_shape.freezer_draws` record — design-02 §4/§6.
+
+    Names a meal to fill from the freezer, never an item: which lot actually
+    feeds it is resolved at generation time, oldest-suitable first
+    (`week.resolve_freezer_draws`) — design-00 F1's pull-versus-push line.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    meal_type: str
+    day: str
+
+
+class WeekShape(BaseModel):
+    """`config["week_shape"]` — design-02: the week's batches and freezer
+    draws, declared and applied, never searched for.
+
+    Both lists default empty, which is what every load produces once
+    `week_shape` is actually applied (Task 1.2c) means "no automatic
+    batching" — a real, chosen answer. **Absence** of the key from the raw
+    file is a *different*, migration-only fallback design-02 §4a/§9
+    describes (the two review-dialog toggles, until they're retired in Task
+    1.2d), and telling the two apart is a question about the raw config
+    dict before it reaches this model, never about this model itself — every
+    load, including one from a `week.json` that never mentions the key at
+    all, produces this same empty value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    batches: List[BatchDeclaration] = Field(default_factory=list)
+    freezer_draws: List[FreezerDrawDeclaration] = Field(default_factory=list)
+
+
 # The two macros that have both a calculated form and a hand-written one, and
 # therefore need somebody to say which is live. Fat is absent because it is
 # always derived (`derive_fat_g`) and `net_carbs_g` because it has no
@@ -2299,6 +2584,12 @@ class AppConfig(BaseModel):
     inventory_to_clear: List[Union[str, Dict[str, Any]]] = Field(default_factory=list)
     enable_sunday_prep: bool = False
     max_prep_active_mins: int = 120
+    # design-02: the declarative replacement for the bulk-prep/long-cook
+    # toggles — owned by week.json, the same file as `enable_sunday_prep`
+    # beside it. Not yet applied anywhere (Task 1.2c); this is the schema
+    # plus `week_shape_is_coherent` below, the one shared validator design-03
+    # §4.2 asks for.
+    week_shape: WeekShape = Field(default_factory=WeekShape)
     dietary_rules: DietaryRules = Field(default_factory=DietaryRules)
     planning_rules: PlanningRules = Field(default_factory=PlanningRules)
     inventory_rules: InventoryRules = Field(default_factory=InventoryRules)
@@ -2350,6 +2641,39 @@ class AppConfig(BaseModel):
             raise ValueError(
                 f"dietary_rules.active_diet_styles names unknown diet_styles entries: "
                 f"{unknown}. Known: {sorted(self.diet_styles)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def week_shape_is_coherent(self) -> "AppConfig":
+        """`week_shape` names a coherent grid — design-02 §7, run through
+        `week_shape_errors`, the one shared function (see its own docstring).
+
+        Lives here, not on `WeekShape` itself, for the same reason
+        `diet_styles_are_known` lives here rather than on `DietaryRules`:
+        the checks need fields `WeekShape` cannot see on its own —
+        `meal_types`, the week's own days, and `base_schedule`/
+        `location_rules`, which together resolve the prep day this batch
+        shape is checked against.
+        """
+        days = week_days({"weekly_schedule": self.weekly_schedule, "week_start_day": self.week_start_day})
+        prep_day = resolve_prep_day(
+            days, {"base_schedule": self.base_schedule, "location_rules": self.location_rules}
+        )
+        errors = week_shape_errors(
+            {
+                "week_shape": self.week_shape.model_dump(),
+                "meal_types": self.meal_types,
+                "weekly_schedule": self.weekly_schedule,
+                "week_start_day": self.week_start_day,
+                "base_schedule": self.base_schedule,
+                "location_rules": self.location_rules,
+            },
+            prep_day,
+        )
+        if errors:
+            raise ValueError(
+                "week_shape is not usable:\n" + "\n".join(f"  - {error}" for error in errors)
             )
         return self
 

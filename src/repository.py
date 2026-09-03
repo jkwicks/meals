@@ -92,6 +92,10 @@ CONFIG_FILES = {
         "max_prep_active_mins",
         "inventory_to_clear",
         "inventory_rules",
+        # design-02: the declarative batches/freezer-draws replacement for the
+        # bulk-prep/long-cook toggles — the shape of the week, same as every
+        # other key in this file.
+        "week_shape",
     ),
     # Where you are and what you are doing — the *declared* week. An
     # integration that later observes any of this writes a cache into `data/`
