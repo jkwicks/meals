@@ -1,0 +1,152 @@
+
+===== run =====
+task: 1.2c — **1.2c — Literal applier** (`src/week.py`; extend `tests/test_week_shape.py`): one pure applier receiving a fresh, location-resolved week spec, the resolved shape, config, prep-day resolution and Task 1.1's freezer snapshot, returning the updated spec, batch anchors, selected lots and structured warnings. Each batch anchors on its first named eating slot, links exactly the remaining named slots with batch provenance, and stamps surplus onto the anchor's existing spare-portions path; prep-day batches are identified through the same anchor data the existing prep consumers read; no candidate search, no day preference, no re-anchoring. Freezer draws call Task 1.1's resolver: oldest suitable stock, run-local reservation only, leftover-mode slot with freezer provenance, honest shortfall on missing stock. Surplus scales portions, recipe scaling and shopping through the existing path and creates a **pending** lot dated from resolved prep day (prep batch) or the declared cook day — it never writes the observed-stock store. The same valid shape applied twice to a fresh spec is byte-identical; no previous run's chosen anchor can freeze the next run.
+tier: 1 (aider-deepseek-direct)
+model: deepseek/deepseek-chat
+agent: aider
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-03 06:38:15
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.2c — Literal applier** (`src/week.py`; extend `tests/test_week_shape.py`): one pure applier receiving a fresh, location-resolved week spec, the resolved shape, config, prep-day resolution and Task 1.1's freezer snapshot, returning the updated spec, batch anchors, selected lots and structured warnings. Each batch anchors on its first named eating slot, links exactly the remaining named slots with batch provenance, and stamps surplus onto the anchor's existing spare-portions path; prep-day batches are identified through the same anchor data the existing prep consumers read; no candidate search, no day preference, no re-anchoring. Freezer draws call Task 1.1's resolver: oldest suitable stock, run-local reservation only, leftover-mode slot with freezer provenance, honest shortfall on missing stock. Surplus scales portions, recipe scaling and shopping through the existing path and creates a **pending** lot dated from resolved prep day (prep batch) or the declared cook day — it never writes the observed-stock store. The same valid shape applied twice to a fresh spec is byte-identical; no previous run's chosen anchor can freeze the next run.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+Warning: Input is not a terminal (fd=0).
+Warning: deepseek/deepseek-chat expects these environment variables
+- DEEPSEEK_API_KEY: Not set
+You can skip this check with --no-show-model-warnings
+https://aider.chat/docs/llms/warnings.html
+Aider v0.86.2
+Model: deepseek/deepseek-chat with diff edit format, prompt cache, infinite
+output
+Git repo: .git with 116 files
+Repo-map: using 2048 tokens, auto refresh
+Added dev/task-queue.md to the chat.
+litellm.AuthenticationError: AuthenticationError: DeepseekException -
+Authentication Fails (governor)
+The API provider is not able to authenticate you. Check your API key.
+
+-- aider-deepseek-direct finished: ok (exit 0)
+
+===== verification gate =====
+$ venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+go here
+Go to https://microsoft.com/devicelogin and enter ABCD-1234
+Catching up 2 missing day(s): catchup-ran through 2026-09-02
+Catching up 2 missing day(s): catchup-ran through 2026-08-26
+............................................................................dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.........................................................................................................................................................................................inventory_to_clear: ignoring entry with no item name: {'quantity_g': 600}
+inventory_to_clear: ignoring unreadable quantity_g 'lots' for tuna
+..............................................................................................................................Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 830 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+....................................Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+...................................................................................................................................................................................measured TDEE of 1014 kcal is more than 25% from the formula's 2628 — ignoring it and planning on the formula. Usually under-logged intake or a weigh-in series dominated by water weight.
+.....the diet-style ceiling is below what locked protein and carbs already cost (800 kcal on Monday, Wednesday) — fat floors at 0 and those days will not reconcile against 4p + 4c + 9f. Raise the ceiling or lower weekly_schedule's net_carbs_g.
+..........................................................................................................................................................2 more day(s) (catchup-ran through 2026-09-02) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-08-26 through 2026-08-26) were not fetched and will be picked up on the next run.
+.2 more day(s) (catchup-ran through 2026-08-26) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-09-02 through 2026-09-02) were not fetched and will be picked up on the next run.
+........................................................................................................................................................................................................................................training_schedule: ignoring session with unknown type 'gym' on Monday
+training_schedule: ignoring session with unknown type 'gym' on Monday
+...................................................................................................................................................................................................................................Monday breakfast: ignoring meal_override without a calories target
+.Monday: ignoring meal_override for unknown meal type 'brunch' (known: breakfast, lunch, dinner, snack)
+......................................................................................................
+----------------------------------------------------------------------
+Ran 1332 tests in 0.535s
+
+OK
+exit 0
+
+===== verified =====

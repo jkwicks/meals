@@ -1,0 +1,177 @@
+
+===== run =====
+task: 1.1b — **1.1b — Typed lot model + observed-stock repository** (a non-UI model module + `src/repository.py`; new `tests/test_freezer.py`): a typed lot with stable generated identity (two lots of one dish remain distinct), user-facing label, declared integer meal portions, required cooked/frozen ISO dates (frozen never before cooked), and freeze-time snapshots of storage class and per-serving macros; recipe identity is optional provenance only — never the live source of a lot's macros or class. Add narrowly named async repository operations following the adherence/catalog shapes: load-all (missing file ⇒ empty), upsert-by-stable-id preserving unrelated rows, delete — all through the repository's one JSON write path; no widget or planner function opens the store directly, and the store is app-written data, never routed through the config-save path. Round-trip tests cover add, update, delete, stable ids, two lots of one recipe, missing file, and preservation of unrelated rows.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-02 17:47:47
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.1b — Typed lot model + observed-stock repository** (a non-UI model module + `src/repository.py`; new `tests/test_freezer.py`): a typed lot with stable generated identity (two lots of one dish remain distinct), user-facing label, declared integer meal portions, required cooked/frozen ISO dates (frozen never before cooked), and freeze-time snapshots of storage class and per-serving macros; recipe identity is optional provenance only — never the live source of a lot's macros or class. Add narrowly named async repository operations following the adherence/catalog shapes: load-all (missing file ⇒ empty), upsert-by-stable-id preserving unrelated rows, delete — all through the repository's one JSON write path; no widget or planner function opens the store directly, and the store is app-written data, never routed through the config-save path. Round-trip tests cover add, update, delete, stable ids, two lots of one recipe, missing file, and preservation of unrelated rows.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+I'll start by reading the task queue to confirm the exact task, then inspect the existing codebase patterns for repository operations and typed models.
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+→ Read(/Users/jasonandlyn/code/meals/src/repository.py)
+→ Bash(grep -n "class RejectionEntry\|class AdherenceEntry\|class WorkoutCompletion\|class Rec…)
+→ Bash(grep -n "storage_window\|storage_class\|storage_day_gaps\|freezer_months\|freezer_quali…)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(grep -n "def per_serving_macros\|per_serving_macros" /Users/jasonandlyn/code/meals/src/…)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(grep -n "^MACRO_KEYS\|^NUTRIENT_KEYS\|MACRO_KEYS =\|NUTRIENT_KEYS =" /Users/jasonandlyn…)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(grep -n "^MACRO_KEYS" /Users/jasonandlyn/code/meals/src/week.py; grep -n "from week imp…)
+→ Bash(ls /Users/jasonandlyn/code/meals/dev/ | grep -i design)
+→ Read(/Users/jasonandlyn/code/meals/dev/design-04-freezer-and-prep.md)
+→ Bash(grep -n "skip_estimate\|class SlotSpec\|LINK_ORIGIN\|link_origin" /Users/jasonandlyn/co…)
+→ Bash(grep -rn "FreezerItem\|FreezerLot\|freezer_lot\|ObservedLot\|freezer\.py\|LINK_ORIGIN_F…)
+There's a full PROMPT-11.md with exact specs. Let me read it in full since it's the authoritative source for this exact task.
+→ Read(/Users/jasonandlyn/code/meals/dev/PROMPT-11.md)
+→ Bash(grep -n "FreezerItem\|storage_class_label\|STORAGE_CLASSES\|freezer_months\|freezer_qua…)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Bash(grep -n "fromisoformat\|model_validator\|field_validator" /Users/jasonandlyn/code/meals…)
+→ Bash(grep -n "^class .*BaseModel\|@field_validator\|@model_validator\|Field(" /Users/jasonan…)
+→ Bash(grep -n "default_factory\|model_validator\|import uuid\|from pydantic import" /Users/ja…)
+→ Read(/Users/jasonandlyn/code/meals/tests/test_food_safety.py)
+Now let me check `test_adherence.py` for the repository round-trip test pattern to mirror exactly, and check the `repository.py` async test helper conventions.
+→ Read(/Users/jasonandlyn/code/meals/tests/test_adherence.py)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(grep -n "pydantic" /Users/jasonandlyn/code/meals/requirements.txt; /Users/jasonandlyn/c…)
+Good, Pydantic v2. Now let's write `src/freezer.py`.
+→ Write(/Users/jasonandlyn/code/meals/src/freezer.py)
+→ Edit(/Users/jasonandlyn/code/meals/src/repository.py)
+Now the abstract interface methods on `PlanRepository`, placed near the adherence/catalog methods for discoverability:
+→ Edit(/Users/jasonandlyn/code/meals/src/repository.py)
+Now the `LocalJSONRepository` concrete async methods, placed near the adherence concrete methods:
+→ Edit(/Users/jasonandlyn/code/meals/src/repository.py)
+Now the blocking worker-thread helpers. I'll add them near `_delete_catalog_recipe`:
+→ Edit(/Users/jasonandlyn/code/meals/src/repository.py)
+→ Bash(venv/bin/python -m compileall -q src/freezer.py src/repository.py && echo OK)
+Now let's quickly sanity-check the model behaves as expected via a scratch import before writing the full test suite.
+→ Bash(venv/bin/python - <<'EOF' import sys sys.path.insert(0, "src") from freezer import Free…)
+The model behaves correctly. Now let's write `tests/test_freezer.py`, covering the model validation and the repository round-trip.
+→ Write(/Users/jasonandlyn/code/meals/tests/test_freezer.py)
+→ Bash(venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s t…)
+All 1271 tests pass. Now let's tick the checkbox for subtask 1.1b.
+→ Edit(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+`★ Insight ─────────────────────────────────────`
+Three modeling decisions worth flagging: (1) `FreezerItem.id` uses a Pydantic `default_factory=lambda: uuid.uuid4().hex` rather than having the repository assign it (as `_toggle_favorite`/`_import_recipe` do for the plain-dict recipe catalog) — since this store is a *typed* model, the id belongs on the type itself, generated once at construction and never recomputed, unlike the catalog's content-hash id which deliberately changes when content does. (2) The cross-field "frozen never before cooked" check uses `@model_validator(mode="after")` rather than a `field_validator` on `frozen_on` — Pydantic v2 doesn't guarantee field-validation order is safe to lean on for cross-field comparisons, so `mode="after"` (which runs once every field has already passed its own validation) is the reliable place for it. (3) `storage_class` and `per_serving` stayed `Optional` rather than required, mirroring the design doc's explicit allowance for a hand-declared lot with no recipe behind it — the "infer from catalog or default to zero" resolution is deliberately deferred to a later subtask (1.1c/1.1d), so the model only needed to be able to *represent* that missing state, not resolve it.
+`─────────────────────────────────────────────────`
+
+Implemented subtask **1.1b**: a new `src/freezer.py` module holds `FreezerItem` — a Pydantic model with a stable generated `id`, required `label`/`portions`, required ISO `cooked_on`/`frozen_on` (rejecting `frozen_on < cooked_on`), and optional freeze-time snapshots of `storage_class` (validated against `week.STORAGE_CLASSES`) and `per_serving` macros (validated against `week.MACRO_KEYS`), with `recipe_id` kept as provenance-only. `src/repository.py` gained `load_freezer`/`save_freezer_item`/`delete_freezer_item` on both `PlanRepository` and `LocalJSONRepository`, storing to `data/freezer.json` via the existing atomic-write path, deliberately excluded from `CONFIG_FILES`. `tests/test_freezer.py` covers model validation and repository round-trips (add, update, delete, distinct ids for two lots of one dish, missing file, and preservation of unrelated rows). Full suite (1271 tests) passes.
+
+-- claude-pro finished: ok (exit 0)
+
+===== verification gate =====
+$ venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+go here
+Go to https://microsoft.com/devicelogin and enter ABCD-1234
+Catching up 2 missing day(s): catchup-ran through 2026-09-01
+Catching up 2 missing day(s): catchup-ran through 2026-08-26
+............................................................................dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.........................................................................................................................................................................................inventory_to_clear: ignoring entry with no item name: {'quantity_g': 600}
+inventory_to_clear: ignoring unreadable quantity_g 'lots' for tuna
+..............................................................................................................................Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 830 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+....................................Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+...................................................................................................................................................................................measured TDEE of 1014 kcal is more than 25% from the formula's 2628 — ignoring it and planning on the formula. Usually under-logged intake or a weigh-in series dominated by water weight.
+.....the diet-style ceiling is below what locked protein and carbs already cost (800 kcal on Monday, Wednesday) — fat floors at 0 and those days will not reconcile against 4p + 4c + 9f. Raise the ceiling or lower weekly_schedule's net_carbs_g.
+..........................................................................................................................................................2 more day(s) (catchup-ran through 2026-09-01) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-08-26 through 2026-08-26) were not fetched and will be picked up on the next run.
+.2 more day(s) (catchup-ran through 2026-08-26) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-09-01 through 2026-09-01) were not fetched and will be picked up on the next run.
+...............................................................................................................................................................................................................training_schedule: ignoring session with unknown type 'gym' on Monday
+training_schedule: ignoring session with unknown type 'gym' on Monday
+..............................................................................................................................................................................................................Monday breakfast: ignoring meal_override without a calories target
+.Monday: ignoring meal_override for unknown meal type 'brunch' (known: breakfast, lunch, dinner, snack)
+.......................................................................................
+----------------------------------------------------------------------
+Ran 1271 tests in 0.536s
+
+OK
+exit 0
+
+===== verified =====

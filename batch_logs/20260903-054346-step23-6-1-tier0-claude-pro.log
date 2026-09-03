@@ -1,0 +1,67 @@
+
+===== run =====
+task: 6.1 — **Task 6.1: Training analytics & fatigue controller** — **PENDING: no prompt written yet; read-only signals first**
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-03 06:45:20
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **Task 6.1: Training analytics & fatigue controller** — **PENDING: no prompt written yet; read-only signals first**
+  - **Origin:** none on disk (no corresponding analytics/fatigue prompt file exists); the governing specification is `dev/design-06-exercise-planning.md` **§8 — "How this joins the larger feedback controller"**, with the fatigue matrix design in `docs/periodization-engine.md`
+  - **Targets:** TBD once the prompt is written (expected: the analytics/nutrition engine, the sync surfaces, and the Today/Insights surfaces + dedicated tests)
+  - **Objective:** Layer the feedback controller onto the controlled object Phase 5 builds (actual exercises, doses, progression proposals), across `design-06` §8's horizons: **morning** readiness (HRV/RHR/sleep) → cap RPE, reduce sets, replace HIIT; **session** response → hold/progress/substitute an exercise; **week** → e1RM, hard sets, adherence → progress volume or trigger deload; **block** → fatigue matrix + goal → change program/deload structure; **periodic** functional assessments → change emphasis. **Read-only signals first:** before any separately tested control rule exists, readiness data may only be surfaced as read-only context — the binding rule Phase 5 already works under — and no automated deload, fatigue matrix, or functional-test diagnosis is implemented in passing.
+  - **Grounding / Dependencies:** Gates: Task 5.1 complete (the controlled object must exist before anything controls it); Task 2.3 (Hevy strength history) for evidence-backed weekly signals; the morning-readiness signals already synced by the existing biometric integrations. **First action in this task: write the prompt** (design → a new `dev/PROMPT-1x.md` in the house prompt format, with §8 as its spine), then decompose into atomic subtasks here.
+  - **Verification:** Verification Gate once specified and implemented; until then this checkbox stays unticked as a planning reminder.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+You've hit your session limit · resets 10:40am (Australia/Melbourne)
+! You've hit your session limit · resets 10:40am (Australia/Melbourne)
+
+-- claude-pro finished: failed (exit 1)
+
+===== the claude run failed =====

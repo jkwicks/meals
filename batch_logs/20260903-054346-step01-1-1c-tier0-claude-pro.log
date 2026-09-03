@@ -1,0 +1,214 @@
+
+===== run =====
+task: 1.1c — **1.1c — Freezer-origin draws** (`src/week.py`; extend `tests/test_week_mechanics.py`): extend the slot link vocabulary with a freezer provenance so an external source is valid **only** for a freezer draw; ordinary user/location/batch leftovers still require a real earlier cook slot. Resolve draws oldest-suitable-first by freeze date with stable id as tie-break; reserve portions only in the run's in-memory snapshot (two draws cannot over-allocate one lot within a plan) while stored portions stay unchanged. A missing or insufficient lot warns and the plan still opens. If the cleanest representation needs the plan to snapshot the lots it used, do so: a cached plan must still render its macros and label after the store is edited — a historical plan's truth never depends on the current mutable ledger.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-03 05:43:48
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.1c — Freezer-origin draws** (`src/week.py`; extend `tests/test_week_mechanics.py`): extend the slot link vocabulary with a freezer provenance so an external source is valid **only** for a freezer draw; ordinary user/location/batch leftovers still require a real earlier cook slot. Resolve draws oldest-suitable-first by freeze date with stable id as tie-break; reserve portions only in the run's in-memory snapshot (two draws cannot over-allocate one lot within a plan) while stored portions stay unchanged. A missing or insufficient lot warns and the plan still opens. If the cleanest representation needs the plan to snapshot the lots it used, do so: a cached plan must still render its macros and label after the store is edited — a historical plan's truth never depends on the current mutable ledger.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+I'll start by reading the task queue and the relevant prior work to understand the conventions already established.
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+→ Bash(git log --oneline -5 -- src/week.py src/lots.py 2>/dev/null; echo "---"; git show --sta…)
+→ Read(/Users/jasonandlyn/code/meals/src/freezer.py)
+→ Bash(grep -n "freezer\|Freezer" src/repository.py)
+→ Read(/Users/jasonandlyn/code/meals/src/repository.py)
+Good, this confirms `load_freezer` returns plain dicts. Now let's inspect `week.py` for the slot link vocabulary — the leftover mode, `link_leftover`, storage class resolution, `WeekSpec`, `CookEvent`/`SlotSpec`, etc.
+→ Bash(wc -l src/week.py; echo "---"; grep -n "^def \|^class \|^MODE_\|^LINK_ORIGIN\|MACRO_KEY…)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Bash(sed -n '1,400p' /Users/jasonandlyn/code/meals/dev/design-04-freezer-and-prep.md 2>/dev/…)
+→ Read(/Users/jasonandlyn/code/meals/tests/test_freezer.py)
+→ Bash(sed -n '400,700p' /Users/jasonandlyn/code/meals/dev/design-04-freezer-and-prep.md)
+→ Bash(sed -n '1,250p' /Users/jasonandlyn/code/meals/dev/PROMPT-11.md 2>/dev/null)
+→ Bash(grep -rn "class WeekPlan\|day_slot_macros\|class CookEvent" src/*.py | head -30)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Bash(grep -n "freezer\|Freezer\|LINK_ORIGIN" /Users/jasonandlyn/code/meals/tests/test_week_m…)
+→ Read(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+→ Bash(grep -n "^class \|def test_" /Users/jasonandlyn/code/meals/tests/test_week_mechanics.py…)
+Let's look at the `TestValidateWeek` class in full to match the exact testing style for the leftover validation tests.
+→ Read(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+→ Bash(grep -n "date.today()\|today: date\|today: Optional\[date\]" /Users/jasonandlyn/code/me…)
+Now I have enough context. Let me check the exact `pick_cuisine_blocks`-style conventions once more and view the small area around `unlink_leftover`/`clear_batch_links` boundary for insertion, then implement.
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+Now I'll implement the changes. First, extend the `LINK_ORIGIN_*` vocabulary and its documentation block.
+→ Edit(/Users/jasonandlyn/code/meals/src/week.py)
+Now let's update the `SlotSpec.source` and `SlotSpec.link_origin` field docs to reflect the new vocabulary member.
+→ Edit(/Users/jasonandlyn/code/meals/src/week.py)
+→ Edit(/Users/jasonandlyn/code/meals/src/week.py)
+Now let's update `validate_week`'s `MODE_LEFTOVER` branch to add the freezer exemption.
+→ Edit(/Users/jasonandlyn/code/meals/src/week.py)
+Now let's add the `FreezerDraw` dataclass and `resolve_freezer_draws` resolver, placed alongside the other leftover-linking mechanics.
+→ Edit(/Users/jasonandlyn/code/meals/src/week.py)
+Let's compile-check before writing tests.
+→ Bash(venv/bin/python -m compileall -q src/week.py && echo OK)
+Now let's extend `spec_with`'s test helper to accept `link_origin`, and write the new test classes in `tests/test_week_mechanics.py`.
+→ Read(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+→ Edit(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+→ Edit(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+Let me move that local `datetime` import to the top of the file for consistency with the rest of the codebase's style.
+→ Edit(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+→ Edit(/Users/jasonandlyn/code/meals/tests/test_week_mechanics.py)
+Now let's run the full verification gate.
+→ Bash(venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s t…)
+All 1286 tests pass. Let's confirm the new tests were actually collected and run (not skipped) by checking the count specifically.
+→ Bash(venv/bin/python -m unittest tests.test_week_mechanics.TestResolveFreezerDraws tests.tes…)
+Let's review the final diff for cleanliness.
+→ Bash(git diff --stat && git diff src/week.py)
+→ Bash(venv/bin/python -c " import ast tree = ast.parse(open('src/week.py').read()) print('par…)
+→ Bash(git diff tests/test_week_mechanics.py | head -100)
+Diff looks clean and matches the codebase's style. Now let's update `dev/task-queue.md`, ticking exactly the 1.1c checkbox.
+→ Edit(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+Final verification run to confirm everything is green before finishing.
+→ Bash(venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s t…)
+→ Bash(venv/bin/python -m unittest discover -s tests -v 2>&1 | grep -c "^test_" ; echo "---"; …)
+Confirmed: all 15 new tests are present and the full suite (1286 tests) passes cleanly. The task-queue checkbox for 1.1c is now ticked.
+
+**Summary of the change** (`src/week.py`, `tests/test_week_mechanics.py`):
+→ Bash(git status --short)
+`★ Insight ─────────────────────────────────────`
+Two design choices worth flagging: **the resolver never mutates the caller's freezer-item dicts** — it tracks consumption in a fresh `reserved: Dict[str, int]` local to each call, so `data/freezer.json`'s stored `portions` figure can only ever change via an explicit confirmation elsewhere. This is the same "declared, not inferred" principle CLAUDE.md applies to the pantry ledger — a planning pass must never look like it silently adjusted what you actually own.
+
+Second, `validate_week`'s new `elif slot.link_origin == LINK_ORIGIN_FREEZER: pass` branch is deliberately a no-op rather than a parallel validation path — it just *skips* the grid-membership checks that don't apply to external stock, leaving `resolve_freezer_draws` as the single place that judges whether a freezer link is actually sound. Two functions checking the same thing two different ways is exactly the kind of drift this codebase's docs warn about repeatedly (e.g. the `/api/recipes` filter bug).
+`─────────────────────────────────────────────────`
+
+Implemented **1.1c — Freezer-origin draws** entirely in `src/week.py`:
+- Added `LINK_ORIGIN_FREEZER` to the link-origin vocabulary, with docs explaining it's the one origin whose `source` names a `data/freezer.json` lot id rather than a slot in the grid.
+- Extended `validate_week`'s leftover checks with the one narrow exemption design-04 §4 calls for — freezer-origin leftovers skip grid-membership/meal-type/ordering checks; user/location/batch leftovers are unaffected.
+- Added `resolve_freezer_draws(spec, slot_ids, freezer_items, today=None, config=None)`, returning `(WeekSpec, List[FreezerDraw], List[str])`: oldest-suitable-first by `frozen_on` with stable-`id` tie-break, an in-memory-only reservation so two draws can't over-allocate one lot, graceful handling of missing/insufficient/malformed lots (warns, leaves the slot untouched), and a "past its best" warning (reusing the existing `freezer_quality_note`) for an aged lot that still gets drawn.
+- `FreezerDraw` carries the resolved lot's dict verbatim, satisfying the "cached plan must survive a store edit" requirement without needing to touch `planner.py`'s `WeekPlan` (out of this subtask's scope).
+
+Added 15 new tests (3 in `TestValidateWeek`, 12 in a new `TestResolveFreezerDraws`) covering the exemption, oldest-first ordering, tie-breaking, reservation/over-allocation, missing/insufficient stock, malformed dates, unknown slot ids, and the quality-window warning. Full suite: 1286 tests pass. Checkbox ticked in `dev/task-queue.md`.
+
+-- claude-pro finished: ok (exit 0)
+
+===== verification gate =====
+$ venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+go here
+Go to https://microsoft.com/devicelogin and enter ABCD-1234
+Catching up 2 missing day(s): catchup-ran through 2026-09-02
+Catching up 2 missing day(s): catchup-ran through 2026-08-26
+............................................................................dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.dynamic targets unavailable, using config.json targets — ValueError: No current weight available: pass a weigh-in with 'weight_kg' as latest_biometrics, or set 'current_weight_kg' on user_profile.
+.........................................................................................................................................................................................inventory_to_clear: ignoring entry with no item name: {'quantity_g': 600}
+inventory_to_clear: ignoring unreadable quantity_g 'lots' for tuna
+..............................................................................................................................Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 830 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+favorite id-Broken is not a usable recipe, generating that slot instead: ValidationError: 1 validation error for Recipe
+Monday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 573 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 0 of 2000 kcal — no flexible slot to absorb the difference
+....................................Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+.Monday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Tuesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Wednesday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Thursday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Friday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Saturday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+Sunday plans 708 of 2000 kcal — no flexible slot to absorb the difference
+...................................................................................................................................................................................measured TDEE of 1014 kcal is more than 25% from the formula's 2628 — ignoring it and planning on the formula. Usually under-logged intake or a weigh-in series dominated by water weight.
+.....the diet-style ceiling is below what locked protein and carbs already cost (800 kcal on Monday, Wednesday) — fat floors at 0 and those days will not reconcile against 4p + 4c + 9f. Raise the ceiling or lower weekly_schedule's net_carbs_g.
+..........................................................................................................................................................2 more day(s) (catchup-ran through 2026-09-02) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-08-26 through 2026-08-26) were not fetched and will be picked up on the next run.
+.2 more day(s) (catchup-ran through 2026-08-26) were not fetched and will be picked up on the next run.
+.1 more day(s) (2026-09-02 through 2026-09-02) were not fetched and will be picked up on the next run.
+...............................................................................................................................................................................................................training_schedule: ignoring session with unknown type 'gym' on Monday
+training_schedule: ignoring session with unknown type 'gym' on Monday
+..............................................................................................................................................................................................................Monday breakfast: ignoring meal_override without a calories target
+.Monday: ignoring meal_override for unknown meal type 'brunch' (known: breakfast, lunch, dinner, snack)
+......................................................................................................
+----------------------------------------------------------------------
+Ran 1286 tests in 0.524s
+
+OK
+exit 0
+
+===== verified =====

@@ -1,0 +1,47 @@
+
+===== run =====
+task: 1.1a — **1.1a — Prep-day resolution from reality** (`src/week.py`; extend `tests/test_week_mechanics.py`): whether a week includes prep stays a preference; **where** prep lands is derived from the location schedule — walk backward from the day before the week starts over the two prior days only, taking the first day whose location permits a prep session (falling back to that location's long-cook permission; Home when no usable location rule exists). If neither candidate works: no prep day, plus a reason the UI can say; never silently move earlier. One shared resolved prep value feeds every prep-day consumer (batch safety origin, prep column, storage wording, surplus dating) — no caller keeps a second hard-coded answer.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-02 17:36:01
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.1a — Prep-day resolution from reality** (`src/week.py`; extend `tests/test_week_mechanics.py`): whether a week includes prep stays a preference; **where** prep lands is derived from the location schedule — walk backward from the day before the week starts over the two prior days only, taking the first day whose location permits a prep session (falling back to that location's long-cook permission; Home when no usable location rule exists). If neither candidate works: no prep day, plus a reason the UI can say; never silently move earlier. One shared resolved prep value feeds every prep-day consumer (batch safety origin, prep column, storage wording, surplus dating) — no caller keeps a second hard-coded answer.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+
+===== interrupted =====

@@ -1,0 +1,93 @@
+
+===== run =====
+task: 1.2b — **1.2b — Schema + one shared validator** (`src/planner.py`, `src/presets.py`; new `tests/test_week_shape.py`, extend `tests/test_config_layout.py`): add the shape as a core top-level key owned by the week config file and declared on the app config; presets override it (or supported leaves beneath it) through the standard typed leaf-path resolver with **no one-off exception**. One validation function, used both by the editor before save and at config load, checks the resolved shape against the resolved base config and resolved prep day: unique non-empty batch names; known meal types and weekday names; a cook anchor that is the prep day or a real day in the week; non-empty, week-ordered, duplicate-free eating days, contiguous for refrigerated leftovers; no two batches (or batch plus draw) claiming one slot; the first served slot able to hold the cook anchor after location rules; subsequent served slots valid leftover targets; no user-origin link overwritten; every served day within Prompt 10's conservative required storage window from its real cook origin — a gap or out-of-window day must suggest a freezer draw, never be silently shortened; a prep-day batch never serves the final grid day; surplus is a non-negative integer; an unsatisfiable freezer draw is a **warning** (stock is observed mutable state), not a load error. Failures name preset, record and field; the editor leaves the preset file byte-identical on failure.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-03 06:32:16
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.2b — Schema + one shared validator** (`src/planner.py`, `src/presets.py`; new `tests/test_week_shape.py`, extend `tests/test_config_layout.py`): add the shape as a core top-level key owned by the week config file and declared on the app config; presets override it (or supported leaves beneath it) through the standard typed leaf-path resolver with **no one-off exception**. One validation function, used both by the editor before save and at config load, checks the resolved shape against the resolved base config and resolved prep day: unique non-empty batch names; known meal types and weekday names; a cook anchor that is the prep day or a real day in the week; non-empty, week-ordered, duplicate-free eating days, contiguous for refrigerated leftovers; no two batches (or batch plus draw) claiming one slot; the first served slot able to hold the cook anchor after location rules; subsequent served slots valid leftover targets; no user-origin link overwritten; every served day within Prompt 10's conservative required storage window from its real cook origin — a gap or out-of-window day must suggest a freezer draw, never be silently shortened; a prep-day batch never serves the final grid day; surplus is a non-negative integer; an unsatisfiable freezer draw is a **warning** (stock is observed mutable state), not a load error. Failures name preset, record and field; the editor leaves the preset file byte-identical on failure.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+→ Bash(wc -l dev/task-queue.md && grep -n "1.2\|week_shape\|WeekShape\|batch_name\|cook_anchor…)
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+→ Bash(git log --oneline -5 -- src/week.py && echo --- && git show 929225d --stat)
+→ Bash(git show 929225d -- src/week.py src/planner.py)
+→ Bash(ls dev/ | grep -i "design-02\|PROMPT-12\|design-03\|design-04")
+→ Read(/Users/jasonandlyn/code/meals/dev/design-02-week-shape.md)
+→ Read(/Users/jasonandlyn/code/meals/dev/PROMPT-12.md)
+→ Bash(grep -n "CONFIG_FILES" /Users/jasonandlyn/code/meals/src/repository.py | head -30)
+→ Read(/Users/jasonandlyn/code/meals/src/repository.py)
+→ Read(/Users/jasonandlyn/code/meals/src/repository.py)
+→ Read(/Users/jasonandlyn/code/meals/config/week.json)
+→ Bash(grep -n "^class \|^CONFIG_FILES\|^from repository\|^import repository" /Users/jasonandl…)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+Let me see the rest of `AppConfig` and its validators.
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(wc -l /Users/jasonandlyn/code/meals/src/presets.py)
+→ Read(/Users/jasonandlyn/code/meals/src/presets.py)
+→ Bash(grep -n "CONFIG_FILES\|CONFIG_KEY_OWNER" /Users/jasonandlyn/code/meals/src/planner.py |…)
+→ Bash(grep -n "^def \|^class \|^LINK_ORIGIN\|^MODE_\|^MEAL_TYPE_PRIORITY\|^STORAGE_CLASS_DEFA…)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+Let me continue reading — the leftover linking, prep day resolution, freezer draw resolver, spread_batch internals, and validate_week / storage_safety_errors.
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Bash(grep -n "^from week import" -A 60 /Users/jasonandlyn/code/meals/src/planner.py | sed -n…)
+→ Bash(grep -rn "_claimable\|_releasable_dependants" /Users/jasonandlyn/code/meals/tests/ /Use…)
+→ Bash(grep -n "^async def generate_and_store_week\|^def generate_and_store_week" -A 80 /Users…)
+You've hit your session limit · resets 10:40am (Australia/Melbourne)
+! You've hit your session limit · resets 10:40am (Australia/Melbourne)
+
+-- claude-pro finished: failed (exit 1)
+
+===== the claude run failed =====

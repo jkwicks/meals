@@ -1,0 +1,67 @@
+
+===== run =====
+task: 1.1c — **1.1c — Freezer-origin draws** (`src/week.py`; extend `tests/test_week_mechanics.py`): extend the slot link vocabulary with a freezer provenance so an external source is valid **only** for a freezer draw; ordinary user/location/batch leftovers still require a real earlier cook slot. Resolve draws oldest-suitable-first by freeze date with stable id as tie-break; reserve portions only in the run's in-memory snapshot (two draws cannot over-allocate one lot within a plan) while stored portions stay unchanged. A missing or insufficient lot warns and the plan still opens. If the cleanest representation needs the plan to snapshot the lots it used, do so: a cached plan must still render its macros and label after the store is edited — a historical plan's truth never depends on the current mutable ledger.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-02 17:52:57
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **1.1c — Freezer-origin draws** (`src/week.py`; extend `tests/test_week_mechanics.py`): extend the slot link vocabulary with a freezer provenance so an external source is valid **only** for a freezer draw; ordinary user/location/batch leftovers still require a real earlier cook slot. Resolve draws oldest-suitable-first by freeze date with stable id as tie-break; reserve portions only in the run's in-memory snapshot (two draws cannot over-allocate one lot within a plan) while stored portions stay unchanged. A missing or insufficient lot warns and the plan still opens. If the cleanest representation needs the plan to snapshot the lots it used, do so: a cached plan must still render its macros and label after the store is edited — a historical plan's truth never depends on the current mutable ledger.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+I'll start by reading the task queue to confirm the exact task scope and location.
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+Now let me inspect the current state of `src/week.py` and what task 1.1b built (the typed lot model and repository operations), since 1.1c must build directly on top of them.
+→ Bash(git log --oneline -5 && echo --- && ls src/ | grep -i freez && echo --- && grep -rn "cl…)
+Let me read `src/freezer.py` in full to understand the typed lot model built in 1.1b.
+→ Read(/Users/jasonandlyn/code/meals/src/freezer.py)
+→ Bash(wc -l src/week.py)
+→ Bash(grep -n "LINK_ORIGIN\|MODE_LEFTOVER\|MODE_COOK\|MODE_SKIP\|^class SlotSpec\|^def \|^cla…)
+Now let me read the key sections: constants, SlotSpec, WeekSpec, link_leftover/leftover_link_error, validate_week, and storage_safety_errors — the places a freezer provenance would need to touch.
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+Now let's read SlotSpec and WeekSpec in full, plus link_leftover / leftover_link_error / validate_week / storage_safety_errors.
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+Now let's look at `validate_week` and `storage_safety_errors`, plus `claim_counts`/`portions_for`/`eaten_on` (source must be in `by_id` today — for freezer draws source will be a lot id, not a slot id).
+→ Read(/Users/jasonandlyn/code/meals/src/week.py)
+Let me check the design docs referenced for the exact freezer-draw semantics.
+→ Bash(ls dev/ | grep -i design && echo --- && grep -n "freezer" dev/design-04-freezer-and-pre…)
+Let me read the full relevant section (§2.2 onward about freezer draws) closely.
+→ Read(/Users/jasonandlyn/code/meals/dev/design-04-freezer-and-prep.md)
+
+===== interrupted =====
