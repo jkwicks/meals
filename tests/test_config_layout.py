@@ -99,8 +99,34 @@ class TestMergedConfigIsUnchanged(unittest.TestCase):
         # here directly rather than by regenerating the fixture — "additions
         # are allowed" per this module's own docstring. Owned by week.json,
         # the same file as `enable_sunday_prep`/`inventory_rules` beside it.
+        #
+        # Task 1.2d migrated `config/week.json` to declare its batches
+        # explicitly (design-02 §9's worked example — the exact shape
+        # `apply_batch_selections` always produced against this file), so
+        # the merged dict now carries it rather than the empty default.
         self.assertNotIn("week_shape", self.snapshot)
-        self.assertEqual(self.config["week_shape"], {"batches": [], "freezer_draws": []})
+        self.assertEqual(
+            self.config["week_shape"],
+            {
+                "batches": [
+                    {
+                        "name": "bulk-prep",
+                        "meal_type": "lunch",
+                        "cook_on": "prep_day",
+                        "serves": ["Monday", "Tuesday", "Wednesday"],
+                        "freeze_portions": 0,
+                    },
+                    {
+                        "name": "long-cook",
+                        "meal_type": "dinner",
+                        "cook_on": "prep_day",
+                        "serves": ["Monday", "Tuesday", "Wednesday"],
+                        "freeze_portions": 0,
+                    },
+                ],
+                "freezer_draws": [],
+            },
+        )
         self.assertEqual(CONFIG_KEY_OWNER["week_shape"], "week.json")
 
 

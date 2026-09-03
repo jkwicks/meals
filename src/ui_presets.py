@@ -14,16 +14,21 @@ have refused too. A second validator here would be free to disagree about a
 file this one wrote (design-03 §4.2).
 
 The logic lives in `ui_state.py` (`PRESET_EDITOR_FIELDS`, `save_preset`,
-`delete_preset`, `preview_preset`, `preset_catalog_view`) and is tested there
-and in `test_presets.py`; this module is widget construction only.
+`delete_preset`, `preview_preset`, `preview_week_shape`, `preset_catalog_view`)
+and is tested there and in `test_presets.py`; this module is widget
+construction only.
 
 Bounded to preset keys with a config home and a clean widget shape.
 design-01 §9.2 lists more — the prep-ceiling constants, the long-cook
 threshold (one number in four prose copies), the numbers welded into
 `DINNER_VARIETY_RULE`/`PORTION_DENSITY_GUARD`, the training constants,
-`meal_styles`, `meal_overrides`, `week_shape`. Each needs a code change first
-and is filed in CHANGE-QUEUE.md items 7-9; every one is a later release, as
-PROMPT-7 intended.
+`meal_styles`, `meal_overrides`. Each needs a code change first and is filed
+in CHANGE-QUEUE.md items 7-9; every one is a later release, as PROMPT-7
+intended. `week_shape` is no longer one of them — Task 1.2d gave it its own
+"Week shape" field below (`render_week_shape`), a list-of-records editor
+rather than the generic scalar/multi/object widgets the rest of this list
+uses, because a batch or freezer draw is a record a preset adds and removes,
+not a fixed set of sub-keys.
 
 **No new colour.** A preset is a label — the active row is marked with a
 filled `bookmark` glyph and the word "Active", the route `sync_freshness` and
@@ -45,6 +50,7 @@ from ui_state import (
     PRESET_FIELD_INT_LIST,
     PRESET_FIELD_MULTI_INT,
     PRESET_FIELD_MULTI_STR,
+    PRESET_FIELD_WEEK_SHAPE,
     PRESET_OBJECT_KINDS,
     PresetField,
     preset_field_subkeys,
@@ -354,11 +360,246 @@ def build_presets(ctx: UIContext) -> PresetsHandles:
                             f"w-20 {TEXT_BODY}"
                         )
 
+        # ---- week shape (Task 1.2d) ---------------------------------------
+        #
+        # A copy of `ui_review.training_editor`'s list-of-records convention
+        # (this module's own docstring names it as the pattern the whole file
+        # follows): one bordered card per record, fields bound through
+        # `on_change` closures that mutate the record dict in place rather
+        # than `bind_value` — so typing in one field never repaints the list
+        # and steals focus from itself — and add/remove are the only actions
+        # that call `body.refresh()`. Record order carries no meaning (unlike
+        # a `serves` list's own day order, which the shared validator checks),
+        # so there is no drag handle.
+
+        _BATCH_DEFAULTS = {
+            "name": "", "meal_type": "", "cook_on": "prep_day", "serves": [],
+            "freeze_portions": 0,
+        }
+        _DRAW_DEFAULTS = {"meal_type": "", "day": ""}
+
+        def render_week_shape(field: PresetField) -> None:
+            meal_type_options = {m: humanize(m).title() for m in state.meal_types}
+            cook_on_options = {"prep_day": "Prep day", **{d: d for d in state.days}}
+            day_options = {d: d for d in state.days}
+
+            @ui.refreshable
+            def body() -> None:
+                with ui.element("div").classes(
+                    f"flex flex-col gap-{SPACE_TIGHT} w-full"
+                ):
+                    with ui.element("div").classes(
+                        "flex flex-row flex-nowrap items-center justify-between "
+                        f"gap-{SPACE_BASE}"
+                    ):
+                        ui.label(field.label).classes(
+                            f"{TEXT_BODY} text-slate-300 min-w-0"
+                        )
+
+                        def on_toggle(event, key=field.key) -> None:
+                            enabled[key] = bool(event.value)
+                            if enabled[key] and key not in draft:
+                                draft[key] = {"batches": [], "freezer_draws": []}
+                            body.refresh()
+
+                        ui.switch(
+                            value=enabled.get(field.key, False), on_change=on_toggle
+                        ).props("dense size=sm color=teal")
+                    if not enabled.get(field.key):
+                        ui.label(field.help).classes(f"{TEXT_MICRO} text-slate-400")
+                        return
+
+                    shape = draft.setdefault(field.key, {"batches": [], "freezer_draws": []})
+                    shape.setdefault("batches", [])
+                    shape.setdefault("freezer_draws", [])
+
+                    def batch_row(index: int, record: dict) -> None:
+                        with ui.element("div").classes(
+                            f"flex flex-col gap-{SPACE_HAIR} p-{SPACE_TIGHT} {RADIUS_CARD} "
+                            "border border-slate-800 bg-slate-950/30"
+                        ):
+                            with ui.row().classes(
+                                f"w-full items-center flex-nowrap gap-{SPACE_BASE}"
+                            ):
+                                ui.input(
+                                    label="Name", value=record.get("name", ""),
+                                    on_change=lambda e, r=record: r.__setitem__(
+                                        "name", e.value or ""
+                                    ),
+                                ).props("dense outlined debounce=350").classes(
+                                    f"flex-1 min-w-0 {TEXT_BODY}"
+                                )
+
+                                def on_remove_batch(i: int = index) -> None:
+                                    shape["batches"].pop(i)
+                                    body.refresh()
+
+                                ui.button(icon="delete", on_click=on_remove_batch).props(
+                                    "dense flat size=xs"
+                                ).classes("min-h-0 p-0 text-slate-400")
+                            with ui.row().classes(
+                                f"w-full items-center flex-nowrap gap-{SPACE_BASE}"
+                            ):
+                                ui.select(
+                                    meal_type_options, value=record.get("meal_type"),
+                                    label="Meal",
+                                    on_change=lambda e, r=record: r.__setitem__(
+                                        "meal_type", e.value
+                                    ),
+                                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                                ui.select(
+                                    cook_on_options, value=record.get("cook_on", "prep_day"),
+                                    label="Cook on",
+                                    on_change=lambda e, r=record: r.__setitem__(
+                                        "cook_on", e.value
+                                    ),
+                                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                            ui.select(
+                                day_options, value=list(record.get("serves") or []),
+                                label="Serves", multiple=True,
+                                on_change=lambda e, r=record: r.__setitem__(
+                                    "serves", list(e.value or [])
+                                ),
+                            ).props("dense outlined use-chips clearable").classes(
+                                f"w-full {TEXT_BODY}"
+                            )
+                            ui.number(
+                                label="Freeze portions", value=record.get("freeze_portions", 0),
+                                min=0, step=1, precision=0,
+                                on_change=lambda e, r=record: r.__setitem__(
+                                    "freeze_portions", int(e.value or 0)
+                                ),
+                            ).props("dense outlined debounce=350").classes(
+                                f"w-40 {TEXT_BODY}"
+                            )
+                            served = len(record.get("serves") or [])
+                            freeze = int(record.get("freeze_portions") or 0)
+                            total = served * state.servings + freeze
+                            ui.label(
+                                f"→ {total} portion(s): {served} meal(s) × "
+                                f"{state.servings} people + {freeze} to the freezer"
+                            ).classes(f"{TEXT_MICRO} text-slate-400")
+
+                    def draw_row(index: int, record: dict) -> None:
+                        with ui.row().classes(
+                            f"w-full items-center flex-nowrap gap-{SPACE_BASE} p-{SPACE_TIGHT} "
+                            f"{RADIUS_CARD} border border-slate-800 bg-slate-950/30"
+                        ):
+                            ui.select(
+                                meal_type_options, value=record.get("meal_type"),
+                                label="Meal",
+                                on_change=lambda e, r=record: r.__setitem__(
+                                    "meal_type", e.value
+                                ),
+                            ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                            ui.select(
+                                day_options, value=record.get("day"), label="Day",
+                                on_change=lambda e, r=record: r.__setitem__("day", e.value),
+                            ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+
+                            def on_remove_draw(i: int = index) -> None:
+                                shape["freezer_draws"].pop(i)
+                                body.refresh()
+
+                            ui.button(icon="delete", on_click=on_remove_draw).props(
+                                "dense flat size=xs"
+                            ).classes("min-h-0 p-0 text-slate-400")
+
+                    ui.label("Batches").classes(
+                        f"{TEXT_MICRO} text-slate-400 font-semibold"
+                    )
+                    if not shape["batches"]:
+                        ui.label("No automatic batches — every slot cooks fresh.").classes(
+                            f"{TEXT_MICRO} text-slate-400 italic"
+                        )
+                    for index, record in enumerate(shape["batches"]):
+                        batch_row(index, record)
+
+                    def on_add_batch() -> None:
+                        shape["batches"].append(dict(_BATCH_DEFAULTS))
+                        body.refresh()
+
+                    ui.button("Add batch", icon="add", on_click=on_add_batch).props(
+                        "dense flat no-caps size=sm"
+                    ).classes("text-slate-400")
+
+                    ui.label("Freezer draws").classes(
+                        f"{TEXT_MICRO} text-slate-400 font-semibold mt-1"
+                    )
+                    for index, record in enumerate(shape["freezer_draws"]):
+                        draw_row(index, record)
+
+                    def on_add_draw() -> None:
+                        shape["freezer_draws"].append(dict(_DRAW_DEFAULTS))
+                        body.refresh()
+
+                    ui.button("Add freezer draw", icon="add", on_click=on_add_draw).props(
+                        "dense flat no-caps size=sm"
+                    ).classes("text-slate-400")
+
+                    # ---- on-demand preview -------------------------------
+                    #
+                    # Its own button, separate from the dialog's overall
+                    # "Preview" (which shows the resolved calorie curve) —
+                    # this one runs `PlannerState.preview_week_shape`, the
+                    # same validator/applier the loader and generation use,
+                    # and shows what it actually returns: slot relationships
+                    # and warnings, never a second, simplified applier. No
+                    # model call, no file write, no live-spec mutation, no
+                    # stock reservation, no repaint of the week canvas.
+                    preview_state: Dict[str, object] = {"value": None}
+
+                    @ui.refreshable
+                    def preview_body() -> None:
+                        result = preview_state["value"]
+                        if result is None:
+                            return
+                        with ui.element("div").classes(
+                            f"flex flex-col gap-{SPACE_HAIR} p-{SPACE_TIGHT} {RADIUS_CARD} "
+                            f"{SURFACE_INSET}"
+                        ):
+                            if not result.ok:
+                                ui.label("Can't apply this shape:").classes(
+                                    f"{TEXT_MICRO} font-semibold text-slate-200"
+                                )
+                                for message in result.errors:
+                                    ui.label(message).classes(
+                                        f"{TEXT_MICRO} text-slate-300"
+                                    )
+                                return
+                            if not result.batch_anchors and not result.warnings:
+                                ui.label(
+                                    "No automatic batches or freezer draws this week."
+                                ).classes(f"{TEXT_MICRO} text-slate-400")
+                            for name, anchor in result.batch_anchors.items():
+                                ui.label(
+                                    f"{name} → {anchor}" if anchor
+                                    else f"{name} → no room this week"
+                                ).classes(f"{TEXT_MICRO} font-mono text-slate-300")
+                            for warning in result.warnings:
+                                ui.label(warning).classes(
+                                    f"{TEXT_MICRO} text-slate-400"
+                                )
+
+                    def on_preview() -> None:
+                        preview_state["value"] = state.preview_week_shape(shape)
+                        preview_body.refresh()
+
+                    ui.button("Preview", icon="visibility", on_click=on_preview).props(
+                        "dense outline no-caps size=sm"
+                    ).classes("text-slate-200 mt-1")
+                    preview_body()
+                    ui.label(field.help).classes(f"{TEXT_MICRO} text-slate-400")
+
+            body()
+
         def render_field(field: PresetField) -> None:
             if field.kind == PRESET_FIELD_DAY_CARBS:
                 render_day_carbs(field)
             elif field.kind in (PRESET_FIELD_MULTI_INT, PRESET_FIELD_MULTI_STR):
                 render_multi(field)
+            elif field.kind == PRESET_FIELD_WEEK_SHAPE:
+                render_week_shape(field)
             elif field.kind in PRESET_OBJECT_KINDS:
                 render_object(field)
             else:

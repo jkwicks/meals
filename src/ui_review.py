@@ -1,10 +1,15 @@
 """The review dialog: every input to the *next* generation in one place —
-cuisine picker, western-style share slider, diet-style picker, bulk-prep and
-long-cook toggles, people per meal, per-day macro targets, training schedule,
-and the pantry list. None of it is written to config.json (see
+cuisine picker, western-style share slider, diet-style picker, people per
+meal, per-day macro targets, training schedule, and the pantry list. None of
+it is written to config.json (see
 `PlannerState.target_overrides`/`pantry`/`training_schedule`/`cuisine_override`
 and siblings); it's all merged into `planning_config()` for whatever the next
 "Generate" click does.
+
+The bulk-prep/long-cook toggles that used to live here were retired by Task
+1.2d — batches and freezer draws are now `config["week_shape"]`'s own
+declaration, edited (per preset, as a standing choice) in the preset editor's
+"Week shape" field (`ui_presets.py`) rather than toggled per run.
 
 Renamed from `ui_prep_options.py` when phase 3 of `ui-redesign.md` folded the
 drawer's Daily Targets/Pantry Clear/Training Schedule sections in here — the
@@ -939,28 +944,6 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             ):
                 with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT}"):
                     recipe_pin_editor()
-
-            with ui.element("div").classes("flex flex-row items-center justify-between"):
-                ui.label("Bulk prep").classes(f"{TEXT_BODY} text-slate-300")
-                ui.switch().bind_value(state, "bulk_prep_enabled").props(
-                    "dense size=sm color=teal"
-                )
-            ui.label(
-                "Batches one dinner across several days automatically — which "
-                "days is decided for you, no picking required. Absorbs the old "
-                "Sunday-prep timeline (no longer tied to Sunday)."
-            ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
-
-            with ui.element("div").classes("flex flex-row items-center justify-between"):
-                ui.label("Long cook meal").classes(f"{TEXT_BODY} text-slate-300")
-                ui.switch().bind_value(state, "long_cook_enabled").props(
-                    "dense size=sm color=teal"
-                )
-            ui.label(
-                "One dinner this week is a genuinely long, hands-off oven "
-                "roast/braise — a different day than bulk prep's, if both are "
-                "on."
-            ).classes(f"{TEXT_MICRO} text-slate-400 -mt-2")
 
             with ui.expansion("Daily targets", icon="track_changes").classes("w-full").props(
                 f"dense header-class='{TEXT_BODY} px-0'"

@@ -31,7 +31,22 @@
     "perishable_day_gap": 3
   },
   "week_shape": {
-    "batches": [],
+    "batches": [
+      {
+        "name": "bulk-prep",
+        "meal_type": "lunch",
+        "cook_on": "prep_day",
+        "serves": ["Monday", "Tuesday", "Wednesday"],
+        "freeze_portions": 0
+      },
+      {
+        "name": "long-cook",
+        "meal_type": "dinner",
+        "cook_on": "prep_day",
+        "serves": ["Monday", "Tuesday", "Wednesday"],
+        "freeze_portions": 0
+      }
+    ],
     "freezer_draws": []
   }
 }
