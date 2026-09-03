@@ -649,9 +649,11 @@ PRESET_GRID_SHAPE_KEYS = ("week_defaults", "meal_types", "base_schedule", "locat
 # clean widget shape. design-01 §9.2 lists more — the prep-ceiling constants,
 # the long-cook threshold (one number in four prose copies), the numbers
 # welded into `DINNER_VARIETY_RULE`/`PORTION_DENSITY_GUARD`, the training
-# constants, `meal_styles`, `meal_overrides`, `week_shape` — but each of those
-# needs a code change first and is filed in CHANGE-QUEUE.md items 7-9. Every
-# ❌ row is a later release, exactly as PROMPT-7 intended.
+# constants, `meal_styles`, `meal_overrides` — but each of those needs a code
+# change first and is filed in CHANGE-QUEUE.md items 7-9. Every ❌ row is a
+# later release, exactly as PROMPT-7 intended. `week_shape` was one of them
+# until Task 1.2d gave it a code home (`planner.week_shape_errors`/
+# `week.apply_week_shape`) and its own list-of-records field below.
 #
 # Every field renders **unset** and may be ignored: an absent override means
 # exactly today's behaviour (design-03 §4.1), which is what keeps the empty
