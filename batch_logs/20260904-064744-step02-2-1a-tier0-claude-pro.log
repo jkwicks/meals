@@ -1,0 +1,95 @@
+
+===== run =====
+task: 2.1a — **2.1a — Part 0 probe (manual, five minutes, no code; stop and report before building):** hand-write a minimal HTML page with a `schema.org/Recipe` JSON-LD block (name, yield, and ingredient strings of grams-plus-display-name) from one generated recipe, publish it as a throwaway public gist, and import the raw URL into Cronometer. Report: did it import, and how many ingredients resolved correctly? Name the ones that did not — that failure list decides whether the normalization is sufficient. If it fails, verify the account has Gold (the URL importer is a Gold feature) before concluding the route is wrong.
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-04 06:54:41
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **2.1a — Part 0 probe (manual, five minutes, no code; stop and report before building):** hand-write a minimal HTML page with a `schema.org/Recipe` JSON-LD block (name, yield, and ingredient strings of grams-plus-display-name) from one generated recipe, publish it as a throwaway public gist, and import the raw URL into Cronometer. Report: did it import, and how many ingredients resolved correctly? Name the ones that did not — that failure list decides whether the normalization is sufficient. If it fails, verify the account has Gold (the URL importer is a Gold feature) before concluding the route is wrong.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+I'll start by reading the task queue to confirm the exact task text and any surrounding context about how probes are meant to be handled.
+→ Bash(grep -n "2.1a\|Part 0 probe\|^## \|^### " dev/task-queue.md | head -80)
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue.md)
+This is a manual probe task — "hand-write a page, publish a public gist, import into Cronometer's Gold URL importer, and report what resolved." Before deciding how to handle it, let me check what a real generated recipe and the shopping-list normalization look like, so any artifact I prepare uses genuine data rather than invented content.
+→ Bash(ls data/ 2>/dev/null && echo "---" && ls -la .env 2>/dev/null && grep -o "CRONOMETER_[A…)
+→ Bash(venv/bin/python -c " import json with open('data/recipes_master.json') as f: data = jso…)
+→ Bash(grep -n "^def \|^PREP_VERB\|display_name\|def normalize" src/shopping.py | head -40)
+→ Read(/Users/jasonandlyn/code/meals/src/shopping.py)
+→ Bash(venv/bin/python -c " import sys sys.path.insert(0, 'src') import json import shopping w…)
+→ Read(/Users/jasonandlyn/code/meals/src/shopping.py)
+→ Bash(grep -n "scratch\|tmp\|\.local\|assistant" .gitignore 2>/dev/null; echo "---"; cat .git…)
+→ Bash(venv/bin/python -c " import sys sys.path.insert(0, 'src') import json import shopping w…)
+Now I'll write the standalone HTML page with the `schema.org/Recipe` JSON-LD block, using this real recipe's genuine display-normalized ingredients.
+→ Write(/tmp/cronometer-probe-recipe.html)
+→ Bash(git status --porcelain)
+Working tree is untouched (I only wrote the throwaway artifact to `/tmp`, outside the repo) — those two `batch_logs` files predate this cycle.
+
+`★ Insight ─────────────────────────────────────`
+This task's own Verification line (`dev/task-queue.md:57`) sets a *different* gate for 2.1a than every other subtask: "2.1a's gate is the user-confirmed import report" — not the `compileall && unittest` command every other checkbox rolls on. That's the codebase's "Probes are stops" rule made concrete: a probe's checkbox can only be ticked by a human observing a real external system, because the whole point of a probe is that no amount of code-reading substitutes for watching what actually happens.
+`─────────────────────────────────────────────────`
+
+**I can't complete this cycle's gate, and I'm stopping rather than faking it.** Two of the three probe steps require things outside what I can do:
+
+- **Publish a public gist** — a visible, externally-attributed action (would post under your GitHub identity); not something to do without your go-ahead.
+- **Import the URL into Cronometer and read the result** — requires your actual logged-in Cronometer account in a browser. I have no browser-automation tool, and the `CRONOMETER_*` credentials in `.env` are for the reverse-engineered sync API (`cronometer-mcp`/GWT-RPC), not the website's Gold URL-importer UI.
+
+What I *did* do: pulled a real generated recipe (`data/recipes_master.json`, "Grilled Lamb Kofta with Charred Vegetables and Tahini") and ran its ingredients through the actual `shopping.display_name()`/`format_grams()` functions — the same normalization Task 2.1b is supposed to reuse — so the probe tests the real pipeline, not invented strings. The finished page is at `/tmp/cronometer-probe-recipe.html`, with a valid `schema.org/Recipe` JSON-LD block (name, `recipeYield: "4 servings"`, 15 `recipeIngredient` strings like `"596g Ground lamb"`).
+
+**Your five minutes, from here:**
+1. `gh gist create --public /tmp/cronometer-probe-recipe.html` (or paste it into gist.github.com by hand) and copy the **raw** URL.
+2. In Cronometer: Diary → Add Food → Import → paste the raw URL. (If it errors out immediately, check the account has Gold first — the task flags this explicitly, since a Gold-gate failure would otherwise look like a route failure.)
+3. Report back: did it import, and for each of the 15 ingredients, did it resolve correctly? Name any that didn't (e.g. does "Water" or "Sumac" fail to match?) — that failure list is what decides whether Task 2.1b's normalization is sufficient as-is.
+
+The checkbox for 2.1a stays unticked — its gate is your report, not a test suite — and I have not started 2.1b. Once you've got the import results, I'll pick this back up on the next cycle.
+
+-- claude-pro finished: ok (exit 0)
+-- claude-pro left the working tree untouched
+
+===== the claude run changed nothing =====
