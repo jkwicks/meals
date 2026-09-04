@@ -72,6 +72,11 @@ class ReviewHandles:
     # Registered under "pins": pinning is a next-generation input, distinct
     # from a saved grid edit and from the catalog browser's own refresh topic.
     recipe_pin_editor: Callable
+    # The weekly-pick control's "pinned by a block" row — its own topic
+    # ("blocks") plus "plan", the same registration `presets_editor.section`
+    # gets for the same reason: it owns no input, so it is safe to repaint
+    # on any change wide enough to matter.
+    block_pin: Callable
 
 
 def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles:
@@ -100,10 +105,17 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         uplift_calories: float,
         max_calories: float,
         baseline_calories: Optional[float] = None,
+        block_name: Optional[str] = None,
     ) -> None:
         """One day's target as a bar (filled = base, amber = training uplift,
         dashed ghost = what the day would aim at unoverridden), with the same
         editable calorie/protein/carb inputs stacked beneath it.
+
+        `block_name` marks the day as covered by a block — a boundary can
+        fall mid-week, so this is a per-day flag rather than a whole-row
+        banner; `targets_editor` resolves it once per row-build call via
+        `state.day_block_names()`, the same per-day map generation itself
+        resolves against.
 
         `baseline_calories` is the ghost's height and is passed in rather than
         read here, because it costs a `planning_config()` rebuild — see
@@ -169,7 +181,18 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
         with ui.element("div").classes(f"flex flex-col items-stretch gap-{SPACE_TIGHT} flex-1 min-w-0"):
             with ui.element("div").classes("flex flex-row items-center justify-between"):
-                ui.label(day[:3]).classes(f"{TEXT_MICRO} font-semibold text-slate-300")
+                with ui.element("div").classes(
+                    f"flex flex-row flex-nowrap items-center gap-{SPACE_HAIR} min-w-0"
+                ):
+                    ui.label(day[:3]).classes(
+                        f"{TEXT_MICRO} font-semibold text-slate-300"
+                    )
+                    if block_name:
+                        icon = ui.icon("lock").classes(
+                            f"{TEXT_MICRO} text-slate-400 shrink-0"
+                        )
+                        with icon:
+                            ui.tooltip(f"In block “{block_name}”")
                 reset = (
                     ui.button(icon="undo", on_click=on_reset)
                     .props("dense flat size=xs")
@@ -253,6 +276,11 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             for day in state.days
             if day in state.target_overrides
         }
+        # Which day, if any, a block covers — computed once per row-build
+        # call, the same "not per day inside day_target_row" rule this
+        # function's own docstring already gives `uplift_by_day`/
+        # `baseline_by_day`.
+        block_names = state.day_block_names()
 
         with ui.element("div").classes(f"flex flex-row items-stretch gap-{SPACE_TIGHT} w-full"):
             for day in state.days:
@@ -262,6 +290,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                     uplift_by_day.get(day, {}).get("calories", 0.0),
                     max_calories,
                     baseline_by_day.get(day),
+                    block_names.get(day),
                 )
 
         def reset_all() -> None:
@@ -661,6 +690,42 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
     # Populated as the selects are built, below.
     catalog_selects: list = []
 
+    @ui.refreshable
+    def block_pin_row() -> None:
+        """During a block, name it and offer the stated exit.
+
+        `design-01` §4.5: "a block pins the preset; it does not replace the
+        picker" — the select above stays exactly as enabled as it always is
+        (never a disabled control); this row only says a block is currently
+        in effect and gives it the explicit "end this block early" the
+        design requires rather than leaving the only way out an edit to
+        `config/blocks.json` by hand. Renders nothing outside any block —
+        the ordinary, undecorated pick is "unchanged outside one".
+        """
+        view = state.current_block_view()
+        if view is None:
+            return
+
+        async def on_end_early() -> None:
+            failures = await state.end_block_early(ctx.repository, view.name)
+            if failures:
+                ui.notify(failures[0], type="warning")
+                return
+            ui.notify(f"Block “{view.name}” ended.")
+            refreshables.refresh("blocks", "plan", "targets", "training", "pantry")
+
+        with ui.element("div").classes(
+            f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT} "
+            f"{SURFACE_INSET} {RADIUS_CARD} p-{SPACE_BASE} mt-{SPACE_HAIR}"
+        ):
+            ui.icon("lock").classes("text-slate-400 shrink-0")
+            ui.label(
+                f"Pinned by block “{view.name}” — through {view.ends_on}"
+            ).classes(f"{TEXT_MICRO} text-slate-300 flex-1 min-w-0")
+            ui.button("End early", on_click=on_end_early).props(
+                "dense flat no-caps size=xs"
+            ).classes("text-slate-300 shrink-0")
+
     def preset_block() -> None:
         """The pick, its one-line diff, and nothing else.
 
@@ -714,6 +779,8 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
                 "Saved as soon as you pick it — the preset is a standing "
                 "choice, and next week starts from this one."
             ).classes(f"{TEXT_MICRO} text-slate-400")
+
+        block_pin_row()
 
     # ---- user recipe pins --------------------------------------------------
 
@@ -1016,4 +1083,5 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         training_editor=training_editor,
         pantry_editor=pantry_editor,
         recipe_pin_editor=recipe_pin_editor,
+        block_pin=block_pin_row,
     )

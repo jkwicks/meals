@@ -116,6 +116,7 @@ from export_menu import build_week_menu_html, build_week_menu_pdf
 from planner import WeekPlan, configure_logging
 from repository import PROJECT_ROOT, LocalJSONRepository
 from ui_adherence import build_adherence
+from ui_blocks import build_blocks
 from ui_cards import build_cards
 from ui_catalog import build_rename_dialog
 from ui_catalog_browser import build_catalog_browser
@@ -266,6 +267,7 @@ async def planner_page() -> None:
     catalog_browser = build_catalog_browser(ctx, cards, rename_dialog)
     settings = build_settings(ctx, biometrics)
     presets_editor = build_presets(ctx)
+    blocks_editor = build_blocks(ctx)
     insights = build_insights(ctx, biometrics)
     staged_bar = build_staged_bar(ctx, review, generation)
 
@@ -458,6 +460,14 @@ async def planner_page() -> None:
     # in the review dialog also changes which row is "Active", so it rides on
     # "plan" too (registered below).
     refreshables.on("presets", presets_editor.section)
+    # The three "in a block" surfaces this task adds: the Blocks panel's own
+    # list, the weekly-pick control's "pinned by a block" row, and the
+    # telemetry header's block chip. `PlannerState.save_block`/
+    # `end_block_early`/`delete_block`'s callers all refresh this topic
+    # explicitly (alongside "plan"/"targets"/"training"/"pantry", the same
+    # blast radius a preset pick already gets), so none of the three needs a
+    # place on "plan" itself the way `presets_editor.section` does.
+    refreshables.on("blocks", blocks_editor.section, review.block_pin, telemetry.week_banner)
     refreshables.on(
         "training",
         review.training_editor,
@@ -763,6 +773,10 @@ async def planner_page() -> None:
                 # inside Settings — the weekly *pick* lives in the review
                 # dialog, this is where the presets it picks from are authored.
                 presets_editor.section()
+                # Same placement logic for blocks (ui_blocks.py): the weekly
+                # pick's "pinned by a block" state lives in the review
+                # dialog, this is where a block itself is declared/edited.
+                blocks_editor.section()
 
 
 if __name__ in {"__main__", "__mp_main__"}:

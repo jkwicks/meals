@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from pydantic import ValidationError
 
+import blocks as block_layer
 from freezer import FreezerItem
 from planner import (
     LOCATION_RESTRICTION_PHRASES,
@@ -45,6 +46,7 @@ from planner import (
     is_sunday_prepped,
     apply_preset_layer,
     resolve_preset_layer,
+    resolve_week_blocks,
     load_app_config,
     meal_overrides_for,
     recipe_eligibility_error,
@@ -823,6 +825,70 @@ def _slim_targets(day_targets: dict) -> Dict[str, float]:
     return {key: day_targets[key] for key in ("calories", "protein_g", "net_carbs_g", "fiber_g")}
 
 
+def _block_diet_style_labels(raw: Optional[list]) -> List[str]:
+    """`block["diet_styles"]` for display — the same two shapes
+    `dietary_rules.active_diet_styles` and `day_scoped_entries` accept (a
+    bare style key, or `{"style", "days"}`), turned into one label per entry.
+    Display only; the Blocks editor writes flat keys exclusively, the same
+    limitation the preset editor's diet-style multi-select already carries.
+    """
+    labels: List[str] = []
+    for entry in raw or []:
+        if isinstance(entry, str):
+            labels.append(humanize(entry).title())
+        elif isinstance(entry, dict):
+            style = humanize(str(entry.get("style", ""))).title()
+            days = entry.get("days")
+            labels.append(f"{style} ({', '.join(days)})" if days else style)
+    return labels
+
+
+def _protein_floor_summary(protein_floor: Optional[dict]) -> str:
+    """One line for a block row: what the floor was declared as, and — once
+    a generation has frozen it — what it resolved to. "" when the block
+    declares no floor at all."""
+    if not isinstance(protein_floor, dict):
+        return ""
+    basis = protein_floor.get("basis", "?")
+    multiplier = protein_floor.get("multiplier")
+    resolved = protein_floor.get("resolved_g")
+    declared = f"{multiplier}× {humanize(str(basis))}" if basis != "grams" else f"{multiplier}g"
+    return f"{declared} → {resolved:.0f}g frozen" if resolved is not None else declared
+
+
+def _carry_forward_protein_floor_resolution(
+    existing: Optional[dict], incoming: Optional[dict]
+) -> Optional[dict]:
+    """Preserve an already-frozen `resolved_g`/`resolved_on` across a Blocks
+    panel save that leaves `multiplier`/`basis` untouched, and drop it the
+    moment either changes.
+
+    `design-01` §6 and CLAUDE.md's "Do not... re-resolve a block's protein
+    floor on every hydration pass" both guard against *passive* re-derivation
+    — a weigh-in landing mid-block must never move an already-frozen figure.
+    A person deliberately typing a new multiplier into the panel is not a
+    hydration pass, though: freezing that edit out from under them would
+    make the panel lie about what it just saved. So the two are told apart
+    by whether the *declaration* moved, not by whether a freeze exists —
+    unchanged carries the freeze forward, changed starts fresh for the next
+    hydration to resolve.
+    """
+    if not incoming:
+        return None
+    if (
+        existing
+        and existing.get("resolved_g") is not None
+        and existing.get("basis") == incoming.get("basis")
+        and existing.get("multiplier") == incoming.get("multiplier")
+    ):
+        return dict(
+            incoming,
+            resolved_g=existing["resolved_g"],
+            resolved_on=existing.get("resolved_on"),
+        )
+    return dict(incoming)
+
+
 @dataclass(frozen=True)
 class PresetCatalogRow:
     """One preset as the Settings editor lists it."""
@@ -917,6 +983,52 @@ class PresetView:
         if not self.changes:
             return "No changes from the base config."
         return " · ".join(self.changes)
+
+
+@dataclass(frozen=True)
+class ActiveBlockView:
+    """The block covering *today*, as the weekly-pick control and the
+    telemetry header both read it — `PlannerState.current_block_view`.
+
+    A display-only projection: `training_intent`/`peak_day` are strings
+    straight off the block record (`blocks.py` types them loosely on
+    purpose — see its own field validation), given their first human reader
+    here, per `dev/PROMPT-13.md` step 5. Nothing downstream of this view
+    *consumes* either field; both are for the person reading the header.
+    """
+
+    name: str
+    ends_on: str
+    training_intent: str
+    peak_day: str
+
+
+@dataclass(frozen=True)
+class BlockRow:
+    """One declared block as the Settings Blocks panel lists and edits it."""
+
+    name: str
+    active: bool  # covers today
+    starts_on: str
+    ends_on: str
+    body_goal: str
+    fitness_goal: str
+    block_type: str  # "" | "transition"
+    diet_style_labels: List[str]
+    protein_floor_summary: str  # "" when the block declares none
+    target_rate_kg_per_week: Optional[float]
+    training_intent: str
+    peak_day: str
+    notes: str
+    next_block: str
+    skip_transition: bool
+    problems: List[str]  # validate_blocks failures naming this block
+
+
+@dataclass(frozen=True)
+class BlocksView:
+    rows: List[BlockRow]
+    names: List[str]  # every declared block's name, for a `next_block` picker
 
 
 @dataclass
@@ -1248,6 +1360,15 @@ class PlannerState:
     # a capture and the repaint that has to show it disappear from the
     # pending-surplus list or appear in the review dialog's row editor.
     freezer: List[Dict[str, Any]] = field(default_factory=list)
+    # `config/blocks.json`'s declared rows, as plain dicts, in file order —
+    # `config/`, not `data/`, but kept in step by hand the same way `freezer`
+    # above is: `save_block`/`end_block_early`/`delete_block` update this
+    # alongside every write, since there is no reload between a Blocks-panel
+    # edit and the repaint that has to show it. See `blocks.py`'s fixed field
+    # list; `planning_config()` hands this straight to
+    # `hydrate_dynamic_targets(blocks=...)` so the header previews exactly
+    # what the next run will resolve.
+    blocks: List[Dict[str, Any]] = field(default_factory=list)
     catalog_search: str = ""
     # The full-screen catalog browser's own filters — separate from
     # catalog_search above so typing in one surface doesn't silently refilter
@@ -1343,6 +1464,7 @@ class PlannerState:
         state.history = await repository.load_history()
         state.adherence = await repository.load_adherence()
         state.freezer = await repository.load_freezer()
+        state.blocks = await repository.load_blocks()
         await state.reload_plan(repository)
         await state.scan_cached_weeks(repository)
         return state
@@ -2208,6 +2330,11 @@ class PlannerState:
             # timing `logs/meals.log` exists for. The generation entry points
             # hydrate again with logging on.
             log=False,
+            # `self.blocks` — read once at `.load()`, kept in step by hand by
+            # every Blocks-panel write — so the header previews exactly what
+            # the next run will resolve, the same "one call, not two" rule
+            # `planned_targets`' own docstring states for the preset layer.
+            blocks=self.blocks,
         )
 
     def planned_targets(self, day: str) -> dict:
@@ -3427,6 +3554,184 @@ class PlannerState:
         `delete_freezer_item` extends to an id already gone."""
         self.freezer = [row for row in self.freezer if row.get("id") != item_id]
         await repository.delete_freezer_item(item_id)
+
+    # ---- blocks: dated exceptions over the standing preset (3.1e) ---------
+    #
+    # `blocks.validate_blocks` is the one validator (`blocks.py`'s own
+    # docstring: "one function, two presentations"), so every write here
+    # builds the *whole* candidate file and runs it through that function
+    # before touching disk — the same validate-before-write shape
+    # `save_preset` already gives `presets.json`, with `blocks.validate_blocks`
+    # standing in for `resolve_preset_layer`. A block this panel accepts is
+    # one a future loud loader would accept too, and a block it refuses never
+    # reaches `repository.save_block`.
+
+    def block_by_name(self, name: str) -> Optional[dict]:
+        return next(
+            (
+                block for block in self.blocks
+                if isinstance(block, dict) and block.get(block_layer.NAME_KEY) == name
+            ),
+            None,
+        )
+
+    def current_block_view(self) -> Optional["ActiveBlockView"]:
+        """The block covering *today*, formatted for display — the
+        pre-commitment framing design-01 §4.5 gives the weekly-pick control
+        and this task gives the telemetry header: "you are currently inside
+        a block", not "the week being previewed touches one". `None` outside
+        any block, the normal state.
+        """
+        block = block_layer.active_block_today(self.blocks)
+        if block is None:
+            return None
+        return ActiveBlockView(
+            name=block.get(block_layer.NAME_KEY, ""),
+            ends_on=block.get(block_layer.ENDS_ON_KEY, ""),
+            training_intent=block.get(block_layer.TRAINING_INTENT_KEY) or "",
+            peak_day=block.get(block_layer.PEAK_DAY_KEY) or "",
+        )
+
+    def day_block_names(self) -> Dict[str, Optional[str]]:
+        """Which named block (if any) covers each day of `self.days` — the
+        same per-day resolution `hydrate_dynamic_targets` uses (via
+        `resolve_week_blocks`), so the review dialog's in-block marking can
+        never disagree with what the next run will actually plan against. A
+        boundary can fall mid-week, which is why this is a map and not one
+        answer for the whole row.
+        """
+        resolved = resolve_week_blocks(self.blocks, self.days)
+        return {
+            day: (block.get(block_layer.NAME_KEY) if block else None)
+            for day, block in resolved.items()
+        }
+
+    def blocks_view(self) -> "BlocksView":
+        """Every declared block, as the Settings panel lists it."""
+        failures_by_name: Dict[str, List[str]] = {}
+        for failure in block_layer.validate_blocks(self.blocks):
+            if failure.block:
+                failures_by_name.setdefault(failure.block, []).append(failure.message)
+        current = block_layer.active_block_today(self.blocks)
+        active_name = current.get(block_layer.NAME_KEY) if current else None
+
+        rows = [
+            BlockRow(
+                name=block.get(block_layer.NAME_KEY, ""),
+                active=active_name is not None and block.get(block_layer.NAME_KEY) == active_name,
+                starts_on=block.get(block_layer.STARTS_ON_KEY, ""),
+                ends_on=block.get(block_layer.ENDS_ON_KEY, ""),
+                body_goal=block.get(block_layer.BODY_GOAL_KEY, ""),
+                fitness_goal=block.get(block_layer.FITNESS_GOAL_KEY, ""),
+                block_type=block.get(block_layer.BLOCK_TYPE_KEY) or "",
+                diet_style_labels=_block_diet_style_labels(block.get(block_layer.DIET_STYLES_KEY)),
+                protein_floor_summary=_protein_floor_summary(block.get(block_layer.PROTEIN_FLOOR_KEY)),
+                target_rate_kg_per_week=block.get(block_layer.TARGET_RATE_KEY),
+                training_intent=block.get(block_layer.TRAINING_INTENT_KEY) or "",
+                peak_day=block.get(block_layer.PEAK_DAY_KEY) or "",
+                notes=block.get(block_layer.NOTES_KEY) or "",
+                next_block=block.get(block_layer.NEXT_BLOCK_KEY) or "",
+                skip_transition=bool(block.get(block_layer.SKIP_TRANSITION_KEY)),
+                problems=failures_by_name.get(block.get(block_layer.NAME_KEY), []),
+            )
+            for block in self.blocks
+            if isinstance(block, dict)
+        ]
+        return BlocksView(rows=rows, names=[row.name for row in rows])
+
+    async def save_block(
+        self, repository: LocalJSONRepository, block: dict, *, is_new: bool
+    ) -> List[str]:
+        """Validate `block` (carrying its own `name`) against every other
+        declared block and persist through `repository.save_block` — 3.1a's
+        supplemental write path, never `save_config_keys`, which raises on
+        every key in this file — only if the whole candidate document still
+        validates.
+
+        `is_new` decides whether `block`'s own prior row (same name) is
+        excluded before the candidate list is assembled: a genuinely new
+        name must still collide if one already exists (caught by
+        `validate_blocks`' duplicate-name check), where an edit replaces its
+        own prior row rather than duplicating beside it.
+
+        An already-frozen `protein_floor.resolved_g` is carried forward when
+        the edited `multiplier`/`basis` are unchanged, and dropped the
+        moment either is — see `_carry_forward_protein_floor_resolution`.
+        """
+        name = block.get(block_layer.NAME_KEY)
+        existing = None if is_new else self.block_by_name(name)
+        protein_floor = _carry_forward_protein_floor_resolution(
+            (existing or {}).get(block_layer.PROTEIN_FLOOR_KEY),
+            block.get(block_layer.PROTEIN_FLOOR_KEY),
+        )
+        block = {key: value for key, value in block.items() if key != block_layer.PROTEIN_FLOOR_KEY}
+        if protein_floor is not None:
+            block[block_layer.PROTEIN_FLOOR_KEY] = protein_floor
+
+        others = (
+            list(self.blocks)
+            if is_new
+            else [
+                row for row in self.blocks
+                if not (isinstance(row, dict) and row.get(block_layer.NAME_KEY) == name)
+            ]
+        )
+        candidate = others + [block]
+        failures = block_layer.validate_blocks(candidate)
+        if failures:
+            return [failure.message for failure in failures]
+        await repository.save_block(block)
+        self.blocks = candidate
+        return []
+
+    async def end_block_early(self, repository: LocalJSONRepository, name: str) -> List[str]:
+        """design-01 §4.5's stated exit: shorten `ends_on` to today, so the
+        block stops covering any day after this one. Never a disabled pick —
+        this is the escape hatch instead.
+
+        Capped at `min(ends_on, today)` rather than set outright, so ending a
+        block on its own first day (`starts_on == today`) can never push
+        `ends_on` before `starts_on` — the same "end not before start" rule
+        `validate_blocks` already enforces would otherwise refuse the very
+        action meant to end it.
+        """
+        existing = self.block_by_name(name)
+        if existing is None:
+            return ["That block no longer exists."]
+        today_iso = date.today().isoformat()
+        current_ends = existing.get(block_layer.ENDS_ON_KEY)
+        new_ends = min(current_ends, today_iso) if current_ends else today_iso
+        updated = dict(existing, **{block_layer.ENDS_ON_KEY: new_ends})
+        others = [
+            row for row in self.blocks
+            if not (isinstance(row, dict) and row.get(block_layer.NAME_KEY) == name)
+        ]
+        candidate = others + [updated]
+        failures = block_layer.validate_blocks(candidate)
+        if failures:
+            return [failure.message for failure in failures]
+        await repository.save_block(updated)
+        self.blocks = candidate
+        return []
+
+    async def delete_block(self, repository: LocalJSONRepository, name: str) -> List[str]:
+        """Remove one block outright — refused when doing so would leave a
+        dangling `next_block` reference (another block still naming it as
+        its recorded successor), which `validate_blocks` on the *remaining*
+        list catches for free. A no-op success for a name already gone, the
+        same tolerance `delete_freezer_item` extends to a lot deleted in
+        another tab.
+        """
+        remaining = [
+            row for row in self.blocks
+            if not (isinstance(row, dict) and row.get(block_layer.NAME_KEY) == name)
+        ]
+        failures = block_layer.validate_blocks(remaining)
+        if failures:
+            return [failure.message for failure in failures]
+        await repository.delete_block(name)
+        self.blocks = remaining
+        return []
 
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""
