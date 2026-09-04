@@ -753,6 +753,300 @@ class TestBlockTargetRateFeedsTheDeficit(unittest.TestCase):
         self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
 
 
+class TestFreezeBlockProteinFloor(unittest.TestCase):
+    """`planner.freeze_block_protein_floor` — 3.1c's "resolve once, then
+    write the figure back onto the block record" half. The actual disk
+    persistence is `freeze_and_persist_block_protein_floors`'s job, tested
+    separately below; this class only checks the freezing rule itself:
+    compute once, never again, and never on a block with nothing to freeze.
+    """
+
+    def test_resolves_and_writes_provenance_onto_the_block(self):
+        block = make_block(protein_floor={"multiplier": 1.8, "basis": "target_weight"})
+        frozen = planner.freeze_block_protein_floor(block, PROFILE, WEIGH_IN, today=BLOCK_TODAY)
+        floor = frozen["protein_floor"]
+        self.assertEqual(floor["resolved_g"], 144.0)
+        self.assertEqual(floor["resolved_on"], BLOCK_TODAY.isoformat())
+        # The multiplier/basis that produced it survive as provenance —
+        # "165 g" alone is a number nobody can audit.
+        self.assertEqual(floor["multiplier"], 1.8)
+        self.assertEqual(floor["basis"], "target_weight")
+
+    def test_does_not_mutate_the_block_it_is_handed(self):
+        block = make_block(protein_floor={"multiplier": 1.8, "basis": "target_weight"})
+        planner.freeze_block_protein_floor(block, PROFILE, WEIGH_IN, today=BLOCK_TODAY)
+        self.assertNotIn("resolved_g", block["protein_floor"])
+
+    def test_an_already_frozen_block_is_returned_unchanged_by_identity(self):
+        block = make_block(
+            protein_floor={
+                "multiplier": 1.8, "basis": "target_weight",
+                "resolved_g": 144.0, "resolved_on": "2026-09-01",
+            }
+        )
+        frozen = planner.freeze_block_protein_floor(block, PROFILE, WEIGH_IN, today=BLOCK_TODAY)
+        self.assertIs(frozen, block)
+
+    def test_a_new_weigh_in_never_moves_an_already_frozen_floor(self):
+        """The load-bearing decision in design-01 §6: an FFM basis reads the
+        scale's noisy BIA body-fat estimate, so a block that re-derived this
+        on every call would walk the day's protein target on instrument
+        noise. Frozen means frozen, whatever the next weigh-in says —
+        exercised here against a wildly different body to make the point
+        unmissable."""
+        block = make_block(
+            protein_floor={
+                "multiplier": 1.8, "basis": "target_weight",
+                "resolved_g": 144.0, "resolved_on": "2026-09-01",
+            }
+        )
+        different_weigh_in = {"date": "2026-09-08", "weight_kg": 70.0, "body_fat_pct": 15.0}
+        frozen = planner.freeze_block_protein_floor(
+            block, PROFILE, different_weigh_in, today=BLOCK_TODAY
+        )
+        self.assertEqual(frozen["protein_floor"]["resolved_g"], 144.0)
+
+    def test_a_block_with_no_protein_floor_is_returned_unchanged_by_identity(self):
+        block = make_block()
+        frozen = planner.freeze_block_protein_floor(block, PROFILE, WEIGH_IN, today=BLOCK_TODAY)
+        self.assertIs(frozen, block)
+
+    def test_raises_when_the_basis_cannot_be_resolved(self):
+        block = make_block(protein_floor={"multiplier": 2.0, "basis": "ffm"})
+        with self.assertRaises(ValueError):
+            planner.freeze_block_protein_floor(
+                block, PROFILE, {"weight_kg": 98.4}, today=BLOCK_TODAY  # no body_fat_pct
+            )
+
+
+class TestHydrateDynamicTargetsUsesTheFrozenBlockProteinFloor(unittest.TestCase):
+    """The block's `protein_floor` stands in for the target-weight lock for
+    exactly the days it covers, and never moves once frozen — mirroring
+    `TestBlockTargetRateFeedsTheDeficit`'s shape for the deficit rate."""
+
+    def config(self, protein_floor, **overrides):
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in BLOCK_WINDOW + BLOCK_OUTSIDE
+        }
+        config = config_with(
+            weekly_schedule=schedule,
+            # Only needed once a block declares a `protein_floor` (the
+            # unaffordable-combination check reads them) — this file's own
+            # `config_with` carries neither key otherwise.
+            meal_types=["breakfast", "lunch", "dinner", "snack"],
+            week_defaults={
+                "breakfast": "cook", "lunch": "cook", "dinner": "cook", "snack": "skip",
+            },
+            **overrides,
+        )
+        block = make_block(protein_floor=protein_floor)
+        return config, [block]
+
+    def test_in_block_days_use_the_resolved_floor(self):
+        config, blocks = self.config({"multiplier": 2.0, "basis": "target_weight"})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        # 80 kg target x 2.0 = 160 g, not the un-blocked 144 g.
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated[day]["protein_g"], 160.0, day)
+
+    def test_out_of_block_days_keep_the_unblocked_lock(self):
+        config, blocks = self.config({"multiplier": 2.0, "basis": "target_weight"})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["protein_g"], LOCKED_PROTEIN_G, day)
+
+    def test_a_stated_day_is_never_touched_by_a_block_protein_floor(self):
+        config, blocks = self.config(
+            {"multiplier": 2.0, "basis": "target_weight"},
+            target_locks={"Monday": ["protein_g"]},
+        )
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        self.assertEqual(hydrated["Monday"]["protein_g"], 120.0)
+        self.assertEqual(hydrated["Tuesday"]["protein_g"], 160.0)
+
+    def test_an_already_frozen_floor_does_not_move_on_a_new_weigh_in(self):
+        config, blocks = self.config(
+            {
+                "multiplier": 2.0, "basis": "current_weight",
+                "resolved_g": 160.0, "resolved_on": "2026-09-01",
+            }
+        )
+        different_weigh_in = {"date": "2026-09-08", "weight_kg": 70.0}
+        hydrated = planner.hydrate_dynamic_targets(
+            config, different_weigh_in, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated[day]["protein_g"], 160.0, day)
+
+    def test_calories_are_unaffected_by_the_protein_floor_block(self):
+        config, blocks = self.config({"multiplier": 2.0, "basis": "target_weight"})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW + BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], DYNAMIC_KCAL, day)
+
+    def test_hydrating_twice_lands_on_the_same_number(self):
+        config, blocks = self.config({"multiplier": 2.0, "basis": "target_weight"})
+        once = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        twice = planner.hydrate_dynamic_targets(
+            once, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
+
+
+class TestBlockProteinFloorUnaffordableWarning(unittest.TestCase):
+    """design-01 §6's "must be reported, not corrected": a block's resolved
+    floor that cannot carry `min_meal_protein_g` across every meal the day
+    actually cooks warns, naming both figures — and the floor itself is used
+    exactly as resolved regardless, the same standing answer `apply_protein_floor`
+    already gives an unreachable floor (do nothing, log)."""
+
+    def config(self, resolved_g):
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in BLOCK_WINDOW + BLOCK_OUTSIDE
+        }
+        config = config_with(
+            weekly_schedule=schedule,
+            meal_types=["breakfast", "lunch", "dinner", "snack"],
+            week_defaults={
+                "breakfast": "cook", "lunch": "cook", "dinner": "cook", "snack": "cook",
+            },
+        )
+        block = make_block(
+            protein_floor={
+                "multiplier": 1.0, "basis": "grams",
+                "resolved_g": resolved_g, "resolved_on": "2026-09-01",
+            }
+        )
+        return config, [block]
+
+    def test_warns_when_the_floor_cannot_carry_every_meal(self):
+        # 35 g/meal default x 4 cooked meals = 140 g needed; 100 g is short.
+        config, blocks = self.config(100.0)
+        notes = []
+        planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, note_callback=notes.append, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertTrue(any("100" in note and "140" in note for note in notes), notes)
+
+    def test_does_not_warn_when_the_floor_is_sufficient(self):
+        config, blocks = self.config(165.0)
+        notes = []
+        planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, note_callback=notes.append, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertFalse(any("protein floor" in note.lower() for note in notes), notes)
+
+    def test_the_floor_is_used_as_is_never_silently_corrected(self):
+        config, blocks = self.config(100.0)
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated[day]["protein_g"], 100.0, day)
+
+    def test_a_config_with_no_meal_types_at_all_is_unaffected(self):
+        """`meal_types`/`week_defaults` are read lazily, only once a block
+        actually declares a `protein_floor` — a config built without either
+        key (this file's own `config_with`, with no block at all) must not
+        need them."""
+        hydrated = planner.hydrate_dynamic_targets(config_with(), WEIGH_IN)
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["protein_g"], LOCKED_PROTEIN_G)
+
+
+class FakeBlocksRepository:
+    """Just enough of `PlanRepository` for
+    `freeze_and_persist_block_protein_floors` — `save_block` only; the
+    biometrics reads that `hydrate_config` itself also needs are not this
+    function's concern, so they are not faked here."""
+
+    def __init__(self):
+        self.saved: List[dict] = []
+
+    async def save_block(self, block: dict) -> None:
+        self.saved.append(dict(block))
+
+
+class TestFreezeAndPersistBlockProteinFloors(unittest.IsolatedAsyncioTestCase):
+    """`hydrate_config`'s own half of 3.1c — the disk write
+    `freeze_block_protein_floor`'s docstring defers to, so a frozen floor
+    survives past this process's lifetime."""
+
+    def config(self):
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in BLOCK_WINDOW + BLOCK_OUTSIDE
+        }
+        return config_with(weekly_schedule=schedule)
+
+    async def test_persists_a_freshly_resolved_floor(self):
+        block = make_block(protein_floor={"multiplier": 1.8, "basis": "target_weight"})
+        repo = FakeBlocksRepository()
+        result = await planner.freeze_and_persist_block_protein_floors(
+            repo, self.config(), [block], WEIGH_IN, today=BLOCK_TODAY
+        )
+        frozen = next(row for row in result if row["name"] == block["name"])
+        self.assertEqual(frozen["protein_floor"]["resolved_g"], 144.0)
+        self.assertEqual(len(repo.saved), 1)
+        self.assertEqual(repo.saved[0]["protein_floor"]["resolved_g"], 144.0)
+
+    async def test_an_already_frozen_block_is_never_re_saved(self):
+        block = make_block(
+            protein_floor={
+                "multiplier": 1.8, "basis": "target_weight",
+                "resolved_g": 144.0, "resolved_on": "2026-09-01",
+            }
+        )
+        repo = FakeBlocksRepository()
+        result = await planner.freeze_and_persist_block_protein_floors(
+            repo, self.config(), [block], WEIGH_IN, today=BLOCK_TODAY
+        )
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(result, [block])
+
+    async def test_a_block_with_no_protein_floor_is_left_alone(self):
+        block = make_block()
+        repo = FakeBlocksRepository()
+        result = await planner.freeze_and_persist_block_protein_floors(
+            repo, self.config(), [block], WEIGH_IN, today=BLOCK_TODAY
+        )
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(result, [block])
+
+    async def test_a_block_outside_this_week_is_not_frozen(self):
+        far_block = make_block(
+            name="future-block", starts_on="2030-01-01", ends_on="2030-01-04",
+            protein_floor={"multiplier": 1.8, "basis": "target_weight"},
+        )
+        repo = FakeBlocksRepository()
+        result = await planner.freeze_and_persist_block_protein_floors(
+            repo, self.config(), [far_block], WEIGH_IN, today=BLOCK_TODAY
+        )
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(result, [far_block])
+
+    async def test_a_resolution_failure_is_logged_not_raised(self):
+        block = make_block(protein_floor={"multiplier": 2.0, "basis": "ffm"})
+        repo = FakeBlocksRepository()
+        no_body_fat = {"weight_kg": 98.4}  # no body_fat_pct: 'ffm' can't resolve
+        result = await planner.freeze_and_persist_block_protein_floors(
+            repo, self.config(), [block], no_body_fat, today=BLOCK_TODAY
+        )
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(result, [block])
+
+
 def cook_slot(meal_type: str, mode: str = MODE_COOK) -> SlotSpec:
     return SlotSpec(
         id=planner.slot_id("Monday", meal_type), day="Monday", meal_type=meal_type, mode=mode
