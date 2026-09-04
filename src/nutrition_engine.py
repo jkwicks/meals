@@ -141,6 +141,25 @@ MIN_TREND_SPAN_DAYS = 7
 
 MACRO_KEYS = ("calories", "protein_g", "net_carbs_g", "fat_g")
 
+# `design-01` §4.7 / `docs/rapid-weightloss.md`'s Phase 3 ("Stepped
+# Transition"): a reverse-diet ramp of "+100-250 kcal/day every 1-2 weeks",
+# held for "7-14 days" once the 7-day average scale weight rises past a
+# threshold. Each is a range in the source, not a single number, and this
+# module picks the conservative end of all three: the smallest step, the
+# longest interval between steps, and the longest hold. The mechanism this
+# ramp exists to prevent — post-restriction fat overshoot, `blocks.py`'s
+# `is_restriction_block` docstring has the physiology — is caused by moving
+# back to maintenance too fast, never too slow, so there is no equivalent
+# cost to landing there a week or two later than the fastest schedule the
+# research still calls safe.
+TRANSITION_RAMP_STEP_KCAL = 100.0
+TRANSITION_RAMP_STEP_DAYS = 14
+# A round figure comfortably above ordinary day-to-day scale noise (glycogen
+# and fluid swings of a few hundred grams), so one heavy meal cannot trigger
+# a hold, while still catching the sustained regain the research describes.
+TRANSITION_HOLD_TRIGGER_KG = 0.5
+TRANSITION_HOLD_DAYS = 14
+
 
 def _parse_iso_date(value: str) -> Optional[date]:
     """An ISO `YYYY-MM-DD` string as a `date`, or None if it isn't one.
@@ -684,6 +703,120 @@ def resolve_protein_floor_g(
         return fat_free_mass_kg * multiplier
 
     raise ValueError(f"'{basis}' is not a known protein_floor basis.")
+
+
+def _seven_day_average_weight_kg(
+    weigh_in_history: Optional[list], end: date
+) -> Optional[float]:
+    """Mean `weight_kg` of `weigh_in_history` rows dated in the 7 days up to
+    and including `end` — the "7-day average scale weight"
+    `resolve_transition_ramp`'s hold trigger checks. `None` when nothing was
+    logged in that window, the same "can't tell" answer a missing
+    precondition gives `measure_adaptive_tdee`: read by the caller as
+    "nothing to hold on", never as a rise that didn't happen.
+
+    `_in_window`'s `window_days` counts backward from `end` exclusive of
+    `end` itself, so 6 (not 7) is what makes the span 7 calendar days wide.
+    """
+    windowed = _in_window(weigh_in_history or [], end, 6)
+    weights = [
+        float(row["weight_kg"]) for _, row in windowed if (row or {}).get("weight_kg")
+    ]
+    if not weights:
+        return None
+    return sum(weights) / len(weights)
+
+
+@dataclass(frozen=True)
+class TransitionRampState:
+    """Where a `transition`-type block's reverse-diet ramp (`design-01` §4.7)
+    stands as of one day: how many `TRANSITION_RAMP_STEP_KCAL` steps it has
+    banked, and whether that day falls inside a weight-triggered hold.
+
+    `steps` is the only figure a caller needs to feed the deficit —
+    `deficit_reduction_kcal` below is a straight multiple of it.
+    `TransitionRampState` carries no protein figure at all: `design-01` §4.7
+    holds protein constant at whatever floor a block already froze, which
+    means the ramp has nothing to compute there — it is a fact about
+    calories only, never about protein.
+    """
+
+    steps: int
+    held: bool
+
+    @property
+    def deficit_reduction_kcal(self) -> float:
+        return self.steps * TRANSITION_RAMP_STEP_KCAL
+
+
+def resolve_transition_ramp(
+    starts_on: str,
+    on_date: date,
+    weigh_in_history: Optional[list] = None,
+) -> TransitionRampState:
+    """The reverse-diet ramp a `transition`-type block runs, as of `on_date`.
+
+    Walks forward from `starts_on` in `TRANSITION_RAMP_STEP_DAYS` increments.
+    At each checkpoint, a step is banked — `steps += 1` — unless the 7-day
+    average weight at that checkpoint has risen more than
+    `TRANSITION_HOLD_TRIGGER_KG` above the average recorded at the last
+    banked step (or at the block's own start, before any step exists); a
+    triggered checkpoint banks no step and instead holds for
+    `TRANSITION_HOLD_DAYS` before the next checkpoint is even considered.
+
+    **Pure, and a pure function of `(starts_on, on_date, weigh_in_history)`
+    is exactly what makes it idempotent.** Nothing here is call-counted or
+    persisted between calls — every call re-walks the same history from
+    scratch — so the UI's live preview and generation's own hydration of the
+    same day land on the identical figure, and calling this twice in one
+    calendar day can never silently advance it a second time. That is the
+    same idempotence lesson `planner.freeze_block_protein_floor`'s docstring
+    gives for the frozen protein floor, arrived at differently: the floor is
+    idempotent because it is resolved once and then read verbatim; the ramp
+    is idempotent because it is *always* recomputed, fresh, from inputs nothing
+    here ever mutates.
+
+    Missing weight data at a checkpoint (no weigh-in logged that week) is
+    read as "nothing to hold on", not as a rise — the ramp advances on
+    schedule, the same "a checkout with no biometrics plans off the file, not
+    off a fabricated body" fallback the rest of this module already applies
+    to a missing weigh-in. `starts_on` that fails to parse, or `on_date`
+    before it, returns the ramp's own starting state (`steps=0, held=False`)
+    — the day a block starts is day zero of its own ramp, not a step into it.
+
+    Returns `TransitionRampState`; multiply `.deficit_reduction_kcal` off
+    whatever deficit the day would otherwise carry, then floor at 0 — the
+    same "feeds the deficit slide, never writes `weekly_schedule` directly"
+    shape `target_rate_kg_per_week` already uses.
+    """
+    start = _parse_iso_date(starts_on) if isinstance(starts_on, str) else None
+    if start is None or on_date < start:
+        return TransitionRampState(steps=0, held=False)
+
+    steps = 0
+    held = False
+    reference_weight = _seven_day_average_weight_kg(weigh_in_history, start)
+    check_date = start + timedelta(days=TRANSITION_RAMP_STEP_DAYS)
+
+    while check_date <= on_date:
+        average = _seven_day_average_weight_kg(weigh_in_history, check_date)
+        triggered = (
+            average is not None
+            and reference_weight is not None
+            and average - reference_weight > TRANSITION_HOLD_TRIGGER_KG
+        )
+        if triggered:
+            hold_end = check_date + timedelta(days=TRANSITION_HOLD_DAYS)
+            if check_date <= on_date < hold_end:
+                held = True
+            check_date = hold_end
+        else:
+            steps += 1
+            if average is not None:
+                reference_weight = average
+            check_date = check_date + timedelta(days=TRANSITION_RAMP_STEP_DAYS)
+
+    return TransitionRampState(steps=steps, held=held)
 
 
 def _exponential_smooth(

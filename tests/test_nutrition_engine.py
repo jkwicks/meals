@@ -11,6 +11,7 @@ under `python -m pytest` if pytest is ever added to requirements.txt.
 
 import sys
 import unittest
+from dataclasses import fields
 from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
@@ -442,6 +443,124 @@ class TestResolveProteinFloorG(unittest.TestCase):
     def test_an_unknown_basis_raises(self):
         with self.assertRaises(ValueError):
             ne.resolve_protein_floor_g("body_weight", 2.0, PROFILE, {"weight_kg": 98.4})
+
+
+class TestResolveTransitionRamp(unittest.TestCase):
+    """`design-01` §4.7's reverse-diet ramp — `dev/task-queue-modified.md`'s
+    3.1d. `planner.hydrate_dynamic_targets` is what actually feeds
+    `.deficit_reduction_kcal` into a `transition`-type block's day; this
+    class only checks the ramp's own arithmetic: a step is banked only on
+    schedule, a weight rise past the threshold holds it, and protein is
+    never part of the answer.
+    """
+
+    START = "2026-01-01"
+    START_DATE = date(2026, 1, 1)
+
+    def test_the_block_s_own_start_day_carries_no_step_yet(self):
+        state = ne.resolve_transition_ramp(self.START, self.START_DATE)
+        self.assertEqual(state.steps, 0)
+        self.assertFalse(state.held)
+        self.assertEqual(state.deficit_reduction_kcal, 0.0)
+
+    def test_a_day_before_the_block_starts_is_also_step_zero(self):
+        state = ne.resolve_transition_ramp(
+            self.START, self.START_DATE - timedelta(days=1)
+        )
+        self.assertEqual(state.steps, 0)
+        self.assertFalse(state.held)
+
+    def test_an_unparseable_starts_on_is_step_zero_rather_than_raising(self):
+        """A block-schema failure (a malformed `starts_on`) is
+        `blocks.validate_blocks`'s job to catch at load — this function has
+        no disk to raise against, so it answers the same "not started yet"
+        state a `None` would."""
+        state = ne.resolve_transition_ramp("not-a-date", self.START_DATE)
+        self.assertEqual(state.steps, 0)
+        self.assertFalse(state.held)
+
+    def test_it_advances_only_on_its_fourteen_day_schedule(self):
+        """No weigh-ins means nothing can ever trigger a hold, so this is a
+        pure test of the schedule itself: one `TRANSITION_RAMP_STEP_KCAL`
+        step every `TRANSITION_RAMP_STEP_DAYS`, never a day early."""
+        cases = {13: 0, 14: 1, 27: 1, 28: 2, 41: 2, 42: 3}
+        for offset, expected_steps in cases.items():
+            with self.subTest(offset=offset):
+                state = ne.resolve_transition_ramp(
+                    self.START, self.START_DATE + timedelta(days=offset)
+                )
+                self.assertEqual(state.steps, expected_steps)
+                self.assertFalse(state.held)
+
+    def test_deficit_reduction_is_the_step_count_times_the_step_size(self):
+        state = ne.resolve_transition_ramp(
+            self.START, self.START_DATE + timedelta(days=42)
+        )
+        self.assertEqual(state.steps, 3)
+        self.assertEqual(
+            state.deficit_reduction_kcal, 3 * ne.TRANSITION_RAMP_STEP_KCAL
+        )
+
+    def test_a_weight_rise_past_the_threshold_holds_the_ramp(self):
+        """The 7-day average at the first checkpoint (day 14) is 1.0 kg above
+        the average recorded at block start — past `TRANSITION_HOLD_TRIGGER_KG`
+        — so no step is banked there, and the block holds."""
+        weigh_ins = [
+            {"date": self.START, "weight_kg": 90.0},
+            {"date": "2026-01-15", "weight_kg": 91.0},  # day 14: +1.0kg
+        ]
+        during_hold = ne.resolve_transition_ramp(
+            self.START, self.START_DATE + timedelta(days=20), weigh_ins
+        )
+        self.assertEqual(during_hold.steps, 0)
+        self.assertTrue(during_hold.held)
+
+    def test_the_ramp_resumes_once_the_hold_window_closes(self):
+        """A day-14 rise holds for `TRANSITION_HOLD_DAYS`; by day 28 the
+        weight has settled back down (+0.2kg, under the trigger), so the
+        held checkpoint is retried and the first step is banked exactly
+        there — not before, and not lost."""
+        weigh_ins = [
+            {"date": self.START, "weight_kg": 90.0},
+            {"date": "2026-01-15", "weight_kg": 91.0},  # day 14: +1.0kg, holds
+            {"date": "2026-01-29", "weight_kg": 90.2},  # day 28: +0.2kg, resumes
+        ]
+        after_hold = ne.resolve_transition_ramp(
+            self.START, self.START_DATE + timedelta(days=28), weigh_ins
+        )
+        self.assertEqual(after_hold.steps, 1)
+        self.assertFalse(after_hold.held)
+
+    def test_missing_weight_data_at_a_checkpoint_does_not_trigger_a_hold(self):
+        """`_seven_day_average_weight_kg` returning `None` reads as "nothing
+        to hold on" — the same "can't tell" answer a missing precondition
+        gives the adaptive-TDEE estimate — so the ramp still advances on
+        schedule rather than freezing for lack of a weigh-in."""
+        state = ne.resolve_transition_ramp(
+            self.START, self.START_DATE + timedelta(days=14), weigh_in_history=[]
+        )
+        self.assertEqual(state.steps, 1)
+        self.assertFalse(state.held)
+
+    def test_calling_it_twice_with_identical_inputs_lands_on_the_same_answer(self):
+        """Idempotence is the whole point — the UI's live preview and
+        generation's own hydration of the same day must never disagree, and
+        neither call may silently bank a second step because the other one
+        already ran."""
+        weigh_ins = [{"date": self.START, "weight_kg": 90.0}]
+        on_date = self.START_DATE + timedelta(days=30)
+        first = ne.resolve_transition_ramp(self.START, on_date, weigh_ins)
+        second = ne.resolve_transition_ramp(self.START, on_date, weigh_ins)
+        self.assertEqual(first, second)
+
+    def test_the_ramp_carries_no_protein_figure(self):
+        """`design-01` §4.7 holds protein constant at whatever floor a block
+        already froze — the ramp only ever computes a calorie contribution.
+        Pinning the dataclass's own field list is the direct way to check
+        that: a mechanism that moved protein would have to add a field to
+        carry it."""
+        state = ne.resolve_transition_ramp(self.START, self.START_DATE)
+        self.assertEqual({f.name for f in fields(state)}, {"steps", "held"})
 
 
 class TestEstimateSessionBurnKcal(unittest.TestCase):

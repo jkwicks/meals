@@ -22,9 +22,12 @@ from pydantic import (
 )
 
 from blocks import (
+    BLOCK_TYPE_KEY,
     DIET_STYLES_KEY,
     PROTEIN_FLOOR_KEY,
+    STARTS_ON_KEY,
     TARGET_RATE_KEY,
+    TRANSITION_BLOCK_TYPE,
     active_block,
 )
 from nutrition_engine import (
@@ -36,6 +39,7 @@ from nutrition_engine import (
     calculate_fiber_target_g,
     calculate_macro_targets,
     resolve_protein_floor_g,
+    resolve_transition_ramp,
 )
 from presets import (
     ACTIVE_PRESET_CONFIG_KEY,
@@ -3506,10 +3510,10 @@ def hydrate_dynamic_targets(
     fabricated one. `biometrics.json` is empty until the first Garmin sync
     lands, so this is the normal path on a fresh checkout, not an edge case.
 
-    **A dated block may override three of the above, for exactly the days it
+    **A dated block may override four of the above, for exactly the days it
     covers, without ever touching a stated one.** `blocks` is `config/blocks.json`'s
     parsed rows (`resolve_week_blocks` below binds each to a calendar day);
-    `today` is the resolver's own clock seam. Three effects, all day-scoped:
+    `today` is the resolver's own clock seam. Four effects, all day-scoped:
 
     - **`diet_styles` unions into that day's active styles**
       (`_block_diet_style_entries`, folded into `dietary_rules.active_diet_styles`
@@ -3524,6 +3528,20 @@ def hydrate_dynamic_targets(
       resolves onto. It is computed from `basis["tdee"]`, so the training
       uplift is still replayed and the diet-style ceiling still applied
       *after* it, unchanged from the non-block path.
+    - **A `transition`-type block's ramp feeds the deficit the same way**,
+      through `nutrition_engine.resolve_transition_ramp`: instead of a fixed
+      rate, `basis["deficit_kcal"]` — the plain engine deficit this day would
+      otherwise carry — is reduced by `TRANSITION_RAMP_STEP_KCAL` for every
+      step the ramp has banked as of this calendar day (`design-01` §4.7's
+      "+100-250 kcal every 1-2 weeks", floored at 0 once the ramp has fully
+      unwound the deficit). `resolve_transition_ramp` needs a real date, not
+      a weekday name, so this is the one block effect that resolves
+      `week_date_range`/`day_date` itself rather than reading `ceilings`'
+      per-day map — the same anchor `resolve_week_blocks` uses, recomputed
+      because that function does not expose its own per-day dates. Checked
+      *before* `target_rate_kg_per_week` in the same day's `elif` chain: a
+      `transition` block declares no rate of its own, so there is nothing to
+      arbitrate between them, only a fixed order to read the code by.
     - **`protein_floor` stands in for the target-weight lock** — `design-01`
       §6. `freeze_block_protein_floor` resolves `{multiplier, basis}` to grams
       the *first* time a block covers a day, and writes the figure back onto
@@ -3543,20 +3561,24 @@ def hydrate_dynamic_targets(
       overspent `meal_overrides` already give a number that does not
       reconcile.
 
-    All three are skipped outright wherever `is_manual`/`target_is_stated`
+    All four are skipped outright wherever `is_manual`/`target_is_stated`
     already says the day's number is somebody's own — a block overrides the
     *engine's* opinion, never a stated one, the same precedence a training
     uplift already respects. None ever writes `weekly_schedule` directly or
     touches `target_modes`: a block's effect lives entirely in the *returned*
     config, exactly like every other figure this function computes.
 
-    **Idempotent for the same reason the training uplift is**: both new
-    inputs are resolved fresh from `blocks`/`today`/`config["dietary_rules"]`
-    on every call, never from the previous pass's own output, so calling this
-    twice on the same arguments — the UI's live preview, then generation's own
-    hydration of the same config — produces the same figure both times. `blocks`
-    is an explicit parameter rather than a `config["blocks"]` read for the same
-    reason `biometrics` is: `PlannerState.planning_config()` calls this function
+    **Idempotent for the same reason the training uplift is**: every block
+    input is resolved fresh from `blocks`/`today`/`config["dietary_rules"]`/
+    `biometrics` on every call, never from the previous pass's own output, so
+    calling this twice on the same arguments — the UI's live preview, then
+    generation's own hydration of the same config — produces the same figure
+    both times. That includes the transition ramp: `resolve_transition_ramp`
+    re-walks the same weigh-in history from scratch rather than advancing a
+    counter, so it cannot silently bank a second step because the UI
+    repainted inside the same calendar day. `blocks` is an explicit parameter
+    rather than a `config["blocks"]` read for the same reason `biometrics`
+    is: `PlannerState.planning_config()` calls this function
     directly (it cannot await the repository `blocks.json` lives behind), so
     once it is handed its own loaded blocks the same way it already holds
     `self.biometrics`, it sees exactly what generation's `hydrate_config` sees —
@@ -3582,6 +3604,14 @@ def hydrate_dynamic_targets(
     # untouched, so a config with no `blocks.json` plans byte-identically to
     # before this existed.
     day_blocks = resolve_week_blocks(blocks, config["weekly_schedule"], today)
+    # The real calendar date behind each weekday name — needed only by a
+    # `transition`-type block's ramp below, since `resolve_transition_ramp`
+    # reads real dates rather than weekday names. Same anchor
+    # `resolve_week_blocks` above already computed internally; recomputed
+    # here because that function does not expose its own per-day dates.
+    week_start_iso = week_date_range(
+        WEEKDAY_NAMES, today.isoformat() if today else None
+    )[0].isoformat()
     block_diet_style_entries = _block_diet_style_entries(day_blocks)
     if block_diet_style_entries:
         dietary_rules = dict(config.get("dietary_rules") or {})
@@ -3726,10 +3756,27 @@ def hydrate_dynamic_targets(
             ceiling = ceilings[day]
             block = day_blocks.get(day)
             block_rate = block.get(TARGET_RATE_KEY) if block else None
+            is_transition_block = bool(block) and block.get(BLOCK_TYPE_KEY) == TRANSITION_BLOCK_TYPE
             if is_manual(day, "calories"):
                 calories = float(day_targets["calories"])
             else:
-                if block_rate is not None:
+                if is_transition_block:
+                    # `design-01` §4.7's reverse-diet ramp: the plain engine
+                    # deficit this day would otherwise carry is reduced by
+                    # whatever the ramp has banked as of this calendar day,
+                    # floored at 0 once fully unwound — never a fixed rate,
+                    # which is the one thing that makes this block type's
+                    # numbers move over its own span. `resolve_transition_ramp`
+                    # needs a real date, not a weekday name, hence
+                    # `week_start_iso`/`day_date` rather than reading `day`
+                    # directly.
+                    on_date = date.fromisoformat(day_date(week_start_iso, WEEKDAY_NAMES, day))
+                    ramp = resolve_transition_ramp(
+                        block.get(STARTS_ON_KEY), on_date, (biometrics or {}).get("weigh_ins")
+                    )
+                    day_deficit = max(0.0, basis["deficit_kcal"] - ramp.deficit_reduction_kcal)
+                    base_calories = max(0.0, basis["tdee"] - day_deficit)
+                elif block_rate is not None:
                     # This day's own deficit, in place of the whole-week
                     # figure `calculate_dynamic_deficit` produced — 7700
                     # kcal/kg is the same tissue-energy constant
