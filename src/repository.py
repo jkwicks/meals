@@ -71,6 +71,9 @@ CONFIG_FILES = {
         "weekly_schedule",
         "meal_weights",
         "dietary_rules",
+        # design-06 §2.1: persistent personal exercise constraints. Its own
+        # root, not nested under user_profile — see planner.TrainingProfile.
+        "training_profile",
     ),
     # What a meal may be: the vocabulary generation draws from.
     "meals.json": (
@@ -106,6 +109,11 @@ CONFIG_FILES = {
         "location_rules",
         "regional",
         "sourcing",
+        # design-06 §2.2: the gym-program catalog and the standing pick from
+        # it — describes the content of the gym sessions above, not a second
+        # calendar. See planner.GymProgram.
+        "gym_programs",
+        "active_gym_program",
     ),
     # Tuning for the planner itself rather than for the food.
     "engine.json": ("planning_rules", "ui_settings"),
