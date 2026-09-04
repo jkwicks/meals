@@ -23,6 +23,7 @@ from pydantic import (
 
 from blocks import (
     DIET_STYLES_KEY,
+    PROTEIN_FLOOR_KEY,
     TARGET_RATE_KEY,
     active_block,
 )
@@ -34,6 +35,7 @@ from nutrition_engine import (
     calculate_adaptive_tdee,
     calculate_fiber_target_g,
     calculate_macro_targets,
+    resolve_protein_floor_g,
 )
 from presets import (
     ACTIVE_PRESET_CONFIG_KEY,
@@ -3289,6 +3291,113 @@ def _block_diet_style_entries(day_blocks: Dict[str, Optional[dict]]) -> List[dic
     return entries
 
 
+def freeze_block_protein_floor(
+    block: dict,
+    profile: dict,
+    latest_biometrics: Optional[dict],
+    today: Optional[date] = None,
+) -> dict:
+    """`block` with its `protein_floor` resolved to grams and frozen, if it
+    declares one and has not already been.
+
+    `design-01` §6: resolution happens once, when a block first covers a day
+    being planned, and the resolved grams are written back onto the block
+    record beside the `multiplier`/`basis` that produced them — the same
+    provenance discipline `calculate_macro_targets`'s own
+    `basis["tdee_source"]` gives the adaptive-TDEE pick, so "165 g" is never a
+    number nobody can audit. It is the "resolve from the engine once, then
+    persist as a standing fact" shape `PlannerState.set_target_mode` and
+    `accept_training_proposal` already use for a UI-driven standing choice;
+    here the trigger is a block reaching its first day of coverage rather than
+    a click. This function only computes the dict to write — the actual disk
+    write is `freeze_and_persist_block_protein_floors`'s job, the one caller
+    that holds a repository.
+
+    Pure — touches no disk, raises exactly when
+    `nutrition_engine.resolve_protein_floor_g` does. Returns `block`
+    unchanged, by identity, when it declares no `protein_floor` or already
+    carries a resolved one (`protein_floor.resolved_g` present) — **a later
+    weigh-in must never move an already-frozen figure**, the entire point of
+    freezing an `ffm` basis at all (the scale's BIA body-fat reading is 4-8%
+    MAPE noisy; re-deriving it every hydration pass would walk the day's
+    protein target on that noise alone).
+    """
+    protein_floor = block.get(PROTEIN_FLOOR_KEY)
+    if not protein_floor or protein_floor.get("resolved_g") is not None:
+        return block
+    resolved_g = resolve_protein_floor_g(
+        protein_floor.get("basis"), protein_floor.get("multiplier"), profile, latest_biometrics
+    )
+    frozen_floor = dict(
+        protein_floor,
+        resolved_g=round(resolved_g, 1),
+        resolved_on=(today or date.today()).isoformat(),
+    )
+    return dict(block, protein_floor=frozen_floor)
+
+
+async def freeze_and_persist_block_protein_floors(
+    repository: PlanRepository,
+    config: dict,
+    blocks: List[dict],
+    latest_biometrics: Optional[dict],
+    today: Optional[date] = None,
+) -> List[dict]:
+    """Freeze the `protein_floor` of every block covering a day of
+    `config["weekly_schedule"]`, persisting a freshly-resolved one through
+    `repository.save_block` so it reads frozen on every future load, not only
+    for the rest of this process's lifetime — the disk write
+    `freeze_block_protein_floor`'s own docstring defers to.
+
+    Called from `hydrate_config`, the one place in this generation path that
+    already holds a repository; `hydrate_dynamic_targets` itself stays pure
+    and never persists, so the UI's synchronous preview can still call it
+    directly. An already-frozen block is returned untouched and never
+    re-saved — no needless write on every hydration.
+
+    A resolution failure (an `ffm` block reached before its first weigh-in
+    with `body_fat_pct`, say) is logged and the block is left unresolved
+    rather than raised here: `hydrate_dynamic_targets` will attempt the same
+    resolution moments later against the identical inputs, and its own
+    established fallback ("Using config.json targets") is the tested answer
+    for "the body isn't known yet" — this function must not take the whole
+    generation down for one block nobody has weighed in for.
+
+    `today` is the same clock seam `resolve_week_blocks` and
+    `freeze_block_protein_floor` already take — `None` defers to the real
+    calendar, and `hydrate_config` calls this without naming one, so it
+    resolves "which block covers this week" exactly as `hydrate_dynamic_targets`
+    itself does moments later.
+    """
+    profile = config.get("user_profile") or {}
+    day_blocks = resolve_week_blocks(blocks, config.get("weekly_schedule") or {}, today)
+    covering = {
+        block.get("name"): block
+        for block in day_blocks.values()
+        if block and isinstance(block.get("name"), str) and block.get("name")
+    }
+    frozen_by_name: Dict[str, dict] = {}
+    for name, block in covering.items():
+        try:
+            frozen = freeze_block_protein_floor(block, profile, latest_biometrics, today)
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                "block '%s' protein floor could not be resolved yet — %s",
+                name, short_error(exc),
+            )
+            continue
+        if frozen is block:
+            continue  # no protein_floor, or already frozen — nothing to persist
+        await repository.save_block(frozen)
+        frozen_by_name[name] = frozen
+    if not frozen_by_name:
+        return blocks
+    return [
+        frozen_by_name.get(block.get("name"), block) if isinstance(block, dict) else block
+        for block in blocks
+    ]
+
+
 def hydrate_dynamic_targets(
     config: dict,
     latest_biometrics: Optional[dict],
@@ -3397,10 +3506,10 @@ def hydrate_dynamic_targets(
     fabricated one. `biometrics.json` is empty until the first Garmin sync
     lands, so this is the normal path on a fresh checkout, not an edge case.
 
-    **A dated block may override two of the above, for exactly the days it
+    **A dated block may override three of the above, for exactly the days it
     covers, without ever touching a stated one.** `blocks` is `config/blocks.json`'s
     parsed rows (`resolve_week_blocks` below binds each to a calendar day);
-    `today` is the resolver's own clock seam. Two effects, both day-scoped:
+    `today` is the resolver's own clock seam. Three effects, all day-scoped:
 
     - **`diet_styles` unions into that day's active styles**
       (`_block_diet_style_entries`, folded into `dietary_rules.active_diet_styles`
@@ -3415,13 +3524,31 @@ def hydrate_dynamic_targets(
       resolves onto. It is computed from `basis["tdee"]`, so the training
       uplift is still replayed and the diet-style ceiling still applied
       *after* it, unchanged from the non-block path.
+    - **`protein_floor` stands in for the target-weight lock** — `design-01`
+      §6. `freeze_block_protein_floor` resolves `{multiplier, basis}` to grams
+      the *first* time a block covers a day, and writes the figure back onto
+      the block dict as `protein_floor.resolved_g` (plus `resolved_on`
+      provenance); every later call, in this hydration or any other, reads
+      that frozen figure rather than recomputing it — a weigh-in landing
+      mid-block, however the block's `basis` reads the body, must never move
+      it. `freeze_and_persist_block_protein_floors` (called from
+      `hydrate_config`, since only it holds a repository) is what makes the
+      freeze survive past this process's lifetime; this function only ever
+      reads `resolved_g` if it is already there, or resolves an unfrozen one
+      fresh for its own answer, same as a live UI preview does before
+      anything has been generated yet. A block whose resolved floor cannot
+      carry `planning_rules.min_meal_protein_g` across every meal the day
+      actually cooks warns, naming both figures, and is never silently
+      corrected — the same standing answer `cap_to_weighted_share` and an
+      overspent `meal_overrides` already give a number that does not
+      reconcile.
 
-    Both are skipped outright wherever `is_manual`/`target_is_stated` already
-    says the day's number is somebody's own — a block overrides the *engine's*
-    opinion, never a stated one, the same precedence a training uplift already
-    respects. Neither ever writes `weekly_schedule` directly or touches
-    `target_modes`: a block's effect lives entirely in the *returned* config,
-    exactly like every other figure this function computes.
+    All three are skipped outright wherever `is_manual`/`target_is_stated`
+    already says the day's number is somebody's own — a block overrides the
+    *engine's* opinion, never a stated one, the same precedence a training
+    uplift already respects. None ever writes `weekly_schedule` directly or
+    touches `target_modes`: a block's effect lives entirely in the *returned*
+    config, exactly like every other figure this function computes.
 
     **Idempotent for the same reason the training uplift is**: both new
     inputs are resolved fresh from `blocks`/`today`/`config["dietary_rules"]`
@@ -3537,6 +3664,52 @@ def hydrate_dynamic_targets(
             return with_fiber_targets(config, floor_g)
         basis = base["basis"]
     try:
+        # Every distinct block covering a day this week that declares a
+        # `protein_floor`, resolved to grams and frozen if it is not already
+        # — once per *block*, not once per day, mirroring `ceilings` above.
+        # Any raise here (an `ffm` block reached before its first weigh-in
+        # carrying `body_fat_pct`, say) is caught by this same `try`, which is
+        # why this lives inside it rather than beside `ceilings`: a block
+        # protein floor that cannot be resolved yet degrades exactly like a
+        # `calculate_macro_targets` failure does, falling back to
+        # `weekly_schedule`'s own figures with a warning, not a crash.
+        block_protein_floors_g: Dict[str, float] = {}
+        protein_floor_unaffordable: List[Tuple[str, float, float]] = []
+        resolved_block_names: Set[str] = set()
+        # Lazy, and deliberately: `meal_types(config)`/`week_defaults` are
+        # only needed at all once a block actually declares a `protein_floor`,
+        # and a config built for a narrower test (or a fresh checkout with no
+        # `blocks.json`) may carry neither key. Resolved at most once, on
+        # first use, not per block.
+        cooked_meal_count: Optional[int] = None
+        min_meal_protein_g: Optional[float] = None
+        for day, block in day_blocks.items():
+            if not block or not block.get(PROTEIN_FLOOR_KEY):
+                continue
+            frozen_block = freeze_block_protein_floor(block, profile, latest_biometrics, today)
+            resolved_g = frozen_block[PROTEIN_FLOOR_KEY]["resolved_g"]
+            block_protein_floors_g[day] = resolved_g
+            name = frozen_block.get("name")
+            if name in resolved_block_names:
+                continue
+            resolved_block_names.add(name)
+            # The unaffordable-combination check, design-01 §6: a block
+            # raising the floor while the active preset still cooks enough
+            # meals a day can be arithmetically unsatisfiable for
+            # `apply_protein_floor`. Reported, never corrected — the same
+            # standing answer an overspent `meal_overrides` and a capped
+            # diet-style ceiling already give.
+            if cooked_meal_count is None:
+                cooked_meal_count = sum(
+                    1
+                    for meal_type in meal_types(config)
+                    if (config.get("week_defaults") or {}).get(meal_type, MODE_COOK) != MODE_SKIP
+                )
+                min_meal_protein_g = planning_rule(config, "min_meal_protein_g")
+            required_g = min_meal_protein_g * cooked_meal_count
+            if resolved_g < required_g:
+                protein_floor_unaffordable.append((name, resolved_g, required_g))
+
         for day, day_targets in config["weekly_schedule"].items():
             # A stated figure is taken exactly as it stands.
             # `apply_training_adjustments` has already declined to grow it by
@@ -3577,6 +3750,11 @@ def hydrate_dynamic_targets(
                     calories = ceiling
             if is_manual(day, "protein_g"):
                 protein_g = float(day_targets["protein_g"])
+            elif day in block_protein_floors_g:
+                # A block's frozen floor stands in for the target-weight lock
+                # for exactly the days it covers — never re-derived here, so
+                # a weigh-in landing mid-block cannot move it.
+                protein_g = block_protein_floors_g[day]
             else:
                 protein_g = base["protein_g"]
             day_carbs = day_targets.get("net_carbs_g")
@@ -3671,6 +3849,28 @@ def hydrate_dynamic_targets(
                 f"carbs under the diet-style ceiling — "
                 f"{ceiling_summary(unaffordable)}"
             )
+    if protein_floor_unaffordable:
+        # A block's resolved floor cannot carry `min_meal_protein_g` across
+        # every meal the day actually cooks — `apply_protein_floor` will find
+        # nowhere to move grams from and do nothing, silently. Naming both
+        # figures here, at resolution time, is what design-01 §6 calls "the
+        # difference between a bad combination you can see and one you
+        # discover six weeks later in a body-composition chart."
+        for name, resolved_g, required_g in protein_floor_unaffordable:
+            if log:
+                logger.warning(
+                    "block '%s' protein floor of %.0fg cannot carry "
+                    "min_meal_protein_g (%.0fg) across %d meal(s) a day "
+                    "(%.0fg needed) — apply_protein_floor will not raise "
+                    "every meal to the floor; the split is left alone.",
+                    name, resolved_g, min_meal_protein_g, cooked_meal_count, required_g,
+                )
+            if note_callback:
+                note_callback(
+                    f"Block '{name}': protein floor {resolved_g:.0f}g is below "
+                    f"the {required_g:.0f}g needed for {cooked_meal_count} "
+                    f"meal(s) a day at {min_meal_protein_g:.0f}g each"
+                )
 
     if basis is None:
         # Every switchable macro is manual, so nothing was computed and there
@@ -3765,6 +3965,14 @@ async def hydrate_config(
     block reaches `hydrate_dynamic_targets`'s mid-week resolution here so
     generation honours it, without this async wrapper needing to know
     anything about what a block *does* — it only hands the raw rows on.
+
+    **And it is the one place a block's `protein_floor` actually gets
+    frozen to disk.** `hydrate_dynamic_targets` itself is pure and cannot
+    write `blocks.json`, so `freeze_and_persist_block_protein_floors` — the
+    only caller here that holds a repository — resolves and saves any
+    still-unresolved floor for a block covering this week *before* handing
+    the (now possibly updated) `blocks` rows on, so generation and every
+    later hydration of the same block read the identical frozen figure.
     """
     store = repository or LocalJSONRepository()
     # Two reads rather than one, deliberately. "Latest" is a question about
@@ -3775,6 +3983,7 @@ async def hydrate_config(
     latest = await store.get_latest_biometrics()
     biometrics = await store.load_biometrics()
     blocks = await store.load_blocks()
+    blocks = await freeze_and_persist_block_protein_floors(store, config, blocks, latest)
     return hydrate_dynamic_targets(config, latest, note_callback, biometrics, blocks=blocks)
 
 

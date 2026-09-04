@@ -383,6 +383,67 @@ class TestResolveCurrentWeightKg(unittest.TestCase):
         )
 
 
+class TestResolveProteinFloorG(unittest.TestCase):
+    """`design-01` §6's four bases — `dev/task-queue-modified.md`'s 3.1c.
+    `planner.freeze_block_protein_floor` is what actually freezes an answer
+    from this function onto a block; this class only checks the arithmetic
+    each basis produces, which is what that freeze then has to hold still."""
+
+    def test_target_weight_matches_calculate_macro_targets(self):
+        # Today's un-blocked 144 g rule: 80 kg target x 1.8.
+        self.assertEqual(
+            ne.resolve_protein_floor_g("target_weight", 1.8, PROFILE, {"weight_kg": 98.4}),
+            144.0,
+        )
+
+    def test_target_weight_falls_back_to_current_weight_when_no_target_is_set(self):
+        profile = dict(PROFILE)
+        del profile["target_weight_kg"]
+        self.assertEqual(
+            ne.resolve_protein_floor_g("target_weight", 2.0, profile, {"weight_kg": 90.0}),
+            180.0,
+        )
+
+    def test_target_weight_raises_with_no_weight_available_at_all(self):
+        profile = dict(PROFILE)
+        del profile["target_weight_kg"]
+        with self.assertRaises(ValueError):
+            ne.resolve_protein_floor_g("target_weight", 2.0, profile, None)
+
+    def test_current_weight_tracks_the_scale_not_the_target(self):
+        self.assertEqual(
+            ne.resolve_protein_floor_g("current_weight", 2.0, PROFILE, {"weight_kg": 98.4}),
+            196.8,
+        )
+
+    def test_current_weight_raises_with_no_weigh_in_and_no_profile_weight(self):
+        with self.assertRaises(ValueError):
+            ne.resolve_protein_floor_g("current_weight", 2.0, PROFILE, None)
+
+    def test_ffm_uses_fat_free_mass_not_total_weight(self):
+        # 98.4 kg at 27.5% body fat: FFM = 98.4 * 0.725 = 71.34 kg.
+        result = ne.resolve_protein_floor_g(
+            "ffm", 2.0, PROFILE, {"weight_kg": 98.4, "body_fat_pct": 27.5}
+        )
+        self.assertAlmostEqual(result, 71.34 * 2.0, places=2)
+
+    def test_ffm_raises_without_a_body_fat_reading(self):
+        with self.assertRaises(ValueError):
+            ne.resolve_protein_floor_g("ffm", 2.0, PROFILE, {"weight_kg": 98.4})
+
+    def test_ffm_raises_with_no_weigh_in_at_all(self):
+        with self.assertRaises(ValueError):
+            ne.resolve_protein_floor_g("ffm", 2.0, PROFILE, None)
+
+    def test_grams_is_the_multiplier_verbatim_and_needs_no_body_data(self):
+        # A bare figure decided by hand — no profile, no weigh-in, no formula.
+        self.assertEqual(ne.resolve_protein_floor_g("grams", 165, {}, None), 165.0)
+
+    def test_an_unknown_basis_raises(self):
+        with self.assertRaises(ValueError):
+            ne.resolve_protein_floor_g("body_weight", 2.0, PROFILE, {"weight_kg": 98.4})
+
+
 class TestEstimateSessionBurnKcal(unittest.TestCase):
     """The MET-based default for `estimated_burn_kcal` — CLAUDE.md's "Derive
     the training burn"."""

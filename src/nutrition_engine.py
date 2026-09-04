@@ -600,6 +600,92 @@ def calculate_macro_targets(
     }
 
 
+# `src/blocks.py`'s `PROTEIN_FLOOR_BASES` names the same four strings — restated
+# here rather than imported for the same reason `MET_VALUES` restates
+# `planner.TRAINING_INTENSITY_SPLIT`'s keys: this module is a leaf, and the
+# four literals below are the only thing either module needs from the other.
+def resolve_protein_floor_g(
+    basis: str,
+    multiplier: float,
+    profile: dict,
+    latest_biometrics: Optional[dict] = None,
+) -> float:
+    """A block's daily protein floor in grams, for one of four bases
+    (`design-01` §6): `target_weight`, `ffm`, `current_weight`, or a bare
+    `grams` figure decided by hand.
+
+    - **`target_weight`** — `target_weight_kg * multiplier`, today's un-blocked
+      144 g rule (`calculate_macro_targets`'s own arithmetic, restated here so
+      a caller that only needs this one figure is not made to run the whole
+      macro assembly to get it). Falls back to the current weight when no
+      target is set, the same fallback `calculate_macro_targets` applies.
+    - **`current_weight`** — the latest weigh-in (or
+      `user_profile.current_weight_kg`) times `multiplier`. Tracks the scale,
+      unlike every other basis here — a block naming it is choosing that on
+      purpose.
+    - **`ffm`** — fat-free mass, `weight_kg * (1 - body_fat_pct / 100)`, times
+      `multiplier`. Needs a weigh-in carrying `body_fat_pct`; nothing here
+      substitutes a plausible one, the same refusal `calculate_bmr`'s own
+      Katch-McArdle branch already makes for a missing reading.
+    - **`grams`** — `multiplier` *is* the answer: a figure decided by hand,
+      no formula behind it.
+
+    This function is pure and stateless — it does not know, and must not be
+    made to know, that a caller intends to use its answer only once. **The
+    freezing discipline belongs entirely to the caller**
+    (`planner.freeze_block_protein_floor`): an FFM basis reads the scale's
+    BIA body-fat estimate, which the research puts at 4-8% MAPE, so a block
+    that re-derived this every hydration pass would walk the day's protein
+    target on instrument noise alone rather than holding the figure it
+    committed to when the block started.
+
+    Raises `ValueError` when the named basis needs data that is not there
+    (mirrors `calculate_macro_targets`'s own refusal to substitute a
+    fabricated body for a missing weigh-in) or when `basis` is not one of the
+    four above.
+    """
+    if basis == "grams":
+        return float(multiplier)
+
+    profile = profile or {}
+    biometrics = latest_biometrics or {}
+
+    if basis == "current_weight":
+        weight_kg = resolve_current_weight_kg(profile, latest_biometrics)
+        if not weight_kg:
+            raise ValueError(
+                "No current weight available to resolve a 'current_weight' "
+                "protein floor: record a weigh-in or set 'current_weight_kg' "
+                "on user_profile."
+            )
+        return weight_kg * multiplier
+
+    if basis == "target_weight":
+        weight_kg = resolve_current_weight_kg(profile, latest_biometrics)
+        target_weight_kg = profile.get("target_weight_kg") or weight_kg
+        if not target_weight_kg:
+            raise ValueError(
+                "No target or current weight available to resolve a "
+                "'target_weight' protein floor: set 'target_weight_kg' on "
+                "user_profile, or record a weigh-in."
+            )
+        return target_weight_kg * multiplier
+
+    if basis == "ffm":
+        weight_kg = resolve_current_weight_kg(profile, latest_biometrics)
+        body_fat_pct = biometrics.get("body_fat_pct") or None
+        if not weight_kg or body_fat_pct is None:
+            raise ValueError(
+                "No fat-free mass available to resolve an 'ffm' protein "
+                "floor: needs a weigh-in carrying both 'weight_kg' and "
+                "'body_fat_pct'."
+            )
+        fat_free_mass_kg = weight_kg * (1.0 - body_fat_pct / 100.0)
+        return fat_free_mass_kg * multiplier
+
+    raise ValueError(f"'{basis}' is not a known protein_floor basis.")
+
+
 def _exponential_smooth(
     values: Sequence[float], alpha: float = DEFAULT_SMOOTHING_ALPHA
 ) -> List[float]:
