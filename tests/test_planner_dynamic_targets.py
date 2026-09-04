@@ -3,17 +3,19 @@
 Covers the three pieces that turn a measured body into a prompt:
 `hydrate_dynamic_targets` (the day's macros come from the scale, not the file),
 `apply_protein_floor` (the day's locked protein reaches every meal), and
-`logged_intake_for` (today's Cronometer row beats the plan).
+`logged_intake_for` (today's Cronometer row beats the plan). Also covers
+`resolve_week_blocks` and the two feeds it makes possible — `dev/task-queue-
+modified.md`'s 3.1b, mid-week block resolution into `hydrate_dynamic_targets`.
 
-All three are pure functions of their arguments — no repository, no event loop,
-no API — which is the point of `hydrate_config` being the only async wrapper
-around them. `unittest` and the `sys.path` insert match
-`test_nutrition_engine.py`; see its docstring for why.
+All three original pieces are pure functions of their arguments — no
+repository, no event loop, no API — which is the point of `hydrate_config`
+being the only async wrapper around them. `unittest` and the `sys.path`
+insert match `test_nutrition_engine.py`; see its docstring for why.
 """
 
 import sys
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -466,6 +468,289 @@ class TestADayScopedCeilingCapsOnlyItsDays(unittest.TestCase):
         self.assertEqual(hydrated, scoped)
         for day in self.WINDOW + self.OUTSIDE:
             self.assertEqual(hydrated[day]["calories"], 1600, day)
+
+
+def make_block(**overrides) -> dict:
+    """A minimal valid block — `src/blocks.py`'s fixed field list, mirroring
+    `test_blocks.py`'s own helper rather than importing it, so this file's
+    fixtures do not reach across test modules for something this small.
+
+    The default span, 2026-09-07 (Monday) through 2026-09-10 (Thursday), is
+    deliberately the same four days `TestADayScopedCeilingCapsOnlyItsDays`
+    above exercises via `dietary_rules.active_diet_styles` directly — "the
+    block" and "the window" name the same four days throughout the classes
+    below, once resolved against `BLOCK_TODAY`.
+    """
+    fields = dict(
+        name="fast-800-kickstart",
+        starts_on="2026-09-07",
+        ends_on="2026-09-10",
+        body_goal="lose 8 kg",
+        fitness_goal="maintain",
+    )
+    fields.update(overrides)
+    return fields
+
+
+# Any date from 2026-09-07 through 2026-09-13 anchors the same calendar week;
+# a day squarely inside the block's own span keeps the arithmetic obvious.
+BLOCK_TODAY = date(2026, 9, 9)
+BLOCK_WINDOW = ["Monday", "Tuesday", "Wednesday", "Thursday"]
+BLOCK_OUTSIDE = ["Friday", "Saturday", "Sunday"]
+
+
+class TestResolveWeekBlocks(unittest.TestCase):
+    """The pure day -> block resolver 3.1c's frozen protein floor and 3.1d's
+    transition ramp are meant to reuse rather than each re-deriving."""
+
+    def test_a_block_resolves_onto_exactly_the_days_it_covers(self):
+        resolved = planner.resolve_week_blocks(
+            [make_block()], planner.WEEKDAY_NAMES, today=BLOCK_TODAY
+        )
+        for day in BLOCK_WINDOW:
+            self.assertIsNotNone(resolved[day], day)
+            self.assertEqual(resolved[day]["name"], "fast-800-kickstart", day)
+        for day in BLOCK_OUTSIDE:
+            self.assertIsNone(resolved[day], day)
+
+    def test_no_blocks_resolves_every_day_to_none(self):
+        resolved = planner.resolve_week_blocks([], planner.WEEKDAY_NAMES, today=BLOCK_TODAY)
+        self.assertEqual(set(resolved.values()), {None})
+        # None (no blocks.json at all) is the same "nothing declared" answer.
+        resolved_none = planner.resolve_week_blocks(
+            None, planner.WEEKDAY_NAMES, today=BLOCK_TODAY
+        )
+        self.assertEqual(set(resolved_none.values()), {None})
+
+    def test_a_sparse_day_list_still_resolves_against_the_full_week(self):
+        """A hand-built config or test fixture may carry a subset of
+        `weekly_schedule`'s seven days — this file's own `config_with` does —
+        so resolution must not need the missing days to place the ones it was
+        actually asked about."""
+        resolved = planner.resolve_week_blocks(
+            [make_block()], ["Monday", "Thursday", "Sunday"], today=BLOCK_TODAY
+        )
+        self.assertIsNotNone(resolved["Monday"])
+        self.assertIsNotNone(resolved["Thursday"])
+        self.assertIsNone(resolved["Sunday"])
+
+    def test_the_anchor_can_land_anywhere_in_the_same_calendar_week(self):
+        """A day *later* in the rotation than the anchor must still resolve
+        into the same week as one earlier — the bug this guards against
+        instead placed a later name up to six days into the week before."""
+        for anchor in (date(2026, 9, 7), date(2026, 9, 10), date(2026, 9, 13)):
+            resolved = planner.resolve_week_blocks(
+                [make_block()], planner.WEEKDAY_NAMES, today=anchor
+            )
+            self.assertEqual(
+                [day for day in planner.WEEKDAY_NAMES if resolved[day]],
+                BLOCK_WINDOW,
+                anchor,
+            )
+
+    def test_an_unnamed_day_is_left_out_rather_than_raising(self):
+        resolved = planner.resolve_week_blocks(
+            [make_block()], ["Monday", "Not-A-Day"], today=BLOCK_TODAY
+        )
+        self.assertEqual(list(resolved), ["Monday"])
+
+
+class TestBlockDietStylesUnionIntoActiveStyles(unittest.TestCase):
+    """A block's `diet_styles` reaches `diet_style_calorie_ceiling` and
+    `build_diet_style_rule` through the *same* `active_diet_styles` reading
+    every other caller already uses — `day_scoped_entries` is the only
+    parser, never a second one for what a block means by "active".
+
+    Mirrors `TestADayScopedCeilingCapsOnlyItsDays` above, sourced from a
+    block instead of `dietary_rules.active_diet_styles` directly.
+    """
+
+    def config(self, block_diet_styles, **overrides):
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in BLOCK_WINDOW + BLOCK_OUTSIDE
+        }
+        config = config_with(
+            weekly_schedule=schedule,
+            diet_styles={
+                "fast_800": {
+                    "label": "Fast 800",
+                    "principles": "Simple, lean, low-added-fat.",
+                    "calorie_ceiling": 1600,
+                },
+            },
+            **overrides,
+        )
+        return config, [make_block(diet_styles=block_diet_styles)]
+
+    def test_the_block_caps_exactly_the_days_it_covers(self):
+        config, blocks = self.config(["fast_800"])
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated[day]["calories"], 1600, day)
+        for day in BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], DYNAMIC_KCAL, day)
+
+    def test_it_unions_with_a_base_config_style_rather_than_replacing_it(self):
+        """A style already active every day through the base config must keep
+        applying outside the block's window too — the block adds a window,
+        it does not become the whole of `active_diet_styles`."""
+        config, blocks = self.config(
+            ["fast_800"], dietary_rules={"active_diet_styles": ["fast_800"]}
+        )
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW + BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], 1600, day)
+
+    def test_no_blocks_argument_leaves_every_day_at_the_engine_figure(self):
+        config, _ = self.config(["fast_800"])
+        hydrated = planner.hydrate_dynamic_targets(config, WEIGH_IN)["weekly_schedule"]
+        for day in BLOCK_WINDOW + BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], DYNAMIC_KCAL, day)
+
+    def test_hydrating_twice_lands_on_the_same_number(self):
+        """The UI hydrates once for its own live preview and generation
+        hydrates that same config again — the block feed is resolved fresh
+        from `blocks`/`today` both times rather than from the previous
+        pass's own output, so it must land on the identical figure twice."""
+        config, blocks = self.config(["fast_800"])
+        once = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        twice = planner.hydrate_dynamic_targets(
+            once, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
+
+    def test_a_stated_day_inside_the_window_is_not_capped(self):
+        config, blocks = self.config(["fast_800"], target_locks={"Monday": ["calories"]})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        self.assertEqual(hydrated["Monday"]["calories"], 1500)
+        self.assertEqual(hydrated["Tuesday"]["calories"], 1600)
+
+    def test_a_malformed_block_diet_style_entry_raises(self):
+        """Reusing `day_scoped_entries` means reusing its raise: a block
+        naming an unknown weekday is a typo, not data to silently drop — the
+        same policy the base `active_diet_styles` already carries, and the
+        opposite of `inventory_entries`' drop-with-warning one."""
+        config, blocks = self.config([{"style": "fast_800", "days": ["Blursday"]}])
+        with self.assertRaises(ValueError):
+            planner.hydrate_dynamic_targets(
+                config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+            )
+
+
+class TestBlockTargetRateFeedsTheDeficit(unittest.TestCase):
+    """`target_rate_kg_per_week` replaces the whole-week deficit
+    `calculate_dynamic_deficit` produced, for exactly the days a block
+    resolves onto: `tdee - (rate * KCAL_PER_KG_TISSUE / 7)`.
+    """
+
+    RATE = 1.0
+
+    def config(self, **overrides):
+        schedule = {
+            day: {"calories": 1500, "protein_g": 120, "net_carbs_g": 130, "fat_g": 55}
+            for day in BLOCK_WINDOW + BLOCK_OUTSIDE
+        }
+        config = config_with(weekly_schedule=schedule, **overrides)
+        block = make_block(target_rate_kg_per_week=self.RATE)
+        return config, [block]
+
+    def expected_block_calories(self, hydrated: dict) -> int:
+        basis = hydrated["dynamic_basis"]
+        return round(basis["tdee"] - self.RATE * planner.KCAL_PER_KG_TISSUE / 7.0)
+
+    def test_the_block_days_use_the_rate_based_deficit(self):
+        config, blocks = self.config()
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        expected = self.expected_block_calories(hydrated)
+        self.assertNotEqual(expected, DYNAMIC_KCAL)
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated["weekly_schedule"][day]["calories"], expected, day)
+
+    def test_days_outside_the_block_keep_the_whole_week_figure(self):
+        config, blocks = self.config()
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_OUTSIDE:
+            self.assertEqual(hydrated[day]["calories"], DYNAMIC_KCAL, day)
+
+    def test_a_stated_day_is_never_touched_by_the_rate(self):
+        config, blocks = self.config(target_locks={"Monday": ["calories"]})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        self.assertEqual(hydrated["Monday"]["calories"], 1500)
+
+    def test_it_never_mutates_the_config_it_is_handed(self):
+        """`hydrate_dynamic_targets` never writes `weekly_schedule` directly —
+        true before blocks existed and still true with one active."""
+        config, blocks = self.config()
+        before = config["weekly_schedule"]["Monday"]["calories"]
+        planner.hydrate_dynamic_targets(config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY)
+        self.assertEqual(config["weekly_schedule"]["Monday"]["calories"], before)
+
+    def test_it_never_touches_target_modes(self):
+        config, blocks = self.config(target_modes={"protein_g": "manual"})
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertEqual(hydrated["target_modes"], {"protein_g": "manual"})
+
+    def test_the_uplift_is_still_replayed_on_a_block_day(self):
+        config, blocks = self.config(
+            meal_types=["breakfast", "lunch", "dinner", "snack"],
+            meal_weights={"breakfast": 0.3, "lunch": 0.3, "dinner": 0.3, "snack": 0.1},
+            training_schedule=[{
+                "day": "Monday", "time": "18:00", "type": "gym_hypertrophy",
+                "estimated_burn_kcal": 350,
+            }],
+        )
+        adjusted = planner.apply_training_adjustments(config)
+        hydrated = planner.hydrate_dynamic_targets(
+            adjusted, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        expected = self.expected_block_calories(hydrated) + 350
+        self.assertEqual(hydrated["weekly_schedule"]["Monday"]["calories"], expected)
+
+    def test_a_diet_style_ceiling_still_caps_a_rate_based_day(self):
+        """A block may declare both `target_rate_kg_per_week` and
+        `diet_styles` naming a style with a `calorie_ceiling` — the ceiling
+        is applied after whichever base the day started from, unchanged from
+        the non-block path, and a tight enough one still wins."""
+        config, blocks = self.config(
+            diet_styles={
+                "fast_800": {
+                    "label": "Fast 800", "principles": "x", "calorie_ceiling": 1200,
+                },
+            },
+        )
+        blocks[0]["diet_styles"] = ["fast_800"]
+        hydrated = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )["weekly_schedule"]
+        for day in BLOCK_WINDOW:
+            self.assertEqual(hydrated[day]["calories"], 1200, day)
+
+    def test_hydrating_twice_lands_on_the_same_number(self):
+        config, blocks = self.config()
+        once = planner.hydrate_dynamic_targets(
+            config, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        twice = planner.hydrate_dynamic_targets(
+            once, WEIGH_IN, blocks=blocks, today=BLOCK_TODAY
+        )
+        self.assertEqual(twice["weekly_schedule"], once["weekly_schedule"])
 
 
 def cook_slot(meal_type: str, mode: str = MODE_COOK) -> SlotSpec:

@@ -21,10 +21,16 @@ from pydantic import (
     model_validator,
 )
 
+from blocks import (
+    DIET_STYLES_KEY,
+    TARGET_RATE_KEY,
+    active_block,
+)
 from nutrition_engine import (
     ADAPTIVE_TDEE_TOLERANCE,
     DEFAULT_FIBER_FLOOR_G,
     DEFAULT_NET_CARBS_G,
+    KCAL_PER_KG_TISSUE,
     calculate_adaptive_tdee,
     calculate_fiber_target_g,
     calculate_macro_targets,
@@ -3196,12 +3202,101 @@ def with_fiber_targets(config: dict, floor_g: Optional[float] = None) -> dict:
     )
 
 
+def resolve_week_blocks(
+    blocks: Optional[List[dict]], day_names: Iterable[str], today: Optional[date] = None
+) -> Dict[str, Optional[dict]]:
+    """Which block (if any) covers each named day of the week being planned.
+
+    A block boundary can fall mid-week (`design-01` §5), so this resolves
+    **per day**, never once for the whole week — the same granularity
+    `_active_on` already reads a diet-style activation at.
+
+    The date each name maps to comes from the *same* two functions
+    `today_in_week`/`day_date` already combine: `week_date_range` anchors the
+    calendar week (using `WEEKDAY_NAMES` — always the full Monday-first
+    rotation, not `weekly_schedule`'s own possibly-partial key order, so a
+    sparse config or test fixture still resolves every name against one
+    consistent week), then `day_date` offsets each name from it by its
+    **index** in that rotation. That indirection matters: calling
+    `week_date_range` a second time per name, independently, would not give
+    back the same week for every name — a target weekday later than the
+    anchor's own resolves to an occurrence up to 6 days *before* it, which is
+    last week's, not this one. `day_date` is what keeps every name inside the
+    one span `week_date_range` already picked.
+
+    `today` is a parameter, never read from the clock inside this function —
+    the same seam `blocks.active_block_today`, `build_rejection_rule(today=...)`
+    and `select_favorite_assignments` already use, so a test can pin the
+    calendar without monkeypatching `date.today`. `None` defers to
+    `week_date_range`'s own `date.today()` default, which is what anchors a
+    fresh (not-yet-generated) week on the day it is actually being planned —
+    there is no stored `week_start_date` yet at preview or first-generation
+    time, and (per `week_date_range`'s own docstring) "current" and "next"
+    carry no distinct calendar offset in this codebase either.
+
+    Reused rather than re-resolved by every later block feature (3.1c's
+    frozen protein floor, 3.1d's transition ramp), so "which block covers
+    this day" cannot come to disagree between them.
+    """
+    generated_at = today.isoformat() if today else None
+    start_iso = week_date_range(WEEKDAY_NAMES, generated_at)[0].isoformat()
+    return {
+        name: active_block(
+            blocks or [], date.fromisoformat(day_date(start_iso, WEEKDAY_NAMES, name))
+        )
+        for name in day_names
+        if name in WEEKDAY_NAMES
+    }
+
+
+def _block_diet_style_entries(day_blocks: Dict[str, Optional[dict]]) -> List[dict]:
+    """The day-scoped `active_diet_styles` entries a resolved block map
+    contributes — in the same two-shape format `day_scoped_entries` already
+    parses, never a second parser for what a block's `diet_styles` list means.
+
+    Grouped by block **name** (`blocks.validate_blocks` requires it unique)
+    rather than by object identity, because the same block object covers
+    every day it resolves onto in `day_blocks` and its diet styles must union
+    onto exactly *those* days — `design-01`'s mid-week boundary, not the
+    whole week. A style entry that further scopes itself by day (the same
+    `{"style", "days"}` shape `dietary_rules.active_diet_styles` itself
+    takes) is intersected with the block's own covered days rather than
+    replacing them, so a sub-window can only ever narrow, never escape, the
+    block it lives inside.
+    """
+    covered_days: Dict[str, List[str]] = {}
+    block_by_name: Dict[str, dict] = {}
+    for day, block in day_blocks.items():
+        if not block:
+            continue
+        name = block.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        covered_days.setdefault(name, []).append(day)
+        block_by_name.setdefault(name, block)
+
+    entries: List[dict] = []
+    for name, covered in covered_days.items():
+        raw = block_by_name[name].get(DIET_STYLES_KEY) or []
+        if not raw:
+            continue
+        for style, days in day_scoped_entries(
+            raw, f"blocks.{name}.{DIET_STYLES_KEY}"
+        ).items():
+            effective = covered if days is None else [d for d in days if d in covered]
+            if effective:
+                entries.append({"style": style, "days": effective})
+    return entries
+
+
 def hydrate_dynamic_targets(
     config: dict,
     latest_biometrics: Optional[dict],
     note_callback=None,
     biometrics: Optional[dict] = None,
     log: bool = True,
+    blocks: Optional[List[dict]] = None,
+    today: Optional[date] = None,
 ) -> dict:
     """Recompute every `weekly_schedule` day from the body, not the file.
 
@@ -3301,6 +3396,44 @@ def hydrate_dynamic_targets(
     so falling back plans a deliberately-configured week rather than a
     fabricated one. `biometrics.json` is empty until the first Garmin sync
     lands, so this is the normal path on a fresh checkout, not an edge case.
+
+    **A dated block may override two of the above, for exactly the days it
+    covers, without ever touching a stated one.** `blocks` is `config/blocks.json`'s
+    parsed rows (`resolve_week_blocks` below binds each to a calendar day);
+    `today` is the resolver's own clock seam. Two effects, both day-scoped:
+
+    - **`diet_styles` unions into that day's active styles**
+      (`_block_diet_style_entries`, folded into `dietary_rules.active_diet_styles`
+      before `ceilings` is computed) — so a block naming `fast_800` reaches
+      `diet_style_calorie_ceiling` and `build_diet_style_rule` through the
+      *same* `active_diet_styles`/`day_scoped_entries` reading every other
+      caller already uses, never a second interpretation of what "active"
+      means for a style.
+    - **`target_rate_kg_per_week` feeds the day's deficit** in place of
+      `calculate_dynamic_deficit`'s whole-week figure — `tdee -
+      (rate * KCAL_PER_KG_TISSUE / 7)` — for exactly the days that block
+      resolves onto. It is computed from `basis["tdee"]`, so the training
+      uplift is still replayed and the diet-style ceiling still applied
+      *after* it, unchanged from the non-block path.
+
+    Both are skipped outright wherever `is_manual`/`target_is_stated` already
+    says the day's number is somebody's own — a block overrides the *engine's*
+    opinion, never a stated one, the same precedence a training uplift already
+    respects. Neither ever writes `weekly_schedule` directly or touches
+    `target_modes`: a block's effect lives entirely in the *returned* config,
+    exactly like every other figure this function computes.
+
+    **Idempotent for the same reason the training uplift is**: both new
+    inputs are resolved fresh from `blocks`/`today`/`config["dietary_rules"]`
+    on every call, never from the previous pass's own output, so calling this
+    twice on the same arguments — the UI's live preview, then generation's own
+    hydration of the same config — produces the same figure both times. `blocks`
+    is an explicit parameter rather than a `config["blocks"]` read for the same
+    reason `biometrics` is: `PlannerState.planning_config()` calls this function
+    directly (it cannot await the repository `blocks.json` lives behind), so
+    once it is handed its own loaded blocks the same way it already holds
+    `self.biometrics`, it sees exactly what generation's `hydrate_config` sees —
+    no second code path to disagree with it.
     """
     profile = config.get("user_profile") or {}
     if not any(profile.get(key) for key in ("target_weight_kg", "height_cm", "birth_date")):
@@ -3314,6 +3447,22 @@ def hydrate_dynamic_targets(
     pins = config.get("training_pins") or {}
     floor_g = fiber_floor_g(config)
     weights = config.get("meal_weights") or DEFAULT_MEAL_WEIGHTS
+
+    # Which block (if any) covers each day of this week — resolved once,
+    # before the ceiling lookup below, since a block's diet styles are folded
+    # into the *same* `dietary_rules.active_diet_styles` that ceiling reads.
+    # Empty `blocks` resolves every day to `None` and leaves `config`
+    # untouched, so a config with no `blocks.json` plans byte-identically to
+    # before this existed.
+    day_blocks = resolve_week_blocks(blocks, config["weekly_schedule"], today)
+    block_diet_style_entries = _block_diet_style_entries(day_blocks)
+    if block_diet_style_entries:
+        dietary_rules = dict(config.get("dietary_rules") or {})
+        dietary_rules["active_diet_styles"] = list(
+            dietary_rules.get("active_diet_styles") or []
+        ) + block_diet_style_entries
+        config = dict(config, dietary_rules=dietary_rules)
+
     # Looked up per day, because an activation may name its days — a four-day
     # Fast 800 window caps Monday to Thursday and leaves the rest of the same
     # week at the engine's own figure. None whenever no style active *on that
@@ -3402,10 +3551,24 @@ def hydrate_dynamic_targets(
             # because there the figure it was added to has just been thrown
             # away.
             ceiling = ceilings[day]
+            block = day_blocks.get(day)
+            block_rate = block.get(TARGET_RATE_KEY) if block else None
             if is_manual(day, "calories"):
                 calories = float(day_targets["calories"])
             else:
-                calories = base["calories"] + (uplift.get(day) or {}).get("calories", 0.0)
+                if block_rate is not None:
+                    # This day's own deficit, in place of the whole-week
+                    # figure `calculate_dynamic_deficit` produced — 7700
+                    # kcal/kg is the same tissue-energy constant
+                    # `calculate_adaptive_tdee` measures a real trend against,
+                    # spread across the week. `basis["tdee"]` rather than
+                    # re-deriving BMR/TDEE per day: neither depends on the
+                    # day, only the deficit subtracted from it does.
+                    day_deficit = float(block_rate) * KCAL_PER_KG_TISSUE / 7.0
+                    base_calories = max(0.0, basis["tdee"] - day_deficit)
+                else:
+                    base_calories = base["calories"]
+                calories = base_calories + (uplift.get(day) or {}).get("calories", 0.0)
                 # After the uplift, not before it: the ceiling bounds what the
                 # day may total, and a workout does not buy an exemption from
                 # a bound its owner chose to eat inside.
@@ -3597,6 +3760,11 @@ async def hydrate_config(
     means both front ends generate against the same numbers with no UI change,
     and a regenerated meal aims at the same day target as the run that
     produced its siblings.
+
+    Also fetches `config/blocks.json` for the same reason: a hand-authored
+    block reaches `hydrate_dynamic_targets`'s mid-week resolution here so
+    generation honours it, without this async wrapper needing to know
+    anything about what a block *does* — it only hands the raw rows on.
     """
     store = repository or LocalJSONRepository()
     # Two reads rather than one, deliberately. "Latest" is a question about
@@ -3606,7 +3774,8 @@ async def hydrate_config(
     # adaptive estimate needs, which is a different question.
     latest = await store.get_latest_biometrics()
     biometrics = await store.load_biometrics()
-    return hydrate_dynamic_targets(config, latest, note_callback, biometrics)
+    blocks = await store.load_blocks()
+    return hydrate_dynamic_targets(config, latest, note_callback, biometrics, blocks=blocks)
 
 
 def meal_overrides_for(day: str, config: dict) -> Dict[str, dict]:
