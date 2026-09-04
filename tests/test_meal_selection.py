@@ -1852,6 +1852,9 @@ class _FakeRepository:
     async def load_rejections(self):
         return []
 
+    async def load_blocks(self):
+        return []
+
 
 class TestShakeMandatoryVegetables(unittest.TestCase):
     """The leafy green, the frozen vegetable and the fruit are mandatory in
