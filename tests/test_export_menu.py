@@ -15,15 +15,21 @@ byte output would pin the layout rather than the content, and the content is
 `_slot_entry`, which is covered below.
 """
 
+import json
+import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import export_menu  # noqa: E402
 from planner import CookEvent, Ingredient, Recipe, WeekPlan  # noqa: E402
+from shopping import matcher_name  # noqa: E402
 from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, SlotSpec, slot_id  # noqa: E402
 
 DAYS = ["Monday", "Tuesday"]
@@ -232,6 +238,183 @@ class TestBuildWeekMenuHtml(unittest.TestCase):
         nothing to fetch, nothing to break, on a file opened straight from a
         phone's downloads folder."""
         self.assertNotIn("<script", self.html.lower())
+
+
+def cook_event(ingredients, *, name="Test Dish", portions=2, instructions=("Mix it.",)):
+    """A cook event with arbitrary ingredient names, for the JSON-LD export.
+
+    `ingredients` is a list of `(name, quantity_g)`. `portions` is the batch
+    the event is scaled to — the recipe's `servings` is set to match, as
+    `build_cook_event` leaves it.
+    """
+    return CookEvent(
+        slot_id="Monday:dinner",
+        day="Monday",
+        meal_type="dinner",
+        portions=portions,
+        eaten_by=["Monday:dinner", "Tuesday:lunch"],
+        recipe=Recipe(
+            name=name,
+            meal_type="dinner",
+            ingredients=[
+                Ingredient(
+                    name=n, quantity_g=q, nova_group=1,
+                    calories=q, protein_g=q * 0.1, net_carbs_g=q * 0.05, fat_g=q * 0.02,
+                )
+                for n, q in ingredients
+            ],
+            instructions=list(instructions),
+            prep_time_minutes=20,
+            servings=portions,
+        ),
+    )
+
+
+class TestMatcherName(unittest.TestCase):
+    """`shopping.matcher_name` exists only for this exporter — the 2.1a
+    Cronometer probe showed `display_name` resolves to the wrong food
+    (sardines in oil for "in water", dried Italian seasoning for "Herbs").
+    It strips prep verbs and keeps everything else.
+    """
+
+    def test_prep_verbs_are_stripped(self):
+        self.assertEqual(matcher_name("Garlic, minced"), "Garlic")
+        self.assertEqual(matcher_name("Chicken breast, raw, diced small"), "Chicken breast")
+        self.assertEqual(matcher_name("Red onion, finely chopped"), "Red onion")
+
+    def test_state_and_fat_level_and_clarifiers_are_kept(self):
+        # display_name would collapse all three of these.
+        self.assertEqual(matcher_name("Sardines in water, drained"), "Sardines in water, drained")
+        self.assertEqual(matcher_name("Low-fat cottage cheese"), "Low-fat cottage cheese")
+        self.assertEqual(matcher_name("Dijon mustard"), "Dijon mustard")
+
+    def test_a_clarifying_parenthetical_survives(self):
+        # strip_parentheticals would leave the useless token "Herbs".
+        self.assertEqual(
+            matcher_name("Chopped fresh herbs (parsley, dill, chives)"),
+            "Herbs (parsley, dill, chives)",
+        )
+        self.assertEqual(matcher_name("Winter squash (butternut), cubed"), "Winter squash (butternut)")
+
+    def test_a_prep_word_inside_a_bracket_does_not_orphan_it(self):
+        self.assertEqual(matcher_name("Parmesan (freshly grated)"), "Parmesan")
+        self.assertNotIn("(", matcher_name("Tomatoes (large, vine-ripened)"))
+
+
+class TestBuildRecipeJsonLd(unittest.TestCase):
+    def test_shape_is_a_schema_org_recipe(self):
+        data = export_menu.build_recipe_jsonld(cook_event([("Beef mince", 600)]))
+        self.assertEqual(data["@context"], "https://schema.org")
+        self.assertEqual(data["@type"], "Recipe")
+        self.assertEqual(data["name"], "Test Dish")
+        self.assertIsInstance(data["recipeIngredient"], list)
+
+    def test_yield_is_the_batch_not_one_serving(self):
+        """A bulk cook feeding three dinners must not be reported at 3x per
+        serving — Cronometer divides by recipeYield."""
+        data = export_menu.build_recipe_jsonld(cook_event([("Beef", 900)], portions=6))
+        self.assertEqual(data["recipeYield"], "6 servings")
+
+    def test_ingredient_strings_are_grams_plus_matcher_name(self):
+        data = export_menu.build_recipe_jsonld(
+            cook_event([("Garlic, minced", 30), ("Green peas, frozen", 90)])
+        )
+        self.assertIn("30 g Garlic", data["recipeIngredient"])
+        self.assertIn("90 g Green peas, frozen", data["recipeIngredient"])
+
+    def test_water_is_dropped(self):
+        data = export_menu.build_recipe_jsonld(
+            cook_event([("Water", 500), ("Whey protein powder", 60)])
+        )
+        self.assertEqual(data["recipeIngredient"], ["60 g Whey protein powder"])
+
+    def test_instructions_become_howtostep_objects(self):
+        data = export_menu.build_recipe_jsonld(
+            cook_event([("Beef", 100)], instructions=("Brown the beef.", "Simmer."))
+        )
+        self.assertEqual(
+            data["recipeInstructions"],
+            [
+                {"@type": "HowToStep", "text": "Brown the beef."},
+                {"@type": "HowToStep", "text": "Simmer."},
+            ],
+        )
+
+    def test_no_nutrition_block(self):
+        """Cronometer computing its own macros is the whole point (F5)."""
+        data = export_menu.build_recipe_jsonld(cook_event([("Beef", 100)]))
+        self.assertNotIn("nutrition", data)
+
+
+class TestRenderRecipePage(unittest.TestCase):
+    def test_embedded_jsonld_parses(self):
+        page = export_menu.render_recipe_page(cook_event([("Beef", 100)]))
+        block = page.split('application/ld+json">', 1)[1].split("</script>", 1)[0]
+        self.assertEqual(json.loads(block)["@type"], "Recipe")
+
+    def test_a_dish_name_cannot_break_out_of_the_script_block(self):
+        page = export_menu.render_recipe_page(
+            cook_event([("Beef", 100)], name="Pan & <Grill> </script><script>evil")
+        )
+        # The only real </script> is the one closing the ld+json block.
+        self.assertEqual(page.count("</script>"), 1)
+        # Visible body escapes it.
+        self.assertNotIn("<Grill>", page)
+        self.assertIn("Pan &amp; &lt;Grill&gt;", page)
+        # And the block still parses with the name intact.
+        block = page.split('application/ld+json">', 1)[1].split("</script>", 1)[0]
+        self.assertEqual(json.loads(block)["name"], "Pan & <Grill> </script><script>evil")
+
+    def test_app_macros_ride_in_a_comment_not_the_jsonld(self):
+        page = export_menu.render_recipe_page(cook_event([("Beef", 300)], portions=3))
+        self.assertIn("<!-- App per-serving macros", page)
+        block = page.split('application/ld+json">', 1)[1].split("</script>", 1)[0]
+        self.assertNotIn("nutrition", block)
+        self.assertNotIn("calories", block)
+
+
+class TestWriteRecipeExports(unittest.TestCase):
+    def setUp(self):
+        self.plan = week_plan()
+        self.out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.out, ignore_errors=True)
+
+    def test_one_file_per_cook_event(self):
+        written, failed = export_menu.write_recipe_exports(self.plan, out_dir=self.out)
+        self.assertEqual(failed, {})
+        self.assertEqual(len(written), len(self.plan.cook_events))
+        for path in written:
+            self.assertTrue(os.path.isfile(path))
+            self.assertTrue(path.endswith(".html"))
+
+    def test_leftover_skip_and_failed_slots_produce_no_file(self):
+        """The plan has 8 slots across all four modes but only two cooks —
+        the export walks `cook_events`, the same set the PDF/HTML recipe
+        pages use."""
+        written, _ = export_menu.write_recipe_exports(self.plan, out_dir=self.out)
+        self.assertEqual(len(os.listdir(self.out)), 2)
+        names = sorted(os.path.basename(p) for p in written)
+        self.assertTrue(any("green-chicken-curry" in n for n in names))
+        self.assertTrue(any("smoked-salmon-scramble" in n for n in names))
+
+    def test_a_recipe_that_fails_to_render_does_not_stop_the_rest(self):
+        real = export_menu.render_recipe_page
+
+        def flaky(event):
+            if event.slot_id == "Monday:breakfast":
+                raise RuntimeError("bad recipe")
+            return real(event)
+
+        with mock.patch.object(export_menu, "render_recipe_page", side_effect=flaky):
+            written, failed = export_menu.write_recipe_exports(self.plan, out_dir=self.out)
+
+        self.assertEqual(list(failed), ["Monday:breakfast"])
+        self.assertEqual(len(written), 1)
+        self.assertTrue(os.path.basename(written[0]).startswith("monday-dinner-"))
+
+    def test_default_out_dir_is_under_data_never_a_tracked_dir(self):
+        default = os.path.join(export_menu.DATA_DIR, export_menu.RECIPE_EXPORT_DIRNAME)
+        self.assertTrue(default.endswith(os.path.join("data", "recipe_exports")))
 
 
 if __name__ == "__main__":

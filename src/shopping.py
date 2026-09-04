@@ -488,6 +488,50 @@ def display_name(name: str) -> str:
 
 
 @lru_cache(maxsize=4096)
+def matcher_name(name: str) -> str:
+    """`name` with only prep verbs removed — the string a food-database
+    matcher wants, which is *not* what `display_name` produces.
+
+    `display_name` is built for a shopping list and does three things a
+    nutrient matcher does not want. `strip_parentheticals` deletes
+    "(parsley, dill, chives)" from "Chopped fresh herbs (…)", leaving the
+    useless token "Herbs". `canonical_ingredient` collapses "Sardines in
+    water, drained" into "Sardines (canned)" and "Low-fat cottage cheese"
+    into "Cottage cheese". And the state/parenthetical/fat-level a matcher
+    keys on is exactly the distinction a shopping list is trying to merge
+    away. Cronometer's importer (the 2.1a probe) resolved all three of those
+    to the wrong food — sardines in oil, 4% cottage cheese, dried Italian
+    seasoning.
+
+    So this keeps everything — parentheticals, state words, "low-fat",
+    "Dijon", the post-comma clarifier — and removes only `PREP_QUALIFIERS`
+    ("minced", "diced", "finely", "chopped", …) wherever they appear. Same
+    vocabulary as `display_name`, opposite goal, which is why it lives here
+    rather than as a second name cleaner in `export_menu`.
+
+    Seasoning lines a matcher still fumbles regardless of the string
+    ("Ground black pepper" resolved to *water* in the probe) are a separate,
+    macro-trivial problem and are left untouched here.
+    """
+    kept = [
+        word
+        for word in name.split()
+        if word.strip("(),.").lower() not in PREP_QUALIFIERS
+    ]
+    cleaned = " ".join(kept)
+    # A prep word removed from inside a parenthetical ("large" in "Tomatoes
+    # (large, vine-ripened)") can orphan a bracket; drop both if they no
+    # longer balance.
+    if cleaned.count("(") != cleaned.count(")"):
+        cleaned = cleaned.replace("(", " ").replace(")", " ")
+    cleaned = re.sub(r"\s*,(?=\s*[,)]|\s*$)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -,")
+    if not cleaned:
+        return display_name(name)
+    return cleaned[0].upper() + cleaned[1:]
+
+
+@lru_cache(maxsize=4096)
 def categorize_department(ingredient_name: str) -> str:
     """Department of the longest matching keyword, not the first one found.
 
