@@ -31,6 +31,9 @@ a re-downloaded plan can't disagree with stale ticks from a previous week.
 """
 
 import io
+import json
+import os
+import re
 from html import escape as html_escape
 from typing import Dict, List, Optional, Sequence, Tuple
 from xml.sax.saxutils import escape
@@ -51,12 +54,16 @@ from reportlab.platypus import (
 )
 
 from planner import CookEvent, Recipe, SundayPrepSession, WeekPlan
+from repository import DATA_DIR
 from shopping import (
+    NON_SHOPPING_INGREDIENTS,
     ShoppingItem,
     aggregate_cook_events,
     apply_pantry,
     format_quantity,
     format_shopping_list_text,
+    matcher_name,
+    normalize_name,
     ordered_departments,
     pantry_covered_line,
     pantry_note,
@@ -992,3 +999,148 @@ def build_week_menu_html(week_plan: WeekPlan, pantry: PantryEntries = None) -> s
         f"{prep_html}\n{recipe_sections}\n{shopping_html}\n"
         "</main>\n</body>\n</html>\n"
     )
+
+
+# --------------------------------------------------------------------------
+# schema.org/Recipe JSON-LD export — for URL-import into Cronometer
+#
+# A third format on the same `week_plan.cook_events` walk the PDF and mobile
+# HTML use for their recipe pages (`_recipes_by_category`), so all three agree
+# on which recipes exist. This one emits one standalone HTML page per cook
+# event carrying a `<script type="application/ld+json">` Recipe block —
+# Cronometer's URL importer resolves each ingredient *string* against its own
+# food database, so the exporter's whole job is to emit good strings.
+#
+# The 2.1a probe (PROMPT-5 Part 0) established two things this depends on:
+#   - the page must be served as `text/html` (a raw gist is `text/plain` and
+#     is rejected); hosting is out of scope here (PROMPT-5 Part 2) — this only
+#     writes the files;
+#   - `shopping.display_name` is the wrong normaliser (its canonical collapse
+#     and parenthetical stripping resolved to the wrong food); `matcher_name`
+#     is the one built for this.
+#
+# No `nutrition` block, ever: Cronometer computing its own macros from a real
+# database is the entire point — a second set of figures here is `design-00`
+# F5's "never store a verdict", and Part 3's calibration value is precisely
+# that independent comparison.
+# --------------------------------------------------------------------------
+
+RECIPE_EXPORT_DIRNAME = "recipe_exports"
+
+_RECIPE_PAGE_STYLE = (
+    "body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,"
+    "sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;color:#1f2937}"
+    "h1{font-size:1.5rem;margin:0 0 .25rem}.sub{color:#6b7280;margin:0 0 1.5rem}"
+    "h2{font-size:1rem;margin:1.5rem 0 .5rem}li{margin:.3rem 0}"
+)
+
+
+def build_recipe_jsonld(event: CookEvent) -> dict:
+    """One cook event as a `schema.org/Recipe` dict, ready for `json.dumps`.
+
+    `recipeYield` is the batch the cook event is scaled to — `event.portions`,
+    which equals `recipe.servings` after `build_cook_event` — not one serving.
+    Cronometer divides by yield exactly as `Recipe.per_serving_macros` does,
+    so a bulk cook feeding three dinners is not reported at 3x.
+
+    Ingredient strings are `"<grams> g <matcher_name>"`. Water and the other
+    `NON_SHOPPING_INGREDIENTS` are dropped — a 0-kcal line that resolves to
+    "Water, Bottled, Generic" (as "Ground black pepper" did in the probe) is
+    clutter, not information.
+    """
+    recipe = event.recipe
+    ingredient_lines = [
+        f"{ingredient.quantity_g:.0f} g {matcher_name(ingredient.name)}"
+        for ingredient in recipe.ingredients
+        if normalize_name(ingredient.name) not in NON_SHOPPING_INGREDIENTS
+    ]
+    data: dict = {
+        "@context": "https://schema.org",
+        "@type": "Recipe",
+        "name": recipe.name,
+        "recipeYield": f"{event.portions} servings",
+        "recipeIngredient": ingredient_lines,
+    }
+    if recipe.instructions:
+        data["recipeInstructions"] = [
+            {"@type": "HowToStep", "text": step} for step in recipe.instructions
+        ]
+    return data
+
+
+def render_recipe_page(event: CookEvent) -> str:
+    """One cook event as a standalone HTML page carrying its Recipe JSON-LD.
+
+    The visible body shows the exact strings that are in the JSON-LD (so the
+    file reads as what Cronometer will parse), and an HTML comment carries the
+    app's own per-serving macros — kept *out* of the JSON-LD on purpose — for
+    the Part 3 cross-check against whatever Cronometer computes.
+    """
+    data = build_recipe_jsonld(event)
+    recipe = event.recipe
+    # `</script>` appearing inside the serialised data (a dish name, a step)
+    # would close the block early; escaping every `<` is the standard
+    # mitigation for JSON embedded in an HTML `<script>`.
+    jsonld = json.dumps(data, indent=2, ensure_ascii=False).replace("<", "\\u003c")
+
+    ingredients = "".join(
+        f"<li>{html_escape(line)}</li>" for line in data["recipeIngredient"]
+    )
+    steps = "".join(
+        f"<li>{html_escape(step['text'])}</li>"
+        for step in data.get("recipeInstructions", [])
+    )
+    method_html = f"<h2>Method</h2>\n<ol>{steps}</ol>\n" if steps else ""
+
+    macros = recipe.per_serving_macros
+    macro_note = "App per-serving macros (not sent to Cronometer): " + ", ".join(
+        f"{key} {value:.1f}" for key, value in macros.items()
+    )
+
+    return (
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        f"<title>{html_escape(recipe.name)}</title>\n"
+        f"<style>{_RECIPE_PAGE_STYLE}</style>\n"
+        f'<script type="application/ld+json">\n{jsonld}\n</script>\n'
+        "</head>\n<body>\n"
+        f"<h1>{html_escape(recipe.name)}</h1>\n"
+        f'<p class="sub">Makes {event.portions} servings — '
+        f"{html_escape(event.day)} {html_escape(event.meal_type)}.</p>\n"
+        f"<h2>Ingredients</h2>\n<ul>{ingredients}</ul>\n"
+        f"{method_html}"
+        f"<!-- {html_escape(macro_note)} -->\n"
+        "</body>\n</html>\n"
+    )
+
+
+def _recipe_export_filename(event: CookEvent) -> str:
+    """`<slot>-<recipe-slug>.html` — slot-prefixed so a recipe cooked twice in
+    one week (a repeated breakfast) does not collide on a single filename."""
+    slug = re.sub(r"[^a-z0-9]+", "-", event.recipe.name.lower()).strip("-")
+    return f"{_html_slug(event.slot_id)}-{slug or 'recipe'}.html"
+
+
+def write_recipe_exports(
+    week_plan: WeekPlan, out_dir: Optional[str] = None
+) -> Tuple[List[str], Dict[str, str]]:
+    """Write one JSON-LD recipe page per cook event, for hand-hosting and
+    URL-import into Cronometer. Returns `(paths_written, {slot_id: error})`.
+
+    `out_dir` defaults to `data/recipe_exports/` — app-written, gitignored
+    (`data/*`), never a tracked directory. A recipe that fails to render is
+    recorded and skipped: one bad recipe must not cost the rest of the week's
+    export, the same policy as `generate_week_plan`'s per-meal-type catch.
+    """
+    target = out_dir or os.path.join(DATA_DIR, RECIPE_EXPORT_DIRNAME)
+    os.makedirs(target, exist_ok=True)
+    written: List[str] = []
+    failed: Dict[str, str] = {}
+    for event in week_plan.cook_events:
+        try:
+            path = os.path.join(target, _recipe_export_filename(event))
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(render_recipe_page(event))
+            written.append(path)
+        except Exception as exc:  # one bad recipe must not stop the others
+            failed[event.slot_id] = str(exc)
+    return written, failed

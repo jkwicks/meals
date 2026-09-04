@@ -1,0 +1,86 @@
+
+===== run =====
+task: 3.1 — **Task 3.1: Blocks — dated, one-off exceptions over standing presets** — **PROMPT-13 NOT YET WRITTEN (placeholder)**
+tier: 0 (claude-pro)
+model: claude-sonnet-5
+agent: claude
+attempt: 1
+project: /Users/jasonandlyn/code/meals
+queue: /Users/jasonandlyn/code/meals/dev/task-queue-modified.md
+gate: venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests
+started: 2026-09-04 10:47:20
+
+===== meta-prompt =====
+You are an autonomous software engineer working through a Spec-Driven Development checklist at `dev/task-queue-modified.md`.
+
+Perform exactly ONE cycle:
+1. Open `dev/task-queue-modified.md` and find the FIRST pending task, marked `- [ ]`
+   (descending into its first pending subtask when it has one).
+2. Inspect the live codebase on disk -- actual imports, type
+   definitions, and function signatures -- before writing anything.
+   Never invent internals or assume a signature from the plan text;
+   import what earlier tasks already built instead of duplicating it.
+3. Implement ONLY that task, plus unit tests for it using the Python
+   standard library `unittest` module. Do not start the next task and
+   do not refactor code the task does not name.
+4. Verify the change by running: `venv/bin/python -m compileall -q src tests && venv/bin/python -m unittest discover -s tests`
+   Fix your own work until it passes.
+5. Once and only once it passes, edit `dev/task-queue-modified.md` and change that task's
+   `- [ ]` to `- [x]`. Change no other checkbox.
+6. Exit immediately. Do not commit -- the supervisor owns git.
+
+## Standing rules (they apply to every task; follow them in full)
+
+1. **No invented internals.** Objectives below state **contracts, behaviors, inputs and outputs** only. Do not assume schema fields, method names, signatures or imports from this document: before writing code, inspect the files on disk — including everything produced by earlier tasks in this queue — using AST/Tree-sitter inspection to learn the actual types, signatures and naming conventions, then follow them.
+2. **Ground on prior work.** Each task lists its gates. The on-disk result of a gated predecessor is the only valid source for its contracts: **import, never duplicate**.
+3. **Atomic scope.** Subtasks touch 1–3 source files plus dedicated standard-library `unittest` tests. Do not expand scope beyond a subtask's objective.
+4. **Roll the gate.** A checkbox is ticked only after the subtask passes the Verification Gate. Do not begin the next subtask until the current one passes.
+5. **Probes are stops.** Subtasks marked **probe** end with a report to the user; their result decides whether and how the following subtask proceeds. Never build past a probe.
+
+**Skipped as already complete:** Prompt 10 (per-dish storage windows), Prompt 7 (hard-coding audit), Prompt 8 (preset container + weekly pick), Prompt 9 (preset editor + validator), Prompt 2 (day-scoped diet styles), Prompt 3 (recipe pin).
+
+## The task for this cycle
+
+The supervisor parsed the checklist and selected this task. It is the unit of work for this cycle -- implement exactly this one, and tick exactly this checkbox.
+
+- [ ] **Task 3.1: Blocks — dated, one-off exceptions over standing presets** — **PROMPT-13 NOT YET WRITTEN (placeholder)**
+  - **Origin:** none on disk (no `dev/PROMPT13-*.md` exists); the concept is specified in `dev/design-01-presets-and-blocks.md`
+  - **Targets:** TBD once the prompt is written (expected: the shared preset resolver, the preset editor, and a dated-override representation + dedicated tests)
+  - **Objective:** Blocks are dated exceptions layered over standing presets — the standing-vs-dated split the codebase already makes twice (standing targets vs per-run locks; and, once Task 2.2 lands, standing schedule vs calendar-dated overrides). A block overrides a named day/week's planning inputs without mutating the standing preset it sits above, and must not survive as a second preset-shaped mechanism beside the real one. **This task is a placeholder:** `dev/PROMPT-13.md` must be written first (design-doc section → prompt, in the house prompt format), then decomposed into atomic subtasks here before any implementation.
+  - **Grounding / Dependencies:** Gated on **completed** Prompts 2 (day-scoped diet styles), 8 (preset container + weekly pick), and 9 (preset editor + validator) — before designing, AST/Tree-sitter-inspect their on-disk implementation (preset container, leaf-path resolver, validator, editor shapes) to determine actual types and signatures. Coordinate with Task 2.2's dated-override precedent for the standing-vs-dated split.
+  - **Verification:** Verification Gate once specified and implemented; until then this checkbox stays unticked as a planning reminder.
+
+## Constraints
+
+- Scope is one checklist item. A larger diff is a failed run, not a
+  bonus.
+- Tests are part of the task, not an optional extra.
+- Leave the working tree in a state the gate passes on; the
+  supervisor discards everything you wrote if it does not.
+
+===== agent output =====
+I'll start by reading the task queue and the relevant design doc to understand what's actually being asked before touching anything.
+→ Read(/Users/jasonandlyn/code/meals/dev/task-queue-modified.md)
+→ Bash(ls /Users/jasonandlyn/code/meals/dev/)
+→ Bash(git log --oneline -- dev/task-queue-modified.md dev/PROMPT-12.md dev/PROMPT-13.md | hea…)
+→ Bash(git log --all --oneline | grep -i "PROMPT-12\|task-queue" | head -30)
+→ Bash(git show d37bfd9 --stat | head -20; echo "---"; git log --diff-filter=A --oneline -- de…)
+→ Read(/Users/jasonandlyn/code/meals/dev/README.md)
+→ Read(/Users/jasonandlyn/code/meals/dev/design-01-presets-and-blocks.md)
+→ Read(/Users/jasonandlyn/code/meals/dev/PROMPT-12.md)
+→ Read(/Users/jasonandlyn/code/meals/dev/design-01-presets-and-blocks.md)
+→ Bash(grep -n "Phase 2\|Task 2\." /Users/jasonandlyn/code/meals/dev/task-queue-modified.md)
+→ Bash(grep -n "design-03 §8\|^## 8\|^### 8" /Users/jasonandlyn/code/meals/dev/design-03-inter…)
+→ Read(/Users/jasonandlyn/code/meals/dev/design-03-interface-feasibility.md)
+Now let me ground this in the actual on-disk implementation of the prior prompts (2, 8, 9) that blocks will build on, rather than trusting the design doc's descriptions.
+→ Bash(echo "=== presets.py ===" && wc -l src/presets.py && grep -n "^def \|^class \|^@datacla…)
+→ Read(/Users/jasonandlyn/code/meals/src/presets.py)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Read(/Users/jasonandlyn/code/meals/src/planner.py)
+→ Bash(echo "=== WeekPlan preset field ===" && grep -n "class WeekPlan\|preset" src/planner.py…)
+API Error: Connection closed mid-response. The response above may be incomplete.
+! API Error: Connection closed mid-response. The response above may be incomplete.
+
+-- claude-pro finished: failed (exit 1)
+
+===== the claude run failed =====
