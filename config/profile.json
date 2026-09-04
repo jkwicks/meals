@@ -7,6 +7,20 @@
     "protein_multiplier": 1.8,
     "activity_level": "light_office"
   },
+  "training_profile": {
+    "movement_constraints": [
+      {
+        "id": "hip-impingement-squat-depth",
+        "scope": "movement_pattern",
+        "target": "squat",
+        "action": "modify",
+        "instruction": "Do not prescribe full-depth squats; use only my user-approved partial range.",
+        "preferred_variations": []
+      }
+    ],
+    "available_equipment": [],
+    "notes": null
+  },
   "target_modes": {
     "calories": "auto",
     "protein_g": "auto"

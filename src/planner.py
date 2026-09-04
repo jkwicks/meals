@@ -6,7 +6,7 @@ import os
 import random
 import time
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union, get_args
 
 import instructor
 from dotenv import load_dotenv
@@ -2544,6 +2544,177 @@ class DaySchedule(BaseModel):
     meal_overrides: Dict[str, Any] = Field(default_factory=dict)
 
 
+# design-06 §2: the controlled movement-pattern vocabulary shared by a
+# personal constraint's `target` (when `scope` is `movement_pattern`) and a
+# gym program's `movement_patterns` list — the same list, not two vocabularies
+# that happen to look alike, because 5.1's generated exercise schema will
+# judge a constraint match against whichever pattern a program declared.
+# Derived from the `Literal` rather than hand-duplicated into a second tuple,
+# so the two can never drift apart.
+MovementPattern = Literal[
+    "squat",
+    "hinge",
+    "horizontal_push",
+    "horizontal_pull",
+    "vertical_push",
+    "vertical_pull",
+    "carry",
+    "core",
+]
+MOVEMENT_PATTERNS: Tuple[str, ...] = get_args(MovementPattern)
+
+
+class MovementConstraint(BaseModel):
+    """One `training_profile.movement_constraints` record — design-06 §2.1: a
+    persistent fact about the trainee's body, not a preference about a week.
+
+    `scope` picks which of the two ways `target` names something: an
+    `exercise` is matched by normalized exact title (no fuzzy matching, no
+    medical ontology — design-06 §2.1 is explicit that version one does
+    neither), while a `movement_pattern` is matched against
+    `MOVEMENT_PATTERNS`, the same controlled vocabulary a gym program's
+    `movement_patterns` draws from. `target_matches_scope` below is what
+    keeps `target` a free string rather than a `Literal` — it has to hold an
+    arbitrary exercise title under one scope and a controlled pattern name
+    under the other, which no single static type can express.
+
+    `action` is one of three things a constraint can ask for (`exclude`,
+    `modify`, `prefer` — design-06 §2.1's table); `instruction` and
+    `preferred_variations` are optional because only `modify` and `prefer`
+    respectively give them content, and a config predating a given action
+    kind must not be forced to populate a field it has nothing to say. Which
+    action requires which field to be *non-empty* is enforced later, on the
+    generated exercise output (design-06 §5) — this model only shapes what a
+    constraint *can* say, not whether the model obeyed it.
+
+    `id` is a stable, human-chosen slug (`"hip-impingement-squat-depth"`,
+    design-06 §2.1's own example) rather than a generated uuid like
+    `FreezerItem.id`: a constraint is authored by the person through the
+    Settings editor (Task 4.1c) and referenced back by a generated exercise's
+    `applied_constraint_ids` (design-06 §4), so it is meant to be read, not
+    merely compared.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1)
+    scope: Literal["exercise", "movement_pattern"]
+    target: str = Field(..., min_length=1)
+    action: Literal["exclude", "modify", "prefer"]
+    instruction: Optional[str] = None
+    preferred_variations: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def target_matches_scope(self) -> "MovementConstraint":
+        if self.scope == "movement_pattern" and self.target not in MOVEMENT_PATTERNS:
+            raise ValueError(
+                f"movement_constraints entry '{self.id}' scopes to movement_pattern "
+                f"but names target '{self.target}', not one of {MOVEMENT_PATTERNS}."
+            )
+        return self
+
+
+class TrainingProfile(BaseModel):
+    """`config["training_profile"]` — design-06 §2.1: persistent facts about
+    the trainee that must still bind after a different weekly preset is
+    picked.
+
+    Owned by `profile.json`, but deliberately **its own top-level root, not a
+    field on `UserProfile`** — `UserProfile` is read-mostly biometric context
+    (`birth_date`, `height_cm`, ...) that only ever changes as the body
+    changes, where this is standing, hand-edited restriction data with a
+    protection rule of its own (design-06 §3, Task 4.1b): the preset resolver
+    needs one unambiguous root to refuse overrides against, and nesting this
+    under `user_profile` would force that rule to reason about a sub-path of
+    a key it otherwise leaves alone.
+
+    Every field defaults empty, and an empty `TrainingProfile` — including
+    the one this class produces with no arguments at all, which is what a
+    `profile.json` predating this feature merges into — means **no personal
+    exercise restriction**, not "restrictions not yet loaded". Merely having
+    a `birth_date` does not populate this: nothing in this codebase may ever
+    derive a constraint from age (design-06 §2.2, §10 — "birth date never
+    selects a gym program and never creates a constraint").
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    movement_constraints: List[MovementConstraint] = Field(default_factory=list)
+    available_equipment: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def constraint_ids_are_unique(self) -> "TrainingProfile":
+        seen: Set[str] = set()
+        duplicates: Set[str] = set()
+        for constraint in self.movement_constraints:
+            if constraint.id in seen:
+                duplicates.add(constraint.id)
+            seen.add(constraint.id)
+        if duplicates:
+            raise ValueError(
+                f"training_profile.movement_constraints ids must be unique; "
+                f"duplicated: {sorted(duplicates)}."
+            )
+        return self
+
+
+class GymProgram(BaseModel):
+    """One `gym_programs` catalog entry — design-06 §2.2: a reusable way to
+    train, not a calendar. The dict key it is stored under (e.g.
+    `"functional_hypertrophy"`) is its stable catalog id, the same
+    key-is-identity/`label`-is-display-text convention `diet_styles` already
+    uses; there is no second `id` field here to keep in sync with the key.
+
+    The schedule remains the single source of *when* — `training_schedule`
+    still owns which days are gym days, their time and duration; a program
+    only supplies *content* for a gym session the schedule already declares,
+    and selecting one must never add, remove or retime a session (design-06
+    §2.2, enforced when generation lands in Task 5.1, not here).
+
+    `working_sets`, `target_rir` and both rep ranges are required with
+    useful bounds — a catalog record with no rep range or an unbounded one
+    cannot brief a real session, and a config author is meant to hit the
+    bound rather than have the field silently default to something never
+    chosen. `compound_rep_range`/`accessory_rep_range` are `(low, high)`
+    pairs, validated as ordered and positive by `rep_range_is_ordered`.
+    `progression` is limited to the two methods design-06 §6 actually
+    implements a proposal rule for — a third value would be a catalog entry
+    nothing knows how to progress.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(..., min_length=1)
+    primary_goal: Literal[
+        "hypertrophy_and_function",
+        "strength",
+        "hypertrophy",
+        "general_fitness",
+        "fat_loss_support",
+    ]
+    architecture: Literal["full_body", "upper_lower", "push_pull_legs", "body_part_split"]
+    working_sets: int = Field(..., ge=1, le=10)
+    compound_rep_range: Tuple[int, int]
+    accessory_rep_range: Tuple[int, int]
+    target_rir: int = Field(..., ge=0, le=5)
+    progression: Literal["double_progression", "two_for_two"]
+    include_power: bool = False
+    movement_patterns: List[MovementPattern] = Field(default_factory=list)
+    notes: Optional[str] = None
+
+    @field_validator("compound_rep_range", "accessory_rep_range")
+    @classmethod
+    def rep_range_is_ordered(cls, value: Tuple[int, int], info: ValidationInfo) -> Tuple[int, int]:
+        low, high = value
+        if low < 1 or high < low or high > 50:
+            raise ValueError(
+                f"{info.field_name} must be a (low, high) pair with 1 <= low <= "
+                f"high <= 50; got {value}."
+            )
+        return value
+
+
 class AppConfig(BaseModel):
     """The full schema of config.json, validated once at load time.
 
@@ -2562,6 +2733,13 @@ class AppConfig(BaseModel):
     week_start_day: str = "Monday"
     meal_types: List[str] = Field(default_factory=lambda: list(DEFAULT_MEAL_TYPES))
     user_profile: UserProfile = Field(default_factory=UserProfile)
+    # design-06 §2.1: persistent personal exercise constraints, owned by
+    # profile.json beside user_profile but deliberately its own root rather
+    # than a field on it — see TrainingProfile's docstring. Empty by default,
+    # which is what every load produces until this installation's own
+    # profile.json states a constraint, and is also what a config predating
+    # this feature merges into.
+    training_profile: TrainingProfile = Field(default_factory=TrainingProfile)
     # Which of `weekly_schedule`'s numbers are live and which are ignored in
     # favour of the engine's — see `TargetModes` and `hydrate_dynamic_targets`.
     target_modes: TargetModes = Field(default_factory=TargetModes)
@@ -2621,6 +2799,32 @@ class AppConfig(BaseModel):
     # together, so "Coles, Woolworths or Aldi" is qualified by "regional VIC,
     # AU" rather than left to mean whatever the model assumes.
     sourcing: SourcingRules = Field(default_factory=SourcingRules)
+    # design-06 §2.2: the gym-program catalog, owned by schedule.json because
+    # it describes the content of the gym sessions `training_schedule`
+    # already declares, never a second calendar. Empty by default — an empty
+    # catalog plus a null active program means the detailed-workout feature
+    # (Task 5.1) is simply off, which is every load until a program is added.
+    gym_programs: Dict[str, GymProgram] = Field(default_factory=dict)
+    # The standing pick from the catalog above; `None` means today's
+    # behaviour exactly — the schedule's gym sessions are shown and edited as
+    # plain entries, nothing generates exercise detail for them. Presettable
+    # per week (Task 4.1b) to a known catalog key, unlike `training_profile`/
+    # `gym_programs` themselves, which the same task protects.
+    active_gym_program: Optional[str] = None
+
+    @model_validator(mode="after")
+    def active_gym_program_is_known(self) -> "AppConfig":
+        """`active_gym_program`, if set, must name a real `gym_programs` entry
+        — the same "fail at load, name the typo" policy
+        `diet_styles_are_known` gives `active_diet_styles`, applied here for
+        the same reason: only `AppConfig` can see both fields to cross-check
+        them."""
+        if self.active_gym_program is not None and self.active_gym_program not in self.gym_programs:
+            raise ValueError(
+                f"active_gym_program '{self.active_gym_program}' is not in "
+                f"gym_programs. Known: {sorted(self.gym_programs)}"
+            )
+        return self
 
     @model_validator(mode="after")
     def default_cuisine_meal_types_to_meal_types(self) -> "AppConfig":

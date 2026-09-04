@@ -129,6 +129,52 @@ class TestMergedConfigIsUnchanged(unittest.TestCase):
         )
         self.assertEqual(CONFIG_KEY_OWNER["week_shape"], "week.json")
 
+    def test_training_profile_is_a_new_key_not_in_the_frozen_snapshot(self):
+        # Task 4.1a (design-06 §2.1): added after the snapshot was captured,
+        # so — same "additions are allowed" policy the week_shape test above
+        # exercises — asserted here directly. Owned by profile.json, its own
+        # root rather than a field on user_profile (see
+        # planner.TrainingProfile's docstring for why).
+        #
+        # This installation's config/profile.json states the user's real
+        # hip-impingement constraint, so the merged dict carries it rather
+        # than TrainingProfile's empty default — proving the round trip
+        # through config, not just through the schema.
+        self.assertNotIn("training_profile", self.snapshot)
+        self.assertEqual(
+            self.config["training_profile"],
+            {
+                "movement_constraints": [
+                    {
+                        "id": "hip-impingement-squat-depth",
+                        "scope": "movement_pattern",
+                        "target": "squat",
+                        "action": "modify",
+                        "instruction": (
+                            "Do not prescribe full-depth squats; use only my "
+                            "user-approved partial range."
+                        ),
+                        "preferred_variations": [],
+                    }
+                ],
+                "available_equipment": [],
+                "notes": None,
+            },
+        )
+        self.assertEqual(CONFIG_KEY_OWNER["training_profile"], "profile.json")
+
+    def test_gym_program_catalog_ships_empty(self):
+        # Task 4.1a (design-06 §2.2): a new key too, and deliberately shipped
+        # empty with no active program — "ship no active program" is the
+        # explicit instruction, so a fresh checkout plans and schedules
+        # exactly as before this feature existed.
+        self.assertNotIn("gym_programs", self.snapshot)
+        self.assertNotIn("active_gym_program", self.snapshot)
+        self.assertEqual(self.config["gym_programs"], {})
+        self.assertIsNone(self.config["active_gym_program"])
+        self.assertEqual(CONFIG_KEY_OWNER["gym_programs"], "schedule.json")
+        self.assertEqual(CONFIG_KEY_OWNER["active_gym_program"], "schedule.json")
+
 
 class TestThePresetLayerChangesNothingShipped(unittest.TestCase):
     """The compatibility claim the preset arm is accepted against, asserted
