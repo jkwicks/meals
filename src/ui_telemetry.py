@@ -95,6 +95,30 @@ def build_telemetry(ctx: UIContext, inspector: InspectorHandles) -> TelemetryHan
                         "Unique produce, herbs/spices, nuts/seeds & spreads across "
                         "this week's cooked recipes."
                     )
+            # The block covering *today*, if any — `dev/task-queue-modified.md`'s
+            # 3.1e: the active block's first surface beyond Settings, and
+            # `training_intent`/`peak_day`'s first human reader anywhere in
+            # the app (design-01 §4.1a stored them ahead of Arm E's reader on
+            # purpose; a field nothing displays is the same "stored and never
+            # read" trap CLAUDE.md already records against sleep/HRV). No new
+            # colour — `lock` is the one glyph every "in a block" surface
+            # this task adds uses.
+            block = state.current_block_view()
+            if block is not None:
+                with ui.element("div").classes(
+                    f"flex flex-row items-center gap-{SPACE_TIGHT} px-{SPACE_BASE} py-{SPACE_TIGHT} "
+                    f"{RADIUS_CARD} border border-slate-800 bg-slate-800/40 w-fit"
+                ):
+                    ui.icon("lock").classes(f"{TEXT_BODY} text-slate-300")
+                    ui.label(f"Block: {block.name}").classes(
+                        f"{TEXT_BODY} font-medium text-slate-300 tracking-wide"
+                    )
+                    with ui.tooltip():
+                        ui.label(f"Through {block.ends_on}")
+                        if block.training_intent:
+                            ui.label(f"Training intent: {block.training_intent}")
+                        if block.peak_day:
+                            ui.label(f"Peak day: {block.peak_day}")
             # The week's shape, moved up here from the Plan destination's own
             # header row by phase 6b of `ui-redesign.md`. These four are
             # *readings* of the week — the same kind of thing as the two

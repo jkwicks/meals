@@ -3958,3 +3958,319 @@ class TestPreviewWeekShape(unittest.TestCase):
         state.preview_week_shape({"batches": [batch()], "freezer_draws": []})
         self.assertEqual(state.spec, spec_before)
         self.assertEqual(state.freezer, freezer_before)
+
+
+# ---------------------------------------------------------------------------
+# Blocks — dev/task-queue-modified.md's 3.1e ("Surfaces"). `blocks.py` (3.1a)
+# and `planner.py`'s mid-week resolution (3.1b/3.1c/3.1d) are exercised in
+# tests/test_blocks.py and tests/test_planner_dynamic_targets.py; this file
+# covers only what moved into `PlannerState` for the Settings panel, the
+# weekly-pick control and the review dialog's in-block marking.
+#
+# A block that must cover "today" whatever day this suite happens to run on
+# uses the same wide-span trick tests/test_blocks.py's own TestActiveBlock
+# does (2020-01-01..2099-12-31): the *fixture* may depend on the span being
+# wide enough to include the clock, but no assertion below depends on which
+# day it actually is (CLAUDE.md's Tests section).
+# ---------------------------------------------------------------------------
+
+
+def make_block(**overrides) -> dict:
+    fields = dict(
+        name="fast-800-kickstart",
+        starts_on="2020-01-01",
+        ends_on="2099-12-31",
+        body_goal="lose 8 kg",
+        fitness_goal="maintain",
+    )
+    fields.update(overrides)
+    return fields
+
+
+class TestPlanningConfigSeesTheResolvedBlock(unittest.TestCase):
+    """`PlannerState.planning_config()` must thread `self.blocks` into
+    `hydrate_dynamic_targets` exactly as it already threads the resolved
+    preset — CLAUDE.md's "a number the UI displays and a number a run plans
+    against must come from one call, not two", applied to blocks."""
+
+    def test_no_blocks_is_unaffected(self):
+        state = make_hydrating_state()
+        self.assertEqual(state.blocks, [])
+        self.assertNotEqual(state.planned_targets("Monday")["protein_g"], 200)
+
+    def test_a_blocks_frozen_protein_floor_reaches_the_preview(self):
+        """`basis: "grams"` needs no profile/weigh-in data at all — `multiplier`
+        *is* the answer — which keeps this test independent of the exact
+        BMR/TDEE arithmetic `make_hydrating_state`'s fixture drives elsewhere."""
+        state = make_hydrating_state()
+        state.blocks = [
+            make_block(
+                protein_floor={"basis": "grams", "multiplier": 200},
+                skip_transition=True,
+            )
+        ]
+        self.assertEqual(state.planned_targets("Monday")["protein_g"], 200)
+        self.assertEqual(state.planned_targets("Tuesday")["protein_g"], 200)
+
+
+class TestBlockByName(unittest.TestCase):
+    def test_finds_a_declared_block(self):
+        state = make_state()
+        state.blocks = [make_block(name="a"), make_block(name="b")]
+        self.assertEqual(state.block_by_name("b")["name"], "b")
+
+    def test_an_unknown_name_returns_none(self):
+        state = make_state()
+        state.blocks = [make_block(name="a")]
+        self.assertIsNone(state.block_by_name("nonesuch"))
+
+
+class TestCurrentBlockView(unittest.TestCase):
+    def test_no_blocks_means_no_current_block(self):
+        state = make_state()
+        self.assertIsNone(state.current_block_view())
+
+    def test_a_wide_span_block_is_current(self):
+        state = make_state()
+        state.blocks = [
+            make_block(name="reverse-diet", training_intent="hypertrophy peak", peak_day="Saturday")
+        ]
+        view = state.current_block_view()
+        self.assertIsNotNone(view)
+        self.assertEqual(view.name, "reverse-diet")
+        self.assertEqual(view.training_intent, "hypertrophy peak")
+        self.assertEqual(view.peak_day, "Saturday")
+
+    def test_an_expired_block_is_not_current(self):
+        state = make_state()
+        state.blocks = [make_block(starts_on="2000-01-01", ends_on="2000-01-04")]
+        self.assertIsNone(state.current_block_view())
+
+
+class TestDayBlockNames(unittest.TestCase):
+    def test_no_blocks_maps_every_day_to_none(self):
+        state = make_state()
+        self.assertEqual(
+            state.day_block_names(), {day: None for day in state.days}
+        )
+
+    def test_a_wide_span_block_covers_every_day(self):
+        state = make_state()
+        state.blocks = [make_block(name="fast-800")]
+        self.assertEqual(
+            state.day_block_names(), {day: "fast-800" for day in state.days}
+        )
+
+
+class TestCarryForwardProteinFloorResolution(unittest.TestCase):
+    """`ui_state._carry_forward_protein_floor_resolution` — the Blocks
+    panel's own analogue of "resolve once, freeze, persist": an edit that
+    leaves the declaration alone must not un-freeze it, and an edit that
+    changes the declaration must not keep a stale resolved figure."""
+
+    def test_turning_the_floor_off_drops_any_resolution(self):
+        existing = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        self.assertIsNone(ui_state._carry_forward_protein_floor_resolution(existing, None))
+
+    def test_an_unchanged_declaration_keeps_the_frozen_figure(self):
+        existing = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        incoming = {"basis": "grams", "multiplier": 200}
+        result = ui_state._carry_forward_protein_floor_resolution(existing, incoming)
+        self.assertEqual(result["resolved_g"], 200)
+        self.assertEqual(result["resolved_on"], "2026-09-01")
+
+    def test_a_changed_multiplier_drops_the_frozen_figure(self):
+        existing = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        incoming = {"basis": "grams", "multiplier": 220}
+        result = ui_state._carry_forward_protein_floor_resolution(existing, incoming)
+        self.assertNotIn("resolved_g", result)
+        self.assertNotIn("resolved_on", result)
+
+    def test_a_changed_basis_drops_the_frozen_figure(self):
+        existing = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        incoming = {"basis": "target_weight", "multiplier": 1.8}
+        result = ui_state._carry_forward_protein_floor_resolution(existing, incoming)
+        self.assertNotIn("resolved_g", result)
+
+    def test_a_brand_new_declaration_has_nothing_to_carry(self):
+        result = ui_state._carry_forward_protein_floor_resolution(None, {"basis": "grams", "multiplier": 200})
+        self.assertNotIn("resolved_g", result)
+
+
+class FakeBlocksRepository:
+    """Just enough of the repository for the Blocks-panel state methods —
+    `save_block`/`delete_block`, the two `PlanRepository` write operations
+    3.1a added alongside `load_blocks`."""
+
+    def __init__(self, blocks=None):
+        self.blocks = list(blocks or [])
+        self.saved = []
+        self.deleted = []
+
+    async def save_block(self, block):
+        self.saved.append(dict(block))
+        self.blocks = [b for b in self.blocks if b.get("name") != block.get("name")] + [block]
+
+    async def delete_block(self, name):
+        self.deleted.append(name)
+        self.blocks = [b for b in self.blocks if b.get("name") != name]
+
+
+class TestSaveBlock(unittest.TestCase):
+    def test_a_new_block_persists_and_updates_state(self):
+        state = make_state()
+        repo = FakeBlocksRepository()
+        failures = run_sync(state.save_block(repo, make_block(name="a"), is_new=True))
+        self.assertEqual(failures, [])
+        self.assertEqual(len(repo.saved), 1)
+        self.assertEqual(len(state.blocks), 1)
+        self.assertEqual(state.blocks[0]["name"], "a")
+
+    def test_a_new_block_reusing_an_existing_name_is_refused(self):
+        state = make_state()
+        state.blocks = [make_block(name="a")]
+        repo = FakeBlocksRepository(state.blocks)
+        failures = run_sync(state.save_block(repo, make_block(name="a"), is_new=True))
+        self.assertTrue(failures)
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(len(state.blocks), 1)
+
+    def test_an_invalid_block_is_refused_and_nothing_is_written(self):
+        state = make_state()
+        repo = FakeBlocksRepository()
+        failures = run_sync(
+            state.save_block(repo, make_block(name="a", fitness_goal=""), is_new=True)
+        )
+        self.assertTrue(failures)
+        self.assertEqual(repo.saved, [])
+        self.assertEqual(state.blocks, [])
+
+    def test_editing_replaces_the_existing_row_rather_than_duplicating(self):
+        state = make_state()
+        state.blocks = [make_block(name="a", body_goal="lose 8 kg")]
+        repo = FakeBlocksRepository(state.blocks)
+        failures = run_sync(
+            state.save_block(repo, make_block(name="a", body_goal="lose 10 kg"), is_new=False)
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(len(state.blocks), 1)
+        self.assertEqual(state.blocks[0]["body_goal"], "lose 10 kg")
+
+    def test_editing_an_unchanged_protein_floor_carries_its_resolution_forward(self):
+        state = make_state()
+        frozen = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        state.blocks = [make_block(name="a", protein_floor=frozen, skip_transition=True)]
+        repo = FakeBlocksRepository(state.blocks)
+        edited = make_block(
+            name="a", body_goal="lose 10 kg",
+            protein_floor={"basis": "grams", "multiplier": 200}, skip_transition=True,
+        )
+        failures = run_sync(state.save_block(repo, edited, is_new=False))
+        self.assertEqual(failures, [])
+        self.assertEqual(state.blocks[0]["protein_floor"]["resolved_g"], 200)
+
+    def test_editing_a_changed_protein_floor_drops_its_resolution(self):
+        state = make_state()
+        frozen = {"basis": "grams", "multiplier": 200, "resolved_g": 200, "resolved_on": "2026-09-01"}
+        state.blocks = [make_block(name="a", protein_floor=frozen, skip_transition=True)]
+        repo = FakeBlocksRepository(state.blocks)
+        edited = make_block(
+            name="a", protein_floor={"basis": "grams", "multiplier": 250}, skip_transition=True,
+        )
+        failures = run_sync(state.save_block(repo, edited, is_new=False))
+        self.assertEqual(failures, [])
+        self.assertNotIn("resolved_g", state.blocks[0]["protein_floor"])
+        self.assertEqual(state.blocks[0]["protein_floor"]["multiplier"], 250)
+
+
+class TestEndBlockEarly(unittest.TestCase):
+    def test_shortens_ends_on_to_today(self):
+        state = make_state()
+        state.blocks = [make_block(name="a", starts_on="2000-01-01", ends_on="2099-12-31")]
+        repo = FakeBlocksRepository(state.blocks)
+        failures = run_sync(state.end_block_early(repo, "a"))
+        self.assertEqual(failures, [])
+        self.assertEqual(state.blocks[0]["ends_on"], date.today().isoformat())
+        self.assertEqual(repo.saved[0]["ends_on"], date.today().isoformat())
+
+    def test_an_already_earlier_end_date_is_left_alone(self):
+        state = make_state()
+        state.blocks = [make_block(name="a", starts_on="2000-01-01", ends_on="2000-01-10")]
+        repo = FakeBlocksRepository(state.blocks)
+        run_sync(state.end_block_early(repo, "a"))
+        self.assertEqual(state.blocks[0]["ends_on"], "2000-01-10")
+
+    def test_an_unknown_block_is_refused(self):
+        state = make_state()
+        repo = FakeBlocksRepository()
+        failures = run_sync(state.end_block_early(repo, "nonesuch"))
+        self.assertTrue(failures)
+        self.assertEqual(repo.saved, [])
+
+
+class TestDeleteBlock(unittest.TestCase):
+    def test_removes_the_block_and_persists(self):
+        state = make_state()
+        state.blocks = [make_block(name="a")]
+        repo = FakeBlocksRepository(state.blocks)
+        failures = run_sync(state.delete_block(repo, "a"))
+        self.assertEqual(failures, [])
+        self.assertEqual(state.blocks, [])
+        self.assertEqual(repo.deleted, ["a"])
+
+    def test_a_name_already_gone_is_a_no_op_success(self):
+        state = make_state()
+        repo = FakeBlocksRepository()
+        failures = run_sync(state.delete_block(repo, "nonesuch"))
+        self.assertEqual(failures, [])
+
+    def test_refuses_to_dangle_a_successor_reference(self):
+        """`validate_blocks` on the *remaining* list catches this for free —
+        deleting a block another block still names as its recorded successor
+        must not silently write a file `validate_blocks` would itself refuse
+        to load."""
+        state = make_state()
+        restriction = make_block(
+            name="restriction", starts_on="2020-01-01", ends_on="2020-01-10",
+            protein_floor={"basis": "grams", "multiplier": 150},
+            next_block="reintro",
+        )
+        successor = make_block(name="reintro", starts_on="2020-01-11", ends_on="2020-01-20")
+        state.blocks = [restriction, successor]
+        repo = FakeBlocksRepository(state.blocks)
+        failures = run_sync(state.delete_block(repo, "reintro"))
+        self.assertTrue(failures)
+        self.assertEqual(repo.deleted, [])
+        self.assertEqual(len(state.blocks), 2)
+
+
+class TestBlocksView(unittest.TestCase):
+    def test_rows_carry_the_declared_fields(self):
+        state = make_state()
+        state.blocks = [
+            make_block(
+                name="a", diet_styles=["fast_800"],
+                protein_floor={"basis": "grams", "multiplier": 200},
+                target_rate_kg_per_week=0.5, skip_transition=True,
+            )
+        ]
+        rows = state.blocks_view().rows
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.name, "a")
+        self.assertTrue(row.active, "a 2020-2099 span must cover today")
+        self.assertIn("Fast 800", row.diet_style_labels[0])
+        self.assertIn("200", row.protein_floor_summary)
+        self.assertEqual(row.target_rate_kg_per_week, 0.5)
+        self.assertEqual(row.problems, [])
+
+    def test_an_invalid_stored_block_surfaces_its_own_problems(self):
+        state = make_state()
+        state.blocks = [make_block(name="a", fitness_goal="")]
+        row = state.blocks_view().rows[0]
+        self.assertTrue(row.problems)
+
+    def test_names_lists_every_declared_block(self):
+        state = make_state()
+        state.blocks = [make_block(name="a"), make_block(name="b", starts_on="2000-01-01", ends_on="2000-01-05")]
+        self.assertEqual(set(state.blocks_view().names), {"a", "b"})
