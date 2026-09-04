@@ -247,6 +247,29 @@ class StoragePaths:
         """
         return os.path.join(self.config_dir, "presets.json")
 
+    @property
+    def blocks(self) -> str:
+        """Dated exceptions laid over the standing preset — see
+        `src/blocks.py`'s fixed field list.
+
+        A fourth supplemental file, alongside `models.json`,
+        `integrations.json` and `presets.json`: hand-edited or written by
+        the Blocks panel, and deliberately absent from `CONFIG_FILES` — a
+        block does not own a config key, it overrides day-scoped numbers
+        `hydrate_dynamic_targets` already computes per day, so a missing
+        file means no declared blocks and every day resolves to preset +
+        base exactly as it did before blocks existed.
+
+        A bare JSON array, `data/freezer.json`'s shape relocated to
+        `config/` — not `presets.json`'s `{"presets": {...}, "active": ...}`
+        wrapper, because a block has no file-level companion key the way a
+        preset's `active` pick is a companion to its `presets` map: every
+        block is an independently addressable, stable-identity record (see
+        `blocks.load_blocks`/`save_block`/`delete_block`), and "which block
+        is active" is derived from dates, never chosen and stored.
+        """
+        return os.path.join(self.config_dir, "blocks.json")
+
     # -- reference/ ---------------------------------------------------------
 
     @property
@@ -463,6 +486,42 @@ class PlanRepository(abc.ABC):
         `save_config_keys` gives per file: writing the weekly pick must not
         drop a preset added by hand that no editor has ever parsed.
         """
+
+    @abc.abstractmethod
+    async def load_blocks(self) -> List[dict]:
+        """Every declared block (see `src/blocks.py`'s fixed field list),
+        as plain dicts, in file order.
+
+        Supplemental like `load_presets_config`: a missing `config/blocks.json`
+        means no declared blocks, so every day resolves to preset + base
+        exactly as it did before this file existed. Never validated here —
+        `blocks.validate_blocks` is the one validator, read by a future
+        loader and the Blocks panel alike (`presets.py`'s "one function, two
+        presentations" split).
+        """
+
+    @abc.abstractmethod
+    async def save_block(self, block: dict) -> None:
+        """Upsert one block by its `name`, preserving every other row.
+
+        A block's `name` is its one stable identity — it is what a
+        successor names and what the Blocks panel edits — so this follows
+        `save_freezer_item`'s per-record upsert shape rather than
+        `save_presets_config`'s whole-object merge: `presets.json` pairs a
+        `presets` map with a companion `active` pick that must be read and
+        written together, where `blocks.json` is only ever a list of
+        independently addressable records with nothing else to merge
+        around. `block` must carry a `name`; without one it could never be
+        corrected or referenced as a successor, so it is rejected rather
+        than stored unaddressable — the same rule `save_freezer_item` states
+        for a lot's `id`.
+        """
+
+    @abc.abstractmethod
+    async def delete_block(self, name: str) -> None:
+        """Remove one block outright. A no-op if `name` is already gone —
+        the same tolerance `delete_freezer_item` extends to a lot deleted in
+        another tab."""
 
     @abc.abstractmethod
     async def load_whfoods(self) -> List[str]:
@@ -974,6 +1033,15 @@ class LocalJSONRepository(PlanRepository):
             )
         self._write_json(self.paths.presets, {**contents, **presets})
 
+    async def load_blocks(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.paths.blocks) or []
+
+    async def save_block(self, block: dict) -> None:
+        await asyncio.to_thread(self._upsert_block, block)
+
+    async def delete_block(self, name: str) -> None:
+        await asyncio.to_thread(self._delete_block, name)
+
     async def load_whfoods(self) -> List[str]:
         foods = await asyncio.to_thread(self._read_json, self.paths.whfoods) or []
         return [food["name"] for food in foods if food.get("name")]
@@ -1368,6 +1436,30 @@ class LocalJSONRepository(PlanRepository):
         remaining = [row for row in items if row.get("id") != item_id]
         if len(remaining) != len(items):
             self._write_json(self.paths.freezer, remaining)
+
+    def _upsert_block(self, block: dict) -> None:
+        """Merge `block` into `blocks.json` by `name`, then rewrite the
+        file. Read-modify-write in one worker-thread call, same reasoning as
+        `_upsert_freezer_item` — the read and the write must not be
+        separated by an `await`, or a concurrent save could be silently
+        dropped by whichever write landed second."""
+        name = block.get("name")
+        if not name:
+            raise ValueError(f"A block needs a 'name': got {block!r}")
+
+        blocks = self._read_json(self.paths.blocks) or []
+        existing = next((row for row in blocks if row.get("name") == name), None)
+        if existing is not None:
+            existing.update(block)
+        else:
+            blocks.append(dict(block))
+        self._write_json(self.paths.blocks, blocks)
+
+    def _delete_block(self, name: str) -> None:
+        blocks = self._read_json(self.paths.blocks) or []
+        remaining = [row for row in blocks if row.get("name") != name]
+        if len(remaining) != len(blocks):
+            self._write_json(self.paths.blocks, remaining)
 
     @staticmethod
     def _read_json(path: str) -> Any:
