@@ -35,7 +35,7 @@ the same one-way borrowing this module already does for the config types.
 
 import time
 from datetime import date as date_type
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
@@ -774,3 +774,420 @@ def generate_workout_week(
         progress_note(f"workout: generated {len(sessions)} session(s)")
 
     return plan
+
+
+# ---------------------------------------------------------------------------
+# design-06 §7: the first subjective feedback signal
+#
+# `WorkoutFeedback` is a different question from `planner.WorkoutCompletion`:
+# completion asks whether a declared session happened at all (schedule vs.
+# `activity_log` vs. a hand mark), where this asks how one *constrained*
+# exercise inside a session actually felt. Kept in its own store
+# (`data/workout_feedback.json`, `repository.load_workout_feedback`/
+# `save_workout_feedback`) for the same reason `adherence.json`'s two
+# sections stay apart from each other and from `daily_actuals`: two signals
+# sharing one key would let a later write silently overwrite an earlier,
+# unrelated one.
+# ---------------------------------------------------------------------------
+
+
+class WorkoutFeedback(BaseModel):
+    """One "how did this feel" mark for one exercise a personal constraint
+    applied to — design-06 §7's own example schema.
+
+    Keyed by `date` + `session_id` + `exercise_id` + `constraint_id`, all
+    four required: a session can carry several exercises, and design-06
+    §2.1's `modify` action means one exercise can carry several applied
+    constraints at once, so any shorter key would let a mark about one
+    exercise/constraint pairing silently overwrite a mark about another.
+    `repository.WORKOUT_FEEDBACK_KEY_FIELDS` names this same tuple for the
+    upsert on the storage side — one key, stated once.
+
+    This is training feedback, not a diagnosis: `response` is one of
+    exactly three words (design-06 §7), never a numeric pain score, and
+    nothing here edits `training_profile` — only the Settings editor may
+    change a personal constraint (design-06 §3/§7).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    session_id: str = Field(..., min_length=1)
+    exercise_id: str = Field(..., min_length=1)
+    constraint_id: str = Field(..., min_length=1)
+    response: Literal["no_issue", "mild_irritation", "worse_than_usual"]
+    note: Optional[str] = None
+
+    @field_validator("date")
+    @classmethod
+    def valid_iso_date(cls, v: str, info: ValidationInfo) -> str:
+        _parse_iso_date(v, info.field_name)
+        return v
+
+
+# `WorkoutFeedback.response`'s own vocabulary, read back off the field
+# rather than hand-copied into a second tuple — the same
+# `get_args(...model_fields[...].annotation)` pattern `MOVEMENT_PATTERNS`
+# and `ProgressionMethod` already use above, so a third response value could
+# never be added to the model without also reaching every reader of this
+# tuple.
+WORKOUT_FEEDBACK_RESPONSES: Tuple[str, ...] = get_args(
+    WorkoutFeedback.model_fields["response"].annotation
+)
+
+
+def feedback_blocks_progression(feedback: Optional[WorkoutFeedback]) -> bool:
+    """design-06 §7: `mild_irritation` "hold[s] load, repetitions, and
+    constrained range" and `worse_than_usual` "suppress[es] progression" —
+    both mean *do not advance this cycle*, so both block a proposal here.
+
+    `no_issue`, and no feedback at all (the ordinary case: most exercises
+    carry no applied personal constraint and so are never fed a feedback
+    row), both leave progression eligible — but neither is proof anything
+    was completed. `propose_progression` still requires real qualifying set
+    evidence before it proposes anything; this function only ever narrows
+    eligibility, never substitutes for evidence.
+    """
+    return feedback is not None and feedback.response in ("mild_irritation", "worse_than_usual")
+
+
+def feedback_flags_review(feedback: Optional[WorkoutFeedback]) -> bool:
+    """design-06 §7: only `worse_than_usual` "propose[s] reviewing/
+    substituting the exercise next time" — `mild_irritation` holds the
+    prescription without raising that flag.
+
+    This module never acts on the flag itself (design-06 §12: substitution
+    is never automatic); it only names the condition so a caller — 5.1d's
+    Today surface — can show it.
+    """
+    return feedback is not None and feedback.response == "worse_than_usual"
+
+
+def latest_feedback_for_exercise(
+    feedback_entries: Optional[List[dict]], exercise_id: str
+) -> Optional[WorkoutFeedback]:
+    """The single most recent recorded feedback naming `exercise_id`, or
+    None when there is none.
+
+    `feedback_entries` is `repository.load_workout_feedback()`'s raw list;
+    every row naming `exercise_id` is parsed into a `WorkoutFeedback` here —
+    the one place this module converts the stored shape into the typed one
+    everything else in it works with, the same boundary
+    `generate_workout_week` already draws for `TrainingProfile`/`GymProgram`.
+
+    An exercise carrying several applied constraints (design-06 §2.1's
+    `modify` action) can have several rows on file for one date, one per
+    constraint. This looks across all of them for the one exercise and
+    keeps only the most recent: design-06 §7's "no_issue removes that
+    feedback block" only reads sensibly per *exercise* — a stale
+    `worse_than_usual` recorded about one constraint must not permanently
+    out-vote a later `no_issue` recorded about the same exercise's overall
+    session response. Ties on `date` break on `session_id`, the same pair
+    `LocalJSONRepository._upsert_workout_feedback` sorts the file by.
+    """
+    matching = [
+        WorkoutFeedback(**row)
+        for row in (feedback_entries or [])
+        if row.get("exercise_id") == exercise_id
+    ]
+    if not matching:
+        return None
+    return max(matching, key=lambda entry: (entry.date, entry.session_id))
+
+
+# ---------------------------------------------------------------------------
+# design-06 §6: progression is a proposal, never a hidden edit
+# ---------------------------------------------------------------------------
+
+# design-06 §6: "propose a 2.5-5% load increase" for both progression
+# methods. One conservative constant, not a value chosen per proposal —
+# design-06 §1's motivating population is an older trainee training around
+# a declared physical constraint, so this always proposes the smaller, safer
+# end of the stated range rather than varying it.
+PROGRESSION_LOAD_INCREMENT_PCT = 0.025
+
+
+class CompletedSetEvidence(BaseModel):
+    """One completed working set for one exercise.
+
+    This is this module's own minimal evidence shape for
+    `propose_progression`, **not** a claim about Hevy's real payload:
+    strength history (`dev/task-queue.md`'s Task 2.3/`PROMPT-4`) has not
+    landed, so there is no on-disk schema here to import rather than
+    duplicate. `generate_workout_week`'s `recent_history` parameter already
+    reserves the same "evidence, not an instruction" role for this data;
+    once Task 2.3 lands, its reader is expected to normalize into (or be
+    mapped to) this shape rather than this module growing a second one.
+
+    `rir` — Reps In Reserve — is deliberately never computed here from an
+    RPE figure: design-06 §6's "convert RPE to RIR in the one existing
+    planned conversion" names a *single* conversion point, which belongs
+    with the strength-history reader that does not exist yet
+    (`dev/task-queue.md`'s 2.3c). A set with no `rir` reported can never
+    qualify a proposal below — the same "absent means no performance claim"
+    rule `feedback_blocks_progression` states for `no_issue`, applied here
+    to missing evidence instead of missing feedback.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    date: str
+    session_id: str = Field(..., min_length=1)
+    exercise_id: str = Field(..., min_length=1)
+    set_number: int = Field(..., ge=1)
+    reps: int = Field(..., ge=0)
+    load_kg: float = Field(..., ge=0)
+    rir: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("date")
+    @classmethod
+    def valid_iso_date(cls, v: str, info: ValidationInfo) -> str:
+        _parse_iso_date(v, info.field_name)
+        return v
+
+
+class ProgressionProposal(BaseModel):
+    """One proposed load increase — design-06 §6: "every proposal names its
+    evidence and requires acceptance," never a silent edit.
+
+    `rule` and `percentage_increment` name the *method*; `session_ids` and
+    `qualifying_sets` name the *evidence itself*; `evidence_summary` states
+    all of it as one readable sentence — `PROMPT-15`'s acceptance line ("a
+    Hevy-backed proposal cites the qualifying sets, percentage increment,
+    and rule") is satisfied by carrying each as a real field rather than
+    folding everything into prose a caller would have to re-parse back out.
+
+    Deliberately silent on *when* or *how* it is accepted — that is 5.1d's
+    Today surface (an explicit Accept action) and whichever caller then
+    calls `apply_progression_proposal` and persists the result through
+    `repository.save_workout_plan`. Nothing in this module writes anything;
+    constructing a `ProgressionProposal` changes no stored state.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    exercise_id: str = Field(..., min_length=1)
+    rule: ProgressionMethod
+    session_ids: List[str] = Field(..., min_length=1)
+    current_load_kg: float = Field(..., ge=0)
+    proposed_load_kg: float = Field(..., ge=0)
+    percentage_increment: float = Field(..., gt=0)
+    qualifying_sets: List[CompletedSetEvidence] = Field(..., min_length=1)
+    evidence_summary: str = Field(..., min_length=1)
+
+
+def _sets_for_exercise(
+    completed_sets: Optional[List[dict]], exercise_id: str
+) -> List[CompletedSetEvidence]:
+    """`completed_sets` (raw rows, whatever future shape Task 2.3 supplies
+    them in) narrowed to `exercise_id` and parsed into `CompletedSetEvidence`
+    — the same raw-dict-in, typed-out boundary `latest_feedback_for_exercise`
+    draws for feedback rows."""
+    return [
+        CompletedSetEvidence(**row)
+        for row in (completed_sets or [])
+        if row.get("exercise_id") == exercise_id
+    ]
+
+
+def _sessions_most_recent_first(
+    sets: List[CompletedSetEvidence],
+) -> List[Tuple[str, List[CompletedSetEvidence]]]:
+    """`sets` grouped by `session_id`, most recent session first (by the
+    latest date any of its sets carries). Both progression rules below
+    reason about "the last session" / "the last two sessions," never about
+    an individual set in isolation from the session it belongs to.
+    """
+    by_session: Dict[str, List[CompletedSetEvidence]] = {}
+    for one_set in sets:
+        by_session.setdefault(one_set.session_id, []).append(one_set)
+    return sorted(
+        by_session.items(),
+        key=lambda item: max(one_set.date for one_set in item[1]),
+        reverse=True,
+    )
+
+
+def _meets_reps_and_rir(
+    completed_set: CompletedSetEvidence, exercise: ExercisePrescription, reps_required: int
+) -> bool:
+    """Whether one completed set clears the bar both progression rules
+    below share: at least `reps_required` reps, performed at no less than
+    `exercise.target_rir` in reserve.
+
+    The `rir` side is a deliberate, uniform reading applied to *both* rules,
+    not a number design-06 §6 states directly: rather than double
+    progression accepting a set that undercut the assigned RIR (pushed
+    closer to failure than programmed) while two-for-two demands the RIR
+    buffer be "maintained" (`docs/exercise-protocols.md`'s wording), this
+    module asks the same thing of both — never propose progression from a
+    set that required going harder than what was actually prescribed. That
+    is the conservative direction for design-06 §1's motivating population
+    (an older trainee training around a declared physical constraint), and
+    it keeps one rule instead of two subtly different ones.
+    """
+    return (
+        completed_set.reps >= reps_required
+        and completed_set.rir is not None
+        and completed_set.rir >= exercise.target_rir
+    )
+
+
+def _double_progression_evidence(
+    exercise: ExercisePrescription, sets: List[CompletedSetEvidence]
+) -> Optional[Tuple[List[str], List[CompletedSetEvidence], str]]:
+    """design-06 §6: "after all working sets reach the top at target RIR,
+    propose a 2.5-5% load increase and reset to the bottom" — judged against
+    the single most recent session only; an older session's performance is
+    not standing evidence once a more recent one exists.
+
+    "All working sets" is read as *at least `exercise.sets` sets meeting the
+    bar*, not literally every set the session logged — a warm-up or a
+    dropped set recorded alongside real working sets should not by itself
+    disqualify a session that otherwise cleared the prescribed volume at the
+    prescribed intensity.
+    """
+    sessions = _sessions_most_recent_first(sets)
+    if not sessions:
+        return None
+    session_id, session_sets = sessions[0]
+    qualifying = [
+        one_set
+        for one_set in session_sets
+        if _meets_reps_and_rir(one_set, exercise, exercise.rep_max)
+    ]
+    if len(qualifying) < exercise.sets:
+        return None
+    summary = (
+        f"{len(qualifying)} of {exercise.sets} prescribed working sets in "
+        f"session {session_id!r} reached the top of the range "
+        f"({exercise.rep_max} reps) while retaining at least "
+        f"{exercise.target_rir} RIR (double_progression)."
+    )
+    return [session_id], qualifying, summary
+
+
+def _two_for_two_evidence(
+    exercise: ExercisePrescription, sets: List[CompletedSetEvidence]
+) -> Optional[Tuple[List[str], List[CompletedSetEvidence], str]]:
+    """design-06 §6 / `docs/exercise-protocols.md`'s 2-for-2 rule: 2
+    additional reps beyond the designated target on the *final* set, for 2
+    consecutive sessions, while retaining the required RIR buffer.
+
+    "Designated target" is read as `exercise.rep_max` — the same top of the
+    range double progression climbs toward — since `ExercisePrescription`
+    states no separate single target rep count of its own. "Final set" is
+    the set with the highest `set_number` recorded for the exercise in that
+    session. Only the two most recent sessions are considered; an older
+    qualifying session does not extend a streak once a more recent
+    non-qualifying one exists between it and now.
+    """
+    sessions = _sessions_most_recent_first(sets)
+    if len(sessions) < 2:
+        return None
+    target_reps = exercise.rep_max + 2
+    qualifying_finals: List[CompletedSetEvidence] = []
+    session_ids: List[str] = []
+    for session_id, session_sets in sessions[:2]:
+        final_set = max(session_sets, key=lambda one_set: one_set.set_number)
+        if not _meets_reps_and_rir(final_set, exercise, target_reps):
+            return None
+        qualifying_finals.append(final_set)
+        session_ids.append(session_id)
+    summary = (
+        f"Final working set reached {target_reps}+ reps (2 beyond the "
+        f"{exercise.rep_max}-rep target) while retaining at least "
+        f"{exercise.target_rir} RIR for 2 consecutive sessions "
+        f"({', '.join(session_ids)}) (two_for_two)."
+    )
+    return session_ids, qualifying_finals, summary
+
+
+def propose_progression(
+    exercise: ExercisePrescription,
+    completed_sets: Optional[List[dict]] = None,
+    feedback: Optional[WorkoutFeedback] = None,
+) -> Optional[ProgressionProposal]:
+    """design-06 §6's proposal logic for both `double_progression` and
+    `two_for_two` (`exercise.progression_rule` picks which). Pure: never
+    reads or writes any store, never invents a load or a rep count, and
+    never mutates `exercise`.
+
+    Three independent ways this returns `None` rather than a proposal,
+    matching design-06 §6/§7's acceptance list:
+
+    - **feedback blocks it** (`feedback_blocks_progression`) — a
+      `mild_irritation`/`worse_than_usual` mark holds the prescription
+      regardless of what any set evidence would otherwise show;
+    - **no history-established load** — `exercise.target_load_kg is None`
+      means nobody has yet recorded what this person actually lifts, so
+      there is no baseline to scale by 2.5%; a load-increase proposal
+      requires one (design-06 §4's "the model must not invent a kilogram
+      figure," extended here to "neither may a proposal");
+    - **no qualifying set evidence** — `completed_sets` absent, empty, or
+      not meeting the rule's bar. `no_issue` feedback (or no feedback row at
+      all) never substitutes for this: it only clears a *block*, it is
+      never itself "proof reps were completed" (design-06 §7).
+
+    `completed_sets` are raw dicts filtered to `exercise.exercise_id`
+    internally, so a caller may pass a whole session's (or several
+    sessions') evidence without pre-filtering.
+    """
+    if feedback_blocks_progression(feedback):
+        return None
+    if exercise.target_load_kg is None:
+        return None
+
+    sets = _sets_for_exercise(completed_sets, exercise.exercise_id)
+    if not sets:
+        return None
+
+    if exercise.progression_rule == "double_progression":
+        evidence = _double_progression_evidence(exercise, sets)
+    else:
+        evidence = _two_for_two_evidence(exercise, sets)
+    if evidence is None:
+        return None
+
+    session_ids, qualifying_sets, summary = evidence
+    proposed_load_kg = round(exercise.target_load_kg * (1 + PROGRESSION_LOAD_INCREMENT_PCT), 2)
+    return ProgressionProposal(
+        exercise_id=exercise.exercise_id,
+        rule=exercise.progression_rule,
+        session_ids=session_ids,
+        current_load_kg=exercise.target_load_kg,
+        proposed_load_kg=proposed_load_kg,
+        percentage_increment=PROGRESSION_LOAD_INCREMENT_PCT,
+        qualifying_sets=qualifying_sets,
+        evidence_summary=(
+            f"{summary} Proposing a {PROGRESSION_LOAD_INCREMENT_PCT:.1%} load "
+            f"increase from {exercise.target_load_kg:g} kg to "
+            f"{proposed_load_kg:g} kg."
+        ),
+    )
+
+
+def apply_progression_proposal(
+    exercise: ExercisePrescription, proposal: ProgressionProposal
+) -> ExercisePrescription:
+    """The only function that may change a stored `target_load_kg` after
+    generation — and it must only ever be called from an explicit Accept
+    action (5.1d), never from generation, feedback recording, or
+    `propose_progression` itself, which only ever constructs a proposal and
+    never applies one.
+
+    Every field except `target_load_kg` is carried over unchanged, which is
+    what makes design-06 §6's "range of motion stays fixed for a modified
+    movement" true by construction here: `applied_constraint_ids` and
+    `execution_notes` — the two fields a `modify` constraint requires
+    (`constraint_violations`) — are untouched, so an accepted proposal can
+    never be the thing that drops a required fixed-range instruction. Only
+    editing the personal constraint itself may ever change those (design-06
+    §7).
+    """
+    if proposal.exercise_id != exercise.exercise_id:
+        raise ValueError(
+            f"Progression proposal for {proposal.exercise_id!r} does not "
+            f"match exercise {exercise.exercise_id!r}."
+        )
+    return exercise.model_copy(update={"target_load_kg": proposal.proposed_load_kg})
