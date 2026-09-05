@@ -191,6 +191,18 @@ BIOMETRIC_SECTION_SOURCES = {
 # would silently overwrite each other with no way to tell which won.
 ADHERENCE_SECTIONS = {"meals": "slot_id", "workouts": "session_id"}
 
+# The four fields identifying one `workout.WorkoutFeedback` row — design-06
+# §7's own key, spelled out as a tuple rather than left implicit so the
+# upsert and its test can both name it once. Unlike `ADHERENCE_SECTIONS`,
+# `workout_feedback.json` holds exactly one kind of row (there is no second
+# section to disambiguate): a session can carry several exercises and one
+# exercise can carry several applied constraints, so the two-part
+# `date`/`session_id` key `ADHERENCE_SECTIONS` uses is not narrow enough —
+# it would let a mild-irritation mark on one exercise's hip constraint
+# silently overwrite a worse-than-usual mark on the same exercise's knee
+# constraint.
+WORKOUT_FEEDBACK_KEY_FIELDS = ("date", "session_id", "exercise_id", "constraint_id")
+
 
 @dataclass(frozen=True)
 class StoragePaths:
@@ -305,6 +317,23 @@ class StoragePaths:
         means schedule-only behaviour — the declared session still shows,
         with no generated exercise detail."""
         return os.path.join(self.data_dir, "workout_plans.json")
+
+    @property
+    def workout_feedback(self) -> str:
+        """Manual per-exercise "how did this feel" marks — design-06 §7, see
+        `src/workout.py`'s `WorkoutFeedback`.
+
+        App-written state like `adherence`/`freezer`, never `config/`: a
+        limitation response is an observed fact about one session, not a
+        setting, and neither a preset nor `save_config_keys` may ever reach
+        it. Keyed by `date` + `session_id` + `exercise_id` + `constraint_id`
+        — see `WORKOUT_FEEDBACK_KEY_FIELDS` — because a session can carry
+        several exercises and an exercise can carry several personal
+        constraints; any shorter key would let one response overwrite
+        another about a different exercise or a different constraint on the
+        same exercise.
+        """
+        return os.path.join(self.data_dir, "workout_feedback.json")
 
     @property
     def recipe_catalog(self) -> str:
@@ -869,6 +898,37 @@ class PlanRepository(abc.ABC):
         """
 
     @abc.abstractmethod
+    async def load_workout_feedback(self) -> List[dict]:
+        """Every recorded `workout.WorkoutFeedback` row, as plain dicts, in
+        file order — design-06 §7.
+
+        Empty when nothing has been recorded yet, the same cold-start
+        tolerance `load_adherence`/`load_freezer` extend for the same
+        reason: a checkout that has never logged a limitation response must
+        read exactly as it did before this feature existed, not raise.
+        """
+
+    @abc.abstractmethod
+    async def save_workout_feedback(self, entry: dict) -> None:
+        """Upsert one row by its full `WORKOUT_FEEDBACK_KEY_FIELDS` key —
+        `date` + `session_id` + `exercise_id` + `constraint_id` — preserving
+        every other row.
+
+        An update, not an append-only event log like `save_rejection_entry`:
+        design-06 §7 says `no_issue` "removes that feedback block," which
+        only makes sense as a replacement of whatever was previously
+        recorded about that exact exercise/constraint pairing, not a second
+        fact stacked beside it. `entry` must carry all four key fields;
+        without one it could never be matched back on a later mark, the same
+        rule `save_freezer_item` states for a lot's `id`.
+
+        Never mutates `config/` or `training_profile` — a response changes
+        eligibility for the *next* progression proposal, never the
+        persistent constraint itself, which only the Settings editor may
+        change.
+        """
+
+    @abc.abstractmethod
     async def save_shopping_list(self, markdown: str) -> None:
         """Write the CLI's rendered shopping list (`--save-shopping-list`).
 
@@ -1179,6 +1239,12 @@ class LocalJSONRepository(PlanRepository):
             self._write_json, self._workout_plan_path(week_identifier), workout_plan
         )
 
+    async def load_workout_feedback(self) -> List[dict]:
+        return await asyncio.to_thread(self._read_json, self.paths.workout_feedback) or []
+
+    async def save_workout_feedback(self, entry: dict) -> None:
+        await asyncio.to_thread(self._upsert_workout_feedback, entry)
+
     async def save_shopping_list(self, markdown: str) -> None:
         await asyncio.to_thread(self._write_text, self.paths.shopping_list, markdown)
 
@@ -1466,6 +1532,40 @@ class LocalJSONRepository(PlanRepository):
             return
         adherence[section] = kept
         self._write_json(self.paths.adherence, adherence)
+
+    def _upsert_workout_feedback(self, entry: dict) -> None:
+        """Merge `entry` into `workout_feedback.json` by its full
+        `WORKOUT_FEEDBACK_KEY_FIELDS` key, then rewrite the file.
+
+        Read-modify-write in one worker-thread call, same reasoning as
+        `_upsert_adherence` — the read and the write must not be separated
+        by an `await`, or a concurrent save could be silently dropped by
+        whichever write landed second. Sorted by the same four fields so the
+        file reads chronologically, and deterministically within a date; all
+        four are strings, so the tuple sorts without parsing any of them.
+        """
+        missing = [field for field in WORKOUT_FEEDBACK_KEY_FIELDS if not entry.get(field)]
+        if missing:
+            raise ValueError(
+                f"A workout feedback entry needs {WORKOUT_FEEDBACK_KEY_FIELDS}: "
+                f"missing {missing}, got {entry!r}"
+            )
+
+        rows = self._read_json(self.paths.workout_feedback) or []
+        existing = next(
+            (
+                row
+                for row in rows
+                if all(row.get(field) == entry.get(field) for field in WORKOUT_FEEDBACK_KEY_FIELDS)
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.update(entry)
+        else:
+            rows.append(dict(entry))
+        rows.sort(key=lambda row: tuple(row.get(field) or "" for field in WORKOUT_FEEDBACK_KEY_FIELDS))
+        self._write_json(self.paths.workout_feedback, rows)
 
     def _save_sync_checkpoint(self, source: str, checked_date: str) -> None:
         """Advance `source`'s entry in `sync_checkpoints`, never backward.
