@@ -22,6 +22,7 @@ from freezer import FreezerItem
 from planner import (
     LOCATION_RESTRICTION_PHRASES,
     MACRO_KEYS,
+    MOVEMENT_PATTERNS,
     NUTRIENT_KEYS,
     SUNDAY_PREP_REHEAT_MINUTES,
     TRAINING_NOTE_PREFIXES,
@@ -670,6 +671,11 @@ PRESET_FIELD_MULTI_STR = "multi_str"      # multi-select of catalog keys
 PRESET_FIELD_ENUM_OBJECT = "enum_object"  # {sub-key: one of `choices`}
 PRESET_FIELD_NUMBER_OBJECT = "number_object"  # {sub-key: a number}
 PRESET_FIELD_DAY_CARBS = "day_carbs"      # one number per weekday, each its own leaf
+# A single value from a set of catalog keys read off the base config
+# (`active_gym_program`'s `gym_programs` catalog) — unlike
+# `PRESET_FIELD_MULTI_STR`, exactly one or none, so the widget is a plain
+# clearable select rather than a chip multi-select.
+PRESET_FIELD_ENUM_STR = "enum_str"
 # `{"batches": [...], "freezer_draws": [...]}`, replaced whole — Task 1.2d.
 # Not an `enum_object`/`number_object`: each list holds independently
 # addable/removable records, not a fixed set of sub-keys, so it draws through
@@ -783,6 +789,15 @@ PRESET_EDITOR_FIELDS: Tuple[PresetField, ...] = (
         "binding.",
         advanced=True, minimum=0, maximum=28, step=1,
         subkeys=("breakfast", "lunch", "dinner"),
+    ),
+    PresetField(
+        "active_gym_program", "active_gym_program", PRESET_FIELD_ENUM_STR,
+        "Active gym program",
+        "design-06 §2.2/§4.1c: the only exercise-planning field a weekly "
+        "preset may set — selects from the catalog authored in Settings -> "
+        "Training. Leave unset to keep your standing pick; a preset can "
+        "select a program but never edit the catalog or your personal "
+        "constraints (both are protected).",
     ),
     PresetField(
         "week_shape", "week_shape",
@@ -983,6 +998,71 @@ class PresetView:
         if not self.changes:
             return "No changes from the base config."
         return " · ".join(self.changes)
+
+
+@dataclass(frozen=True)
+class ConstraintSummaryRow:
+    """One personal exercise constraint, as the review dialog's read-only
+    summary states it — display only, since Settings -> Training is the one
+    place any of this is edited (Task 4.1c)."""
+
+    target: str
+    scope: str
+    action: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class TrainingReviewView:
+    """The review dialog's read-only "what this week binds to" panel —
+    design-06 §3/§4: `training_profile` is a protected config root (Task
+    4.1b), so its constraints can never differ between `config` and
+    `base_config`; `active_gym_program` is the one field of the three a
+    preset may override, which is why this states *which* resolved value
+    won rather than only showing the inert base pick.
+    """
+
+    program_label: Optional[str]
+    program_overridden: bool
+    base_program_label: Optional[str]
+    constraints: List[ConstraintSummaryRow]
+
+
+def training_review_view(config: dict, base_config: dict) -> TrainingReviewView:
+    """Build `TrainingReviewView` from the resolved (`config`) and standing
+    (`base_config`) dicts `PlannerState` already keeps side by side —
+    exactly the pair `PresetView`/`preset_changes` read for the same reason.
+    """
+    programs = config.get("gym_programs") or {}
+
+    def label_for(key: Optional[str]) -> Optional[str]:
+        if key is None:
+            return None
+        return (programs.get(key) or {}).get("label", key)
+
+    resolved_key = config.get("active_gym_program")
+    base_key = base_config.get("active_gym_program")
+    profile = config.get("training_profile") or {}
+    constraints = []
+    for entry in profile.get("movement_constraints") or []:
+        variations = entry.get("preferred_variations") or []
+        detail = entry.get("instruction") or (
+            "prefers: " + ", ".join(variations) if variations else ""
+        )
+        constraints.append(
+            ConstraintSummaryRow(
+                target=str(entry.get("target", "")),
+                scope=str(entry.get("scope", "")),
+                action=str(entry.get("action", "")),
+                detail=detail,
+            )
+        )
+    return TrainingReviewView(
+        program_label=label_for(resolved_key),
+        program_overridden=resolved_key != base_key,
+        base_program_label=label_for(base_key),
+        constraints=constraints,
+    )
 
 
 @dataclass(frozen=True)
@@ -3732,6 +3812,148 @@ class PlannerState:
         await repository.delete_block(name)
         self.blocks = remaining
         return []
+
+    # ---- exercise constraints & the gym-program catalog (Task 4.1c) -------
+    #
+    # design-06 §2/§3: `training_profile` and `gym_programs` are standing
+    # personal facts, not a per-run input — the same class of thing
+    # `set_target_mode`/`accept_training_proposal` already persist, so every
+    # write here reaches disk through `repository.save_config_keys` the
+    # moment it validates rather than waiting on the next generation.
+    # `active_gym_program` is the one field of the three a preset may
+    # override (Task 4.1b), which is why every write re-layers from
+    # `base_config` — the *standing* pick, never the value a preset might
+    # currently be overriding — exactly the split `set_preset` already draws
+    # between `base_config` and `config`.
+
+    async def _save_base_config_key(
+        self, repository: LocalJSONRepository, key: str, value: Any
+    ) -> List[str]:
+        """`base_config` with `key` replaced by `value`, validated through
+        the same typed config path the loader runs (`AppConfig`, under the
+        active preset) before anything reaches disk — the Settings-editor
+        counterpart to `save_preset`'s validate-then-write shape, with
+        `resolve_preset_layer` standing in for the loader's own check so a
+        write here can never introduce a state the next start would refuse.
+        Nothing is mutated or written when validation fails.
+        """
+        candidate = dict(self.base_config, **{key: value})
+        config, failures = resolve_preset_layer(candidate, self.presets_config)
+        if failures:
+            return [failure.message for failure in failures]
+        await repository.save_config_keys({key: value})
+        self.base_config = candidate
+        self._relayer(config)
+        return []
+
+    async def update_training_profile(
+        self, repository: LocalJSONRepository, **fields: Any
+    ) -> List[str]:
+        """Replace one or more `training_profile` sub-fields (`notes`,
+        `available_equipment`, or a whole new `movement_constraints` list)
+        and persist, only if the result still validates."""
+        profile = dict(self.base_config.get("training_profile") or {}, **fields)
+        return await self._save_base_config_key(repository, "training_profile", profile)
+
+    async def add_movement_constraint(self, repository: LocalJSONRepository) -> List[str]:
+        """Append one blank-but-valid constraint row, ready to edit in place
+        — the same `add_training_session`/`on_freezer_add` shape."""
+        constraints = list(
+            (self.base_config.get("training_profile") or {}).get("movement_constraints") or []
+        )
+        constraints.append(
+            {
+                "id": f"constraint-{len(constraints) + 1}",
+                "scope": "movement_pattern",
+                "target": MOVEMENT_PATTERNS[0],
+                "action": "modify",
+                "instruction": None,
+                "preferred_variations": [],
+            }
+        )
+        return await self.update_training_profile(repository, movement_constraints=constraints)
+
+    async def update_movement_constraint(
+        self, repository: LocalJSONRepository, index: int, **fields: Any
+    ) -> List[str]:
+        """Edit one constraint's fields in place, by position — a constraint
+        carries no generated id of its own (`id` is the person's own slug,
+        possibly mid-edit or duplicated), so this is keyed like
+        `training_field_handler`, not like `update_freezer_item`."""
+        constraints = list(
+            (self.base_config.get("training_profile") or {}).get("movement_constraints") or []
+        )
+        if not 0 <= index < len(constraints):
+            return ["That constraint no longer exists."]
+        constraints[index] = dict(constraints[index], **fields)
+        return await self.update_training_profile(repository, movement_constraints=constraints)
+
+    async def remove_movement_constraint(
+        self, repository: LocalJSONRepository, index: int
+    ) -> List[str]:
+        """A no-op success for an index already gone — the same tolerance
+        `remove_freezer_item`/`delete_block` extend to a row deleted from
+        another tab."""
+        constraints = list(
+            (self.base_config.get("training_profile") or {}).get("movement_constraints") or []
+        )
+        if not 0 <= index < len(constraints):
+            return []
+        del constraints[index]
+        return await self.update_training_profile(repository, movement_constraints=constraints)
+
+    async def add_gym_program(self, repository: LocalJSONRepository) -> List[str]:
+        """Append one new catalog entry under a freshly generated key. The
+        key is the program's stable identity — like a preset's or a block's
+        name — so it is never offered as an editable field; `label` is the
+        editable display text."""
+        programs = dict(self.base_config.get("gym_programs") or {})
+        index = 1
+        while f"program_{index}" in programs:
+            index += 1
+        programs[f"program_{index}"] = {
+            "label": "New program",
+            "primary_goal": "general_fitness",
+            "architecture": "full_body",
+            "working_sets": 3,
+            "compound_rep_range": [6, 10],
+            "accessory_rep_range": [10, 15],
+            "target_rir": 2,
+            "progression": "double_progression",
+            "include_power": False,
+            "movement_patterns": [],
+            "notes": None,
+        }
+        return await self._save_base_config_key(repository, "gym_programs", programs)
+
+    async def update_gym_program(
+        self, repository: LocalJSONRepository, key: str, **fields: Any
+    ) -> List[str]:
+        """Edit one catalog entry's fields in place, by its stable key."""
+        programs = dict(self.base_config.get("gym_programs") or {})
+        if key not in programs:
+            return [f"No gym program '{key}'."]
+        programs[key] = dict(programs[key], **fields)
+        return await self._save_base_config_key(repository, "gym_programs", programs)
+
+    async def remove_gym_program(self, repository: LocalJSONRepository, key: str) -> List[str]:
+        """Refused for the standing active pick — deletion must never
+        silently change what the week plans against, the same guard
+        `delete_preset` gives the active preset."""
+        if key == self.base_config.get("active_gym_program"):
+            return ["Can't delete the active gym program — clear the pick first."]
+        programs = dict(self.base_config.get("gym_programs") or {})
+        programs.pop(key, None)
+        return await self._save_base_config_key(repository, "gym_programs", programs)
+
+    async def set_active_gym_program(
+        self, repository: LocalJSONRepository, key: Optional[str]
+    ) -> List[str]:
+        """The standing base pick — distinct from the *weekly preset's* own
+        `active_gym_program` override (Task 4.1b/the preset editor), which
+        this never touches. `resolve_preset_layer` is what actually checks
+        `key` names a real catalog entry."""
+        return await self._save_base_config_key(repository, "active_gym_program", key or None)
 
     def slot_views(self) -> Dict[str, SlotView]:
         """slot_id -> SlotView for every slot in the week."""

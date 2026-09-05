@@ -33,14 +33,17 @@ overnight from drawing yesterday's 14-day sync window.
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional, get_args
 
 from nicegui import ui
 
 from planner import (
+    MOVEMENT_PATTERNS,
     TARGET_MODE_AUTO,
     TARGET_MODE_MACROS,
     TARGET_MODE_MANUAL,
+    GymProgram,
+    MovementConstraint,
     selectable_models,
 )
 from ui_context import UIContext
@@ -73,7 +76,7 @@ from ui_theme import (
     TEXT_HEAD,
     TEXT_MICRO,
 )
-from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP
+from week import MODE_COOK, MODE_LEFTOVER, MODE_SKIP, humanize
 
 # What each `<meal_type>_mode` actually does to the grid, in one clause.
 # Straight out of `week.apply_location_modes` — including the leftover
@@ -92,6 +95,41 @@ LOCATION_MODE_NOTES = {
 SYNC_STAGE = "sync"
 LOCATION_STAGE = "context"
 WORKOUT_STAGE = "workout"
+
+# design-06 §2's controlled vocabularies, for the Training section's selects
+# (Task 4.1c). Derived with `get_args` off the Pydantic models rather than
+# hand-duplicated — the same reason `planner.MOVEMENT_PATTERNS` itself is
+# `get_args(MovementPattern)`: a second hand-typed copy is a second thing to
+# forget when the model's `Literal` gains or loses a value.
+CONSTRAINT_SCOPE_OPTIONS = {
+    value: humanize(value).title()
+    for value in get_args(MovementConstraint.model_fields["scope"].annotation)
+}
+CONSTRAINT_ACTION_OPTIONS = {
+    value: humanize(value).title()
+    for value in get_args(MovementConstraint.model_fields["action"].annotation)
+}
+GYM_PRIMARY_GOAL_OPTIONS = {
+    value: humanize(value).title()
+    for value in get_args(GymProgram.model_fields["primary_goal"].annotation)
+}
+GYM_ARCHITECTURE_OPTIONS = {
+    value: humanize(value).title()
+    for value in get_args(GymProgram.model_fields["architecture"].annotation)
+}
+GYM_PROGRESSION_OPTIONS = {
+    value: humanize(value).title()
+    for value in get_args(GymProgram.model_fields["progression"].annotation)
+}
+MOVEMENT_PATTERN_OPTIONS = {value: humanize(value).title() for value in MOVEMENT_PATTERNS}
+
+
+def _parse_str_list(text: str) -> List[str]:
+    """"squat rack, bands" -> ["squat rack", "bands"] — the free-text
+    multi-value shape for a field with no fixed catalog to offer as a
+    multi-select (`available_equipment`, a constraint's
+    `preferred_variations`)."""
+    return [chunk.strip() for chunk in str(text or "").split(",") if chunk.strip()]
 
 
 def _stamp(iso: Optional[str]) -> str:
@@ -624,6 +662,376 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
                 "completion schema this page deliberately doesn't invent."
             ).classes(f"{TEXT_MICRO} text-slate-400")
 
+    # ---- exercise constraints & the gym-program catalog (Task 4.1c) -------
+    #
+    # design-06 §2/§3: standing personal facts, not a per-run input — the
+    # same class of thing "Daily Targets" above already is, so an edit here
+    # persists the moment it validates (`PlannerState`'s `_save_base_config_key`
+    # writers) rather than staging for the next generation. Field edits are
+    # debounced and mutate a candidate object validated through the same
+    # typed config path (`AppConfig`) before it reaches disk; a rejected
+    # edit is reported with `ui.notify`, the same tolerance the freezer row
+    # editor already extends, never a blocking modal. Add/remove are the
+    # only actions that repaint a list, so typing into an open field can
+    # never steal its own focus — the `training_editor`/`freezer_editor`
+    # shape this copies.
+    #
+    # This phase builds the inputs only (`dev/PROMPT-14.md`): no workout is
+    # generated, and nothing here reads or writes a workout plan.
+
+    def constraint_field_handler(index: int, key: str):
+        """One `on_change` per (row, field) — index and key baked in via
+        closure arguments, the same shape `training_field_handler` uses and
+        for the same reason: a row removed between render and edit must not
+        write into whichever entry has since taken its place. Keyed by
+        position, not by the constraint's own `id` — that field is itself
+        editable and may be mid-edit or briefly duplicated, so it cannot
+        double as a stable row identity the way a freezer lot's generated id
+        can."""
+
+        async def handler(event) -> None:
+            value = event.value
+            if key == "preferred_variations":
+                value = _parse_str_list(value)
+            elif key == "instruction":
+                value = (value or "").strip() or None
+            elif isinstance(value, str):
+                value = value.strip()
+            failures = await state.update_movement_constraint(
+                repository, index, **{key: value}
+            )
+            if failures:
+                ui.notify(failures[0], type="warning")
+
+        return handler
+
+    def constraint_row(index: int, constraint: dict) -> None:
+        async def on_remove(i: int = index) -> None:
+            await state.remove_movement_constraint(repository, i)
+            constraints_body.refresh()
+
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_TIGHT} {RADIUS_CARD} "
+            "border border-slate-800 bg-slate-950/30"
+        ):
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                ui.input(
+                    label="ID",
+                    value=constraint.get("id", ""),
+                    on_change=constraint_field_handler(index, "id"),
+                ).props("dense outlined debounce=500").classes(
+                    f"flex-1 min-w-0 {TEXT_BODY}"
+                )
+                ui.button(icon="delete", on_click=on_remove).props(
+                    "dense flat size=xs"
+                ).classes("min-h-0 p-0 text-slate-400")
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                ui.select(
+                    CONSTRAINT_SCOPE_OPTIONS,
+                    value=constraint.get("scope"),
+                    label="Scope",
+                    on_change=constraint_field_handler(index, "scope"),
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                ui.select(
+                    CONSTRAINT_ACTION_OPTIONS,
+                    value=constraint.get("action"),
+                    label="Action",
+                    on_change=constraint_field_handler(index, "action"),
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+            ui.input(
+                label="Target (a movement pattern name, or an exact exercise title)",
+                value=constraint.get("target", ""),
+                on_change=constraint_field_handler(index, "target"),
+            ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+            ui.label(
+                "A movement-pattern scope must name one of: "
+                + ", ".join(MOVEMENT_PATTERNS)
+            ).classes(f"{TEXT_MICRO} text-slate-400")
+            ui.input(
+                label='Instruction (for "modify")',
+                value=constraint.get("instruction") or "",
+                on_change=constraint_field_handler(index, "instruction"),
+            ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+            ui.input(
+                label='Preferred variations, comma-separated (for "prefer")',
+                value=", ".join(constraint.get("preferred_variations") or []),
+                on_change=constraint_field_handler(index, "preferred_variations"),
+            ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+
+    @ui.refreshable
+    def constraints_body() -> None:
+        constraints = (
+            state.base_config.get("training_profile") or {}
+        ).get("movement_constraints") or []
+        if not constraints:
+            ui.label("No personal exercise constraints declared.").classes(
+                f"{TEXT_MICRO} text-slate-400 italic"
+            )
+        for index, constraint in enumerate(constraints):
+            constraint_row(index, constraint)
+
+        async def on_add() -> None:
+            failures = await state.add_movement_constraint(repository)
+            if failures:
+                ui.notify(failures[0], type="warning")
+                return
+            constraints_body.refresh()
+
+        ui.button("Add constraint", icon="add", on_click=on_add).props(
+            "dense flat no-caps size=sm"
+        ).classes("text-slate-400")
+
+    async def on_equipment_change(event) -> None:
+        failures = await state.update_training_profile(
+            repository, available_equipment=_parse_str_list(event.value)
+        )
+        if failures:
+            ui.notify(failures[0], type="warning")
+
+    async def on_notes_change(event) -> None:
+        failures = await state.update_training_profile(
+            repository, notes=(event.value or "").strip() or None
+        )
+        if failures:
+            ui.notify(failures[0], type="warning")
+
+    def gym_program_field_handler(key: str, field_key: str):
+        """Keyed by the program's own stable catalog key rather than
+        position — unlike a constraint, a program's key is never itself
+        edited (see `PlannerState.add_gym_program`), so it is a safe closure
+        argument the same way `freezer_field_handler` keys on a lot's id."""
+
+        async def handler(event) -> None:
+            value = event.value
+            if field_key == "movement_patterns":
+                value = list(value or [])
+            elif field_key in ("working_sets", "target_rir"):
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    return
+            elif field_key == "notes":
+                value = (value or "").strip() or None
+            elif field_key == "label":
+                value = str(value or "").strip()
+            failures = await state.update_gym_program(repository, key, **{field_key: value})
+            if failures:
+                ui.notify(failures[0], type="warning")
+
+        return handler
+
+    def rep_range_handler(key: str, field_key: str, position: int):
+        """One `on_change` per (program, rep-range field, low/high) — the
+        pair is one leaf in config, so an edit reads the *current* pair
+        before replacing just the edited half, the same read-modify-write
+        shape `update_gym_program` gives every other field."""
+
+        async def handler(event) -> None:
+            programs = state.base_config.get("gym_programs") or {}
+            current = list(programs.get(key, {}).get(field_key) or [0, 0])
+            try:
+                current[position] = int(event.value)
+            except (TypeError, ValueError):
+                return
+            failures = await state.update_gym_program(
+                repository, key, **{field_key: current}
+            )
+            if failures:
+                ui.notify(failures[0], type="warning")
+
+        return handler
+
+    def gym_program_row(key: str, program: dict) -> None:
+        async def on_remove(k: str = key) -> None:
+            failures = await state.remove_gym_program(repository, k)
+            if failures:
+                ui.notify(failures[0], type="warning")
+                return
+            gym_section.refresh()
+
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_TIGHT} {RADIUS_CARD} "
+            "border border-slate-800 bg-slate-950/30"
+        ):
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                ui.input(
+                    label="Label",
+                    value=program.get("label", ""),
+                    on_change=gym_program_field_handler(key, "label"),
+                ).props("dense outlined debounce=500").classes(
+                    f"flex-1 min-w-0 {TEXT_BODY}"
+                )
+                ui.button(icon="delete", on_click=on_remove).props(
+                    "dense flat size=xs"
+                ).classes("min-h-0 p-0 text-slate-400")
+            ui.label(key).classes(f"{TEXT_MICRO} font-mono text-slate-400")
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                ui.select(
+                    GYM_PRIMARY_GOAL_OPTIONS,
+                    value=program.get("primary_goal"),
+                    label="Primary goal",
+                    on_change=gym_program_field_handler(key, "primary_goal"),
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+                ui.select(
+                    GYM_ARCHITECTURE_OPTIONS,
+                    value=program.get("architecture"),
+                    label="Architecture",
+                    on_change=gym_program_field_handler(key, "architecture"),
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                ui.number(
+                    label="Working sets",
+                    value=program.get("working_sets"),
+                    min=1, max=10, step=1, precision=0,
+                    on_change=gym_program_field_handler(key, "working_sets"),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+                ui.number(
+                    label="Target RIR",
+                    value=program.get("target_rir"),
+                    min=0, max=5, step=1, precision=0,
+                    on_change=gym_program_field_handler(key, "target_rir"),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+                ui.select(
+                    GYM_PROGRESSION_OPTIONS,
+                    value=program.get("progression"),
+                    label="Progression",
+                    on_change=gym_program_field_handler(key, "progression"),
+                ).props("dense outlined").classes(f"flex-1 {TEXT_BODY}")
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                compound = program.get("compound_rep_range") or [0, 0]
+                ui.number(
+                    label="Compound reps, low",
+                    value=compound[0], min=1, max=50, step=1, precision=0,
+                    on_change=rep_range_handler(key, "compound_rep_range", 0),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+                ui.number(
+                    label="Compound reps, high",
+                    value=compound[1], min=1, max=50, step=1, precision=0,
+                    on_change=rep_range_handler(key, "compound_rep_range", 1),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+            with ui.row().classes(f"w-full items-center flex-nowrap gap-{SPACE_BASE}"):
+                accessory = program.get("accessory_rep_range") or [0, 0]
+                ui.number(
+                    label="Accessory reps, low",
+                    value=accessory[0], min=1, max=50, step=1, precision=0,
+                    on_change=rep_range_handler(key, "accessory_rep_range", 0),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+                ui.number(
+                    label="Accessory reps, high",
+                    value=accessory[1], min=1, max=50, step=1, precision=0,
+                    on_change=rep_range_handler(key, "accessory_rep_range", 1),
+                ).props("dense outlined debounce=500").classes(f"flex-1 {TEXT_BODY}")
+            ui.checkbox(
+                "Includes power work",
+                value=bool(program.get("include_power")),
+                on_change=gym_program_field_handler(key, "include_power"),
+            ).classes(f"{TEXT_BODY} text-slate-300")
+            ui.select(
+                MOVEMENT_PATTERN_OPTIONS,
+                value=list(program.get("movement_patterns") or []),
+                multiple=True,
+                label="Movement patterns covered",
+                on_change=gym_program_field_handler(key, "movement_patterns"),
+            ).props("dense outlined use-chips clearable").classes(f"w-full {TEXT_BODY}")
+            ui.input(
+                label="Notes",
+                value=program.get("notes") or "",
+                on_change=gym_program_field_handler(key, "notes"),
+            ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+
+    @ui.refreshable
+    def gym_section() -> None:
+        # Two nested groups, not one flat list with margins between them —
+        # `ui-work`'s "space siblings with the parent's gap, not per-element
+        # margins" — so the catalog and the standing pick each read as their
+        # own unit regardless of how many programs are declared.
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} w-full"):
+            programs = state.base_config.get("gym_programs") or {}
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} w-full"):
+                if not programs:
+                    ui.label("No gym programs declared.").classes(
+                        f"{TEXT_MICRO} text-slate-400 italic"
+                    )
+                for key, program in programs.items():
+                    gym_program_row(key, program)
+
+                async def on_add_program() -> None:
+                    failures = await state.add_gym_program(repository)
+                    if failures:
+                        ui.notify(failures[0], type="warning")
+                        return
+                    gym_section.refresh()
+
+                ui.button("Add gym program", icon="add", on_click=on_add_program).props(
+                    "dense flat no-caps size=sm"
+                ).classes("text-slate-400")
+
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_HAIR} w-full"):
+                ui.label("Standing active program").classes(
+                    f"{TEXT_BODY} font-semibold text-slate-300"
+                )
+
+                async def on_active_change(event) -> None:
+                    failures = await state.set_active_gym_program(
+                        repository, event.value or None
+                    )
+                    if failures:
+                        ui.notify(failures[0], type="warning")
+
+                ui.select(
+                    {key: entry.get("label", key) for key, entry in programs.items()},
+                    value=state.base_config.get("active_gym_program"),
+                    on_change=on_active_change,
+                ).props("dense outlined clearable").classes(f"w-full {TEXT_BODY}")
+                ui.label(
+                    "Off keeps workout detail off (Phase 5) until one is "
+                    "picked. A weekly preset may override this pick for its "
+                    "own week; the review dialog says which one won."
+                ).classes(f"{TEXT_MICRO} text-slate-400")
+
+    def training_section() -> None:
+        # One outer group at `SPACE_SECTION`, matching the gap `panel()`'s
+        # own container already uses between top-level sections — self
+        # contained rather than relying on whatever gap the caller happens
+        # to wrap this in, and each subsection below is its own tighter
+        # group, the same "gap, not margin" rule.
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_SECTION} w-full"):
+            ui.label(
+                "Standing, personal facts — never a per-run input, and never "
+                "erased by a weekly preset (design-06 §3: only the "
+                "active-program pick below may be overridden per week, in "
+                "the preset editor). This phase builds the inputs only — no "
+                "workout is generated yet."
+            ).classes(f"{TEXT_BODY} text-slate-400")
+
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} w-full"):
+                ui.label("Movement constraints").classes(
+                    f"{TEXT_MICRO} font-semibold text-slate-400"
+                )
+                constraints_body()
+
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} w-full"):
+                ui.input(
+                    label="Available equipment, comma-separated",
+                    value=", ".join(
+                        (state.base_config.get("training_profile") or {}).get(
+                            "available_equipment"
+                        ) or []
+                    ),
+                    on_change=on_equipment_change,
+                ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+                ui.input(
+                    label="Notes",
+                    value=(state.base_config.get("training_profile") or {}).get("notes") or "",
+                    on_change=on_notes_change,
+                ).props("dense outlined debounce=500").classes(f"w-full {TEXT_BODY}")
+
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} w-full"):
+                ui.label("Gym programs").classes(
+                    f"{TEXT_MICRO} font-semibold text-slate-400"
+                )
+                gym_section()
+
     # ---- the dialogs ------------------------------------------------------
     # One per surface, built once and reused, keyed by nothing: unlike the day
     # inspector there is no per-open parameter — each dialog always shows the
@@ -766,6 +1174,10 @@ def build_settings(ctx: UIContext, biometrics: dict) -> SettingsHandles:
             ui.separator()
             ui.label("Integrations").classes(f"{TEXT_BODY} font-semibold text-slate-300")
             integrations_status()
+
+            ui.separator()
+            ui.label("Training").classes(f"{TEXT_BODY} font-semibold text-slate-300")
+            training_section()
 
     return SettingsHandles(
         panel=panel, open_stage=open_stage, targets_source=targets_source
