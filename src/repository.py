@@ -295,6 +295,18 @@ class StoragePaths:
         return os.path.join(self.data_dir, "week_plan.json")
 
     @property
+    def workout_plans(self) -> str:
+        """Generated exercise detail for gym sessions the schedule already
+        declares — see `src/workout.py`'s `WorkoutPlan`.
+
+        A dedicated file, not folded into `week_plan.json`: a workout plan
+        is keyed by calendar date and a stable session id (design-06 §4),
+        the meal week's own concerns entirely separate from it. Missing
+        means schedule-only behaviour — the declared session still shows,
+        with no generated exercise detail."""
+        return os.path.join(self.data_dir, "workout_plans.json")
+
+    @property
     def recipe_catalog(self) -> str:
         return os.path.join(self.data_dir, "recipes_master.json")
 
@@ -826,6 +838,37 @@ class PlanRepository(abc.ABC):
         """
 
     @abc.abstractmethod
+    async def load_workout_plan(self, week_identifier: str = "current") -> Optional[dict]:
+        """The last generated workout plan as a raw dict, or None if there
+        isn't one — see `src/workout.py`'s `WorkoutPlan` (design-06 §4).
+
+        `week_identifier` follows `load_week_plan`'s current/next convention
+        rather than a bare weekday key: a workout session is identified by
+        a real calendar date and a stable session id, not by the weekday
+        name `training_schedule` indexes its declared sessions under, so
+        "which cached week" is the same question `load_week_plan` already
+        answers and this reuses its answer rather than inventing a second
+        one. A missing file means schedule-only behaviour — the declared
+        session still shows, with no generated exercise detail. Returned
+        unvalidated, like every other repository read; callers run
+        `WorkoutPlan.model_validate` themselves.
+        """
+
+    @abc.abstractmethod
+    async def save_workout_plan(self, workout_plan: dict, week_identifier: str = "current") -> None:
+        """Store the generated workout plan under `week_identifier`,
+        replacing any previous plan stored under that same identifier.
+
+        Callers must only pass an already-validated plan — nothing here
+        validates one. That is what makes a failed generation or
+        regeneration leave the previous file byte-identical: the write
+        itself is atomic (temp file + rename, the same
+        `LocalJSONRepository._write_json` every other store here uses), and
+        a caller that never reaches this method because validation raised
+        first leaves nothing to roll back.
+        """
+
+    @abc.abstractmethod
     async def save_shopping_list(self, markdown: str) -> None:
         """Write the CLI's rendered shopping list (`--save-shopping-list`).
 
@@ -1126,6 +1169,16 @@ class LocalJSONRepository(PlanRepository):
             self._write_json, self._week_plan_path(week_identifier), week_plan
         )
 
+    async def load_workout_plan(self, week_identifier: str = "current") -> Optional[dict]:
+        return await asyncio.to_thread(
+            self._read_json, self._workout_plan_path(week_identifier)
+        )
+
+    async def save_workout_plan(self, workout_plan: dict, week_identifier: str = "current") -> None:
+        await asyncio.to_thread(
+            self._write_json, self._workout_plan_path(week_identifier), workout_plan
+        )
+
     async def save_shopping_list(self, markdown: str) -> None:
         await asyncio.to_thread(self._write_text, self.paths.shopping_list, markdown)
 
@@ -1169,6 +1222,21 @@ class LocalJSONRepository(PlanRepository):
         return os.path.join(
             os.path.dirname(self.paths.week_plan),
             f"week_plan_{week_identifier}.json",
+        )
+
+    def _workout_plan_path(self, week_identifier: str) -> str:
+        """File for one named week's workout plan — mirrors `_week_plan_path`.
+
+        Unlike `week_plan.json`, there is no pre-multi-week single file to
+        stay compatible with (`workout_plans.json` is new), but `"current"`
+        still maps to the bare filename rather than `workout_plans_current.json`
+        — one naming rule for both stores, not a second one invented here.
+        """
+        if week_identifier == "current":
+            return self.paths.workout_plans
+        return os.path.join(
+            os.path.dirname(self.paths.workout_plans),
+            f"workout_plans_{week_identifier}.json",
         )
 
     # -- blocking helpers, only ever called in a worker thread --------------
