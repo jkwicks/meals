@@ -312,6 +312,104 @@ class TestABadPathFailsAtLoad(unittest.TestCase):
         self.assertIn("schema validation", str(caught.exception))
 
 
+class TestProtectedTrainingFactsResistAPreset(unittest.TestCase):
+    """design-06 §3, Task 4.1b: `training_profile` (the personal constraint
+    profile) and `gym_programs` (the catalog) are persistent personal facts,
+    never a weekly opinion — a preset may select the active program but must
+    never empty, replace or mutate either object, root or nested leaf.
+
+    The shipped `training_profile` already carries this installation's real
+    hip-impingement constraint (Task 4.1a), so `shipped_base()` alone is
+    enough to prove a preset cannot touch it; a catalog entry is added by
+    hand (not through a preset) to prove the same for `gym_programs` and to
+    give `active_gym_program` something real to select.
+    """
+
+    GYM_PROGRAM = {
+        "label": "Functional hypertrophy",
+        "primary_goal": "hypertrophy_and_function",
+        "architecture": "full_body",
+        "working_sets": 3,
+        "compound_rep_range": [8, 12],
+        "accessory_rep_range": [10, 15],
+        "target_rir": 2,
+        "progression": "double_progression",
+    }
+
+    def setUp(self) -> None:
+        base = shipped_base()
+        self.assertTrue(
+            base["training_profile"]["movement_constraints"],
+            "fixture drifted: profile.json no longer ships a constraint",
+        )
+        self.base = dict(base, gym_programs={"functional_hypertrophy": self.GYM_PROGRAM})
+
+    def test_a_preset_may_select_a_known_program(self):
+        layered = apply_preset_layer(
+            self.base,
+            preset_file("bulk", bulk={"active_gym_program": "functional_hypertrophy"}),
+        )
+        self.assertEqual(layered["active_gym_program"], "functional_hypertrophy")
+        self.assertEqual(layered["gym_programs"], load_app_config(self.base)["gym_programs"])
+
+    def test_a_preset_cannot_empty_the_training_profile(self):
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(self.base, preset_file("x", x={"training_profile": {}}))
+        message = str(caught.exception)
+        self.assertIn("x", message, "the failing preset must be named")
+        self.assertIn("training_profile", message, "the path must be named")
+
+    def test_a_preset_cannot_mutate_a_nested_training_profile_leaf(self):
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(
+                self.base,
+                preset_file("x", x={"training_profile.movement_constraints": []}),
+            )
+        self.assertIn("training_profile.movement_constraints", str(caught.exception))
+
+    def test_a_preset_cannot_replace_the_gym_program_catalog(self):
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(self.base, preset_file("x", x={"gym_programs": {}}))
+        self.assertIn("gym_programs", str(caught.exception))
+
+    def test_a_preset_cannot_mutate_one_catalog_entry(self):
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(
+                self.base,
+                preset_file(
+                    "x", x={"gym_programs.functional_hypertrophy.working_sets": 10}
+                ),
+            )
+        self.assertIn(
+            "gym_programs.functional_hypertrophy.working_sets", str(caught.exception)
+        )
+
+    def test_re_layering_from_base_is_unaffected_elsewhere(self):
+        """An unrelated override still applies exactly as today, and neither
+        protected object moves along with it."""
+        layered = apply_preset_layer(
+            self.base,
+            preset_file("lean", lean={"dietary_rules.allowed_nova_groups": [1, 2]}),
+        )
+        self.assertEqual(
+            layered["dietary_rules"]["allowed_nova_groups"], [1, 2]
+        )
+        validated = load_app_config(self.base)
+        self.assertEqual(layered["training_profile"], validated["training_profile"])
+        self.assertEqual(layered["gym_programs"], validated["gym_programs"])
+
+    def test_the_resolver_reports_rather_than_raises(self):
+        """Same check as `apply_preset_layer`'s raise, from the pure half
+        the editor's preview reaches — one check, two presentations."""
+        resolution = presets.resolve_config(
+            self.base, preset_file("x", x={"training_profile.notes": "anything"})
+        )
+        self.assertFalse(resolution.ok)
+        failure = resolution.failures[0]
+        self.assertEqual(failure.preset, "x")
+        self.assertEqual(failure.path, "training_profile.notes")
+
+
 class TestADayScopedDietStyleArrivesFromAPreset(unittest.TestCase):
     """A preset setting `active_diet_styles` is a *layer over* that key, not
     a change to it (`design-01` §9.2) — so both shapes it accepts have to
