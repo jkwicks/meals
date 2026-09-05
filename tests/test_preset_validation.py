@@ -95,6 +95,67 @@ class TestOneFunctionTwoPresentations(unittest.TestCase):
                 apply_preset_layer(self.base, doc)
 
 
+class TestProtectedTrainingFacts(unittest.TestCase):
+    """design-06 §3, Task 4.1b, through the full loader path (`resolve_config`
+    *and* `AppConfig`) rather than `presets.py` alone — `resolve_preset_layer`
+    is what the loader raises on and what the editor's preview renders, so
+    the protection has to hold at this seam too, not only in `presets.py`'s
+    own tests."""
+
+    GYM_PROGRAM = {
+        "label": "Functional hypertrophy",
+        "primary_goal": "hypertrophy_and_function",
+        "architecture": "full_body",
+        "working_sets": 3,
+        "compound_rep_range": [8, 12],
+        "accessory_rep_range": [10, 15],
+        "target_rir": 2,
+        "progression": "double_progression",
+    }
+
+    def setUp(self) -> None:
+        self.base = dict(
+            shipped_base(), gym_programs={"functional_hypertrophy": self.GYM_PROGRAM}
+        )
+
+    def test_selecting_a_known_program_resolves_cleanly(self):
+        config, failures = resolve_preset_layer(
+            self.base,
+            one_preset("bulk", {"active_gym_program": "functional_hypertrophy"}),
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(config["active_gym_program"], "functional_hypertrophy")
+        self.assertEqual(config["gym_programs"], load_app_config(self.base)["gym_programs"])
+
+    def test_emptying_the_training_profile_fails_both_presentations(self):
+        doc = one_preset("x", {"training_profile": {}})
+        config, failures = resolve_preset_layer(self.base, doc)
+        self.assertIsNone(config)
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].preset, "x")
+        self.assertEqual(failures[0].path, "training_profile")
+        with self.assertRaises(ValueError) as caught:
+            apply_preset_layer(self.base, doc)
+        self.assertIn("training_profile", str(caught.exception))
+
+    def test_mutating_the_catalog_fails_both_presentations(self):
+        doc = one_preset("x", {"gym_programs.functional_hypertrophy.working_sets": 10})
+        config, failures = resolve_preset_layer(self.base, doc)
+        self.assertIsNone(config)
+        self.assertEqual(failures[0].path, "gym_programs.functional_hypertrophy.working_sets")
+        with self.assertRaises(ValueError):
+            apply_preset_layer(self.base, doc)
+
+    def test_the_shipped_personal_constraint_survives_an_unrelated_preset(self):
+        """Re-layering from base still works exactly as today: an unrelated
+        override must not disturb the real, hand-authored constraint."""
+        config, failures = resolve_preset_layer(
+            self.base, one_preset("lean", {"dietary_rules.allowed_nova_groups": [1, 2]})
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(config["training_profile"], self.base["training_profile"])
+
+
 class TestReuseWindowsFitHistory(unittest.TestCase):
     """The first cross-field check the editor needs — `favorite_reuse_days`
     past `history_max_entries` silently stops binding, so it fails at load."""

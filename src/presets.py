@@ -82,6 +82,16 @@ PRESETS_KEY = "presets"
 OVERRIDES_KEY = "overrides"
 LABEL_KEY = "label"
 
+# design-06 §3, Task 4.1b: `training_profile` and `gym_programs` are
+# persistent personal facts (a body's constraints, a catalog of programs),
+# not a weekly opinion — so they are frozen against a preset override, root
+# or any nested leaf, the same way `CONFIG_KEY_OWNER` freezes an unknown key.
+# `active_gym_program` is deliberately *not* in this set: it is the one
+# thing about training a week is allowed to pick, and it lives as its own
+# sibling key precisely so this set does not have to reason about a sub-path
+# of it.
+PROTECTED_CONFIG_ROOTS = frozenset({"training_profile", "gym_programs"})
+
 # Where the resolved pick rides on the config dict — runtime-injected, in
 # memory only, exactly like `nudge_foods`, `target_locks` and `storage_spans`.
 # It is added *after* `AppConfig` validation (which would strip an unknown
@@ -245,6 +255,12 @@ def _path_failures(preset: str, path: Any) -> List[PresetFailure]:
     appears to be applied and is not — strictly worse than one that refuses to
     load, and the same argument `CONFIG_FILES` already makes about a key in
     the wrong file.
+
+    The one narrower rule beside it: a root in `PROTECTED_CONFIG_ROOTS` fails
+    here too, whole or nested — `root in PROTECTED_CONFIG_ROOTS` is exact-string,
+    so a path merely starting with the same letters (there is no such key
+    today) is untouched, and `active_gym_program` — a different top-level key —
+    is never caught by it.
     """
     if not isinstance(path, str) or not path.strip():
         return [_fail("an override path must be a non-empty string.", preset=preset,
@@ -259,6 +275,12 @@ def _path_failures(preset: str, path: Any) -> List[PresetFailure]:
         return [_fail(
             f"'{root}' is not a known config key. The first segment of an override "
             f"path must be a top-level key CONFIG_FILES owns. Known keys: {known}.",
+            preset=preset, path=path)]
+    if root in PROTECTED_CONFIG_ROOTS:
+        return [_fail(
+            f"'{root}' is a protected config root — a persistent personal fact, "
+            f"not a weekly opinion — and may not be set by a preset, whole or by "
+            f"any nested leaf. Only 'active_gym_program' may be preset-selected.",
             preset=preset, path=path)]
     return []
 
