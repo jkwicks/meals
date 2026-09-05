@@ -255,6 +255,54 @@ the staged-changes bar the same way a target override does. Like targets
 and pantry, training sessions are review-dialog-only input — they apply to
 the next generation and are never written to any file in `config/`.
 
+### Structured workout plans and progression
+
+Beyond the schedule above (day/time/type/duration/burn), the app can generate
+the actual exercises for a gym session — sets, reps, target RIR, rest, and
+execution notes — while always honouring any personal exercise limitation
+you've recorded. Three steps, in order:
+
+1. **Record any personal constraint once, in Settings → Training.** A
+   constraint names a movement pattern or an exact exercise and either
+   excludes it, requires a fixed modification (e.g. "squat only to my
+   established pain-free depth"), or ranks a preferred variation. This is a
+   standing fact about you, not a weekly setting — it survives switching
+   presets, and turning 55 does not create one on its own; you have to state
+   it. The same Settings section is where you build the gym-program catalog
+   (rep ranges, working sets, target RIR, which movement patterns to cover)
+   and pick the one that's active this week — or via the review dialog's
+   weekly preset pick, if a preset names one.
+2. **Open Daily View and click the small dumbbell icon beside a gym
+   session.** With no program selected, or nothing generated yet for that
+   week, clicking it generates the whole week's gym sessions in one call —
+   never one session at a time, so movement variety across the week is a
+   single decision rather than several disconnected ones. Once generated, the
+   same icon opens the session's detail: every exercise, its dosage, and —
+   for anything a personal constraint touches — the exact instruction that
+   constraint requires, shown right next to that exercise rather than buried
+   in a paragraph. A constrained exercise can never come back missing that
+   note, use the wrong range, or drop the modification on a later edit; that
+   is enforced in code, not left to the prompt.
+3. **After a session, mark how a constrained exercise felt.** Three buttons —
+   *No issue*, *Mild irritation*, *Worse than usual* — appear only on
+   exercises a constraint applies to. This is training feedback, not a pain
+   score: it never edits the constraint itself (only Settings does that), a
+   mild mark holds the current prescription, and a worse mark holds it and
+   flags the exercise for you to reconsider next time. Once real completed-set
+   history exists (via the Hevy integration, when connected), a session that
+   cleared its target reps and RIR proposes a small load increase — always
+   shown with the sets it's based on, and only applied if you click Accept.
+   Without that history the plan and the feedback buttons still work exactly
+   the same; nothing invents a starting weight or a completed set to manufacture
+   a proposal.
+
+A session can be regenerated on its own from inside its detail view without
+touching the rest of the week. None of this changes `training_schedule`
+itself — the day, time and duration you declared stay exactly as they are;
+this only fills in what a gym session actually consists of. Morning readiness
+data, if it's ever shown alongside a session, is context to read, not
+something that automatically lightens the plan — that layer isn't built yet.
+
 ### Fibre — targeted, never budgeted
 
 Fibre has a daily target, a per-meal share and its own reading on the
@@ -929,7 +977,7 @@ where it does.
 | `dietary_rules.allowed_nova_groups` | `profile.json` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | `profile.json` | Substring blocklist, enforced as schema validation |
 | `dietary_rules.active_diet_styles` | `profile.json` | Which `diet_styles` entries are in effect. A bare name is every day; `{"style", "days"}` names a window (see "Diet styles, and running one for part of the week"). Soft guidance via the prompt, not a hard constraint; an unknown name — or a malformed window — fails at startup |
-| `training_profile` | `profile.json` | Personal exercise constraints — declared movement/exercise restrictions, available equipment, notes. Configuration only today: nothing yet generates a workout from it. Empty means no personal restriction; a birth date alone activates nothing. Its own root, not nested under `user_profile`, and protected against every preset override — see "Personal exercise constraints and the gym-program catalog" |
+| `training_profile` | `profile.json` | Personal exercise constraints — declared movement/exercise restrictions, available equipment, notes. Always applied when a gym session's exercises are generated (see "Structured workout plans and progression"). Empty means no personal restriction; a birth date alone activates nothing. Its own root, not nested under `user_profile`, and protected against every preset override — see "Personal exercise constraints and the gym-program catalog" |
 | `gym_programs` / `active_gym_program` | `schedule.json` | The gym-program catalog (rep ranges, working sets, target RIR, progression, movement patterns) and the standing pick from it. `gym_programs` is protected like `training_profile`; `active_gym_program` is the one exercise-planning field a weekly preset may set. Edited in **Settings → Training**; `active_gym_program` also has a select in the preset editor |
 | `diet_styles` | `meals.json` | The catalog of named eating patterns to choose from — `label` plus `principles` |
 | `week_defaults` | `meals.json` | Default mode (`cook`/`leftover`/`skip`) per meal type |
@@ -988,6 +1036,7 @@ anywhere in the schema.
 | `src/export_menu.py` | Week → printable PDF menu (`reportlab`) and its Markdown equivalent |
 | `src/repository.py` | The storage boundary — nothing else reads or writes a stored file |
 | `src/nutrition_engine.py` | BMR/TDEE/deficit arithmetic, the adaptive estimate, the fibre target, session burn, and the schedule proposal |
+| `src/workout.py` | Generated gym-session detail — the structured model call, the shared constraint validator, manual feedback and progression proposals |
 | `src/api.py` | The JSON API mounted onto NiceGUI's own FastAPI app (see Section 3) |
 | `src/generation_jobs.py` | The single-flight claim a browser tab and an API client share, and the job records a client polls |
 | `src/ui_state.py` | `PlannerState` — the view model, and the only UI module with tests |
@@ -1009,6 +1058,8 @@ anywhere in the schema.
 | `data/meal_history.json` | Style/cuisine rotation history (**not** regenerable) |
 | `data/biometrics.json` | Four lists from the sync above — weigh-ins, readiness, activity, logged intake (ships empty) |
 | `data/adherence.json` | Whether each planned meal was eaten, skipped or swapped, and workouts the watch never saw |
+| `data/workout_plans.json` | The current week's generated gym-session exercises (regenerable; missing means schedule-only) |
+| `data/workout_feedback.json` | How a constrained exercise felt, per session — never edits `training_profile` |
 | `data/rejections.json` | Why a suggested recipe was thrown away — an event log, never an upsert |
 | `logs/meals.log` | Per-call generation timing, finish reason, token counts |
 | `logs/sync.log` | Where the scheduled sync reports, and what a "did the scheduler stop?" question is answered against |

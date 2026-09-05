@@ -31,7 +31,7 @@ over, for that reason.**
 """
 
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from nicegui import ui
 
@@ -46,8 +46,12 @@ from ui_state import (
     PlannerState,
     SlotView,
     TrainingView,
+    WorkoutExerciseView,
     WorkoutMarkView,
+    WorkoutSessionView,
     day_context,
+    is_gym_session,
+    workout_session_view,
 )
 from ui_theme import (
     ADHERENCE_MARK_ICONS,
@@ -60,6 +64,7 @@ from ui_theme import (
     MACRO_LABELS,
     MACRO_TINTS,
     RADIUS_CARD,
+    RADIUS_PANEL,
     RADIUS_PILL,
     REST_ACCENT,
     SPACE_BASE,
@@ -81,6 +86,24 @@ from ui_theme import (
     telemetry_bar,
 )
 from week import MODE_COOK, MODE_LEFTOVER, humanize, slot_id
+from workout import WORKOUT_FEEDBACK_RESPONSES
+
+# The three responses design-06 §7 defines, as a button label/icon pair — kept
+# local to this module rather than in `ui_theme.py`: nothing else in the app
+# renders workout feedback, and a shared constant nobody else reads is just a
+# second place to look. Order follows `WORKOUT_FEEDBACK_RESPONSES` (itself
+# read off `WorkoutFeedback.response`'s own field, never hand-copied — see
+# that module) rather than being re-stated here.
+WORKOUT_FEEDBACK_LABELS = {
+    "no_issue": "No issue",
+    "mild_irritation": "Mild irritation",
+    "worse_than_usual": "Worse than usual",
+}
+WORKOUT_FEEDBACK_ICONS = {
+    "no_issue": "check_circle",
+    "mild_irritation": "sentiment_neutral",
+    "worse_than_usual": "sentiment_very_dissatisfied",
+}
 
 # Every icon+text row below carries `flex-nowrap`. Quasar's own `.flex` rule
 # sets `flex-wrap: wrap` and Tailwind's `flex-row` does not undo it, so a
@@ -130,6 +153,27 @@ def build_day_marks(
         workouts=state.workout_marks_for(day),
         handles=adherence,
     )
+
+
+@dataclass
+class WorkoutHandles:
+    """`state`, plus the training strip's one workout click action.
+
+    A parameter object for the same reason `DayMarks` is one: `training_row`
+    needs `state` to ask `workout_session_view`/`is_gym_session` whether a
+    session has generated detail, and `ui_inspector.py`'s reuse of these
+    renderers should be free to pass `None` for "no workout affordance here"
+    exactly as it already does for `DayMarks`. `open`/`generate` are the same
+    action either way — open the dialog if there's something to show,
+    otherwise generate the week and open it if that succeeded — split into
+    two callables only because the Daily View's own "generate this week's
+    workouts" reminder (below the strip) needs the second on its own,
+    without a session to open afterwards.
+    """
+
+    state: PlannerState
+    open: Callable[[str, TrainingView], None]
+    generate: Callable[[str, TrainingView], None]
 
 
 # ---- the day-context strip: where you are, what you're training -----------
@@ -249,7 +293,51 @@ def completion_mark(mark: Optional[WorkoutMarkView], marks: Optional[DayMarks]) 
         )
 
 
-def training_row(context: DayContext, marks: Optional[DayMarks] = None) -> None:
+def workout_action(day: str, session: TrainingView, workout: Optional[WorkoutHandles]) -> None:
+    """The one workout affordance beside a gym session's chip: open the
+    generated detail (design-06's Adaptive Workout, Task 5.1) if there is
+    any, or offer to generate this week's whole plan if there is not.
+
+    Nothing renders for a non-gym session (`is_gym_session`) — a cardio or
+    walk session has no exercise plan to generate — and nothing renders at
+    all when `workout` is None, the same "no handles, no affordance" rule
+    `completion_mark` follows for adherence marking.
+    """
+    if workout is None or not is_gym_session(session):
+        return
+    view = workout_session_view(workout.state, day, session)
+    if view is not None:
+        button = ui.button(
+            icon="fitness_center", on_click=lambda: workout.open(day, session)
+        )
+        button.props("dense flat round size=xs").classes(
+            f"min-h-0 p-{SPACE_HAIR} text-slate-300 hover:text-slate-100"
+        )
+        with button:
+            ui.tooltip("View this session's workout")
+        return
+
+    # No detail yet — offered only once a program is actually selected, and
+    # busy-guarded the same way a whole-week meal run is
+    # (`state.generating`/`state.regenerating_day`).
+    if not workout.state.config.get("active_gym_program"):
+        return
+    button = ui.button(
+        icon="fitness_center", on_click=lambda: workout.generate(day, session)
+    )
+    button.props(
+        "dense flat round size=xs"
+        + (" loading disable" if workout.state.generating_workout else "")
+    ).classes(f"min-h-0 p-{SPACE_HAIR} text-slate-400 hover:text-slate-300")
+    with button:
+        ui.tooltip("Generate this week's workouts")
+
+
+def training_row(
+    context: DayContext,
+    marks: Optional[DayMarks] = None,
+    workout: Optional[WorkoutHandles] = None,
+) -> None:
     by_session = {mark.session_id: mark for mark in (marks.workouts if marks else [])}
     with ui.element("div").classes(f"flex flex-row flex-wrap items-center gap-{SPACE_TIGHT}"):
         for session in context.sessions:
@@ -270,6 +358,7 @@ def training_row(context: DayContext, marks: Optional[DayMarks] = None) -> None:
                     by_session.get(workout_session_id(session.time, session.type)),
                     marks,
                 )
+                workout_action(session.day, session, workout)
 
         # Only worth printing once there are two sessions to add up —
         # under one it would just restate the chip beside it. This is the
@@ -281,7 +370,11 @@ def training_row(context: DayContext, marks: Optional[DayMarks] = None) -> None:
             )
 
 
-def context_strip(context: DayContext, marks: Optional[DayMarks] = None) -> None:
+def context_strip(
+    context: DayContext,
+    marks: Optional[DayMarks] = None,
+    workout: Optional[WorkoutHandles] = None,
+) -> None:
     """The location and training rows, or nothing at all.
 
     Nothing is the honest render for a config with no `base_schedule` and
@@ -298,7 +391,7 @@ def context_strip(context: DayContext, marks: Optional[DayMarks] = None) -> None
         if context.location is not None:
             location_row(context.location)
         if context.sessions:
-            training_row(context, marks)
+            training_row(context, marks, workout)
 
 
 # ---- the cards --------------------------------------------------------
@@ -650,6 +743,271 @@ def build_today(
                     "Today", icon="today", on_click=lambda: go(reset=True)
                 ).props("dense flat no-caps size=sm").classes("text-sky-300")
 
+    # ---- the workout detail dialog (design-06, Task 5.1) --------------------
+    # design-06 §9: "Today / Adaptive Workout: the detailed session,
+    # applied-constraint notes, feedback buttons, and progression proposals."
+    # Not built on `ui_cards.recipe_detail` — a workout is a different shape
+    # entirely (exercises, not ingredients/instructions) — but it copies that
+    # dialog's structure: a `ui.dialog()` wrapping one `@ui.refreshable` body
+    # that reads a small mutable target dict, exactly `ui_cards.py`'s "send to
+    # freezer"/"eaten out" modals. `workout_target` holds identity only (day +
+    # the declared `TrainingView`); the body re-derives `WorkoutSessionView`
+    # from state on every refresh rather than caching one, so a feedback click
+    # or an accepted proposal is never one repaint stale.
+
+    workout_target: Dict[str, object] = {"day": "", "session": None}
+
+    def open_workout(day: str, session: TrainingView) -> None:
+        workout_target["day"] = day
+        workout_target["session"] = session
+        workout_dialog_body.refresh()
+        workout_dialog.open()
+
+    async def generate_workouts() -> None:
+        """Whole-week generation (design-06 §4) — explicit, never on page
+        load. Guarded the same way a whole-week meal run is
+        (`state.generating`/`state.regenerating_day`): a second click while
+        one call is already in flight does nothing.
+        """
+        if state.generating_workout or state.regenerating_workout_session:
+            return
+        state.generating_workout = True
+        today_view.refresh()
+        try:
+            error = await state.generate_workout_plan(REPOSITORY)
+        finally:
+            state.generating_workout = False
+        if error:
+            ui.notify(error, type="warning", multi_line=True, close_button=True, timeout=0)
+        today_view.refresh()
+
+    async def generate_and_open(day: str, session: TrainingView) -> None:
+        """The day strip's "Generate this week's workouts" affordance —
+        generates, then opens the very session that was clicked if the run
+        produced one for it. A failed run leaves the previous file (nothing,
+        the first time) untouched and reports through the same toast
+        `generate_workouts` already shows; there is nothing to open then.
+        """
+        await generate_workouts()
+        if workout_session_view(state, day, session) is not None:
+            open_workout(day, session)
+
+    async def regenerate_session() -> None:
+        """The dialog's own "Regenerate this session" — design-06 §4's
+        single-session regeneration, narrowed to whichever session the
+        dialog is currently open on. A failed regeneration leaves the
+        previously stored plan exactly as it was and reports the failure;
+        the dialog stays open on the (unchanged) session either way.
+        """
+        day = str(workout_target["day"] or "")
+        session = workout_target["session"]
+        if not day or session is None or state.regenerating_workout_session:
+            return
+        view = workout_session_view(state, day, session)
+        if view is None:
+            return
+        state.regenerating_workout_session = view.session_id
+        workout_dialog_body.refresh()
+        try:
+            error = await state.regenerate_workout_session(REPOSITORY, day, view.session_id)
+        finally:
+            state.regenerating_workout_session = None
+        if error:
+            ui.notify(error, type="warning", multi_line=True, close_button=True, timeout=0)
+        workout_dialog_body.refresh()
+        today_view.refresh()
+
+    async def set_feedback(
+        view: WorkoutSessionView, exercise: WorkoutExerciseView, constraint_id: str, response: str
+    ) -> None:
+        """Record one exercise/constraint's limitation response (design-06
+        §7) and repaint the dialog immediately — feedback persists on click
+        and never stages, the same rule adherence marks follow.
+        """
+        error = await state.record_workout_feedback(
+            REPOSITORY,
+            date=view.date,
+            session_id=view.session_id,
+            exercise_id=exercise.exercise_id,
+            constraint_id=constraint_id,
+            response=response,
+        )
+        if error:
+            ui.notify(error, type="warning")
+            return
+        workout_dialog_body.refresh()
+
+    async def accept_proposal(view: WorkoutSessionView, exercise: WorkoutExerciseView) -> None:
+        """Explicit acceptance — design-06 §6: "requires an Accept action
+        before the next stored plan changes." Passes the exact proposal the
+        dialog is currently showing, built moments ago from real state.
+        """
+        if exercise.proposal is None:
+            return
+        error = await state.accept_progression_proposal(
+            REPOSITORY, view.session_id, exercise.proposal
+        )
+        if error:
+            ui.notify(error, type="warning")
+            return
+        ui.notify("Progression accepted.", type="positive")
+        workout_dialog_body.refresh()
+
+    def constraint_feedback_row(view: WorkoutSessionView, exercise: WorkoutExerciseView, note) -> None:
+        """One applied-constraint note, visible beside the exercise it binds,
+        plus the three feedback buttons — offered only here, per design-06
+        §7: "Surface the response only on exercises to which a personal
+        constraint applied."
+        """
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} mt-{SPACE_TIGHT} px-{SPACE_SECTION} py-{SPACE_TIGHT} "
+            f"{RADIUS_CARD} border border-slate-700 bg-slate-800/40"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-start gap-{SPACE_TIGHT}"
+            ):
+                ui.icon("rule").classes(f"shrink-0 {TEXT_BODY} text-slate-300 mt-[2px]")
+                ui.label(f"{note.target}: {note.instruction}").classes(
+                    f"min-w-0 {TEXT_MICRO} leading-snug text-slate-300"
+                )
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+            ):
+                for response in WORKOUT_FEEDBACK_RESPONSES:
+                    selected = note.response == response
+                    button = ui.button(
+                        icon=WORKOUT_FEEDBACK_ICONS[response],
+                        on_click=lambda v=view, e=exercise, c=note.constraint_id, r=response: set_feedback(
+                            v, e, c, r
+                        ),
+                    )
+                    button.props("dense flat no-caps size=xs").classes(
+                        f"min-h-0 p-{SPACE_HAIR} "
+                        + (
+                            "text-slate-100 bg-slate-700"
+                            if selected
+                            else "text-slate-400 hover:text-slate-300"
+                        )
+                    )
+                    with button:
+                        ui.tooltip(WORKOUT_FEEDBACK_LABELS[response])
+
+    def exercise_card(view: WorkoutSessionView, exercise: WorkoutExerciseView) -> None:
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_TIGHT} p-{SPACE_SECTION} {RADIUS_CARD} border "
+            "border-slate-800 bg-slate-800/30"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-wrap items-baseline justify-between gap-{SPACE_BASE}"
+            ):
+                ui.label(exercise.name).classes(
+                    f"{TEXT_HEAD} font-semibold text-slate-100"
+                )
+                ui.label(f"{exercise.movement_pattern} · {exercise.role}").classes(
+                    f"{TEXT_MICRO} text-slate-400"
+                )
+
+            ui.label(
+                f"{exercise.sets} x {exercise.rep_min}-{exercise.rep_max} reps @ RIR "
+                f"{exercise.target_rir} · rest {exercise.rest_seconds}s"
+            ).classes(f"{TEXT_BODY} font-mono text-slate-300")
+
+            ui.label(
+                f"{exercise.target_load_kg:g} kg" if exercise.target_load_kg is not None
+                else "No history yet — choose a load that reaches the target RIR."
+            ).classes(f"{TEXT_MICRO} text-slate-400")
+
+            if exercise.execution_notes:
+                ui.label(exercise.execution_notes).classes(
+                    f"{TEXT_MICRO} text-slate-400 leading-snug"
+                )
+
+            for note in exercise.constraint_feedback:
+                constraint_feedback_row(view, exercise, note)
+
+            # An explicit proposal, named and attributed — design-06 §6:
+            # "every proposal names its evidence and requires acceptance."
+            # Absent whenever there is nothing to propose (no evidence, no
+            # history-established load, or feedback holding the block), which
+            # is the ordinary state until strength history exists.
+            if exercise.proposal is not None:
+                with ui.element("div").classes(
+                    f"flex flex-col gap-{SPACE_TIGHT} mt-{SPACE_TIGHT} px-{SPACE_SECTION} "
+                    f"py-{SPACE_TIGHT} {RADIUS_CARD} border border-emerald-900/60 "
+                    "bg-emerald-500/[0.07]"
+                ):
+                    ui.label(exercise.proposal.evidence_summary).classes(
+                        f"{TEXT_MICRO} text-emerald-200/90 leading-snug"
+                    )
+                    ui.button(
+                        "Accept",
+                        on_click=lambda v=view, e=exercise: accept_proposal(v, e),
+                    ).props("dense unelevated no-caps size=xs").classes(
+                        "self-end bg-emerald-500/20 text-emerald-200"
+                    )
+
+    @ui.refreshable
+    def workout_dialog_body() -> None:
+        day = str(workout_target["day"] or "")
+        session = workout_target["session"]
+        if not day or session is None:
+            ui.label("Nothing to show.").classes(f"{TEXT_BODY} text-slate-400")
+            return
+        view = workout_session_view(state, day, session)
+        if view is None:
+            ui.label("Not generated yet.").classes(f"{TEXT_BODY} text-slate-400")
+            return
+
+        with ui.element("div").classes(
+            f"flex flex-row items-center justify-between gap-{SPACE_SECTION}"
+        ):
+            ui.label(f"{format_day_label(day, state.day_date_iso(day))} · {view.program_label}").classes(
+                f"{TEXT_MICRO} font-mono uppercase tracking-widest text-slate-400"
+            )
+            # Completion source rides on the same adherence view the strip
+            # itself reads — "whether it happened" is never a second answer
+            # here (CLAUDE.md's three-stores rule).
+            completion_mark(view.mark, build_day_marks(state, day, adherence))
+
+        with ui.element("div").classes(
+            f"flex flex-row flex-wrap items-baseline justify-between gap-{SPACE_BASE} mt-1"
+        ):
+            ui.label(view.name).classes(
+                f"{TEXT_DISPLAY} font-semibold text-slate-100"
+            )
+            ui.label(f"{view.planned_duration_minutes} min").classes(
+                f"{TEXT_BODY} text-slate-400"
+            )
+
+        with ui.element("div").classes(f"flex flex-col gap-{SPACE_BASE} mt-{SPACE_SECTION}"):
+            for exercise in view.exercises:
+                exercise_card(view, exercise)
+
+        with ui.element("div").classes(f"flex flex-row justify-end mt-{SPACE_SECTION}"):
+            ui.button(
+                "Regenerate session",
+                icon="refresh",
+                on_click=regenerate_session,
+            ).props(
+                "flat dense no-caps size=sm"
+                + (
+                    " loading disable"
+                    if state.regenerating_workout_session == view.session_id
+                    else ""
+                )
+            ).classes("text-slate-400")
+
+    with ui.dialog() as workout_dialog:
+        with ui.element("div").classes(
+            f"bg-slate-900 {RADIUS_PANEL} border border-slate-800 p-{SPACE_PAGE} "
+            "w-[40rem] max-w-full max-h-[85vh] overflow-y-auto"
+        ):
+            workout_dialog_body()
+
+    workout_handles = WorkoutHandles(
+        state=state, open=open_workout, generate=generate_and_open
+    )
+
     @ui.refreshable
     def today_view() -> None:
         sync_tab_label()
@@ -690,7 +1048,7 @@ def build_today(
                         f"{TEXT_BODY} text-amber-300/80 italic"
                     )
 
-            context_strip(context, marks)
+            context_strip(context, marks, workout_handles)
 
             with ui.element("div").classes(f"flex flex-col gap-{SPACE_TIGHT} max-w-md"):
                 telemetry_bar(

@@ -1,5 +1,16 @@
 # PROMPT-15 — Constraint-aware workout plans and the first progression loop
 
+**Complete.** All four subtasks below have shipped: typed models and storage
+(`src/workout.py`, `data/workout_plans.json`), the one structured weekly
+generation call plus the shared deterministic constraint validator, manual
+feedback and progression proposals (`data/workout_feedback.json`), and the
+Today/Adaptive Workout surfacing (`src/ui_today.py`, `src/ui_state.py`). The
+hip-impingement acceptance case has been run against a real model call as
+well as tested directly. See CLAUDE.md's "Structured workout plans and the
+first progression loop" and `tests/test_workout_planning.py`/
+`tests/test_workout_feedback.py`. Kept as the record of what was asked for and
+why, per this repo's convention for a finished prompt.
+
 **Not queue-safe** (in `dev/`; the queue globs `.prompts/prompt-*.md`). It calls
 an LLM, writes a new plan and feedback store, and changes the Today/Adaptive
 Workout surface. Its acceptance requires visual and generated-plan review.

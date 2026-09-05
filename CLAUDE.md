@@ -714,6 +714,158 @@ program and the constraints that will bind — built by
 `ui_state.training_review_view`, and states which layer won whenever the
 active preset overrides the standing pick; it never edits anything.
 
+### Structured workout plans and the first progression loop
+
+`design-06`'s second slice (Task 5.1): for each gym/resistance session
+`training_schedule` already declares, generate the actual exercises from the
+selected program while **always** applying `training_profile`'s persistent
+constraints. The motivating case is literal, not hypothetical: a squat
+pattern under this installation's real hip-impingement constraint may use
+only the established pain-free depth — a full-depth squat, a missing
+modification note, or "progression" by increasing depth must never be
+storable, and a live model call against the real constraint has been run and
+its output inspected as this feature's acceptance evidence. This is the
+useful first half of the training arm, **not** the fatigue/deload controller
+— Phase 6 layers morning-readiness caps, session-response substitution and a
+block-level fatigue matrix onto the object this phase builds, and none of
+that exists yet.
+
+**Three stores, three lifetimes, never folded together:**
+
+| store | owns | written by |
+|---|---|---|
+| `training_schedule` (`schedule.json`) | standing day/time/type/duration/burn | the Settings training editor |
+| `data/adherence.json` | whether a declared session happened at all | adherence marks / Garmin match |
+| `data/workout_plans.json` | *what* a gym session's exercises are — `src/workout.py`'s `WorkoutPlan`/`WorkoutSession`/`ExercisePrescription` | `generate_workout_week`, an accepted progression |
+
+A fourth, `data/workout_feedback.json`, answers a fourth question — how one
+*constrained* exercise felt, not whether the session happened — and is kept
+apart from adherence for the same reason `daily_actuals`/`weigh_ins` stay
+apart: two signals sharing one key let a later write silently overwrite an
+earlier, unrelated one. None of the four may answer for another: `workout.py`
+is a **non-UI module of its own**, importing `GymProgram`/`MovementConstraint`/
+`MovementPattern`/`TrainingProfile` from `planner.py` (one-way — `planner.py`
+never imports `workout.py`), the same relationship `freezer.py` has with
+`week.py`. `WorkoutPlan` is keyed by `week_identifier` ("current"/"next"),
+mirroring `load_week_plan`/`save_week_plan`'s convention, because a session
+belongs to a real calendar week, not a bare weekday — `WorkoutSession.date` is
+a real ISO date and `WorkoutSession.session_id` (`workout_plan_session_id`,
+`"<date>:<type>:<time>"`) folds that date in specifically because the shipped
+schedule repeats "05:30 gym_hypertrophy" on two different days in one week,
+which a bare `"<time>:<type>"` key (`WorkoutCompletion`'s own, fine for a key
+that already carries `date` alongside it) would collide on. A missing
+`workout_plans.json` means schedule-only behaviour — the declared session
+still shows, with no generated detail — the same cold start every other
+optional store in this app gets.
+
+**Generation is one structured call per week, never per session, and never
+automatic.** `generate_workout_week(config, week_start_date)` reads
+`config["active_gym_program"]`/`config["gym_programs"]` and every
+`training_schedule` entry whose `type` starts with `GYM_SESSION_TYPES`
+(`WORKOUT_BREAKFAST_TYPES`, reused verbatim from the meal axis so a session
+judged "gym" for breakfast-pinning purposes can never disagree with one judged
+"gym" for workout generation); no active program or no gym session this week
+is an **explicit no-op** (`None`, no model call, no credentials needed) rather
+than an error. The one call sees the whole week so movement-pattern
+distribution and day-to-day variation are one decision, the
+`MealTypeWeekRecipes` precedent applied to the training axis. Every session's
+`date`/`session_id`/`planned_duration_minutes` come from Python, off
+`training_schedule` itself, never the model — a session can never be added,
+removed or retimed by generation. `target_load_kg` is populated only from an
+unambiguous exercise-history match (Task 2.3, not yet landed) and is
+otherwise `None`; the model is told to leave it out and the person selects a
+load that reaches the target RIR, never an invented starting weight.
+
+**Single-session regeneration is the same call, not a second function.**
+`PlannerState.regenerate_workout_session` narrows
+`config["training_schedule"]` to the one declared entry matching the clicked
+session (by the same `workout_plan_session_id`) and calls
+`generate_workout_week` on that, then splices the one returned session into
+the stored plan in place of its old self — every other stored session is
+carried over untouched. This is what makes "the same validator serves full
+generation and single-session regeneration" (below) literally true rather
+than a promise two code paths have to keep in step by hand.
+
+**Constraint enforcement is a deterministic function, not the prompt.**
+`workout.constraint_violations(exercises, constraints)` is pure — no I/O, no
+model — and is the one thing that can reject a response: an `exclude` match is
+always a violation; a `modify` match requires its constraint id in
+`applied_constraint_ids` **and** its `instruction` verbatim inside
+`execution_notes`; a `prefer` match never rejects anything (prompt-only
+ranking). There is no separate check for "progression by increasing range" —
+nothing on `ExercisePrescription` represents a range of motion numerically, so
+the only way a regenerated or edited exercise could describe progressing one
+is by no longer carrying its `modify` constraint's fixed instruction, which
+the same check already catches. One function serves four callers so none can
+drift: the model's own `model_validator` (`WeeklyWorkoutRecipes`, raised
+inside `generate_workout_week` so instructor retries with the exact failure),
+`validate_workout_plan` (the same check over a whole assembled plan, run once
+more before anything is returned), and 5.1d's regeneration/edit paths, which
+reach it by construction because they are the same call.
+
+**Feedback is training signal, not a diagnosis, and it never edits the
+constraint.** `data/workout_feedback.json` keys a row on `date` + `session_id`
++ `exercise_id` + `constraint_id` — all four, because one exercise can carry
+several applied constraints and one session several exercises, so anything
+shorter would let a mark about one pairing overwrite a mark about another. It
+is an **upsert**, not an event log (`design-06 §7`'s "no_issue removes that
+feedback block" only makes sense as a replacement). Exactly three responses,
+never a numeric pain score: `mild_irritation` holds load/reps/range;
+`worse_than_usual` suppresses progression and flags the exercise for
+review/substitution (never automatically); `no_issue` clears a hold but **is
+never itself proof a rep was completed** — `propose_progression` still
+requires real qualifying-set evidence before proposing anything.
+`latest_feedback_for_exercise` reads the most recent mark **across every**
+constraint on an exercise for the progression gate (a stale
+`worse_than_usual` about one constraint must not permanently out-vote a later
+`no_issue` about the same exercise), where the Today dialog's own per-note
+display narrows to one exact constraint first — two different questions, one
+function, different inputs.
+
+**Progression is proposed, attributed, and applied only on explicit Accept.**
+`propose_progression` implements `double_progression` (all prescribed working
+sets reach the top of the rep range at target RIR → propose +2.5%) and
+`two_for_two` (the final set of two consecutive sessions clears the rep target
+by 2 while holding RIR → propose +2.5%) — one conservative constant
+(`PROGRESSION_LOAD_INCREMENT_PCT`), always the low end of the specified 2.5–
+5% band, never varied per proposal. Both rules read the **same** "no less RIR
+than prescribed" bar, a deliberate unification rather than two subtly
+different ones. Three independent reasons a proposal is `None` rather than
+constructed: feedback blocking it, no history-established `target_load_kg` to
+scale (never an invented one), or no qualifying set evidence — `completed_sets`
+is `None` throughout the UI today because Hevy (Task 2.3) has not landed, so
+**no proposal can currently fire**, which is correct: the static plan and
+manual feedback stay fully usable without it, and nothing here fabricates a
+load or RPE to manufacture one. `apply_progression_proposal` is the *only*
+function that may change a stored `target_load_kg`, is called from nowhere but
+an explicit Accept action, and changes that one field alone — the fields a
+`modify` constraint requires (`applied_constraint_ids`, `execution_notes`) are
+untouched by construction, which is what makes "range of motion stays fixed
+for a modified movement" true across an accepted progression rather than a
+rule someone has to remember to preserve.
+
+**Today owns the detail; nothing generates on page load.** The Adaptive
+Workout affordance (`ui_today.py`'s training strip) offers a small
+`fitness_center` button beside a gym session's chip: view the generated
+detail if `ui_state.workout_session_view` finds one, or generate the whole
+week's plan if a program is active and nothing has been generated yet —
+`ui_state.is_gym_session` (`GYM_SESSION_TYPES`, shared with `workout.py`) is
+what decides a session is a candidate at all. The dialog shows the session's
+exercises with sets/reps/RIR/rest, execution notes, each applied constraint's
+note **visible beside the exercise it binds** (not folded into prose), the
+three feedback buttons only on exercises a constraint actually applies to, an
+explicit progression proposal with its evidence and an Accept button when one
+exists, a "Regenerate session" action, and the session's completion mark via
+the same `WorkoutMarkView`/`AdherenceHandles` the strip itself reads — the
+"whether it happened" question is never answered twice. Every write
+(generate, regenerate, feedback, accept) is an explicit click; a failed
+generation or regeneration leaves the previously stored plan — and the
+dialog's own rendering of it — exactly as it was, and reports the failure
+rather than adopting a partial result. If readiness data is ever shown here it
+is read-only context: the fatigue matrix and any automated deload remain
+Phase 6, and nothing in this surface assigns a numeric pain score or edits a
+personal constraint — only the Settings training editor does that.
+
 ### Targets come from the body, not the file — unless you say otherwise
 
 `weekly_schedule`'s per-day calories and protein are, by default, not what
@@ -2396,7 +2548,9 @@ seven frozen weekdays before trusting it.
 | `test_keep_import.py` | Takeout note loading, colour selection, checklist-note text |
 | `test_export_menu.py` | the Markdown export and the `_slot_entry` walk it shares with the PDF |
 | `test_adherence.py` | adherence's three layers — the two-part key and delete-don't-flag clear, the per-date `activity_log` match, the view models both marking surfaces read |
-| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and their baseline, target modes, stored-plan vs live-preview days, slot views, the Today day picker (including the step across into an adjacent cached week), location/training context, the derived training-burn estimate, the inspector's open/closed state, the adaptive-TDEE state, planned fibre vs target vs logged, the schedule proposal's session half, Settings' read views, the generation dialog's stage checklist and its off-by-one, Insights' five series and their gates |
+| `test_workout_planning.py` | `workout.py`'s typed models and their repository round trip (including a failed generation leaving the file byte-identical), the shared `constraint_violations`/`validate_workout_plan` validator (the hip-constraint acceptance cases by name: full-depth rejection, missing-note rejection, valid partial-range acceptance, range-progression rejection), the prompt-building helpers, and `generate_workout_week`'s no-model-call paths |
+| `test_workout_feedback.py` | `WorkoutFeedback`'s validation and its four-part-key repository round trip, the pure feedback semantics (`feedback_blocks_progression`, `feedback_flags_review`, `latest_feedback_for_exercise`), and `propose_progression`/`apply_progression_proposal` for both `double_progression` and `two_for_two` (qualifying evidence, the feedback/missing-load preconditions, the fields an accepted proposal leaves untouched) |
+| `test_ui_state.py` | `PlannerState` — grid edits, batch rescaling, target overrides and their baseline, target modes, stored-plan vs live-preview days, slot views, the Today day picker (including the step across into an adjacent cached week), location/training context, the derived training-burn estimate, the inspector's open/closed state, the adaptive-TDEE state, planned fibre vs target vs logged, the schedule proposal's session half, Settings' read views, the generation dialog's stage checklist and its off-by-one, Insights' five series and their gates, the workout-detail view (`workout_session_view`'s session matching, applied-constraint notes, the always-null proposal without Hevy) and its four writers (whole-week/single-session generation, feedback recording, progression acceptance) |
 | `test_config_layout.py` | a snapshot of the merged config, through the bare merge *and* the preset layer |
 | `test_presets.py` | the preset layer — compatibility (no file, empty `default`), the sibling-destruction case (17 named ingredients), leaf-whole replacement both ways, an empty list as a value, the four load-time failures, the write path that can't be `save_config_keys`, a hand-added preset surviving a pick, a day-scoped `active_diet_styles` from a preset, `set_preset`'s re-layer; and **the editor** (the identity preset, unexposed paths surviving an edit, the invalid preset refused, the delete guard, the active-preset re-layer) |
 | `test_preset_validation.py` | `resolve_preset_layer` returns both `resolve_config`'s structural failures and an `AppConfig` schema failure; `apply_preset_layer` raises on exactly those; the `favorite_reuse_days > history_max_entries` cross-field rule |

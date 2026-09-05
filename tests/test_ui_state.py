@@ -29,12 +29,20 @@ import sys
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest import mock
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import ui_state  # noqa: E402
 from repository import LocalJSONRepository, run_sync  # noqa: E402
+from workout import (  # noqa: E402
+    CompletedSetEvidence,
+    ProgressionProposal,
+    WorkoutFeedback,
+    WorkoutPlan,
+    workout_plan_session_id,
+)
 from nutrition_engine import (  # noqa: E402
     PROPOSAL_ADD,
     PROPOSAL_DROP,
@@ -1050,6 +1058,13 @@ class FakeWeekRepository:
 
     async def load_week_plan(self, week_identifier: str = "current"):
         return self.plans.get(week_identifier)
+
+    async def load_workout_plan(self, week_identifier: str = "current"):
+        """`switch_week`/`reload_plan` also pull the workout plan for
+        whichever week they land on (Task 5.1) — always schedule-only here,
+        since nothing about stepping/crossing weeks is about workout detail.
+        """
+        return None
 
 
 def step(state: ui_state.PlannerState, delta: int, repository=None) -> None:
@@ -4637,3 +4652,538 @@ class TestTrainingReviewView(unittest.TestCase):
         self.assertEqual(len(view.constraints), 2)
         self.assertEqual(view.constraints[0].detail, "Partial range only.")
         self.assertIn("Landmine press", view.constraints[1].detail)
+
+
+# ---------------------------------------------------------------------------
+# Task 5.1d — Today / Adaptive Workout surfacing
+#
+# `workout_session_view` and the four `PlannerState` writers
+# (`generate_workout_plan`, `regenerate_workout_session`,
+# `record_workout_feedback`, `accept_progression_proposal`) are exercised
+# here rather than through a NiceGUI harness — per the `ui-work` skill,
+# `ui_state.py` is the one UI module with tests, and `ui_today.py`'s dialog is
+# widget construction over these. No test here touches the network or a real
+# model: `generate_workout_week` is patched at `ui_state.generate_workout_week`
+# (the name bound by `ui_state.py`'s own `from workout import
+# generate_workout_week`), the same "patch where it's looked up, not where
+# it's defined" rule `test_workout_planning.py` follows for `build_client`.
+# ---------------------------------------------------------------------------
+
+HIP_CONSTRAINT_INSTRUCTION = (
+    "Do not prescribe full-depth squats; use only my user-approved partial range."
+)
+
+TRAINING_PROFILE_WITH_HIP_CONSTRAINT = {
+    "movement_constraints": [
+        {
+            "id": "hip-impingement-squat-depth",
+            "scope": "movement_pattern",
+            "target": "squat",
+            "action": "modify",
+            "instruction": HIP_CONSTRAINT_INSTRUCTION,
+            "preferred_variations": [],
+        }
+    ],
+    "available_equipment": [],
+    "notes": None,
+}
+
+MONDAY_SESSION_ID = workout_plan_session_id("2026-08-17", "05:30", "gym_hypertrophy")
+
+
+def make_workout_exercise(**overrides) -> dict:
+    fields = dict(
+        exercise_id="partial-range-squat",
+        name="Partial-range back squat",
+        movement_pattern="squat",
+        role="compound",
+        sets=3,
+        rep_min=8,
+        rep_max=12,
+        target_rir=2,
+        rest_seconds=90,
+        execution_notes=HIP_CONSTRAINT_INSTRUCTION,
+        applied_constraint_ids=["hip-impingement-squat-depth"],
+        progression_rule="double_progression",
+    )
+    fields.update(overrides)
+    return fields
+
+
+def make_workout_session(**overrides) -> dict:
+    fields = dict(
+        date="2026-08-17",
+        session_id=MONDAY_SESSION_ID,
+        name="Monday full body",
+        planned_duration_minutes=60,
+        exercises=[make_workout_exercise()],
+    )
+    fields.update(overrides)
+    return fields
+
+
+def make_workout_plan(**overrides) -> WorkoutPlan:
+    fields = dict(
+        week_start_date="2026-08-17",
+        gym_program="functional_hypertrophy",
+        sessions=[make_workout_session()],
+    )
+    fields.update(overrides)
+    return WorkoutPlan(**fields)
+
+
+def make_gym_state(workout_plan=None, workout_feedback=None) -> ui_state.PlannerState:
+    """`make_state()` plus what Task 5.1's view needs: a Monday gym session
+    on the drawer's live schedule, an active program, and the installation's
+    real hip constraint (mirroring `config/profile.json`'s shape, not a
+    stand-in) — optionally with a stored `workout.WorkoutPlan`/feedback rows.
+    """
+    state = make_state()
+    state.config = dict(
+        state.config,
+        active_gym_program="functional_hypertrophy",
+        gym_programs={"functional_hypertrophy": {"label": "Functional Hypertrophy"}},
+        training_profile=TRAINING_PROFILE_WITH_HIP_CONSTRAINT,
+    )
+    state.training_schedule = [
+        {
+            "day": "Monday", "time": "05:30", "type": "gym_hypertrophy",
+            "duration_minutes": 60, "estimated_burn_kcal": 350,
+        },
+    ]
+    state.workout_plan = workout_plan
+    state.workout_feedback = workout_feedback or []
+    return state
+
+
+class TestIsGymSession(unittest.TestCase):
+    def test_a_gym_type_session_is_a_gym_session(self):
+        state = make_gym_state()
+        session = state.training_for("Monday")[0]
+        self.assertTrue(ui_state.is_gym_session(session))
+
+    def test_a_non_gym_type_is_not(self):
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "06:30", "type": "cardio_hiit",
+             "duration_minutes": 30, "estimated_burn_kcal": 300},
+        ]
+        session = state.training_for("Monday")[0]
+        self.assertFalse(ui_state.is_gym_session(session))
+
+    def test_a_zero_burn_gym_type_is_rest_not_a_gym_session(self):
+        """`TrainingView.is_rest` already folds a zero-burn session in with a
+        typed rest day (CLAUDE.md's "Rest is filtered..." note) — this must
+        agree, or a session `apply_training_adjustments` treats as untrained
+        would still offer to generate a workout for it."""
+        state = make_state()
+        state.training_schedule = [
+            {"day": "Monday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 0, "estimated_burn_kcal": 0},
+        ]
+        session = state.training_for("Monday")[0]
+        self.assertTrue(session.is_rest)
+        self.assertFalse(ui_state.is_gym_session(session))
+
+
+class TestWorkoutSessionView(unittest.TestCase):
+    def test_no_stored_plan_is_schedule_only(self):
+        state = make_gym_state()
+        session = state.training_for("Monday")[0]
+        self.assertIsNone(ui_state.workout_session_view(state, "Monday", session))
+
+    def test_no_calendar_week_has_no_date_to_resolve_against(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        session = state.training_for("Monday")[0]
+        state.week_plan = None
+        self.assertIsNone(ui_state.workout_session_view(state, "Monday", session))
+
+    def test_a_matching_stored_session_resolves(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertIsNotNone(view)
+        self.assertEqual(view.session_id, MONDAY_SESSION_ID)
+        self.assertEqual(view.name, "Monday full body")
+        self.assertEqual(view.program_label, "Functional Hypertrophy")
+        self.assertEqual(len(view.exercises), 1)
+
+    def test_an_unresolved_program_label_falls_back_to_the_catalog_id(self):
+        state = make_gym_state(
+            workout_plan=make_workout_plan(gym_program="retired_program")
+        )
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertEqual(view.program_label, "retired_program")
+
+    def test_a_different_day_sharing_the_time_and_type_does_not_resolve(self):
+        """The exact collision `workout_plan_session_id` folds the date in to
+        avoid — the shipped config repeats "05:30 gym_hypertrophy" on two
+        days in one week."""
+        state = make_gym_state(workout_plan=make_workout_plan())
+        state.training_schedule.append(
+            {"day": "Wednesday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        )
+        wednesday_session = state.training_for("Wednesday")[0]
+        self.assertIsNone(
+            ui_state.workout_session_view(state, "Wednesday", wednesday_session)
+        )
+
+    def test_applied_constraint_notes_are_visible_beside_the_exercise(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        notes = view.exercises[0].constraint_feedback
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].constraint_id, "hip-impingement-squat-depth")
+        self.assertEqual(notes[0].target, "squat")
+        self.assertEqual(notes[0].instruction, HIP_CONSTRAINT_INSTRUCTION)
+        self.assertIsNone(notes[0].response)
+
+    def test_an_exercise_with_no_applied_constraint_offers_no_feedback_row(self):
+        plan = make_workout_plan(
+            sessions=[
+                make_workout_session(
+                    exercises=[
+                        make_workout_exercise(
+                            exercise_id="goblet-squat-b",
+                            movement_pattern="hinge",
+                            applied_constraint_ids=[],
+                            execution_notes="Standard cues.",
+                        )
+                    ]
+                )
+            ]
+        )
+        state = make_gym_state(workout_plan=plan)
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertEqual(view.exercises[0].constraint_feedback, [])
+
+    def test_the_most_recent_feedback_for_that_constraint_is_read_back(self):
+        rows = [
+            WorkoutFeedback(
+                date="2026-08-10", session_id=MONDAY_SESSION_ID,
+                exercise_id="partial-range-squat",
+                constraint_id="hip-impingement-squat-depth",
+                response="worse_than_usual",
+            ).model_dump(),
+            WorkoutFeedback(
+                date="2026-08-17", session_id=MONDAY_SESSION_ID,
+                exercise_id="partial-range-squat",
+                constraint_id="hip-impingement-squat-depth",
+                response="no_issue",
+            ).model_dump(),
+        ]
+        state = make_gym_state(workout_plan=make_workout_plan(), workout_feedback=rows)
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertEqual(view.exercises[0].constraint_feedback[0].response, "no_issue")
+
+    def test_no_proposal_without_completed_set_evidence(self):
+        """PROMPT-15's acceptance line: "no fake load/RPE appears" without
+        Hevy. `workout_session_view` always asks with `completed_sets=None`
+        (strength history, Task 2.3, has not landed), so a proposal must
+        never fire even against a history-established load."""
+        plan = make_workout_plan(
+            sessions=[
+                make_workout_session(
+                    exercises=[make_workout_exercise(target_load_kg=40.0)]
+                )
+            ]
+        )
+        state = make_gym_state(workout_plan=plan)
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertIsNone(view.exercises[0].proposal)
+
+    def test_mark_reads_off_the_same_adherence_view_the_strip_uses(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        session = state.training_for("Monday")[0]
+        view = ui_state.workout_session_view(state, "Monday", session)
+        self.assertEqual(
+            view.mark.session_id, ui_state.workout_session_id("05:30", "gym_hypertrophy")
+        )
+
+
+class _RecordingWorkoutRepository:
+    """Just enough repository for the Task 5.1d writers below — records what
+    was saved rather than persisting anything, the same shape
+    `_RecordingConfigRepository` gives the Task 4.1c writers.
+    """
+
+    def __init__(self) -> None:
+        self.saved_plans = []
+        self.saved_feedback = []
+
+    async def save_workout_plan(self, workout_plan: dict, week_identifier: str = "current") -> None:
+        self.saved_plans.append((workout_plan, week_identifier))
+
+    async def save_workout_feedback(self, entry: dict) -> None:
+        self.saved_feedback.append(entry)
+
+
+class TestGenerateWorkoutPlan(unittest.TestCase):
+    def test_without_a_meal_week_plan_it_refuses_before_any_call(self):
+        state = make_gym_state()
+        state.week_plan = None
+        repo = _RecordingWorkoutRepository()
+        with mock.patch(
+            "ui_state.generate_workout_week",
+            side_effect=AssertionError("must not be called"),
+        ):
+            error = run_sync(state.generate_workout_plan(repo))
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_a_successful_call_saves_and_adopts_the_plan(self):
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        plan = make_workout_plan()
+        with mock.patch(
+            "ui_state.generate_workout_week", return_value=plan
+        ) as generate:
+            error = run_sync(state.generate_workout_plan(repo))
+        self.assertIsNone(error)
+        self.assertEqual(generate.call_args.args[1], "2026-08-17")
+        self.assertEqual(state.workout_plan, plan)
+        self.assertEqual(len(repo.saved_plans), 1)
+        saved_dict, week_identifier = repo.saved_plans[0]
+        self.assertEqual(week_identifier, "current")
+        self.assertEqual(saved_dict["gym_program"], "functional_hypertrophy")
+
+    def test_a_no_op_result_is_reported_and_touches_nothing(self):
+        """design-06 §4's explicit no-op (no program/no gym sessions) is not
+        a crash, but it is still nothing to adopt or save."""
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        with mock.patch("ui_state.generate_workout_week", return_value=None):
+            error = run_sync(state.generate_workout_plan(repo))
+        self.assertIsNotNone(error)
+        self.assertIsNone(state.workout_plan)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_a_raised_exception_leaves_the_previous_plan_untouched(self):
+        state = make_gym_state(workout_plan=make_workout_plan(gym_program="old_program"))
+        repo = _RecordingWorkoutRepository()
+        with mock.patch("ui_state.generate_workout_week", side_effect=ValueError("boom")):
+            error = run_sync(state.generate_workout_plan(repo))
+        self.assertIn("boom", error)
+        self.assertEqual(state.workout_plan.gym_program, "old_program")
+        self.assertEqual(repo.saved_plans, [])
+
+
+class TestRegenerateWorkoutSession(unittest.TestCase):
+    def test_without_a_calendar_date_it_refuses(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        state.week_plan = None
+        repo = _RecordingWorkoutRepository()
+        with mock.patch(
+            "ui_state.generate_workout_week",
+            side_effect=AssertionError("must not be called"),
+        ):
+            error = run_sync(
+                state.regenerate_workout_session(repo, "Monday", MONDAY_SESSION_ID)
+            )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_a_session_no_longer_on_the_schedule_is_refused(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        repo = _RecordingWorkoutRepository()
+        with mock.patch(
+            "ui_state.generate_workout_week",
+            side_effect=AssertionError("must not be called"),
+        ):
+            error = run_sync(
+                state.regenerate_workout_session(repo, "Monday", "not-a-real-session")
+            )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_a_successful_regeneration_replaces_only_that_session(self):
+        wednesday_session_id = workout_plan_session_id(
+            "2026-08-19", "05:30", "gym_hypertrophy"
+        )
+        other_session = make_workout_session(
+            date="2026-08-19", session_id=wednesday_session_id, name="Wednesday full body",
+        )
+        state = make_gym_state(
+            workout_plan=make_workout_plan(sessions=[make_workout_session(), other_session])
+        )
+        state.training_schedule.append(
+            {"day": "Wednesday", "time": "05:30", "type": "gym_hypertrophy",
+             "duration_minutes": 60, "estimated_burn_kcal": 350}
+        )
+        repo = _RecordingWorkoutRepository()
+        regenerated = make_workout_plan(
+            sessions=[make_workout_session(name="Monday full body (regenerated)")]
+        )
+        with mock.patch(
+            "ui_state.generate_workout_week", return_value=regenerated
+        ) as generate:
+            error = run_sync(
+                state.regenerate_workout_session(repo, "Monday", MONDAY_SESSION_ID)
+            )
+        self.assertIsNone(error)
+        # Only the one narrowed session was ever asked for — never the whole
+        # declared schedule.
+        narrowed_config = generate.call_args.args[0]
+        self.assertEqual(len(narrowed_config["training_schedule"]), 1)
+        self.assertEqual(narrowed_config["training_schedule"][0]["day"], "Monday")
+        by_id = {s.session_id: s.name for s in state.workout_plan.sessions}
+        self.assertEqual(by_id[MONDAY_SESSION_ID], "Monday full body (regenerated)")
+        self.assertEqual(by_id[wednesday_session_id], "Wednesday full body")
+        self.assertEqual(len(repo.saved_plans), 1)
+
+    def test_a_raised_exception_leaves_the_stored_plan_untouched(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        repo = _RecordingWorkoutRepository()
+        with mock.patch("ui_state.generate_workout_week", side_effect=ValueError("boom")):
+            error = run_sync(
+                state.regenerate_workout_session(repo, "Monday", MONDAY_SESSION_ID)
+            )
+        self.assertIn("boom", error)
+        self.assertEqual(state.workout_plan.sessions[0].name, "Monday full body")
+        self.assertEqual(repo.saved_plans, [])
+
+
+class TestRecordWorkoutFeedback(unittest.TestCase):
+    def test_a_valid_response_round_trips_onto_state_and_the_repository(self):
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.record_workout_feedback(
+                repo,
+                date="2026-08-17",
+                session_id=MONDAY_SESSION_ID,
+                exercise_id="partial-range-squat",
+                constraint_id="hip-impingement-squat-depth",
+                response="mild_irritation",
+            )
+        )
+        self.assertIsNone(error)
+        self.assertEqual(len(repo.saved_feedback), 1)
+        self.assertEqual(len(state.workout_feedback), 1)
+        self.assertEqual(state.workout_feedback[0]["response"], "mild_irritation")
+
+    def test_re_recording_the_same_key_replaces_rather_than_duplicates(self):
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        key = dict(
+            date="2026-08-17", session_id=MONDAY_SESSION_ID,
+            exercise_id="partial-range-squat",
+            constraint_id="hip-impingement-squat-depth",
+        )
+        run_sync(state.record_workout_feedback(repo, response="worse_than_usual", **key))
+        run_sync(state.record_workout_feedback(repo, response="no_issue", **key))
+        self.assertEqual(len(state.workout_feedback), 1)
+        self.assertEqual(state.workout_feedback[0]["response"], "no_issue")
+
+    def test_an_unknown_response_is_refused_before_any_write(self):
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.record_workout_feedback(
+                repo,
+                date="2026-08-17",
+                session_id=MONDAY_SESSION_ID,
+                exercise_id="partial-range-squat",
+                constraint_id="hip-impingement-squat-depth",
+                response="excruciating",
+            )
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_feedback, [])
+        self.assertEqual(state.workout_feedback, [])
+
+    def test_it_never_touches_training_profile(self):
+        """design-06 §7: a response changes eligibility for the next
+        proposal — it never edits the persistent constraint."""
+        state = make_gym_state()
+        before = dict(state.config["training_profile"])
+        repo = _RecordingWorkoutRepository()
+        run_sync(
+            state.record_workout_feedback(
+                repo,
+                date="2026-08-17",
+                session_id=MONDAY_SESSION_ID,
+                exercise_id="partial-range-squat",
+                constraint_id="hip-impingement-squat-depth",
+                response="worse_than_usual",
+            )
+        )
+        self.assertEqual(state.config["training_profile"], before)
+
+
+class TestAcceptProgressionProposal(unittest.TestCase):
+    def make_proposal(self, exercise_id="partial-range-squat", proposed_load_kg=41.0):
+        return ProgressionProposal(
+            exercise_id=exercise_id,
+            rule="double_progression",
+            session_ids=["s1"],
+            current_load_kg=40.0,
+            proposed_load_kg=proposed_load_kg,
+            percentage_increment=0.025,
+            qualifying_sets=[
+                CompletedSetEvidence(
+                    date="2026-08-17", session_id="s1", exercise_id=exercise_id,
+                    set_number=1, reps=12, load_kg=40.0, rir=2,
+                )
+            ],
+            evidence_summary="3 of 3 sets qualified; propose a 2.5% increase.",
+        )
+
+    def test_no_workout_plan_is_refused(self):
+        state = make_gym_state()
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.accept_progression_proposal(repo, MONDAY_SESSION_ID, self.make_proposal())
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_accepting_updates_only_the_target_load(self):
+        plan = make_workout_plan(
+            sessions=[
+                make_workout_session(
+                    exercises=[make_workout_exercise(target_load_kg=40.0)]
+                )
+            ]
+        )
+        state = make_gym_state(workout_plan=plan)
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.accept_progression_proposal(repo, MONDAY_SESSION_ID, self.make_proposal())
+        )
+        self.assertIsNone(error)
+        updated = state.workout_plan.sessions[0].exercises[0]
+        self.assertEqual(updated.target_load_kg, 41.0)
+        # Range of motion stays fixed for a modified movement (design-06 §6):
+        # everything a `modify` constraint requires survives untouched.
+        self.assertEqual(updated.applied_constraint_ids, ["hip-impingement-squat-depth"])
+        self.assertEqual(updated.execution_notes, HIP_CONSTRAINT_INSTRUCTION)
+        self.assertEqual(len(repo.saved_plans), 1)
+
+    def test_an_unknown_session_id_is_refused(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.accept_progression_proposal(
+                repo, "not-a-real-session", self.make_proposal()
+            )
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
+
+    def test_an_unknown_exercise_id_is_refused(self):
+        state = make_gym_state(workout_plan=make_workout_plan())
+        repo = _RecordingWorkoutRepository()
+        error = run_sync(
+            state.accept_progression_proposal(
+                repo, MONDAY_SESSION_ID, self.make_proposal(exercise_id="bench-press")
+            )
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(repo.saved_plans, [])
