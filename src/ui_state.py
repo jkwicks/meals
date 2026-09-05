@@ -10,6 +10,7 @@ computes and returns a value or mutates `self`, and the caller (still in
 the monolith; this file just draws the module boundary where it already was.
 """
 
+import asyncio
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
@@ -52,12 +53,30 @@ from planner import (
     meal_overrides_for,
     recipe_eligibility_error,
     resolve_planner_model,
+    short_error,
     single_serving,
     split_targets,
     storage_spans,
     week_shape_errors,
     weeknight_prep_minutes,
     workout_session_id,
+)
+# design-06's structured workout plans (Task 5.1) — a separate module from
+# `planner.py` on purpose (see `workout.py`'s own docstring on the one-way
+# import direction), so its models/functions come in through their own
+# import rather than being re-exported through planner.
+from workout import (
+    GYM_SESSION_TYPES,
+    ExercisePrescription,
+    ProgressionProposal,
+    WorkoutFeedback,
+    WorkoutPlan,
+    WorkoutSession,
+    apply_progression_proposal,
+    generate_workout_week,
+    latest_feedback_for_exercise,
+    propose_progression,
+    workout_plan_session_id,
 )
 # `apply_training_adjustments` is its real owner; it is the tolerant "HH:MM"
 # parse a drawer's free-text time field needs. Shared rather than
@@ -1065,6 +1084,200 @@ def training_review_view(config: dict, base_config: dict) -> TrainingReviewView:
     )
 
 
+def is_gym_session(session: "TrainingView") -> bool:
+    """Whether a declared session is the kind `workout.generate_workout_week`
+    would generate detail for — the same `type`-prefix test that module's own
+    `GYM_SESSION_TYPES` (`workout_session_id` cannot help here: that identity
+    is `"<time>:<type>"`, with no notion of which types count as gym).
+    Exposed here, tested, rather than inlined at each of the Today tab's call
+    sites, so the "is this a gym day" question is answered once.
+    """
+    return not session.is_rest and str(session.type).startswith(GYM_SESSION_TYPES)
+
+
+@dataclass(frozen=True)
+class ConstraintFeedbackRow:
+    """One applied personal constraint on one exercise, plus the most recent
+    feedback recorded against exactly that (exercise, constraint) pairing —
+    design-06 §7's four-part key, narrowed to the two that vary within one
+    exercise. `target`/`instruction` are read back off `training_profile`
+    (config, not the stored exercise) so the note still names the constraint
+    even if `execution_notes`' free text has drifted from it.
+    """
+
+    constraint_id: str
+    target: str
+    instruction: str
+    response: Optional[str]
+
+
+@dataclass(frozen=True)
+class WorkoutExerciseView:
+    """One `workout.ExercisePrescription`, flattened for the Today tab's
+    workout dialog — display fields plus the two things the dialog can act
+    on: per-constraint feedback rows (`ConstraintFeedbackRow`) and, when the
+    evidence clears the bar, a pending `ProgressionProposal`.
+
+    `proposal` is computed fresh on every view build via
+    `workout.propose_progression`, never cached on the stored plan — the pure
+    function it wraps takes no store of its own (design-06 §6: "never a
+    hidden edit"), so nothing here can go stale between a feedback mark and
+    the next repaint the way a cached verdict could.
+    """
+
+    exercise_id: str
+    name: str
+    movement_pattern: str
+    role: str
+    sets: int
+    rep_min: int
+    rep_max: int
+    target_load_kg: Optional[float]
+    target_rir: int
+    rest_seconds: int
+    execution_notes: str
+    constraint_feedback: List[ConstraintFeedbackRow]
+    proposal: Optional[ProgressionProposal]
+
+
+@dataclass(frozen=True)
+class WorkoutSessionView:
+    """One generated `workout.WorkoutSession`, with its resolved program
+    label and per-exercise detail — what the Today tab's workout dialog
+    renders start to finish. `mark` rides on the existing adherence view
+    (`WorkoutMarkView`) rather than a second completion answer, per CLAUDE.md's
+    "three distinct stores" rule: this module owns *what* was prescribed,
+    never *whether* it happened.
+    """
+
+    session_id: str
+    date: str
+    day: str
+    name: str
+    program_label: str
+    planned_duration_minutes: int
+    exercises: List[WorkoutExerciseView]
+    mark: Optional[WorkoutMarkView]
+
+
+def workout_session_for(
+    state: "PlannerState", day: str, session: "TrainingView"
+) -> Optional[WorkoutSession]:
+    """Which stored `WorkoutSession`, if any, a declared session maps to.
+
+    Matched by `workout_plan_session_id` — a real calendar date folded in
+    with the type and time — never by `session.time`/`session.type` alone,
+    because a `training_schedule` can genuinely repeat one time+type pair on
+    two different days in a week (the shipped config's two "05:30
+    gym_hypertrophy" sessions); see that function's own docstring. `None`
+    whenever there's no calendar date to resolve (no meal week generated yet)
+    or no plan — both are the documented "schedule-only" cold start.
+    """
+    plan = state.workout_plan
+    if plan is None:
+        return None
+    date_iso = state.day_date_iso(day)
+    if date_iso is None:
+        return None
+    target_id = workout_plan_session_id(date_iso, session.time, session.type)
+    return next((s for s in plan.sessions if s.session_id == target_id), None)
+
+
+def _constraint_feedback_response(
+    feedback_entries: Optional[List[dict]], exercise_id: str, constraint_id: str
+) -> Optional[str]:
+    """The most recent recorded response for one exact (exercise, constraint)
+    pairing — `workout.latest_feedback_for_exercise`'s own tie-break logic,
+    reused rather than re-implemented, over entries pre-narrowed to
+    `constraint_id`. That function alone only narrows by exercise, since
+    `propose_progression`'s gating deliberately reads the most recent mark
+    *across every* constraint on an exercise (see its own docstring); this
+    narrows further because a display row is about one constraint's own
+    history, not the exercise's overall verdict.
+    """
+    narrowed = [
+        row for row in (feedback_entries or []) if row.get("constraint_id") == constraint_id
+    ]
+    feedback = latest_feedback_for_exercise(narrowed, exercise_id)
+    return feedback.response if feedback else None
+
+
+def workout_session_view(
+    state: "PlannerState", day: str, session: "TrainingView"
+) -> Optional[WorkoutSessionView]:
+    """The Today tab's whole workout dialog, built fresh from state.
+
+    Deliberately not cached alongside `state.workout_plan`: feedback and
+    progression both change between repaints of the same session (a feedback
+    click, an accepted proposal), and a stale view would be exactly the
+    "appears applied and is not" failure the rest of this module works to
+    avoid. The cost is one list walk over one session's exercises, not a
+    `planning_config()` rebuild.
+    """
+    stored = workout_session_for(state, day, session)
+    if stored is None:
+        return None
+    plan = state.workout_plan
+    programs = state.config.get("gym_programs") or {}
+    program_label = (programs.get(plan.gym_program) or {}).get("label", plan.gym_program)
+    constraints_by_id = {
+        str(entry.get("id")): entry
+        for entry in (state.config.get("training_profile") or {}).get("movement_constraints")
+        or []
+    }
+    marks_by_id = {mark.session_id: mark for mark in state.workout_marks_for(day)}
+
+    exercises = []
+    for exercise in stored.exercises:
+        constraint_feedback = []
+        for constraint_id in exercise.applied_constraint_ids:
+            constraint = constraints_by_id.get(constraint_id, {})
+            constraint_feedback.append(
+                ConstraintFeedbackRow(
+                    constraint_id=constraint_id,
+                    target=str(constraint.get("target", "")),
+                    instruction=str(constraint.get("instruction") or exercise.execution_notes),
+                    response=_constraint_feedback_response(
+                        state.workout_feedback, exercise.exercise_id, constraint_id
+                    ),
+                )
+            )
+        feedback = latest_feedback_for_exercise(state.workout_feedback, exercise.exercise_id)
+        exercises.append(
+            WorkoutExerciseView(
+                exercise_id=exercise.exercise_id,
+                name=exercise.name,
+                movement_pattern=humanize(exercise.movement_pattern),
+                role=humanize(exercise.role),
+                sets=exercise.sets,
+                rep_min=exercise.rep_min,
+                rep_max=exercise.rep_max,
+                target_load_kg=exercise.target_load_kg,
+                target_rir=exercise.target_rir,
+                rest_seconds=exercise.rest_seconds,
+                execution_notes=exercise.execution_notes,
+                constraint_feedback=constraint_feedback,
+                # `completed_sets=None`: strength history (Task 2.3) has not
+                # landed, so there is no evidence to pass — exactly the
+                # "static plan and manual feedback path must work fully
+                # without it" acceptance line. Once it exists, this is the
+                # one place that starts passing real sets through.
+                proposal=propose_progression(exercise, completed_sets=None, feedback=feedback),
+            )
+        )
+
+    return WorkoutSessionView(
+        session_id=stored.session_id,
+        date=stored.date,
+        day=day,
+        name=stored.name,
+        program_label=program_label,
+        planned_duration_minutes=stored.planned_duration_minutes,
+        exercises=exercises,
+        mark=marks_by_id.get(workout_session_id(session.time, session.type)),
+    )
+
+
 @dataclass(frozen=True)
 class ActiveBlockView:
     """The block covering *today*, as the weekly-pick control and the
@@ -1449,6 +1662,32 @@ class PlannerState:
     # `hydrate_dynamic_targets(blocks=...)` so the header previews exactly
     # what the next run will resolve.
     blocks: List[Dict[str, Any]] = field(default_factory=list)
+    # `data/workout_plans.json`'s plan for whichever week is selected — the
+    # generated exercise detail for this week's declared gym sessions
+    # (design-06 §4, Task 5.1). `None` is the documented cold start: no
+    # active program, no gym sessions this run, or nothing generated yet all
+    # read the same way, and the Today tab falls back to the schedule-only
+    # view. Reloaded alongside `week_plan` (`reload_plan`/`switch_week`) since
+    # it is keyed by the same `week_selection` identifier; kept in step by
+    # hand on every write here (`generate_workout_plan`,
+    # `regenerate_workout_session`, `accept_progression_proposal`), the same
+    # "no reload between a write and the repaint that shows it" rule
+    # `freezer`/`blocks` above already follow.
+    workout_plan: Optional[WorkoutPlan] = None
+    # `data/workout_feedback.json`'s rows, as plain dicts — design-06 §7.
+    # Read once at `.load()` and kept in step by hand by
+    # `record_workout_feedback`, never reloaded per repaint (the same
+    # `adherence`/`freezer` convention). A response here changes eligibility
+    # for the *next* progression proposal; it never edits `training_profile`.
+    workout_feedback: List[Dict[str, Any]] = field(default_factory=list)
+    # Busy flags for the two workout-generation calls, mirroring
+    # `generating`/`regenerating_day` on the meal axis: a plain bool for the
+    # whole-week call (`generate_workout_plan`), and the target session id for
+    # a single-session regeneration, both guarding against a second click
+    # racing the first and letting the clicked button show its own `loading`
+    # state.
+    generating_workout: bool = False
+    regenerating_workout_session: Optional[str] = None
     catalog_search: str = ""
     # The full-screen catalog browser's own filters — separate from
     # catalog_search above so typing in one surface doesn't silently refilter
@@ -1545,6 +1784,7 @@ class PlannerState:
         state.adherence = await repository.load_adherence()
         state.freezer = await repository.load_freezer()
         state.blocks = await repository.load_blocks()
+        state.workout_feedback = await repository.load_workout_feedback()
         await state.reload_plan(repository)
         await state.scan_cached_weeks(repository)
         return state
@@ -1558,6 +1798,7 @@ class PlannerState:
         """
         raw = await repository.load_week_plan(self.week_selection)
         self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
+        await self._reload_workout_plan(repository, self.week_selection)
 
     async def switch_week(self, repository: LocalJSONRepository, target_week: str) -> None:
         """Change which cached week is on screen, loading it from disk.
@@ -1571,6 +1812,20 @@ class PlannerState:
         raw = await repository.load_week_plan(target_week)
         self.week_selection = target_week
         self.adopt_plan(WeekPlan.model_validate(raw) if raw else None)
+        await self._reload_workout_plan(repository, target_week)
+
+    async def _reload_workout_plan(
+        self, repository: LocalJSONRepository, week_identifier: str
+    ) -> None:
+        """The workout-plan half of `reload_plan`/`switch_week` — kept by the
+        same `week_identifier` `load_week_plan` already uses, since a
+        generated session belongs to a real calendar week, not a bare weekday
+        (see `workout.WorkoutSession`'s own docstring). A missing file is the
+        documented cold start, not a failure: `None` means the Today tab
+        falls back to schedule-only rendering.
+        """
+        raw = await repository.load_workout_plan(week_identifier)
+        self.workout_plan = WorkoutPlan.model_validate(raw) if raw else None
 
     def adopt_plan(self, plan: Optional[WeekPlan]) -> None:
         """Make `plan` the week on screen, discarding any unsaved edits.
@@ -3390,6 +3645,168 @@ class PlannerState:
         ).model_dump()
         self.adherence = dict(self.adherence or {}, workouts=rows + [entry])
         await repository.save_workout_completion(entry)
+
+    # ---- generated workout detail (Task 5.1) -------------------------------
+    # `workout.generate_workout_week` is a plain, blocking function — it has
+    # no `WeekSpec` of its own to dispatch stages across the way
+    # `generate_week_plan` does, so `asyncio.to_thread` is applied at this
+    # boundary instead, the same "anything that takes seconds must not block
+    # the loop" rule CLAUDE.md states for the meal axis.
+
+    async def generate_workout_plan(self, repository: LocalJSONRepository) -> Optional[str]:
+        """Generate this week's whole gym-session detail in one call —
+        design-06 §4. Returns why not, or None on success, the same
+        convention `send_to_freezer`/`set_skip_estimate` use.
+
+        Requires a generated *meal* week first: a declared session has no
+        real calendar date to attach to until `week_plan.week_start_date`
+        exists (`workout.WorkoutSession.date` is a real date, never a bare
+        weekday). A failed call leaves `self.workout_plan` and the stored
+        file exactly as they were — nothing here is assigned or saved until
+        `generate_workout_week` has already returned a validated plan.
+        """
+        plan = self.week_plan
+        if plan is None or not plan.week_start_date:
+            return "Generate this week's meal plan first — workouts need a real calendar week to attach to."
+        config = self.planning_config()
+        try:
+            generated = await asyncio.to_thread(generate_workout_week, config, plan.week_start_date)
+        except Exception as exc:
+            return f"Workout generation failed: {short_error(exc)}"
+        if generated is None:
+            return "No active gym program, or no gym session this week — nothing to generate."
+        await repository.save_workout_plan(generated.model_dump(), self.week_selection)
+        self.workout_plan = generated
+        return None
+
+    async def regenerate_workout_session(
+        self, repository: LocalJSONRepository, day: str, session_id: str
+    ) -> Optional[str]:
+        """Regenerate exactly one session, leaving every other stored session
+        untouched — design-06 §4's "single-session regeneration" reusing the
+        same weekly call, narrowed to the one declared session that matches
+        `session_id`: `generate_workout_week` reads only
+        `config["training_schedule"]`, so handing it a `training_schedule` of
+        one entry makes a real call that can only ever answer for that one
+        session, through the identical constraint validator full generation
+        uses (design-06 §5: "shared... across full generation, single-session
+        regeneration"). No second generation function to keep in step with
+        the first.
+        """
+        plan = self.week_plan
+        date_iso = self.day_date_iso(day)
+        if plan is None or date_iso is None:
+            return "Generate this week's meal plan first — workouts need a real calendar week to attach to."
+        config = self.planning_config()
+        matching = [
+            session
+            for session in (config.get("training_schedule") or [])
+            if session.get("day") == day
+            and workout_plan_session_id(
+                date_iso, str(session.get("time") or "00:00"), str(session.get("type") or "")
+            )
+            == session_id
+        ]
+        if not matching:
+            return "That session is no longer on the schedule."
+        narrowed = dict(config, training_schedule=matching)
+        try:
+            generated = await asyncio.to_thread(generate_workout_week, narrowed, plan.week_start_date)
+        except Exception as exc:
+            return f"Regenerating that session failed: {short_error(exc)}"
+        if generated is None:
+            return "No active gym program — nothing to generate."
+        existing = list(self.workout_plan.sessions) if self.workout_plan else []
+        merged_sessions = [s for s in existing if s.session_id != session_id] + list(
+            generated.sessions
+        )
+        merged = generated.model_copy(update={"sessions": merged_sessions})
+        await repository.save_workout_plan(merged.model_dump(), self.week_selection)
+        self.workout_plan = merged
+        return None
+
+    async def record_workout_feedback(
+        self,
+        repository: LocalJSONRepository,
+        *,
+        date: str,
+        session_id: str,
+        exercise_id: str,
+        constraint_id: str,
+        response: str,
+    ) -> Optional[str]:
+        """Record — or replace — one exercise/constraint's manual limitation
+        response (design-06 §7). Never edits `training_profile`: only the
+        Settings editor may change a personal constraint, and this writes to
+        `data/workout_feedback.json` alone.
+        """
+        try:
+            entry = WorkoutFeedback(
+                date=date,
+                session_id=session_id,
+                exercise_id=exercise_id,
+                constraint_id=constraint_id,
+                response=response,
+            ).model_dump()
+        except ValidationError as exc:
+            return f"That isn't a usable feedback entry: {exc}"
+        await repository.save_workout_feedback(entry)
+        self.workout_feedback = [
+            row
+            for row in self.workout_feedback
+            if not (
+                row.get("date") == entry["date"]
+                and row.get("session_id") == entry["session_id"]
+                and row.get("exercise_id") == entry["exercise_id"]
+                and row.get("constraint_id") == entry["constraint_id"]
+            )
+        ] + [entry]
+        return None
+
+    async def accept_progression_proposal(
+        self,
+        repository: LocalJSONRepository,
+        session_id: str,
+        proposal: ProgressionProposal,
+    ) -> Optional[str]:
+        """The only writer of an accepted progression — design-06 §6:
+        "every proposal names its evidence and requires acceptance." Takes
+        the exact `ProgressionProposal` the dialog displayed (built by
+        `workout_session_view` from real state) rather than recomputing one,
+        so what gets accepted can never silently disagree with what was
+        shown; `workout.apply_progression_proposal` still checks the
+        exercise id matches before touching anything.
+        """
+        plan = self.workout_plan
+        if plan is None:
+            return "No workout plan to update."
+        session = next((s for s in plan.sessions if s.session_id == session_id), None)
+        if session is None:
+            return "That session is no longer in the plan."
+        exercise = next(
+            (e for e in session.exercises if e.exercise_id == proposal.exercise_id), None
+        )
+        if exercise is None:
+            return "That exercise is no longer in the plan."
+        updated_exercise = apply_progression_proposal(exercise, proposal)
+        updated_session = session.model_copy(
+            update={
+                "exercises": [
+                    updated_exercise if e.exercise_id == proposal.exercise_id else e
+                    for e in session.exercises
+                ]
+            }
+        )
+        updated_plan = plan.model_copy(
+            update={
+                "sessions": [
+                    updated_session if s.session_id == session_id else s for s in plan.sessions
+                ]
+            }
+        )
+        await repository.save_workout_plan(updated_plan.model_dump(), self.week_selection)
+        self.workout_plan = updated_plan
+        return None
 
     # ---- the declared freezer ledger ---------------------------------------
     # `design-04` §2: a confirmed list, not an inferred count. Every write

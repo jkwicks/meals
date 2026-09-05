@@ -1,8 +1,15 @@
 # Design 06 — Exercise planning: personal constraints, gym programs, and feedback
 
-Status: **approved direction, not built.** This is the first designed slice of
-Arm E. `PROMPT-14` builds its configuration substrate; `PROMPT-15` builds the
-planner and first feedback loop.
+Status: **the first two slices are both built.** `PROMPT-14` (configuration
+substrate — `training_profile`, `gym_programs`, the protected preset roots,
+the Settings editors) and `PROMPT-15` (the useful loop below — structured
+generation, the shared constraint validator, manual feedback, progression
+proposals, and the Today/Adaptive Workout surface) have both shipped; see
+`src/workout.py`, `src/ui_today.py`/`src/ui_state.py`, and CLAUDE.md's
+"Structured workout plans and the first progression loop". §8's larger
+feedback controller — the fatigue matrix, automated deloads, and the
+morning/session/week/block/periodic horizons beyond read-only context — is
+**not** built and has no prompt written yet (see `OUTSTANDING.md`).
 
 Read `design-00-program.md` §4–§5, `docs/exercise-protocols.md`,
 `docs/fitness-model.md`, and `docs/periodization-engine.md` first. The three
@@ -406,12 +413,15 @@ workout is explicit and never happens on each keystroke.
 
 ## 11. Sequence
 
-1. **`PROMPT-14` — substrate:** schemas, protected preset paths, persistence,
-   Settings editors, and active-program review control. No workout generation.
-2. **`PROMPT-15` — useful loop:** structured generation, storage, deterministic
+1. ~~**`PROMPT-14` — substrate:**~~ schemas, protected preset paths, persistence,
+   Settings editors, and active-program review control. **Shipped** — no
+   workout generation was in scope for it.
+2. ~~**`PROMPT-15` — useful loop:**~~ structured generation, storage, deterministic
    constraint validator, Today surface, feedback, and progression proposals.
+   **Shipped.**
 3. **Arm D/Arm E analytics later:** RHR/readiness fetch, HRV band, fatigue matrix,
-   deload controller, and functional-assessment trends.
+   deload controller, and functional-assessment trends. **Not started; no
+   prompt written yet.**
 
 `PROMPT-14` is independent of Hevy. `PROMPT-15` may use Hevy only if `PROMPT-4`
 has landed; its static/manual path is required either way.

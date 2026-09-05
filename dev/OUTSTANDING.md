@@ -85,17 +85,24 @@ inside it are still open — see D1 and D2 in section D below.
 `design-00` §5 is an inventory, not a design. Owns the Garmin fetch additions,
 the HRV band, and the AEE bias correction — see C1 and C2.
 
-### B4 — Arm E: training engine — **first slice designed**
-`design-06-exercise-planning.md` now owns persistent personal constraints,
-selectable gym programs, structured workouts, manual limitation feedback, and
-confirmed progression proposals. `PROMPT-14` and `PROMPT-15` make that work
-pickupable.
+### B4 — Arm E: training engine — **first two slices shipped**
+`design-06-exercise-planning.md`'s persistent personal constraints, selectable
+gym programs, structured workouts, manual limitation feedback, and confirmed
+progression proposals are **built** — `PROMPT-14` and `PROMPT-15` have both
+shipped (`src/workout.py`, `src/ui_today.py`/`src/ui_state.py`; see CLAUDE.md's
+"Structured workout plans and the first progression loop"). The hip-impingement
+acceptance case (never a full-depth squat, never a missing modification note,
+never progression by increasing depth) is enforced by
+`workout.constraint_violations`, tested directly, and has been run against a
+real model call.
 
-PROMPT-1 is complete and no longer a gate. The first slice is deliberately
-usable without Hevy: A2 gates evidence-backed load progression and the later
-fatigue controller, not static constraint-aware workout planning. The full
-HRV/RHR/e1RM fatigue matrix, deload controller, and functional-assessment trend
-surface remain open in section C.
+The first slice was deliberately built usable without Hevy, and remains so: A2
+gates evidence-backed load progression, not static constraint-aware workout
+planning — without it, `propose_progression` simply never has evidence to
+propose from. What is genuinely still open is the full HRV/RHR/e1RM fatigue
+matrix, the automated deload controller, and the functional-assessment trend
+surface (section C below) — `design-06` §8's "later work," explicitly out of
+scope for both shipped prompts and still without a written prompt of its own.
 
 ---
 
@@ -377,8 +384,6 @@ here because the code is still outstanding:
 |---|---|---|---|
 | Freezer ledger — the consumer `extra_portions` never got | `design-04`, **`PROMPT-11`** | Tier 2 item 7 | **`PROMPT-10`** |
 | `week_shape` records + applier + on-demand preview | `design-02`, `design-03` §8 step 6, **`PROMPT-12`** | Arm A's last step | **`PROMPT-10`**, **`PROMPT-11`** |
-| Personal exercise constraints + gym-program catalog | `design-06`, **`PROMPT-14`** | Arm E first slice | preset container/editor; **not Hevy** |
-| Constraint-aware workout plans + manual feedback/progression | `design-06`, **`PROMPT-15`** | Arm E first useful loop | **`PROMPT-14`**; Hevy optional |
 | `Recipe.cuisine` + `total_time_minutes`, backfill 91 records | `design-00` F4 | Tier 2 item 6 | — |
 | Fetch RHR / VO2max / Training Readiness | nowhere | Tier 1 item 4 | — |
 | `readiness_log`'s first reader — the HRV band (C2) | nowhere | Tier 1 item 5 | — |
@@ -389,8 +394,10 @@ here because the code is still outstanding:
 | Full fatigue matrix + automatic deload proposals | `periodization-engine.md`; `design-06` boundary | Arm E controller | C2, RHR, A2/e1RM |
 
 The blocks row is deliberate: `PROMPT-8` builds presets only, and blocks are the
-larger half. The two exercise rows are also deliberately split: configuration
-must be independently useful and testable before an LLM writes a workout.
+larger half. The exercise rows (`PROMPT-14`/`PROMPT-15`) were also deliberately
+split for the same reason — configuration had to be independently useful and
+testable before an LLM wrote a workout — and both have since shipped, which is
+why neither row is in this table any more; see B4 above.
 
 **The blocks row's three gates are now all satisfied** (`PROMPT-2` in v0.44.0,
 `-8` in v0.43.0, `-9` in v0.44.0), which changes what is true of it rather
