@@ -130,10 +130,10 @@ The five core files, listed in `CONFIG_FILES`:
 
 | file | holds |
 |---|---|
-| `profile.json` | the body and the numbers aimed at it — `user_profile`, `target_modes`, `weekly_schedule`, `meal_weights`, `dietary_rules` |
+| `profile.json` | the body and the numbers aimed at it — `user_profile`, `target_modes`, `weekly_schedule`, `meal_weights`, `dietary_rules`, `training_profile` (personal exercise constraints, its own root — see "Personal exercise constraints and the gym-program catalog") |
 | `meals.json` | what a meal may be — `meal_types`, `meal_styles`, `cuisines`, `cuisine_affinities`, `cuisine_meal_types`, `diet_styles`, `week_defaults` |
 | `week.json` | the shape of a week — `week_start_day`, `shopping`, `serving_rules`, `enable_sunday_prep`, `max_prep_active_mins`, `inventory_to_clear`, `inventory_rules` (including `storage_windows`, see "Storage windows belong to the dish") |
-| `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below) |
+| `schedule.json` | where you are and what you're doing — `training_schedule` and `sourcing`, plus `base_schedule`, `location_rules` and `regional`, of which only `regional` is read (see below); also `gym_programs` and `active_gym_program`, the gym-program catalog and its standing pick (same section) |
 | `engine.json` | tuning for the planner, not the food — `planning_rules`, `ui_settings` |
 
 The three supplemental files, loaded by their own methods and **not** part of
@@ -670,6 +670,49 @@ starts optimising for it instead of the food.
 **All twelve are soft guidance, including Paleo and AIP.** "Exclude all
 grains, legumes and dairy" is `principles` text, not a validator — real hard
 exclusions belong in `dietary_rules.banned_ingredients`.
+
+### Personal exercise constraints and the gym-program catalog
+
+`design-06`'s first slice (Task 4.1): configuration and UI only — **no
+workout is generated from any of this yet** (that is Task 5.1). Three core
+keys, all with benign absent meanings so an existing checkout is unaffected:
+
+- `training_profile` (`profile.json`) — `planner.TrainingProfile`:
+  `movement_constraints` (each a `planner.MovementConstraint` — `scope`
+  `exercise`/`movement_pattern`, a `target` matched exactly, `action`
+  `exclude`/`modify`/`prefer`), plus `available_equipment` and `notes`. Its
+  own root, deliberately not nested under `user_profile` — different
+  lifecycle, and the preset-protection rule below needs one unambiguous
+  root. Empty means no personal restriction; **merely having a `birth_date`
+  activates nothing** — no constraint or program is ever inferred from age.
+- `gym_programs` (`schedule.json`) — a catalog of `planner.GymProgram`
+  entries (rep ranges, working sets, target RIR, progression method,
+  movement patterns covered), keyed by a stable catalog id exactly like
+  `diet_styles`. Content for a gym session `training_schedule` already
+  declares, never a second calendar.
+- `active_gym_program` (`schedule.json`) — the standing pick from the
+  catalog, or `None` (empty catalog + no pick = the detailed-workout
+  feature is simply off).
+
+**`presets.PROTECTED_CONFIG_ROOTS`** freezes `training_profile` and
+`gym_programs` against any preset override, root or nested leaf — a
+persistent personal fact, not a weekly opinion. `active_gym_program` is
+deliberately the one presettable field of the three, and is
+`PRESET_EDITOR_FIELDS`' `active_gym_program` entry (`ui_state.py`) — the
+**only** exercise-planning field in the weekly preset editor. A violation is
+an ordinary `PresetFailure` naming preset and path, exactly like a typo'd
+override path.
+
+**UI ownership:** the Settings destination's "Training" section
+(`ui_settings.py`) is the *only* editor for the personal profile and the
+catalog — list-of-record cards copying `ui_review.training_editor`'s
+inline convention (add/remove repaints, a field edit is debounced and
+persists immediately through `save_config_keys` once it validates through
+the same typed config path, never a staged input). The review dialog
+(`ui_review.py`) shows a **read-only** summary — the resolved active
+program and the constraints that will bind — built by
+`ui_state.training_review_view`, and states which layer won whenever the
+active preset overrides the standing pick; it never edits anything.
 
 ### Targets come from the body, not the file — unless you say otherwise
 

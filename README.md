@@ -929,6 +929,8 @@ where it does.
 | `dietary_rules.allowed_nova_groups` | `profile.json` | NOVA processing groups allowed (group 4 is always rejected) |
 | `dietary_rules.banned_ingredients` | `profile.json` | Substring blocklist, enforced as schema validation |
 | `dietary_rules.active_diet_styles` | `profile.json` | Which `diet_styles` entries are in effect. A bare name is every day; `{"style", "days"}` names a window (see "Diet styles, and running one for part of the week"). Soft guidance via the prompt, not a hard constraint; an unknown name — or a malformed window — fails at startup |
+| `training_profile` | `profile.json` | Personal exercise constraints — declared movement/exercise restrictions, available equipment, notes. Configuration only today: nothing yet generates a workout from it. Empty means no personal restriction; a birth date alone activates nothing. Its own root, not nested under `user_profile`, and protected against every preset override — see "Personal exercise constraints and the gym-program catalog" |
+| `gym_programs` / `active_gym_program` | `schedule.json` | The gym-program catalog (rep ranges, working sets, target RIR, progression, movement patterns) and the standing pick from it. `gym_programs` is protected like `training_profile`; `active_gym_program` is the one exercise-planning field a weekly preset may set. Edited in **Settings → Training**; `active_gym_program` also has a select in the preset editor |
 | `diet_styles` | `meals.json` | The catalog of named eating patterns to choose from — `label` plus `principles` |
 | `week_defaults` | `meals.json` | Default mode (`cook`/`leftover`/`skip`) per meal type |
 | `meal_styles` / `cuisines` / `cuisine_meal_types` | `meals.json` | Style/cuisine pools; anything left `auto` rotates least-recently-used from `meal_history.json`. A gym/cardio session starting before 11:00 pins that day's breakfast to `custom_shake` unless you picked a style yourself |
@@ -992,10 +994,10 @@ anywhere in the schema.
 | `src/ui_presets.py` | The preset editor shown in Settings — a list of records plus the save-time validator |
 | `src/integrations/sync_service.py` | Garmin and Cronometer sync (see Section 3) |
 | `src/integrations/keep_import.py` | A once-off bootstrap of the recipe catalog from a Google Keep Takeout export |
-| `config/profile.json` | Body, per-day targets, meal weights, dietary rules |
+| `config/profile.json` | Body, per-day targets, meal weights, dietary rules, personal exercise constraints |
 | `config/meals.json` | Meal types, styles, cuisines and affinities |
 | `config/week.json` | Week shape, shopping days, prep and pantry |
-| `config/schedule.json` | Training sessions and location/regional context |
+| `config/schedule.json` | Training sessions, location/regional context, the gym-program catalog and its standing pick |
 | `config/engine.json` | Planner tuning and UI settings |
 | `config/models.json` | Model selection and timeout (see Section 2) |
 | `config/integrations.json` | Garmin/Cronometer sync tuning |

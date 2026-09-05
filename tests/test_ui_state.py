@@ -34,7 +34,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 import ui_state  # noqa: E402
-from repository import run_sync  # noqa: E402
+from repository import LocalJSONRepository, run_sync  # noqa: E402
 from nutrition_engine import (  # noqa: E402
     PROPOSAL_ADD,
     PROPOSAL_DROP,
@@ -53,6 +53,7 @@ from planner import (  # noqa: E402
     Recipe,
     SundayPrepSession,
     WeekPlan,
+    apply_preset_layer,
 )
 from week import (  # noqa: E402
     MODE_COOK,
@@ -4274,3 +4275,365 @@ class TestBlocksView(unittest.TestCase):
         state = make_state()
         state.blocks = [make_block(name="a"), make_block(name="b", starts_on="2000-01-01", ends_on="2000-01-05")]
         self.assertEqual(set(state.blocks_view().names), {"a", "b"})
+
+
+# ---------------------------------------------------------------------------
+# Task 4.1c — Settings editors + the weekly preset pick for exercise
+# constraints and the gym-program catalog (design-06 §2/§3).
+#
+# These write paths run the *whole* candidate config through
+# `resolve_preset_layer` (`AppConfig`, exactly as the loader does), so —
+# like `TestSetPreset` in `test_presets.py` — `state.config` has to start as
+# a real `apply_preset_layer` dump rather than the file's minimal `CONFIG`
+# fixture: `_relayer`'s re-seed reads `config["target_modes"]` and friends
+# off the *previous* config unconditionally, which the minimal fixture does
+# not carry. `shipped_base()` mirrors `test_preset_validation.py`'s own
+# helper — reading `config/*.json` is neither the network nor the clock.
+
+
+def shipped_base() -> dict:
+    return run_sync(LocalJSONRepository().load_config())
+
+
+class _RecordingConfigRepository:
+    """Just enough repository for the Task 4.1c writers — they only ever
+    call `save_config_keys`, the same fake `_RecordingRepository` gives
+    `set_target_mode`."""
+
+    def __init__(self) -> None:
+        self.saved: Dict[str, object] = {}
+
+    async def save_config_keys(self, updates: dict) -> None:
+        self.saved.update(updates)
+
+
+def make_training_state(base_config=None) -> ui_state.PlannerState:
+    base = base_config if base_config is not None else shipped_base()
+    return ui_state.PlannerState(
+        config=apply_preset_layer(base, {}),
+        base_config=base,
+        presets_config={},
+        week_start=base["week_start_day"],
+        servings=base["serving_rules"]["servings_per_meal"],
+        shop_days=list(base["shopping"]["shop_days"]),
+    )
+
+
+class TestUpdateTrainingProfile(unittest.TestCase):
+    def test_updating_notes_persists_and_validates(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(
+            state.update_training_profile(repo, notes="Knee-friendly only.")
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            repo.saved["training_profile"]["notes"], "Knee-friendly only."
+        )
+        self.assertEqual(
+            state.base_config["training_profile"]["notes"], "Knee-friendly only."
+        )
+        self.assertEqual(
+            state.config["training_profile"]["notes"], "Knee-friendly only."
+        )
+
+    def test_updating_equipment_round_trips(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(
+            state.update_training_profile(
+                repo, available_equipment=["squat rack", "bands"]
+            )
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            state.base_config["training_profile"]["available_equipment"],
+            ["squat rack", "bands"],
+        )
+
+    def test_an_invalid_update_changes_nothing(self):
+        """Emptying `training_profile` to `{}` is legal *within* this call
+        (it is not a preset trying to overwrite a protected root — this
+        writes the base itself), but a movement_constraints entry that
+        breaks `AppConfig` must refuse the whole write."""
+        state = make_training_state()
+        before = dict(state.base_config["training_profile"])
+        repo = _RecordingConfigRepository()
+        failures = run_sync(
+            state.update_training_profile(
+                repo,
+                movement_constraints=[
+                    {
+                        "id": "bad",
+                        "scope": "movement_pattern",
+                        "target": "bench_press",
+                        "action": "exclude",
+                    }
+                ],
+            )
+        )
+        self.assertTrue(failures)
+        self.assertIn("bench_press", failures[0])
+        self.assertEqual(state.base_config["training_profile"], before)
+        self.assertEqual(repo.saved, {})
+
+
+class TestMovementConstraintCrud(unittest.TestCase):
+    def test_add_appends_a_valid_constraint(self):
+        state = make_training_state()
+        before = len(state.base_config["training_profile"]["movement_constraints"])
+        repo = _RecordingConfigRepository()
+        failures = run_sync(state.add_movement_constraint(repo))
+        self.assertEqual(failures, [])
+        constraints = state.base_config["training_profile"]["movement_constraints"]
+        self.assertEqual(len(constraints), before + 1)
+        self.assertEqual(constraints[-1]["scope"], "movement_pattern")
+
+    def test_update_edits_by_position(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_movement_constraint(repo))
+        index = len(state.base_config["training_profile"]["movement_constraints"]) - 1
+        failures = run_sync(
+            state.update_movement_constraint(repo, index, action="exclude")
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            state.base_config["training_profile"]["movement_constraints"][index]["action"],
+            "exclude",
+        )
+
+    def test_update_out_of_range_is_refused(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(state.update_movement_constraint(repo, 99, action="exclude"))
+        self.assertTrue(failures)
+        self.assertEqual(repo.saved, {})
+
+    def test_a_movement_pattern_scope_must_name_a_known_pattern(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_movement_constraint(repo))
+        index = len(state.base_config["training_profile"]["movement_constraints"]) - 1
+        before = list(state.base_config["training_profile"]["movement_constraints"])
+        failures = run_sync(
+            state.update_movement_constraint(repo, index, target="bench_press")
+        )
+        self.assertTrue(failures)
+        self.assertIn("bench_press", failures[0])
+        self.assertEqual(
+            state.base_config["training_profile"]["movement_constraints"], before
+        )
+
+    def test_remove_deletes_by_position(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_movement_constraint(repo))
+        count = len(state.base_config["training_profile"]["movement_constraints"])
+        failures = run_sync(state.remove_movement_constraint(repo, count - 1))
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            len(state.base_config["training_profile"]["movement_constraints"]),
+            count - 1,
+        )
+
+    def test_remove_out_of_range_is_a_noop(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        before = list(state.base_config["training_profile"]["movement_constraints"])
+        failures = run_sync(state.remove_movement_constraint(repo, 99))
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            state.base_config["training_profile"]["movement_constraints"], before
+        )
+        self.assertEqual(repo.saved, {})
+
+
+class TestGymProgramCrud(unittest.TestCase):
+    def test_add_creates_a_uniquely_keyed_program(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(state.add_gym_program(repo))
+        self.assertEqual(failures, [])
+        programs = state.base_config["gym_programs"]
+        self.assertEqual(len(programs), 1)
+        self.assertIn("program_1", programs)
+        failures = run_sync(state.add_gym_program(repo))
+        self.assertEqual(failures, [])
+        self.assertIn("program_2", state.base_config["gym_programs"])
+
+    def test_update_edits_fields(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        failures = run_sync(
+            state.update_gym_program(repo, "program_1", label="Strength block")
+        )
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            state.base_config["gym_programs"]["program_1"]["label"], "Strength block"
+        )
+
+    def test_update_rejects_an_out_of_bounds_field(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        before = dict(state.base_config["gym_programs"]["program_1"])
+        failures = run_sync(state.update_gym_program(repo, "program_1", working_sets=99))
+        self.assertTrue(failures)
+        self.assertEqual(state.base_config["gym_programs"]["program_1"], before)
+
+    def test_update_an_unknown_program_is_refused(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(state.update_gym_program(repo, "nope", label="x"))
+        self.assertTrue(failures)
+        self.assertEqual(repo.saved, {})
+
+    def test_remove_deletes_a_program(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        failures = run_sync(state.remove_gym_program(repo, "program_1"))
+        self.assertEqual(failures, [])
+        self.assertEqual(state.base_config["gym_programs"], {})
+
+    def test_cannot_remove_the_active_program(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        run_sync(state.set_active_gym_program(repo, "program_1"))
+        failures = run_sync(state.remove_gym_program(repo, "program_1"))
+        self.assertTrue(failures)
+        self.assertIn("program_1", state.base_config["gym_programs"])
+
+
+class TestSetActiveGymProgram(unittest.TestCase):
+    def test_selecting_a_known_program_persists(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        failures = run_sync(state.set_active_gym_program(repo, "program_1"))
+        self.assertEqual(failures, [])
+        self.assertEqual(state.base_config["active_gym_program"], "program_1")
+        self.assertEqual(repo.saved["active_gym_program"], "program_1")
+
+    def test_selecting_an_unknown_program_is_refused(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        failures = run_sync(state.set_active_gym_program(repo, "nope"))
+        self.assertTrue(failures)
+        # Rejected before anything is mutated — `base_config` is the raw
+        # merge, which never carried the key at all until a successful
+        # write adds it (`AppConfig`'s `None` default lives only in `config`).
+        self.assertIsNone(state.base_config.get("active_gym_program"))
+
+    def test_clearing_the_pick(self):
+        state = make_training_state()
+        repo = _RecordingConfigRepository()
+        run_sync(state.add_gym_program(repo))
+        run_sync(state.set_active_gym_program(repo, "program_1"))
+        failures = run_sync(state.set_active_gym_program(repo, None))
+        self.assertEqual(failures, [])
+        self.assertIsNone(state.base_config["active_gym_program"])
+
+
+class TestBirthDateAloneActivatesNothing(unittest.TestCase):
+    """design-06 §2.2/§10, asserted at the `PlannerState` seam too: a birth
+    date must never read as a constraint or a program pick — the same claim
+    `test_training_config.py` makes directly against `AppConfig`."""
+
+    def test_a_birth_date_creates_no_constraint_or_program(self):
+        base = dict(shipped_base())
+        base["user_profile"] = dict(base.get("user_profile") or {}, birth_date="1971-01-10")
+        state = make_training_state(base_config=base)
+        self.assertEqual(
+            state.base_config["training_profile"]["movement_constraints"],
+            shipped_base()["training_profile"]["movement_constraints"],
+        )
+        self.assertIsNone(state.base_config.get("active_gym_program"))
+
+
+class TestPresetEditorOffersActiveGymProgram(unittest.TestCase):
+    """Task 4.1c: "exactly one exercise-planning field" in the weekly preset
+    editor — `active_gym_program`, presettable per `PROTECTED_CONFIG_ROOTS`
+    (Task 4.1b), never `training_profile`/`gym_programs` themselves."""
+
+    def test_the_field_is_present_with_the_right_path_and_kind(self):
+        fields = {f.key: f for f in ui_state.PRESET_EDITOR_FIELDS}
+        self.assertIn("active_gym_program", fields)
+        field = fields["active_gym_program"]
+        self.assertEqual(field.path, "active_gym_program")
+        self.assertEqual(field.kind, ui_state.PRESET_FIELD_ENUM_STR)
+
+    def test_it_is_one_of_the_editor_managed_paths(self):
+        managed = ui_state.preset_editor_field_paths(shipped_base())
+        self.assertIn("active_gym_program", managed)
+
+
+class TestTrainingReviewView(unittest.TestCase):
+    """Pure — `ui_state.training_review_view(config, base_config)` — no
+    `PlannerState` needed, the same reasoning `PresetView`'s own tests give."""
+
+    def config_with(self, **overrides):
+        return dict(
+            {
+                "gym_programs": {
+                    "a": {"label": "Program A"},
+                    "b": {"label": "Program B"},
+                },
+                "active_gym_program": "a",
+                "training_profile": {"movement_constraints": []},
+            },
+            **overrides,
+        )
+
+    def test_no_program_and_no_constraints(self):
+        view = ui_state.training_review_view(
+            self.config_with(active_gym_program=None, gym_programs={}),
+            self.config_with(active_gym_program=None, gym_programs={}),
+        )
+        self.assertIsNone(view.program_label)
+        self.assertFalse(view.program_overridden)
+        self.assertEqual(view.constraints, [])
+
+    def test_resolved_matches_base_no_override_flag(self):
+        config = self.config_with()
+        view = ui_state.training_review_view(config, config)
+        self.assertEqual(view.program_label, "Program A")
+        self.assertFalse(view.program_overridden)
+
+    def test_a_preset_override_states_which_value_won(self):
+        base = self.config_with(active_gym_program="a")
+        resolved = self.config_with(active_gym_program="b")
+        view = ui_state.training_review_view(resolved, base)
+        self.assertEqual(view.program_label, "Program B")
+        self.assertTrue(view.program_overridden)
+        self.assertEqual(view.base_program_label, "Program A")
+
+    def test_constraints_list_states_instruction_and_variations(self):
+        config = self.config_with(
+            training_profile={
+                "movement_constraints": [
+                    {
+                        "id": "hip",
+                        "scope": "movement_pattern",
+                        "target": "squat",
+                        "action": "modify",
+                        "instruction": "Partial range only.",
+                        "preferred_variations": [],
+                    },
+                    {
+                        "id": "shoulder",
+                        "scope": "exercise",
+                        "target": "Behind-the-Neck Press",
+                        "action": "prefer",
+                        "preferred_variations": ["Landmine press"],
+                    },
+                ]
+            }
+        )
+        view = ui_state.training_review_view(config, config)
+        self.assertEqual(len(view.constraints), 2)
+        self.assertEqual(view.constraints[0].detail, "Partial range only.")
+        self.assertIn("Landmine press", view.constraints[1].detail)

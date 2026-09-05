@@ -34,7 +34,7 @@ from nicegui import ui
 from planner import calculate_daily_targets
 from ui_context import UIContext
 from ui_generation import GenerationHandles
-from ui_state import training_proposals_view
+from ui_state import training_proposals_view, training_review_view
 from ui_theme import (
     RADIUS_CARD,
     RADIUS_PANEL,
@@ -782,6 +782,55 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
 
         block_pin_row()
 
+    # ---- exercise constraints & the resolved gym program (Task 4.1c) ------
+    #
+    # Read-only: Settings -> Training owns every edit to the catalog and the
+    # personal constraints, and the preset editor owns the weekly pick's own
+    # `active_gym_program` override. This states what the *next* generation
+    # would bind to, and — since a preset may override the standing pick but
+    # never the constraints (Task 4.1b) — which resolved value won.
+
+    @ui.refreshable
+    def training_summary() -> None:
+        view = training_review_view(state.config, state.base_config)
+        with ui.element("div").classes(
+            f"flex flex-col gap-{SPACE_HAIR} {SURFACE_INSET} {RADIUS_CARD} p-{SPACE_BASE}"
+        ):
+            with ui.element("div").classes(
+                f"flex flex-row flex-nowrap items-center gap-{SPACE_TIGHT}"
+            ):
+                ui.icon("fitness_center").classes("text-slate-400 shrink-0")
+                ui.label("Exercise constraints").classes(f"{TEXT_BODY} text-slate-300")
+
+            if view.program_label is not None:
+                ui.label(f"Active gym program: {view.program_label}").classes(
+                    f"{TEXT_MICRO} text-slate-300"
+                )
+                if view.program_overridden:
+                    ui.label(
+                        "This week's preset overrides your standing pick "
+                        f"({view.base_program_label or 'none'})."
+                    ).classes(f"{TEXT_MICRO} text-slate-400")
+            else:
+                ui.label(
+                    "No active gym program — workout detail is off this week."
+                ).classes(f"{TEXT_MICRO} text-slate-400")
+
+            if view.constraints:
+                for row in view.constraints:
+                    detail = f": {row.detail}" if row.detail else ""
+                    ui.label(
+                        f"{row.target} ({humanize(row.scope)}) — "
+                        f"{humanize(row.action)}{detail}"
+                    ).classes(f"{TEXT_MICRO} text-slate-400")
+            else:
+                ui.label("No personal exercise constraints declared.").classes(
+                    f"{TEXT_MICRO} text-slate-400"
+                )
+            ui.label("Edited in Settings -> Training, never here.").classes(
+                f"{TEXT_MICRO} text-slate-400"
+            )
+
     # ---- user recipe pins --------------------------------------------------
 
     pin_pick = {"day": state.days[0] if state.days else "", "meal_type": ""}
@@ -915,6 +964,7 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
             # true of everything under it and false of this, which persists
             # the moment it changes.
             preset_block()
+            training_summary()
 
             # Also above the "staged" line, and for the same reason: a
             # freezer edit persists the moment it's made, so this is where
@@ -1075,6 +1125,11 @@ def build_review(ctx: UIContext, generation: GenerationHandles) -> ReviewHandles
         # "Send to freezer"/"Record" action does — see `ui_cards.py`), so the
         # one guaranteed-fresh moment is right before it becomes visible.
         freezer_editor.refresh()
+        # No centrally-registered refresh topic of its own, the same reason
+        # `freezer_editor` lacks one — nothing else on the page changes
+        # Settings -> Training while this dialog is closed, so the one
+        # guaranteed-fresh moment is right before it becomes visible.
+        training_summary.refresh()
         dialog.open()
 
     return ReviewHandles(

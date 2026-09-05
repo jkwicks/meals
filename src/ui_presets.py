@@ -46,6 +46,7 @@ from ui_state import (
     PRESET_EDITOR_FIELDS,
     PRESET_FIELD_DAY_CARBS,
     PRESET_FIELD_ENUM_OBJECT,
+    PRESET_FIELD_ENUM_STR,
     PRESET_FIELD_INT,
     PRESET_FIELD_INT_LIST,
     PRESET_FIELD_MULTI_INT,
@@ -106,6 +107,15 @@ def build_presets(ctx: UIContext) -> PresetsHandles:
         return {
             key: entry.get("label", humanize(key).title())
             for key, entry in (state.base_config.get("diet_styles") or {}).items()
+        }
+
+    def gym_program_options() -> Dict[str, str]:
+        # Task 4.1c: `active_gym_program`'s option list, read off the base
+        # catalog the same way `diet_style_options` reads `diet_styles` — a
+        # preset may select from it, but (Task 4.1b) never edit it.
+        return {
+            key: entry.get("label", key)
+            for key, entry in (state.base_config.get("gym_programs") or {}).items()
         }
 
     # ---- the editor dialog ------------------------------------------------
@@ -183,6 +193,9 @@ def build_presets(ctx: UIContext) -> PresetsHandles:
                     parsed = _parse_int_list(value) if value not in (None, "") else None
                     if parsed is not None:
                         out[field.path] = parsed
+                elif field.kind == PRESET_FIELD_ENUM_STR:
+                    if value not in (None, ""):
+                        out[field.path] = value
                 elif value not in (None, ""):
                     out[field.path] = (
                         int(value) if field.kind == PRESET_FIELD_INT else float(value)
@@ -264,6 +277,28 @@ def build_presets(ctx: UIContext) -> PresetsHandles:
                 ).props("dense outlined use-chips clearable").classes(
                     f"w-full {TEXT_BODY}"
                 )
+                field_help(field, base)
+
+        def render_enum_str(field: PresetField) -> None:
+            """A single, optional pick from a base-config catalog — unlike
+            `render_multi`, exactly one value or none, so a plain clearable
+            select rather than a chip multi-select. Today this is only
+            `active_gym_program`; `gym_program_options` is read fresh each
+            render, the same "catalog read once per dialog open" shape
+            `diet_style_options` already gives `active_diet_styles`.
+            """
+            base = base_value(field)
+
+            def on_change(event, key=field.key) -> None:
+                draft[key] = event.value or None
+
+            with ui.element("div").classes(f"flex flex-col gap-{SPACE_HAIR} w-full"):
+                ui.label(field.label).classes(f"{TEXT_BODY} text-slate-300")
+                ui.select(
+                    gym_program_options(),
+                    value=draft.get(field.key),
+                    on_change=on_change,
+                ).props("dense outlined clearable").classes(f"w-full {TEXT_BODY}")
                 field_help(field, base)
 
         def render_object(field: PresetField) -> None:
@@ -600,6 +635,8 @@ def build_presets(ctx: UIContext) -> PresetsHandles:
                 render_multi(field)
             elif field.kind == PRESET_FIELD_WEEK_SHAPE:
                 render_week_shape(field)
+            elif field.kind == PRESET_FIELD_ENUM_STR:
+                render_enum_str(field)
             elif field.kind in PRESET_OBJECT_KINDS:
                 render_object(field)
             else:
